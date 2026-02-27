@@ -30,6 +30,8 @@ import {
   parseResponsesSSEToChatCompletion,
   parseResponsesSSEToResponseObject,
   responseObjectToChatCompletion,
+  sanitizeResponsesSSEFrame,
+  stripReasoningFromResponseObject,
 } from "./responses-bridge.js";
 
 const PORT = Number(process.env.PORT ?? 4010);
@@ -334,6 +336,19 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function takeNextSSEFrame(buffer: string): { frame: string; rest: string } | null {
+  const crlfBoundary = buffer.indexOf("\r\n\r\n");
+  const lfBoundary = buffer.indexOf("\n\n");
+
+  if (crlfBoundary === -1 && lfBoundary === -1) return null;
+
+  if (crlfBoundary !== -1 && (lfBoundary === -1 || crlfBoundary < lfBoundary)) {
+    return { frame: buffer.slice(0, crlfBoundary), rest: buffer.slice(crlfBoundary + 4) };
+  }
+
+  return { frame: buffer.slice(0, lfBoundary), rest: buffer.slice(lfBoundary + 2) };
+}
+
 async function fetchCodexWithRetry(url: string, init: RequestInit): Promise<Response> {
   let lastError: Error | undefined;
   for (let attempt = 0; attempt <= MAX_UPSTREAM_RETRIES; attempt++) {
@@ -528,10 +543,34 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
         setForwardHeaders(upstream, res);
         if (!upstream.body) return res.end();
         const reader = upstream.body.getReader();
+        const decoder = new TextDecoder();
+        let sseBuffer = "";
+
         while (true) {
           const { value, done } = await reader.read();
           if (done) break;
-          res.write(Buffer.from(value));
+          sseBuffer += decoder.decode(value, { stream: true });
+
+          while (true) {
+            const next = takeNextSSEFrame(sseBuffer);
+            if (!next) break;
+            sseBuffer = next.rest;
+            const filtered = sanitizeResponsesSSEFrame(next.frame);
+            if (filtered !== null) res.write(`${filtered}\n\n`);
+          }
+        }
+
+        sseBuffer += decoder.decode();
+        while (true) {
+          const next = takeNextSSEFrame(sseBuffer);
+          if (!next) break;
+          sseBuffer = next.rest;
+          const filtered = sanitizeResponsesSSEFrame(next.frame);
+          if (filtered !== null) res.write(`${filtered}\n\n`);
+        }
+        if (sseBuffer.trim()) {
+          const filtered = sanitizeResponsesSSEFrame(sseBuffer);
+          if (filtered !== null) res.write(`${filtered}\n\n`);
         }
         res.end();
 
@@ -626,6 +665,10 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
 
       let parsed: any = undefined;
       try { parsed = JSON.parse(text); } catch {}
+      if (parsed?.object === "response") {
+        parsed = stripReasoningFromResponseObject(parsed);
+        text = JSON.stringify(parsed);
+      }
 
       // Hard guarantee for chat-completions streaming clients:
       // always return SSE, even when upstream returns JSON or SSE-like text without content-type.

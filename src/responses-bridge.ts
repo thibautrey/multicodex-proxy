@@ -134,6 +134,77 @@ function clampReasoningEffort(modelId: string, effort: string): string {
   return effort;
 }
 
+function isVisibleAssistantContentPart(part: any): boolean {
+  return part?.type === "output_text" || part?.type === "refusal";
+}
+
+function sanitizeResponseMessageItem(item: any): any {
+  if (!item || typeof item !== "object") return item;
+  if (item.type !== "message") return item;
+  const content = Array.isArray(item.content)
+    ? item.content.filter((part: any) => isVisibleAssistantContentPart(part))
+    : [];
+  return { ...item, content };
+}
+
+export function stripReasoningFromResponseObject(resp: any) {
+  if (!resp || typeof resp !== "object") return resp;
+  const output = Array.isArray(resp.output)
+    ? resp.output
+      .filter((item: any) => item?.type !== "reasoning")
+      .map((item: any) => sanitizeResponseMessageItem(item))
+    : resp.output;
+  const next = { ...resp, output };
+  if ("reasoning" in next) delete next.reasoning;
+  return next;
+}
+
+type SanitizedEventResult = { drop: true; event: null; changed: boolean } | { drop: false; event: any; changed: boolean };
+
+export function sanitizeResponsesEvent(event: any): SanitizedEventResult {
+  if (!event || typeof event !== "object") return { drop: false, event, changed: false };
+  const type = typeof event.type === "string" ? event.type : "";
+
+  if (
+    type.startsWith("response.reasoning")
+    || ((type === "response.output_item.added" || type === "response.output_item.done") && event?.item?.type === "reasoning")
+    || ((type === "response.content_part.added" || type === "response.content_part.done") && !isVisibleAssistantContentPart(event?.part))
+  ) {
+    return { drop: true, event: null, changed: true };
+  }
+
+  if (type === "response.completed" && event?.response && typeof event.response === "object") {
+    return { drop: false, event: { ...event, response: stripReasoningFromResponseObject(event.response) }, changed: true };
+  }
+
+  if (type === "response.output_item.done" && event?.item?.type === "message") {
+    return { drop: false, event: { ...event, item: sanitizeResponseMessageItem(event.item) }, changed: true };
+  }
+
+  return { drop: false, event, changed: false };
+}
+
+export function sanitizeResponsesSSEFrame(frame: string): string | null {
+  const dataLines = frame
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("data:"));
+  if (!dataLines.length) return frame;
+
+  const payload = dataLines.map((line) => line.slice(5).trim()).join("\n").trim();
+  if (!payload || payload === "[DONE]") return frame;
+
+  try {
+    const parsed = JSON.parse(payload);
+    const sanitized = sanitizeResponsesEvent(parsed);
+    if (sanitized.drop) return null;
+    if (!sanitized.changed) return frame;
+    return `data: ${JSON.stringify(sanitized.event)}`;
+  } catch {
+    return frame;
+  }
+}
+
 function applyCodexParityDefaults(payload: any, sessionId?: string) {
   const modelId = typeof payload?.model === "string" ? payload.model : "";
   payload.store = false;
@@ -182,8 +253,11 @@ export function parseResponsesSSEToResponseObject(sseText: string) {
     if (!payload || payload === "[DONE]") continue;
     try {
       const obj = JSON.parse(payload);
-      if (obj?.type === "response.output_text.delta") outputText += obj?.delta ?? "";
-      if (obj?.type === "response.completed") response = obj?.response;
+      const sanitized = sanitizeResponsesEvent(obj);
+      if (sanitized.drop) continue;
+      const event = sanitized.event;
+      if (event?.type === "response.output_text.delta") outputText += event?.delta ?? "";
+      if (event?.type === "response.completed") response = stripReasoningFromResponseObject(event?.response);
     } catch {}
   }
   if (!response) {
@@ -289,14 +363,16 @@ export function chatCompletionsToResponsesPayload(body: any, sessionId?: string)
 }
 
 export function responseObjectToChatCompletion(resp: any, model: string) {
+  const sanitizedResp = stripReasoningFromResponseObject(resp);
   let outputText = "";
-  const toolCalls = Array.isArray(resp?.output)
-    ? resp.output
+  const toolCalls = Array.isArray(sanitizedResp?.output)
+    ? sanitizedResp.output
       .flatMap((it: any) => {
         if (it?.type === "message") {
           const parts = Array.isArray(it?.content) ? it.content : [];
           for (const p of parts) {
-            if ((p?.type === "output_text" || p?.type === "text") && typeof p?.text === "string") outputText += p.text;
+            if (p?.type === "output_text" && typeof p?.text === "string") outputText += p.text;
+            if (p?.type === "refusal" && typeof p?.refusal === "string") outputText += p.refusal;
           }
           return [];
         }
@@ -314,7 +390,7 @@ export function responseObjectToChatCompletion(resp: any, model: string) {
       })
     : [];
 
-  const usage = resp?.usage;
+  const usage = sanitizedResp?.usage;
   const prompt = usage?.input_tokens ?? 0;
   const completion = usage?.output_tokens ?? 0;
   const total = usage?.total_tokens ?? prompt + completion;
@@ -347,11 +423,14 @@ export function parseResponsesSSEToChatCompletion(sseText: string, model: string
     if (!payload || payload === "[DONE]") continue;
     try {
       const obj = JSON.parse(payload);
-      if (obj?.type === "response.output_text.delta") outputText += obj?.delta ?? "";
-      if (obj?.type === "response.output_text.done" && !outputText) outputText = obj?.text ?? "";
-      if (obj?.type === "response.completed") {
-        usage = obj?.response?.usage;
-        completedResponse = obj?.response;
+      const sanitized = sanitizeResponsesEvent(obj);
+      if (sanitized.drop) continue;
+      const event = sanitized.event;
+      if (event?.type === "response.output_text.delta") outputText += event?.delta ?? "";
+      if (event?.type === "response.output_text.done" && !outputText) outputText = event?.text ?? "";
+      if (event?.type === "response.completed") {
+        usage = event?.response?.usage;
+        completedResponse = event?.response;
       }
     } catch {}
   }
@@ -385,9 +464,12 @@ export function convertResponsesSSEToChatCompletionSSE(upstreamLine: string, mod
 
   try {
     const obj = JSON.parse(payload);
+    const sanitized = sanitizeResponsesEvent(obj);
+    if (sanitized.drop) return null;
+    const event = sanitized.event;
 
-    if (obj?.type === "response.output_text.delta") {
-      const delta = obj?.delta ?? "";
+    if (event?.type === "response.output_text.delta") {
+      const delta = event?.delta ?? "";
       const chatDelta = {
         id: `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
         object: "chat.completion.chunk",
@@ -398,8 +480,8 @@ export function convertResponsesSSEToChatCompletionSSE(upstreamLine: string, mod
       return `data: ${JSON.stringify(chatDelta)}\n\n`;
     }
 
-    if (obj?.type === "response.output_text.done") {
-      const text = obj?.text ?? "";
+    if (event?.type === "response.output_text.done") {
+      const text = event?.text ?? "";
       if (!text) return null;
       const chatDelta = {
         id: `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
@@ -411,10 +493,10 @@ export function convertResponsesSSEToChatCompletionSSE(upstreamLine: string, mod
       return `data: ${JSON.stringify(chatDelta)}\n\n`;
     }
 
-    if (obj?.type === "response.completed") {
-      const usage = obj?.response?.usage;
-      const toolCalls = Array.isArray(obj?.response?.output)
-        ? obj.response.output
+    if (event?.type === "response.completed") {
+      const usage = event?.response?.usage;
+      const toolCalls = Array.isArray(event?.response?.output)
+        ? event.response.output
           .filter((it: any) => it?.type === "function_call")
           .map((it: any, idx: number) => ({
             index: idx,
