@@ -184,7 +184,20 @@ function sanitizeResponseMessageItem(item: any): any {
   if (!item || typeof item !== "object") return item;
   if (item.type !== "message") return item;
   const content = Array.isArray(item.content)
-    ? item.content.filter((part: any) => isVisibleAssistantContentPart(part))
+    ? item.content
+      .filter((part: any) => isVisibleAssistantContentPart(part))
+      .map((part: any) => {
+        if (part?.type === "output_text" && typeof part?.text === "string") {
+          const text = sanitizeOutputText(part.text);
+          return text ? { ...part, text } : null;
+        }
+        if (part?.type === "refusal" && typeof part?.refusal === "string") {
+          const refusal = sanitizeOutputText(part.refusal);
+          return refusal ? { ...part, refusal } : null;
+        }
+        return part;
+      })
+      .filter((part: any) => part !== null)
     : [];
   return { ...item, content };
 }
@@ -194,6 +207,7 @@ export function stripReasoningFromResponseObject(resp: any) {
   const output = Array.isArray(resp.output)
     ? resp.output
       .filter((item: any) => item?.type !== "reasoning")
+      .filter((item: any) => item?.type !== "function_call" || shouldExposeFunctionCallName(item?.name))
       .map((item: any) => sanitizeResponseMessageItem(item))
     : resp.output;
   const next = { ...resp, output };
@@ -263,6 +277,24 @@ export function sanitizeResponsesEvent(event: any): SanitizedEventResult {
 
   if (type === "response.output_item.done" && event?.item?.type === "message") {
     return { drop: false, event: { ...event, item: sanitizeResponseMessageItem(event.item) }, changed: true };
+  }
+
+  if (type === "response.output_text.delta") {
+    const delta = sanitizeOutputText(typeof event?.delta === "string" ? event.delta : "");
+    if (!delta) return { drop: true, event: null, changed: true };
+    return { drop: false, event: { ...event, delta }, changed: true };
+  }
+
+  if (type === "response.output_text.done") {
+    const text = sanitizeOutputText(typeof event?.text === "string" ? event.text : "");
+    if (!text) return { drop: true, event: null, changed: true };
+    return { drop: false, event: { ...event, text }, changed: true };
+  }
+
+  if (type === "response.refusal.delta") {
+    const delta = sanitizeOutputText(typeof event?.delta === "string" ? event.delta : "");
+    if (!delta) return { drop: true, event: null, changed: true };
+    return { drop: false, event: { ...event, delta }, changed: true };
   }
 
   return { drop: false, event, changed: false };
