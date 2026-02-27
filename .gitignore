@@ -3,3 +3,4 @@ web/node_modules
 dist
 web-dist
 .env
+web/*.tsbuildinfo
