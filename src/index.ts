@@ -712,7 +712,7 @@ function convertResponsesSSEToChatCompletionSSE(upstreamLine: string, model: str
         model,
         choices: [{ index: 0, delta: delta ? { content: delta } : {}, finish_reason: null }],
       };
-      return `data: ${JSON.stringify(chatDelta)}\n`;
+      return `data: ${JSON.stringify(chatDelta)}\n\n`;
     }
 
     // Convert response.output_text.done - contains full text, forward it
@@ -726,7 +726,7 @@ function convertResponsesSSEToChatCompletionSSE(upstreamLine: string, model: str
         model,
         choices: [{ index: 0, delta: { content: text }, finish_reason: null }],
       };
-      return `data: ${JSON.stringify(chatDelta)}\n`;
+      return `data: ${JSON.stringify(chatDelta)}\n\n`;
     }
 
     // Convert response.completed to final chunk (supports tool_calls)
