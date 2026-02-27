@@ -48,6 +48,42 @@ function sanitizeOutputText(text: string): string {
   return (looksLikeInternalToolProtocolText(text) || looksLikeInternalPlannerText(text)) ? "" : text;
 }
 
+export function sanitizeAssistantTextChunk(text: string): string {
+  return sanitizeOutputText(text);
+}
+
+function withFallbackAssistantContent(chat: any, fallbackText: string): any {
+  const safeFallback = asNonEmptyString(sanitizeOutputText(fallbackText));
+  if (!safeFallback) return chat;
+  if (!chat || typeof chat !== "object" || chat.object !== "chat.completion") return chat;
+  const choice = chat?.choices?.[0];
+  if (!choice) return chat;
+
+  const existingContent = choice?.message?.content;
+  const existingContentText = typeof existingContent === "string"
+    ? existingContent
+    : Array.isArray(existingContent)
+      ? existingContent.map((part: any) => (typeof part?.text === "string" ? part.text : "")).join("")
+      : "";
+  const hasText = Boolean(asNonEmptyString(existingContentText));
+  const hasToolCalls = Array.isArray(choice?.message?.tool_calls) && choice.message.tool_calls.length > 0;
+  if (hasText || hasToolCalls) return chat;
+
+  return {
+    ...chat,
+    choices: [
+      {
+        ...choice,
+        message: {
+          ...(choice?.message ?? {}),
+          content: safeFallback,
+        },
+      },
+      ...(Array.isArray(chat?.choices) ? chat.choices.slice(1) : []),
+    ],
+  };
+}
+
 function shouldExposeFunctionCallName(name: any): boolean {
   if (typeof name !== "string") return true;
   return !name.trim().toLowerCase().startsWith("functions.");
@@ -531,11 +567,15 @@ export function parseResponsesSSEToChatCompletion(sseText: string, model: string
     if (!payload || payload === "[DONE]") continue;
     try {
       const obj = JSON.parse(payload);
+      if (obj?.type === "response.output_text.delta" && typeof obj?.delta === "string") {
+        outputText += sanitizeAssistantTextChunk(obj.delta);
+      }
+      if (obj?.type === "response.output_text.done" && !outputText && typeof obj?.text === "string") {
+        outputText = sanitizeAssistantTextChunk(obj.text);
+      }
       const sanitized = sanitizeResponsesEvent(obj);
       if (sanitized.drop) continue;
       const event = sanitized.event;
-      if (event?.type === "response.output_text.delta") outputText += sanitizeOutputText(event?.delta ?? "");
-      if (event?.type === "response.output_text.done" && !outputText) outputText = sanitizeOutputText(event?.text ?? "");
       if (event?.type === "response.completed") {
         usage = event?.response?.usage;
         completedResponse = event?.response;
@@ -544,7 +584,8 @@ export function parseResponsesSSEToChatCompletion(sseText: string, model: string
   }
 
   if (completedResponse) {
-    return responseObjectToChatCompletion(completedResponse, model);
+    const converted = responseObjectToChatCompletion(completedResponse, model);
+    return withFallbackAssistantContent(converted, outputText);
   }
 
   const prompt = usage?.input_tokens ?? 0;
@@ -561,7 +602,7 @@ export function parseResponsesSSEToChatCompletion(sseText: string, model: string
   };
 }
 
-export function convertResponsesSSEToChatCompletionSSE(upstreamLine: string, model: string): string | null {
+export function convertResponsesSSEToChatCompletionSSE(upstreamLine: string, model: string, fallbackText = ""): string | null {
   if (!upstreamLine.startsWith("data:")) return null;
   const payload = upstreamLine.slice(5).trim();
   if (!payload || payload === "[DONE]") return payload === "[DONE]" ? "data: [DONE]\n" : null;
@@ -579,7 +620,7 @@ export function convertResponsesSSEToChatCompletionSSE(upstreamLine: string, mod
 
     if (event?.type === "response.completed") {
       const converted = responseObjectToChatCompletion(event?.response, model);
-      return chatCompletionObjectToSSE(converted);
+      return chatCompletionObjectToSSE(withFallbackAssistantContent(converted, fallbackText));
     }
 
     return null;
