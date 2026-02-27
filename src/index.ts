@@ -345,7 +345,7 @@ function setForwardHeaders(from: Response, to: express.Response) {
 
 await compactTraceStorageIfNeeded();
 
-app.get("/health", (_req, res) => res.json({ ok: true }));
+app.get("/health", (_req, res) => res.json({ ok: true, version: APP_VERSION, gitSha: BUILD_GIT_SHA, buildId: BUILD_ID }));
 app.get("/admin/config", adminGuard, (_req, res) => {
   res.json({
     ok: true,
