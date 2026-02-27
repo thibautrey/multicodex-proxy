@@ -666,6 +666,25 @@ function toUpstreamInputContent(content: any, role: "user" | "assistant") {
   return [{ type: textType, text: String(content ?? "") }];
 }
 
+function toolContentToOutput(content: any): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    const texts = content
+      .map((part: any) => {
+        if (typeof part === "string") return part;
+        if (part?.type === "text" && typeof part?.text === "string") return part.text;
+        return "";
+      })
+      .filter(Boolean);
+    if (texts.length) return texts.join("\n");
+  }
+  try {
+    return JSON.stringify(content ?? "");
+  } catch {
+    return String(content ?? "");
+  }
+}
+
 function normalizeResponsesPayload(body: any) {
   const b = { ...(body ?? {}) };
   if (!b.instructions) b.instructions = "You are a helpful assistant.";
@@ -718,19 +737,47 @@ function chatCompletionsToResponsesPayload(body: any) {
     .filter(Boolean)
     .join("\n\n");
 
-  // Filter out system messages and convert roles
-  let input = messages
-    .filter((m: any) => m?.role !== "system")
-    .map((m: any) => {
-      const role = m?.role === "assistant" ? "assistant" : "user";
-      return {
-        role,
-        content: toUpstreamInputContent(m?.content, role),
-      };
+  let input: any[] = [];
+  for (const m of messages) {
+    if (m?.role === "system") continue;
+
+    if (m?.role === "tool") {
+      input.push({
+        type: "function_call_output",
+        call_id: m?.tool_call_id ?? `call_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
+        output: toolContentToOutput(m?.content),
+      });
+      continue;
+    }
+
+    if (m?.role === "assistant") {
+      const assistantContent = toUpstreamInputContent(m?.content, "assistant");
+      if (assistantContent.length > 0) {
+        input.push({ role: "assistant", content: assistantContent });
+      }
+
+      const toolCalls = Array.isArray(m?.tool_calls) ? m.tool_calls : [];
+      for (const tc of toolCalls) {
+        input.push({
+          type: "function_call",
+          call_id: tc?.id ?? `call_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
+          name: tc?.function?.name ?? "unknown",
+          arguments: typeof tc?.function?.arguments === "string"
+            ? tc.function.arguments
+            : JSON.stringify(tc?.function?.arguments ?? {}),
+        });
+      }
+      continue;
+    }
+
+    input.push({
+      role: "user",
+      content: toUpstreamInputContent(m?.content, "user"),
     });
+  }
 
   // Ensure first message is a user message (Responses API requirement)
-  if (input.length > 0 && input[0]?.role === "assistant") {
+  if (input.length > 0 && input[0]?.role !== "user") {
     // Prepend a dummy user message if the conversation starts with assistant
     input = [
       { role: "user", content: [{ type: "input_text", text: " " }] },
