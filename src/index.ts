@@ -285,25 +285,26 @@ function chatCompletionsToResponsesPayload(body: any) {
     .filter(Boolean)
     .join("\n\n");
 
-  // Filter out system messages and convert roles
-  let input = messages
-    .filter((m: any) => m?.role !== "system")
-    .map((m: any) => {
-      const role = m?.role === "assistant" ? "assistant" : "user";
-      return {
-        role,
-        content: toUpstreamInputContent(m?.content, role),
-      };
-    });
-
-  // Ensure first message is a user message (Responses API requirement)
-  if (input.length > 0 && input[0]?.role === "assistant") {
-    // Prepend a dummy user message if the conversation starts with assistant
-    input = [
-      { role: "user", content: [{ type: "input_text", text: " " }] },
-      ...input,
-    ];
+  // Responses API only accepts user messages in input array
+  // Convert all messages to a single user message with formatted history
+  const nonSystemMessages = messages.filter((m: any) => m?.role !== "system");
+  let inputText = "";
+  
+  for (const msg of nonSystemMessages) {
+    const roleLabel = msg?.role === "assistant" ? "Assistant" : "User";
+    const content = typeof msg?.content === "string" ? msg.content : JSON.stringify(msg?.content || "");
+    inputText += `${roleLabel}: ${content}\n\n`;
   }
+
+  // If no messages, use a default prompt
+  if (!inputText.trim()) {
+    inputText = "Hello";
+  }
+
+  let input = [{
+    role: "user",
+    content: [{ type: "input_text", text: inputText }],
+  }];
 
   const payload: any = {
     model: body?.model,
