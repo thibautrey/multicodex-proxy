@@ -27,6 +27,7 @@ export type Account = {
   email?: string;
   accessToken: string;
   refreshToken?: string;
+  expiresAt?: number;
   chatgptAccountId?: string;
   enabled: boolean;
   priority?: number;

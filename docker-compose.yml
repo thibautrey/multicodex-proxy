@@ -7,10 +7,18 @@ services:
       - "4010:4010"
     environment:
       - PORT=4010
+      - PUBLIC_BASE_URL=http://localhost:4010
       - STORE_PATH=/data/accounts.json
+      - OAUTH_STATE_PATH=/data/oauth-state.json
       - CHATGPT_BASE_URL=https://chatgpt.com
       - UPSTREAM_PATH=/backend-api/codex/responses
       - ADMIN_TOKEN=change-me
+      - OAUTH_CLIENT_ID=openai-chatgpt
+      - OAUTH_AUTHORIZATION_URL=https://auth.openai.com/oauth/authorize
+      - OAUTH_TOKEN_URL=https://auth.openai.com/oauth/token
+      - OAUTH_SCOPE=openid profile email offline_access
+      - OAUTH_AUDIENCE=https://api.openai.com/v1
+      - OAUTH_REDIRECT_URI=http://localhost:4010/admin/oauth/callback
     volumes:
       - ./data:/data
     restart: unless-stopped

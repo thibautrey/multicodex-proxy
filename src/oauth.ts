@@ -10,6 +10,14 @@ export type OAuthConfig = {
   redirectUri: string;
 };
 
+export type TokenResponse = {
+  access_token: string;
+  refresh_token?: string;
+  id_token?: string;
+  account_id?: string;
+  expires_in?: number;
+};
+
 export function base64url(input: Buffer | string) {
   return Buffer.from(input)
     .toString("base64")
@@ -43,7 +51,19 @@ export function buildAuthorizationUrl(config: OAuthConfig, flow: OAuthFlowState)
   return url.toString();
 }
 
-export async function exchangeCodeForToken(config: OAuthConfig, code: string, codeVerifier: string) {
+async function postForm(url: string, body: URLSearchParams): Promise<TokenResponse> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body,
+  });
+
+  const text = await res.text();
+  if (!res.ok) throw new Error(`token endpoint failed ${res.status}: ${text.slice(0, 400)}`);
+  return JSON.parse(text) as TokenResponse;
+}
+
+export async function exchangeCodeForToken(config: OAuthConfig, code: string, codeVerifier: string): Promise<TokenResponse> {
   const body = new URLSearchParams({
     grant_type: "authorization_code",
     client_id: config.clientId,
@@ -51,22 +71,16 @@ export async function exchangeCodeForToken(config: OAuthConfig, code: string, co
     redirect_uri: config.redirectUri,
     code_verifier: codeVerifier,
   });
+  return postForm(config.tokenUrl, body);
+}
 
-  const res = await fetch(config.tokenUrl, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body,
+export async function refreshAccessToken(config: OAuthConfig, refreshToken: string): Promise<TokenResponse> {
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    client_id: config.clientId,
+    refresh_token: refreshToken,
   });
-
-  const text = await res.text();
-  if (!res.ok) throw new Error(`token exchange failed ${res.status}: ${text.slice(0, 300)}`);
-  return JSON.parse(text) as {
-    access_token: string;
-    refresh_token?: string;
-    id_token?: string;
-    account_id?: string;
-    expires_in?: number;
-  };
+  return postForm(config.tokenUrl, body);
 }
 
 function decodeJwtPayload(jwt: string | undefined): any {
@@ -80,7 +94,20 @@ function decodeJwtPayload(jwt: string | undefined): any {
   }
 }
 
-export function accountFromOAuth(flow: OAuthFlowState, tokenData: any): Account {
+export function mergeTokenIntoAccount(account: Account, tokenData: TokenResponse): Account {
+  const idToken = decodeJwtPayload(tokenData.id_token);
+  const expiresAt = tokenData.expires_in ? Date.now() + tokenData.expires_in * 1000 : account.expiresAt;
+  return {
+    ...account,
+    accessToken: tokenData.access_token,
+    refreshToken: tokenData.refresh_token ?? account.refreshToken,
+    expiresAt,
+    chatgptAccountId: tokenData.account_id ?? idToken?.account_id ?? account.chatgptAccountId,
+    email: account.email ?? idToken?.email,
+  };
+}
+
+export function accountFromOAuth(flow: OAuthFlowState, tokenData: TokenResponse): Account {
   const idToken = decodeJwtPayload(tokenData.id_token);
   const chatgptAccountId = tokenData.account_id ?? idToken?.account_id;
   return {
@@ -88,6 +115,7 @@ export function accountFromOAuth(flow: OAuthFlowState, tokenData: any): Account 
     email: flow.email || idToken?.email,
     accessToken: tokenData.access_token,
     refreshToken: tokenData.refresh_token,
+    expiresAt: tokenData.expires_in ? Date.now() + tokenData.expires_in * 1000 : undefined,
     chatgptAccountId,
     enabled: true,
     priority: 0,
