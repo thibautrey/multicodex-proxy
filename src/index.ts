@@ -16,6 +16,7 @@ import {
 } from "./oauth.js";
 import { chooseAccount, isQuotaErrorText, markQuotaHit, refreshUsageIfNeeded, rememberError } from "./quota.js";
 import type { Account } from "./types.js";
+import { estimateCostUsd } from "./model-pricing.js";
 
 const PORT = Number(process.env.PORT ?? 4010);
 const STORE_PATH = process.env.STORE_PATH ?? "/data/accounts.json";
@@ -95,6 +96,7 @@ type TraceEntry = {
   tokensInput?: number;
   tokensOutput?: number;
   tokensTotal?: number;
+  costUsd?: number;
   usage?: any;
   requestBody?: any;
   error?: string;
@@ -109,13 +111,17 @@ type TraceTotals = {
   tokensInput: number;
   tokensOutput: number;
   tokensTotal: number;
+  costUsd: number;
   latencyAvgMs: number;
 };
 
 type TraceModelStats = {
   model: string;
   count: number;
+  tokensInput: number;
+  tokensOutput: number;
   tokensTotal: number;
+  costUsd: number;
 };
 
 type TraceTimeseriesBucket = {
@@ -125,6 +131,7 @@ type TraceTimeseriesBucket = {
   tokensInput: number;
   tokensOutput: number;
   tokensTotal: number;
+  costUsd: number;
   latencyP50Ms: number;
   latencyP95Ms: number;
 };
@@ -176,6 +183,7 @@ function normalizeTrace(raw: any): TraceEntry | null {
     output: safeNumber(raw.tokensOutput),
     total: safeNumber(raw.tokensTotal),
   });
+  const costUsd = estimateCostUsd(model, normalizedTokens.tokensInput ?? 0, normalizedTokens.tokensOutput ?? 0);
 
   return {
     id: typeof raw.id === "string" && raw.id ? raw.id : `${at}-${route}-${status}`,
@@ -191,6 +199,7 @@ function normalizeTrace(raw: any): TraceEntry | null {
     tokensInput: normalizedTokens.tokensInput,
     tokensOutput: normalizedTokens.tokensOutput,
     tokensTotal: normalizedTokens.tokensTotal,
+    costUsd,
     usage: raw.usage,
     requestBody: raw.requestBody,
     error: typeof raw.error === "string" ? raw.error : undefined,
@@ -243,6 +252,7 @@ async function appendTrace(entry: Omit<TraceEntry, "id" | "isError" | "tokensInp
     tokensInput: normalizedTokens.tokensInput,
     tokensOutput: normalizedTokens.tokensOutput,
     tokensTotal: normalizedTokens.tokensTotal,
+    costUsd: estimateCostUsd(entry.model, normalizedTokens.tokensInput ?? 0, normalizedTokens.tokensOutput ?? 0),
   };
 
   const run = traceWriteQueue.then(async () => {
@@ -267,6 +277,10 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
   const tokensInput = traces.reduce((sum, t) => sum + (t.tokensInput ?? 0), 0);
   const tokensOutput = traces.reduce((sum, t) => sum + (t.tokensOutput ?? 0), 0);
   const tokensTotal = traces.reduce((sum, t) => sum + (t.tokensTotal ?? ((t.tokensInput ?? 0) + (t.tokensOutput ?? 0))), 0);
+  const costUsd = traces.reduce((sum, t) => {
+    if (typeof t.costUsd === "number") return sum + t.costUsd;
+    return sum + (estimateCostUsd(t.model, t.tokensInput ?? 0, t.tokensOutput ?? 0) ?? 0);
+  }, 0);
   const latencyAvgMs = requests ? traces.reduce((sum, t) => sum + t.latencyMs, 0) / requests : 0;
   const errorRate = requests ? errors / requests : 0;
 
@@ -274,15 +288,28 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
   for (const trace of traces) {
     const key = trace.model || "unknown";
     const existing = modelMap.get(key);
-    if (!existing) modelMap.set(key, { model: key, count: 1, tokensTotal: trace.tokensTotal ?? 0 });
+    const traceCost = typeof trace.costUsd === "number" ? trace.costUsd : (estimateCostUsd(trace.model, trace.tokensInput ?? 0, trace.tokensOutput ?? 0) ?? 0);
+    if (!existing) {
+      modelMap.set(key, {
+        model: key,
+        count: 1,
+        tokensInput: trace.tokensInput ?? 0,
+        tokensOutput: trace.tokensOutput ?? 0,
+        tokensTotal: trace.tokensTotal ?? 0,
+        costUsd: traceCost,
+      });
+    }
     else {
       existing.count += 1;
+      existing.tokensInput += trace.tokensInput ?? 0;
+      existing.tokensOutput += trace.tokensOutput ?? 0;
       existing.tokensTotal += trace.tokensTotal ?? 0;
+      existing.costUsd += traceCost;
     }
   }
   const models = Array.from(modelMap.values()).sort((a, b) => b.count - a.count);
 
-  const bucketMap = new Map<number, { requests: number; errors: number; tokensInput: number; tokensOutput: number; tokensTotal: number; latencies: number[] }>();
+  const bucketMap = new Map<number, { requests: number; errors: number; tokensInput: number; tokensOutput: number; tokensTotal: number; costUsd: number; latencies: number[] }>();
   for (const trace of traces) {
     const bucketAt = Math.floor(trace.at / 3_600_000) * 3_600_000;
     const bucket = bucketMap.get(bucketAt) ?? {
@@ -291,6 +318,7 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
       tokensInput: 0,
       tokensOutput: 0,
       tokensTotal: 0,
+      costUsd: 0,
       latencies: [],
     };
     bucket.requests += 1;
@@ -298,6 +326,7 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
     bucket.tokensInput += trace.tokensInput ?? 0;
     bucket.tokensOutput += trace.tokensOutput ?? 0;
     bucket.tokensTotal += trace.tokensTotal ?? 0;
+    bucket.costUsd += typeof trace.costUsd === "number" ? trace.costUsd : (estimateCostUsd(trace.model, trace.tokensInput ?? 0, trace.tokensOutput ?? 0) ?? 0);
     bucket.latencies.push(trace.latencyMs);
     bucketMap.set(bucketAt, bucket);
   }
@@ -310,6 +339,7 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
       tokensInput: bucket.tokensInput,
       tokensOutput: bucket.tokensOutput,
       tokensTotal: bucket.tokensTotal,
+      costUsd: bucket.costUsd,
       latencyP50Ms: percentile(bucket.latencies, 50),
       latencyP95Ms: percentile(bucket.latencies, 95),
     }));
@@ -322,6 +352,7 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
       tokensInput,
       tokensOutput,
       tokensTotal,
+      costUsd,
       latencyAvgMs,
     },
     models,
@@ -811,6 +842,12 @@ function chatCompletionsToResponsesPayload(body: any) {
   if (body?.tool_choice) {
     payload.tool_choice = body.tool_choice;
   }
+  if (body?.reasoning_effort !== undefined) {
+    payload.reasoning_effort = body.reasoning_effort;
+  }
+  if (body?.reasoning !== undefined) {
+    payload.reasoning = body.reasoning;
+  }
   if (body?.temperature !== undefined) {
     payload.temperature = body.temperature;
   }
@@ -1114,10 +1151,13 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
                       const payload = JSON.parse(line.slice(5).trim());
                       accumulatedUsage = payload?.response?.usage;
                     } catch {}
-                  }
+                } else {
+                  // Keep streaming clients alive when upstream emits non-text events (e.g. reasoning/thinking).
+                  res.write(": keepalive\n\n");
                 }
               }
             }
+          }
           }
 
           res.write("data: [DONE]\n");
