@@ -26,6 +26,7 @@ MultiCodex Proxy sits between your clients and OpenAI/Codex endpoints and gives 
 - **OAuth onboarding** from dashboard (manual redirect paste flow)
 - **Persistent account storage** across container restarts
 - **Request tracing v2** (retention capped at 1000, server pagination, tokens/model/error/latency stats, optional full payload)
+- **Usage stats endpoint** with global + per-account + per-route aggregates
 
 ---
 
@@ -137,6 +138,18 @@ curl -H "x-admin-token: change-me" \
 curl -H "x-admin-token: change-me" \
   "http://localhost:4010/admin/traces?limit=50"
 ```
+
+### Usage stats
+
+```bash
+curl -H "x-admin-token: change-me" \
+  "http://localhost:4010/admin/stats/usage?limit=1000"
+```
+
+Optional filters:
+- `accountId=<id>`
+- `route=/v1/chat/completions`
+- `sinceMs=<epoch_ms>`
 
 ---
 
