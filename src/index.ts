@@ -215,8 +215,79 @@ app.post("/admin/oauth/complete", adminGuard, async (req, res) => {
   }
 });
 
+function toUpstreamInputContent(content: any) {
+  if (typeof content === "string") return [{ type: "input_text", text: content }];
+  if (Array.isArray(content)) {
+    const out: any[] = [];
+    for (const part of content) {
+      if (typeof part === "string") out.push({ type: "input_text", text: part });
+      else if (part?.type === "text" && typeof part?.text === "string") out.push({ type: "input_text", text: part.text });
+      else if (part?.type === "input_text" && typeof part?.text === "string") out.push({ type: "input_text", text: part.text });
+    }
+    return out.length ? out : [{ type: "input_text", text: JSON.stringify(content) }];
+  }
+  return [{ type: "input_text", text: String(content ?? "") }];
+}
+
+function chatCompletionsToResponsesPayload(body: any) {
+  const messages = Array.isArray(body?.messages) ? body.messages : [];
+  const systemInstructions = messages
+    .filter((m: any) => m?.role === "system")
+    .map((m: any) => (typeof m?.content === "string" ? m.content : ""))
+    .filter(Boolean)
+    .join("\n\n");
+
+  const input = messages
+    .filter((m: any) => m?.role !== "system")
+    .map((m: any) => ({
+      role: m?.role === "assistant" ? "assistant" : "user",
+      content: toUpstreamInputContent(m?.content),
+    }));
+
+  return {
+    model: body?.model,
+    instructions: body?.instructions || systemInstructions || "You are a helpful assistant.",
+    input,
+    store: false,
+    stream: true,
+  };
+}
+
+function parseResponsesSSEToChatCompletion(sseText: string, model: string) {
+  let outputText = "";
+  let usage: any = undefined;
+  for (const rawLine of sseText.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line.startsWith("data:")) continue;
+    const payload = line.slice(5).trim();
+    if (!payload || payload === "[DONE]") continue;
+    try {
+      const obj = JSON.parse(payload);
+      if (obj?.type === "response.output_text.delta") outputText += obj?.delta ?? "";
+      if (obj?.type === "response.output_text.done" && !outputText) outputText = obj?.text ?? "";
+      if (obj?.type === "response.completed") usage = obj?.response?.usage;
+    } catch {}
+  }
+
+  const prompt = usage?.input_tokens ?? 0;
+  const completion = usage?.output_tokens ?? 0;
+  const total = usage?.total_tokens ?? prompt + completion;
+
+  return {
+    id: `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
+    object: "chat.completion",
+    created: Math.floor(Date.now() / 1000),
+    model,
+    choices: [{ index: 0, message: { role: "assistant", content: outputText }, finish_reason: "stop" }],
+    usage: { prompt_tokens: prompt, completion_tokens: completion, total_tokens: total },
+  };
+}
+
 async function proxyWithRotation(req: express.Request, res: express.Response) {
   const startedAt = Date.now();
+  const isChatCompletions = req.path === "/v1/chat/completions";
+  const clientRequestedStream = Boolean(req.body?.stream);
+
   let accounts = await store.listAccounts();
   if (!accounts.length) return res.status(503).json({ error: "no accounts configured" });
 
@@ -236,6 +307,8 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
     selected.state = { ...selected.state, lastSelectedAt: Date.now() };
     await store.upsertAccount(selected);
 
+    const payloadToUpstream = isChatCompletions ? chatCompletionsToResponsesPayload(req.body) : (req.body ?? {});
+
     const headers: Record<string, string> = {
       "content-type": "application/json",
       authorization: `Bearer ${selected.accessToken}`,
@@ -247,13 +320,32 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
       const upstream = await fetch(`${CHATGPT_BASE_URL}${UPSTREAM_PATH}`, {
         method: "POST",
         headers,
-        body: JSON.stringify(req.body ?? {}),
+        body: JSON.stringify(payloadToUpstream),
       });
 
       const contentType = upstream.headers.get("content-type") ?? "";
       const isStream = contentType.includes("text/event-stream");
 
       if (isStream) {
+        if (isChatCompletions && !clientRequestedStream) {
+          const txt = await upstream.text();
+          const chatResp = parseResponsesSSEToChatCompletion(txt, req.body?.model ?? payloadToUpstream?.model ?? "unknown");
+          res.status(upstream.ok ? 200 : upstream.status).json(chatResp);
+
+          await appendTrace({
+            at: Date.now(),
+            route: req.path,
+            accountId: selected.id,
+            accountEmail: selected.email,
+            status: upstream.status,
+            stream: true,
+            latencyMs: Date.now() - startedAt,
+            usage: chatResp?.usage,
+            requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
+          });
+          return;
+        }
+
         res.status(upstream.status);
         setForwardHeaders(upstream, res);
         if (!upstream.body) return res.end();
