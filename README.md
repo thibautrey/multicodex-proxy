@@ -21,6 +21,7 @@ On 429/quota-like errors, account is temporarily blocked until next reset (or fa
 
 - `/data/accounts.json`: accounts, tokens, usage, state
 - `/data/oauth-state.json`: OAuth flow state tracking
+- `/data/requests-trace.jsonl`: request trace logs (account used, status, latency, usage, request body optional)
 
 ## Run with Docker
 
@@ -77,3 +78,8 @@ npm run start
 
 
 Model list is configurable with env `PROXY_MODELS` (comma-separated), e.g. `gpt-5.3-codex,gpt-5.3-codex-codex`.
+
+
+Tracing env:
+- `TRACE_FILE_PATH` (default `/data/requests-trace.jsonl`)
+- `TRACE_INCLUDE_BODY=true|false` (store full request payload; useful but sensitive)

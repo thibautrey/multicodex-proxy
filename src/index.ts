@@ -1,5 +1,6 @@
 import express from "express";
 import path from "node:path";
+import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { AccountStore, OAuthStateStore } from "./store.js";
@@ -19,6 +20,8 @@ import type { Account } from "./types.js";
 const PORT = Number(process.env.PORT ?? 4010);
 const STORE_PATH = process.env.STORE_PATH ?? "/data/accounts.json";
 const OAUTH_STATE_PATH = process.env.OAUTH_STATE_PATH ?? "/data/oauth-state.json";
+const TRACE_FILE_PATH = process.env.TRACE_FILE_PATH ?? "/data/requests-trace.jsonl";
+const TRACE_INCLUDE_BODY = (process.env.TRACE_INCLUDE_BODY ?? "true") === "true";
 const CHATGPT_BASE_URL = process.env.CHATGPT_BASE_URL ?? "https://chatgpt.com";
 const UPSTREAM_PATH = process.env.UPSTREAM_PATH ?? "/backend-api/codex/responses";
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
@@ -33,12 +36,13 @@ const oauthConfig: OAuthConfig = {
 };
 
 const app = express();
-app.use(express.json({ limit: "10mb" }));
+app.use(express.json({ limit: "20mb" }));
 
 const store = new AccountStore(STORE_PATH);
 const oauthStore = new OAuthStateStore(OAUTH_STATE_PATH);
 await store.init();
 await oauthStore.init();
+await fs.mkdir(path.dirname(TRACE_FILE_PATH), { recursive: true });
 
 function adminGuard(req: express.Request, res: express.Response, next: express.NextFunction) {
   if (!ADMIN_TOKEN) return next();
@@ -67,11 +71,60 @@ async function ensureValidToken(account: Account): Promise<Account> {
   }
 }
 
+type TraceEntry = {
+  at: number;
+  route: string;
+  accountId?: string;
+  accountEmail?: string;
+  status: number;
+  stream: boolean;
+  latencyMs: number;
+  usage?: any;
+  requestBody?: any;
+  error?: string;
+};
+
+async function appendTrace(entry: TraceEntry) {
+  await fs.appendFile(TRACE_FILE_PATH, `${JSON.stringify(entry)}\n`, "utf8");
+}
+
+async function readTraces(limit = 200): Promise<TraceEntry[]> {
+  try {
+    const raw = await fs.readFile(TRACE_FILE_PATH, "utf8");
+    const lines = raw.trim().split("\n").filter(Boolean);
+    const sliced = lines.slice(-Math.max(1, Math.min(limit, 2000)));
+    return sliced.map((line) => JSON.parse(line));
+  } catch {
+    return [];
+  }
+}
+
+function extractUsageFromPayload(payload: any) {
+  return payload?.usage ?? payload?.response?.usage ?? payload?.metrics?.usage;
+}
+
+function setForwardHeaders(from: Response, to: express.Response) {
+  for (const [k, v] of from.headers.entries()) if (k.toLowerCase() !== "content-length") to.setHeader(k, v);
+}
+
 app.get("/health", (_req, res) => res.json({ ok: true }));
 app.get("/admin/config", adminGuard, (_req, res) => {
-  res.json({ ok: true, oauthRedirectUri: oauthConfig.redirectUri });
+  res.json({
+    ok: true,
+    oauthRedirectUri: oauthConfig.redirectUri,
+    storage: {
+      accountsPath: STORE_PATH,
+      oauthStatePath: OAUTH_STATE_PATH,
+      tracePath: TRACE_FILE_PATH,
+      persistenceLikelyEnabled: STORE_PATH.startsWith("/data/") || STORE_PATH.startsWith("/data"),
+    },
+  });
 });
 app.get("/admin/accounts", adminGuard, async (_req, res) => res.json({ accounts: (await store.listAccounts()).map(redact) }));
+app.get("/admin/traces", adminGuard, async (req, res) => {
+  const limit = Number(req.query.limit ?? 100);
+  res.json({ traces: await readTraces(limit) });
+});
 
 app.post("/admin/accounts", adminGuard, async (req, res) => {
   const body = req.body ?? {};
@@ -162,20 +215,8 @@ app.post("/admin/oauth/complete", adminGuard, async (req, res) => {
   }
 });
 
-async function streamOrJson(resUp: Response, res: express.Response) {
-  res.status(resUp.status);
-  for (const [k, v] of resUp.headers.entries()) if (k.toLowerCase() !== "content-length") res.setHeader(k, v);
-  if (!resUp.body) return void res.end();
-  const reader = resUp.body.getReader();
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    res.write(Buffer.from(value));
-  }
-  res.end();
-}
-
 async function proxyWithRotation(req: express.Request, res: express.Response) {
+  const startedAt = Date.now();
   let accounts = await store.listAccounts();
   if (!accounts.length) return res.status(503).json({ error: "no accounts configured" });
 
@@ -190,6 +231,7 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
   for (let i = 0; i < accounts.length; i++) {
     const selected = chooseAccount(accounts.filter((a) => !tried.has(a.id)));
     if (!selected) break;
+
     tried.add(selected.id);
     selected.state = { ...selected.state, lastSelectedAt: Date.now() };
     await store.upsertAccount(selected);
@@ -202,40 +244,97 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
     if (selected.chatgptAccountId) headers["ChatGPT-Account-Id"] = selected.chatgptAccountId;
 
     try {
-      const upstream = await fetch(`${CHATGPT_BASE_URL}${UPSTREAM_PATH}`, { method: "POST", headers, body: JSON.stringify(req.body ?? {}) });
-      if (upstream.ok) return streamOrJson(upstream, res);
+      const upstream = await fetch(`${CHATGPT_BASE_URL}${UPSTREAM_PATH}`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(req.body ?? {}),
+      });
+
+      const contentType = upstream.headers.get("content-type") ?? "";
+      const isStream = contentType.includes("text/event-stream");
+
+      if (isStream) {
+        res.status(upstream.status);
+        setForwardHeaders(upstream, res);
+        if (!upstream.body) return res.end();
+        const reader = upstream.body.getReader();
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          res.write(Buffer.from(value));
+        }
+        res.end();
+
+        await appendTrace({
+          at: Date.now(),
+          route: req.path,
+          accountId: selected.id,
+          accountEmail: selected.email,
+          status: upstream.status,
+          stream: true,
+          latencyMs: Date.now() - startedAt,
+          requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
+        });
+        return;
+      }
+
       const text = await upstream.text();
+      res.status(upstream.status);
+      setForwardHeaders(upstream, res);
+      res.type(contentType || "application/json").send(text);
+
+      let parsed: any = undefined;
+      try { parsed = JSON.parse(text); } catch {}
+      const usage = extractUsageFromPayload(parsed);
+
+      await appendTrace({
+        at: Date.now(),
+        route: req.path,
+        accountId: selected.id,
+        accountEmail: selected.email,
+        status: upstream.status,
+        stream: false,
+        latencyMs: Date.now() - startedAt,
+        usage,
+        requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
+      });
+
+      if (upstream.ok) return;
       if (upstream.status === 429 || isQuotaErrorText(text)) {
         markQuotaHit(selected, `quota/rate-limit: ${upstream.status}`);
         await store.upsertAccount(selected);
         continue;
       }
+
       rememberError(selected, `upstream ${upstream.status}: ${text.slice(0, 200)}`);
       await store.upsertAccount(selected);
-      return res.status(upstream.status).type("application/json").send(text);
+      return;
     } catch (err: any) {
-      rememberError(selected, err?.message ?? String(err));
+      const msg = err?.message ?? String(err);
+      rememberError(selected, msg);
       await store.upsertAccount(selected);
+      await appendTrace({
+        at: Date.now(),
+        route: req.path,
+        accountId: selected.id,
+        accountEmail: selected.email,
+        status: 599,
+        stream: false,
+        latencyMs: Date.now() - startedAt,
+        error: msg,
+        requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
+      });
     }
   }
+
   res.status(429).json({ error: "all accounts exhausted or unavailable" });
 }
 
 const PROXY_MODELS = (process.env.PROXY_MODELS ?? "gpt-5.3-codex").split(",").map((s) => s.trim()).filter(Boolean);
-
 function modelObject(id: string) {
-  return {
-    id,
-    object: "model",
-    created: Math.floor(Date.now() / 1000),
-    owned_by: "multicodex-proxy",
-  };
+  return { id, object: "model", created: Math.floor(Date.now() / 1000), owned_by: "multicodex-proxy" };
 }
-
-app.get("/v1/models", (_req, res) => {
-  res.json({ object: "list", data: PROXY_MODELS.map(modelObject) });
-});
-
+app.get("/v1/models", (_req, res) => res.json({ object: "list", data: PROXY_MODELS.map(modelObject) }));
 app.get("/v1/models/:id", (req, res) => {
   const id = req.params.id;
   if (!PROXY_MODELS.includes(id)) return res.status(404).json({ error: { message: `The model '${id}' does not exist`, type: "invalid_request_error" } });
@@ -255,5 +354,5 @@ app.get("*", (req, res, next) => {
 
 app.listen(PORT, () => {
   console.log(`multicodex-proxy listening on :${PORT}`);
-  console.log(`store=${STORE_PATH} oauth=${OAUTH_STATE_PATH} redirect=${oauthConfig.redirectUri} upstream=${CHATGPT_BASE_URL}${UPSTREAM_PATH}`);
+  console.log(`store=${STORE_PATH} oauth=${OAUTH_STATE_PATH} trace=${TRACE_FILE_PATH} redirect=${oauthConfig.redirectUri} upstream=${CHATGPT_BASE_URL}${UPSTREAM_PATH}`);
 });
