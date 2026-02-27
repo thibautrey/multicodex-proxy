@@ -3,6 +3,32 @@ import type { Account, UsageSnapshot } from "./types.js";
 export const USAGE_CACHE_TTL_MS = Number(process.env.USAGE_CACHE_TTL_MS ?? 300_000);
 const USAGE_TIMEOUT_MS = Number(process.env.USAGE_TIMEOUT_MS ?? 10_000);
 const BLOCK_FALLBACK_MS = Number(process.env.BLOCK_FALLBACK_MS ?? 30 * 60_000);
+const DEFAULT_ROUTING_WINDOW_MS = Number(process.env.ROUTING_WINDOW_MS ?? 5 * 60 * 1000);
+
+type RouteCache = {
+  bucket: number;
+  accountId?: string;
+};
+
+const routeCache: RouteCache = { bucket: -1, accountId: undefined };
+
+function nowBucket(now: number, windowMs: number) {
+  return Math.floor(now / windowMs);
+}
+
+function safePct(v?: number): number {
+  if (typeof v !== "number" || Number.isNaN(v)) return 0;
+  return Math.max(0, Math.min(100, v));
+}
+
+function scoreAccount(account: Account): number {
+  const p = safePct(account.usage?.primary?.usedPercent);
+  const w = safePct(account.usage?.secondary?.usedPercent);
+
+  const mean = (p + w) / 2;
+  const imbalance = Math.abs(p - w);
+  return mean * 0.75 + imbalance * 0.25;
+}
 
 function parseUsage(data: any): UsageSnapshot {
   const primary = data?.rate_limit?.primary_window;
@@ -46,27 +72,52 @@ export function accountUsable(a: Account): boolean {
 }
 
 export function chooseAccount(accounts: Account[]): Account | null {
-  const pool = accounts.filter(accountUsable);
-  if (!pool.length) return null;
+  const now = Date.now();
+  const windowMs = Number.isFinite(DEFAULT_ROUTING_WINDOW_MS) && DEFAULT_ROUTING_WINDOW_MS > 0 ? DEFAULT_ROUTING_WINDOW_MS : 5 * 60 * 1000;
 
-  const untouched = pool.filter((a) => usageUntouched(a.usage));
-  if (untouched.length) {
-    untouched.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
-    return untouched[0];
+  const available = accounts.filter((a) => {
+    if (!a.enabled) return false;
+    const blockedUntil = a.state?.blockedUntil ?? 0;
+    return blockedUntil <= now;
+  });
+  if (!available.length) return null;
+
+  const bucket = nowBucket(now, windowMs);
+
+  if (routeCache.bucket === bucket && routeCache.accountId) {
+    const sticky = available.find((a) => a.id === routeCache.accountId);
+    if (sticky) return sticky;
   }
 
-  const withWeekly = pool.filter((a) => typeof weeklyResetAt(a.usage) === "number");
-  if (withWeekly.length) {
-    withWeekly.sort((a, b) => {
-      const d = (weeklyResetAt(a.usage) ?? Number.MAX_SAFE_INTEGER) - (weeklyResetAt(b.usage) ?? Number.MAX_SAFE_INTEGER);
-      if (d !== 0) return d;
-      return (b.priority ?? 0) - (a.priority ?? 0);
-    });
-    return withWeekly[0];
-  }
+  const untouched = available.filter((a) => {
+    const p = safePct(a.usage?.primary?.usedPercent);
+    const w = safePct(a.usage?.secondary?.usedPercent);
+    return p === 0 && w === 0;
+  });
 
-  pool.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
-  return pool[0];
+  const pool = untouched.length ? untouched : available;
+
+  const sorted = [...pool].sort((a, b) => {
+    const sa = scoreAccount(a);
+    const sb = scoreAccount(b);
+    if (sa !== sb) return sa - sb;
+
+    const ar = a.usage?.secondary?.resetAt ?? Number.MAX_SAFE_INTEGER;
+    const br = b.usage?.secondary?.resetAt ?? Number.MAX_SAFE_INTEGER;
+    if (ar !== br) return ar - br;
+
+    const ap = a.priority ?? Number.MAX_SAFE_INTEGER;
+    const bp = b.priority ?? Number.MAX_SAFE_INTEGER;
+    if (ap !== bp) return ap - bp;
+
+    return a.id.localeCompare(b.id);
+  });
+
+  const winner = sorted[0] ?? null;
+  routeCache.bucket = bucket;
+  routeCache.accountId = winner?.id;
+
+  return winner;
 }
 
 export async function refreshUsageIfNeeded(account: Account, chatgptBaseUrl: string, force = false): Promise<Account> {
