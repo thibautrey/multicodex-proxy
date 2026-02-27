@@ -507,6 +507,48 @@ function convertResponsesSSEToChatCompletionSSE(upstreamLine: string, model: str
   }
 }
 
+function chatCompletionObjectToSSE(chatObj: any): string {
+  const id = chatObj?.id || `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
+  const model = chatObj?.model || "unknown";
+  const created = chatObj?.created || Math.floor(Date.now() / 1000);
+  const choice = chatObj?.choices?.[0] || {};
+  const content = choice?.message?.content ?? "";
+  const toolCalls = Array.isArray(choice?.message?.tool_calls) ? choice.message.tool_calls : [];
+  const finishReason = choice?.finish_reason ?? (toolCalls.length ? "tool_calls" : "stop");
+  const usage = chatObj?.usage || {};
+
+  const chunks: string[] = [];
+  if (content) {
+    chunks.push(`data: ${JSON.stringify({
+      id,
+      object: "chat.completion.chunk",
+      created,
+      model,
+      choices: [{ index: 0, delta: { content }, finish_reason: null }],
+    })}\n`);
+  }
+
+  chunks.push(`data: ${JSON.stringify({
+    id,
+    object: "chat.completion.chunk",
+    created,
+    model,
+    choices: [{
+      index: 0,
+      delta: toolCalls.length ? { tool_calls: toolCalls } : {},
+      finish_reason: finishReason,
+    }],
+    usage: {
+      prompt_tokens: usage?.prompt_tokens ?? 0,
+      completion_tokens: usage?.completion_tokens ?? 0,
+      total_tokens: usage?.total_tokens ?? 0,
+    },
+  })}\n`);
+
+  chunks.push("data: [DONE]\n");
+  return chunks.join("");
+}
+
 async function proxyWithRotation(req: express.Request, res: express.Response) {
   const startedAt = Date.now();
   const isChatCompletionsPath = (req.path || "").includes("chat/completions") || (req.originalUrl || "").includes("chat/completions");
@@ -541,7 +583,8 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
     const headers: Record<string, string> = {
       "content-type": "application/json",
       authorization: `Bearer ${selected.accessToken}`,
-      accept: req.header("accept") ?? "application/json",
+      // Force SSE upstream when client requested stream to avoid JSON response passthrough mismatch
+      accept: clientRequestedStream ? "text/event-stream" : (req.header("accept") ?? "application/json"),
     };
     if (selected.chatgptAccountId) headers["ChatGPT-Account-Id"] = selected.chatgptAccountId;
 
@@ -677,7 +720,69 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
         return;
       }
 
-      let text = await upstream.text();
+      // Some upstream responses may return JSON even when stream=true was requested.
+      // Convert JSON chat completion to SSE so streaming clients (pi/openclaw) still render output.
+      let bufferedText: string | undefined = undefined;
+      if (shouldReturnChatCompletions && clientRequestedStream) {
+        let raw = await upstream.text();
+        if (!raw) raw = JSON.stringify({ error: `upstream ${upstream.status} with empty body` });
+        bufferedText = raw;
+
+        let parsed: any = undefined;
+        try { parsed = JSON.parse(raw); } catch {}
+
+        if (upstream.ok && parsed && parsed.object === "chat.completion") {
+          res.status(200);
+          res.set("Content-Type", "text/event-stream");
+          res.set("Cache-Control", "no-cache");
+          res.set("Connection", "keep-alive");
+          res.write(chatCompletionObjectToSSE(parsed));
+          res.end();
+
+          await appendTrace({
+            at: Date.now(),
+            route: req.path,
+            accountId: selected.id,
+            accountEmail: selected.email,
+            status: upstream.status,
+            stream: true,
+            latencyMs: Date.now() - startedAt,
+            usage: parsed?.usage,
+            requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
+            upstreamContentType: contentType,
+          });
+          return;
+        }
+
+        // If it's a JSON Responses object, convert to chat completion first then to SSE.
+        if (upstream.ok && parsed && parsed.object === "response") {
+          const converted = responseObjectToChatCompletion(parsed, req.body?.model ?? payloadToUpstream?.model ?? "unknown");
+          res.status(200);
+          res.set("Content-Type", "text/event-stream");
+          res.set("Cache-Control", "no-cache");
+          res.set("Connection", "keep-alive");
+          res.write(chatCompletionObjectToSSE(converted));
+          res.end();
+
+          await appendTrace({
+            at: Date.now(),
+            route: req.path,
+            accountId: selected.id,
+            accountEmail: selected.email,
+            status: upstream.status,
+            stream: true,
+            latencyMs: Date.now() - startedAt,
+            usage: converted?.usage,
+            requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
+            upstreamContentType: contentType,
+          });
+          return;
+        }
+
+        // On error, fall through to normal handling.
+      }
+
+      let text = bufferedText ?? await upstream.text();
       if (!text) text = JSON.stringify({ error: `upstream ${upstream.status} with empty body` });
       const upstreamError = !upstream.ok ? text.slice(0, 500) : undefined;
 
