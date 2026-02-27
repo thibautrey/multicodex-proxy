@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import "./styles.css";
 
 type Account = { id: string; email?: string; enabled: boolean; usage?: any; state?: any };
-type Trace = { at: number; route: string; accountId?: string; accountEmail?: string; status: number; latencyMs: number; usage?: any; error?: string };
+type Trace = { at: number; route: string; accountId?: string; accountEmail?: string; status: number; latencyMs: number; usage?: any; error?: string; requestBody?: any };
 type Tab = "overview" | "accounts" | "tracing" | "playground" | "docs";
 
 const tokenDefault = localStorage.getItem("adminToken") ?? "change-me";
@@ -48,6 +48,7 @@ export default function App() {
   const [chatPrompt, setChatPrompt] = useState("Give me a one-line hello");
   const [chatOut, setChatOut] = useState("");
   const [error, setError] = useState("");
+  const [expandedTrace, setExpandedTrace] = useState<number | null>(null);
 
   const stats = useMemo(() => ({
     total: accounts.length,
@@ -134,7 +135,38 @@ export default function App() {
       <section className="card"><h2>Accounts</h2><table><thead><tr><th>Email</th><th>ID</th><th>5h</th><th>Week</th><th>Blocked</th><th>Error</th><th/></tr></thead><tbody>{accounts.map((a)=><tr key={a.id}><td>{sanitized?maskEmail(a.email):a.email??"-"}</td><td className="mono">{sanitized?maskId(a.id):a.id}</td><td>{pct(a.usage?.primary?.usedPercent)}<small>{fmt(a.usage?.primary?.resetAt)}</small></td><td>{pct(a.usage?.secondary?.usedPercent)}<small>{fmt(a.usage?.secondary?.resetAt)}</small></td><td>{fmt(a.state?.blockedUntil)}</td><td className="mono">{a.state?.lastError?.slice(0,80)??"-"}</td><td className="inline wrap"><button onClick={()=>patch(a.id,{enabled:!a.enabled})}>{a.enabled?"Disable":"Enable"}</button><button onClick={()=>api(`/admin/accounts/${a.id}/unblock`,{method:"POST"}).then(load)}>Unblock</button><button onClick={()=>api(`/admin/accounts/${a.id}/refresh-usage`,{method:"POST"}).then(load)}>Refresh</button><button className="danger" onClick={()=>del(a.id)}>Delete</button></td></tr>)}</tbody></table></section>
     </>}
 
-    {tab==="tracing" && <section className="card"><h2>Request tracing</h2><table><thead><tr><th>Time</th><th>Route</th><th>Account</th><th>Status</th><th>Latency</th><th>Tokens</th><th>Error</th></tr></thead><tbody>{traces.map((t,i)=><tr key={i}><td>{fmt(t.at)}</td><td className="mono">{t.route}</td><td className="mono">{sanitized?maskEmail(t.accountEmail)||maskId(t.accountId):t.accountEmail??t.accountId??"-"}</td><td>{t.status}</td><td>{t.latencyMs}ms</td><td>{t.usage?.total_tokens??"-"}</td><td className="mono">{t.error?.slice(0,60)??"-"}</td></tr>)}</tbody></table></section>}
+    {tab==="tracing" && <section className="card"><h2>Request tracing</h2><table><thead><tr><th>Time</th><th>Route</th><th>Account</th><th>Status</th><th>Latency</th><th>Tokens</th><th>Error</th></tr></thead><tbody>{traces.map((t,i)=>{
+      const isExpanded = expandedTrace === i;
+      return (
+        <React.Fragment key={i}>
+          <tr onClick={() => setExpandedTrace(isExpanded ? null : i)} style={{ cursor: "pointer" }}>
+            <td>{fmt(t.at)}</td>
+            <td className="mono">{t.route}</td>
+            <td className="mono">{sanitized ? maskEmail(t.accountEmail) || maskId(t.accountId) : t.accountEmail ?? t.accountId ?? "-"}</td>
+            <td>{t.status}</td>
+            <td>{t.latencyMs}ms</td>
+            <td>{t.usage?.total_tokens ?? "-"}</td>
+            <td className="mono">{t.error?.slice(0, 60) ?? "-"}</td>
+          </tr>
+          {isExpanded && (
+            <tr>
+              <td colSpan={7}>
+                <div className="expanded-trace">
+                  <details open>
+                    <summary>Request Body</summary>
+                    <pre className="mono pre">{JSON.stringify(t.requestBody, null, 2)}</pre>
+                  </details>
+                  <details>
+                    <summary>Full Trace Object</summary>
+                    <pre className="mono pre">{JSON.stringify(t, null, 2)}</pre>
+                  </details>
+                </div>
+              </td>
+            </tr>
+          )}
+        </React.Fragment>
+      );
+    })}</tbody></table></section>}
 
     {tab==="playground" && <section className="card"><h2>Chat test</h2><div className="inline wrap"><input value={chatPrompt} onChange={(e)=>setChatPrompt(e.target.value)} placeholder="Type a prompt"/><button onClick={runChatTest}>Run</button></div><pre className="mono pre">{chatOut || "No output yet."}</pre></section>}
 
