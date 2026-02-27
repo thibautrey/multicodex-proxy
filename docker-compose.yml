@@ -17,7 +17,7 @@ services:
       - OAUTH_AUTHORIZATION_URL=https://auth.openai.com/oauth/authorize
       - OAUTH_TOKEN_URL=https://auth.openai.com/oauth/token
       - OAUTH_SCOPE=openid profile email offline_access
-            - OAUTH_REDIRECT_URI=http://localhost:1455/auth/callback
+      - OAUTH_REDIRECT_URI=http://localhost:1455/auth/callback
     volumes:
       - ./data:/data
     restart: unless-stopped
