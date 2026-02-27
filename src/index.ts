@@ -327,7 +327,7 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
       const isStream = contentType.includes("text/event-stream");
 
       if (isStream) {
-        if (isChatCompletions && !clientRequestedStream) {
+        if (isChatCompletions) {
           const txt = await upstream.text();
           const chatResp = parseResponsesSSEToChatCompletion(txt, req.body?.model ?? payloadToUpstream?.model ?? "unknown");
           res.status(upstream.ok ? 200 : upstream.status).json(chatResp);
