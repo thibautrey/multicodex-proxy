@@ -102,6 +102,9 @@ type TraceEntry = {
   error?: string;
   upstreamError?: string;
   upstreamContentType?: string;
+  upstreamEmptyBody?: boolean;
+  assistantEmptyOutput?: boolean;
+  assistantFinishReason?: string;
 };
 
 type TraceTotals = {
@@ -205,6 +208,9 @@ function normalizeTrace(raw: any): TraceEntry | null {
     error: typeof raw.error === "string" ? raw.error : undefined,
     upstreamError: typeof raw.upstreamError === "string" ? raw.upstreamError : undefined,
     upstreamContentType: typeof raw.upstreamContentType === "string" ? raw.upstreamContentType : undefined,
+    upstreamEmptyBody: typeof raw.upstreamEmptyBody === "boolean" ? raw.upstreamEmptyBody : undefined,
+    assistantEmptyOutput: typeof raw.assistantEmptyOutput === "boolean" ? raw.assistantEmptyOutput : undefined,
+    assistantFinishReason: typeof raw.assistantFinishReason === "string" ? raw.assistantFinishReason : undefined,
   };
 }
 
@@ -368,6 +374,48 @@ async function readTracesLegacy(limit = 200): Promise<TraceEntry[]> {
 
 function extractUsageFromPayload(payload: any) {
   return payload?.usage ?? payload?.response?.usage ?? payload?.metrics?.usage;
+}
+
+function asNonEmptyString(v: any): string | undefined {
+  if (typeof v !== "string") return undefined;
+  const t = v.trim();
+  return t ? t : undefined;
+}
+
+function inspectAssistantPayload(payload: any): { assistantEmptyOutput?: boolean; assistantFinishReason?: string } {
+  if (!payload || typeof payload !== "object") return {};
+
+  if (payload.object === "chat.completion") {
+    const choice = payload?.choices?.[0];
+    if (!choice) return {};
+
+    const finishReason = asNonEmptyString(choice.finish_reason);
+    const content = choice?.message?.content;
+    const contentText = typeof content === "string"
+      ? content
+      : Array.isArray(content)
+        ? content.map((part: any) => (typeof part?.text === "string" ? part.text : "")).join("")
+        : "";
+    const hasText = Boolean(asNonEmptyString(contentText));
+    const hasToolCalls = Array.isArray(choice?.message?.tool_calls) && choice.message.tool_calls.length > 0;
+    const assistantEmptyOutput = !hasText && !hasToolCalls;
+
+    return { assistantEmptyOutput, assistantFinishReason: finishReason };
+  }
+
+  if (payload.object === "response") {
+    const outputs = Array.isArray(payload?.output) ? payload.output : [];
+    const assistantMsg = outputs.find((item: any) => item?.type === "message" && item?.role === "assistant");
+    if (!assistantMsg) return {};
+
+    const contentParts = Array.isArray(assistantMsg?.content) ? assistantMsg.content : [];
+    const hasOutputText = contentParts.some((part: any) => Boolean(asNonEmptyString(part?.text)));
+    const assistantEmptyOutput = !hasOutputText;
+    const assistantFinishReason = asNonEmptyString(payload?.status) ?? asNonEmptyString(payload?.stop_reason);
+    return { assistantEmptyOutput, assistantFinishReason };
+  }
+
+  return {};
 }
 
 type UsageTokenTotals = {
@@ -1253,6 +1301,7 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
       let bufferedText: string | undefined = undefined;
       if (shouldReturnChatCompletions && clientRequestedStream) {
         let raw = await upstream.text();
+        const upstreamEmptyBody = !raw;
         if (!raw) raw = JSON.stringify({ error: `upstream ${upstream.status} with empty body` });
         bufferedText = raw;
 
@@ -1279,6 +1328,8 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
             usage: parsed?.usage,
             requestBody,
             upstreamContentType: contentType,
+            upstreamEmptyBody,
+            ...inspectAssistantPayload(parsed),
           });
           return;
         }
@@ -1305,6 +1356,8 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
             usage: converted?.usage,
             requestBody,
             upstreamContentType: contentType,
+            upstreamEmptyBody,
+            ...inspectAssistantPayload(converted),
           });
           return;
         }
@@ -1313,6 +1366,7 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
       }
 
       let text = bufferedText ?? await upstream.text();
+      const upstreamEmptyBody = !text;
       if (!text) text = JSON.stringify({ error: `upstream ${upstream.status} with empty body` });
       const upstreamError = !upstream.ok ? text.slice(0, 500) : undefined;
 
@@ -1353,6 +1407,8 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
             requestBody,
             upstreamError,
             upstreamContentType: contentType,
+            upstreamEmptyBody,
+            ...inspectAssistantPayload(chatResp),
           });
           return;
         }
@@ -1375,6 +1431,8 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
             requestBody,
             upstreamError,
             upstreamContentType: contentType,
+            upstreamEmptyBody,
+            ...inspectAssistantPayload(chatResp),
           });
           return;
         }
@@ -1394,6 +1452,8 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
           requestBody,
           upstreamError,
           upstreamContentType: contentType,
+          upstreamEmptyBody,
+          ...inspectAssistantPayload(respObj),
         });
         return;
       }
@@ -1417,6 +1477,8 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
         requestBody,
         upstreamError,
         upstreamContentType: contentType,
+        upstreamEmptyBody,
+        ...inspectAssistantPayload(parsed),
       });
 
       if (upstream.ok) return;
