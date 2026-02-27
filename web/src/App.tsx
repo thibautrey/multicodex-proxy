@@ -114,6 +114,46 @@ export default function App() {
         {error && <p className="err">{error}</p>}
       </section>
 
+
+      <section className="panel">
+        <h2>API reference</h2>
+        <p className="muted">Base URL: <span className="mono">{window.location.origin}</span></p>
+        <div className="api-grid">
+          <div>
+            <h3>Proxy endpoints</h3>
+            <ul>
+              <li><span className="mono">POST /v1/chat/completions</span></li>
+              <li><span className="mono">POST /v1/responses</span></li>
+            </ul>
+          </div>
+          <div>
+            <h3>Admin endpoints (x-admin-token)</h3>
+            <ul>
+              <li><span className="mono">GET /admin/accounts</span></li>
+              <li><span className="mono">POST /admin/accounts</span></li>
+              <li><span className="mono">PATCH /admin/accounts/:id</span></li>
+              <li><span className="mono">DELETE /admin/accounts/:id</span></li>
+              <li><span className="mono">POST /admin/accounts/:id/unblock</span></li>
+              <li><span className="mono">POST /admin/accounts/:id/refresh-usage</span></li>
+              <li><span className="mono">POST /admin/usage/refresh</span></li>
+              <li><span className="mono">POST /admin/oauth/start</span></li>
+              <li><span className="mono">POST /admin/oauth/complete</span></li>
+              <li><span className="mono">GET /admin/oauth/status/:flowId</span></li>
+            </ul>
+          </div>
+        </div>
+        <details>
+          <summary>Quick cURL examples</summary>
+          <pre className="mono" style={{ whiteSpace: "pre-wrap" }}>{`# List accounts
+curl -H "x-admin-token: ${adminToken || "change-me"}" ${window.location.origin}/admin/accounts
+
+# Proxy chat
+curl -X POST ${window.location.origin}/v1/chat/completions \
+  -H "content-type: application/json" \
+  -d '{"model":"gpt-5.3-codex","messages":[{"role":"user","content":"hello"}]}'`}</pre>
+        </details>
+      </section>
+
       <section className="panel">
         <h2>Accounts & usage</h2>
         <table><thead><tr><th>Email</th><th>ID</th><th>5h</th><th>Weekly</th><th>Blocked until</th><th>Last error</th><th>Actions</th></tr></thead><tbody>
