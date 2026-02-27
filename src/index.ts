@@ -339,6 +339,114 @@ function extractUsageFromPayload(payload: any) {
   return payload?.usage ?? payload?.response?.usage ?? payload?.metrics?.usage;
 }
 
+type UsageTokenTotals = {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+};
+
+type UsageAggregate = {
+  requests: number;
+  ok: number;
+  errors: number;
+  stream: number;
+  latencyMsTotal: number;
+  requestsWithUsage: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  statusCounts: Record<string, number>;
+  firstAt?: number;
+  lastAt?: number;
+};
+
+function toNumber(v: any): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
+function usageToTokens(usage: any): UsageTokenTotals {
+  const promptTokens = toNumber(usage?.prompt_tokens) ?? toNumber(usage?.input_tokens) ?? 0;
+  const completionTokens = toNumber(usage?.completion_tokens) ?? toNumber(usage?.output_tokens) ?? 0;
+  const totalTokens = toNumber(usage?.total_tokens) ?? (promptTokens + completionTokens);
+  return { promptTokens, completionTokens, totalTokens };
+}
+
+function createUsageAggregate(): UsageAggregate {
+  return {
+    requests: 0,
+    ok: 0,
+    errors: 0,
+    stream: 0,
+    latencyMsTotal: 0,
+    requestsWithUsage: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    statusCounts: {},
+  };
+}
+
+function addTraceToAggregate(agg: UsageAggregate, trace: TraceEntry) {
+  const status = Number(trace.status);
+  const statusKey = Number.isFinite(status) ? String(status) : "unknown";
+  const tokens = usageToTokens(trace.usage);
+
+  agg.requests += 1;
+  if (status >= 200 && status < 400) agg.ok += 1;
+  else agg.errors += 1;
+  if (trace.stream) agg.stream += 1;
+
+  agg.latencyMsTotal += Number.isFinite(trace.latencyMs) ? trace.latencyMs : 0;
+  agg.statusCounts[statusKey] = (agg.statusCounts[statusKey] ?? 0) + 1;
+
+  if (trace.usage) {
+    agg.requestsWithUsage += 1;
+    agg.promptTokens += tokens.promptTokens;
+    agg.completionTokens += tokens.completionTokens;
+    agg.totalTokens += tokens.totalTokens;
+  }
+
+  if (typeof trace.at === "number") {
+    agg.firstAt = typeof agg.firstAt === "number" ? Math.min(agg.firstAt, trace.at) : trace.at;
+    agg.lastAt = typeof agg.lastAt === "number" ? Math.max(agg.lastAt, trace.at) : trace.at;
+  }
+}
+
+function finalizeAggregate(agg: UsageAggregate) {
+  const avgLatencyMs = agg.requests ? Math.round((agg.latencyMsTotal / agg.requests) * 100) / 100 : 0;
+  const successRate = agg.requests ? Math.round((agg.ok / agg.requests) * 10000) / 100 : 0;
+  const streamingRate = agg.requests ? Math.round((agg.stream / agg.requests) * 10000) / 100 : 0;
+
+  return {
+    requests: agg.requests,
+    ok: agg.ok,
+    errors: agg.errors,
+    successRate,
+    stream: agg.stream,
+    streamingRate,
+    latencyMsTotal: agg.latencyMsTotal,
+    avgLatencyMs,
+    requestsWithUsage: agg.requestsWithUsage,
+    tokens: {
+      prompt: agg.promptTokens,
+      completion: agg.completionTokens,
+      total: agg.totalTokens,
+    },
+    statusCounts: agg.statusCounts,
+    firstAt: agg.firstAt,
+    lastAt: agg.lastAt,
+  };
+}
+
+function parseQueryNumber(v: unknown): number | undefined {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const n = Number(v);
+    if (Number.isFinite(n)) return n;
+  }
+  return undefined;
+}
+
 function setForwardHeaders(from: Response, to: express.Response) {
   for (const [k, v] of from.headers.entries()) if (k.toLowerCase() !== "content-length") to.setHeader(k, v);
 }
@@ -389,6 +497,67 @@ app.get("/admin/traces", adminGuard, async (req, res) => {
       hasNext: page < totalPages,
     },
     stats,
+  });
+});
+app.get("/admin/stats/usage", adminGuard, async (req, res) => {
+  const limit = Math.max(1, Math.min(5000, parseQueryNumber(req.query.limit) ?? 500));
+  const accountIdFilter = typeof req.query.accountId === "string" ? req.query.accountId.trim() : "";
+  const routeFilter = typeof req.query.route === "string" ? req.query.route.trim() : "";
+  const sinceMs = parseQueryNumber(req.query.sinceMs);
+
+  const windowed = await readTraceWindow();
+  const traces = windowed.slice(-limit);
+  const filtered = traces.filter((t) => {
+    if (accountIdFilter && t.accountId !== accountIdFilter) return false;
+    if (routeFilter && t.route !== routeFilter) return false;
+    if (typeof sinceMs === "number" && Number.isFinite(sinceMs) && t.at < sinceMs) return false;
+    return true;
+  });
+
+  const globalAgg = createUsageAggregate();
+  const byAccount = new Map<string, UsageAggregate>();
+  const byRoute = new Map<string, UsageAggregate>();
+
+  for (const trace of filtered) {
+    addTraceToAggregate(globalAgg, trace);
+
+    const accountKey = trace.accountId ?? "unknown";
+    if (!byAccount.has(accountKey)) byAccount.set(accountKey, createUsageAggregate());
+    addTraceToAggregate(byAccount.get(accountKey)!, trace);
+
+    const routeKey = trace.route ?? "unknown";
+    if (!byRoute.has(routeKey)) byRoute.set(routeKey, createUsageAggregate());
+    addTraceToAggregate(byRoute.get(routeKey)!, trace);
+  }
+
+  const accounts = await store.listAccounts();
+  const accountMeta = new Map(accounts.map((a) => [a.id, { id: a.id, email: a.email, enabled: a.enabled }]));
+
+  const byAccountOut = Array.from(byAccount.entries())
+    .map(([accountId, agg]) => ({
+      accountId,
+      account: accountMeta.get(accountId) ?? { id: accountId, email: undefined, enabled: undefined },
+      ...finalizeAggregate(agg),
+    }))
+    .sort((a, b) => b.requests - a.requests);
+
+  const byRouteOut = Array.from(byRoute.entries())
+    .map(([route, agg]) => ({ route, ...finalizeAggregate(agg) }))
+    .sort((a, b) => b.requests - a.requests);
+
+  res.json({
+    ok: true,
+    filters: {
+      limit,
+      accountId: accountIdFilter || undefined,
+      route: routeFilter || undefined,
+      sinceMs,
+    },
+    totals: finalizeAggregate(globalAgg),
+    byAccount: byAccountOut,
+    byRoute: byRouteOut,
+    tracesEvaluated: traces.length,
+    tracesMatched: filtered.length,
   });
 });
 
