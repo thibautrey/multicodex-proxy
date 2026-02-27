@@ -122,6 +122,8 @@ export default function App() {
           <div>
             <h3>Proxy endpoints</h3>
             <ul>
+              <li><span className="mono">GET /v1/models</span></li>
+              <li><span className="mono">GET /v1/models/:id</span></li>
               <li><span className="mono">POST /v1/chat/completions</span></li>
               <li><span className="mono">POST /v1/responses</span></li>
             </ul>

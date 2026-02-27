@@ -221,6 +221,27 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
   res.status(429).json({ error: "all accounts exhausted or unavailable" });
 }
 
+const PROXY_MODELS = (process.env.PROXY_MODELS ?? "gpt-5.3-codex").split(",").map((s) => s.trim()).filter(Boolean);
+
+function modelObject(id: string) {
+  return {
+    id,
+    object: "model",
+    created: Math.floor(Date.now() / 1000),
+    owned_by: "multicodex-proxy",
+  };
+}
+
+app.get("/v1/models", (_req, res) => {
+  res.json({ object: "list", data: PROXY_MODELS.map(modelObject) });
+});
+
+app.get("/v1/models/:id", (req, res) => {
+  const id = req.params.id;
+  if (!PROXY_MODELS.includes(id)) return res.status(404).json({ error: { message: `The model '${id}' does not exist`, type: "invalid_request_error" } });
+  res.json(modelObject(id));
+});
+
 app.post("/v1/chat/completions", proxyWithRotation);
 app.post("/v1/responses", proxyWithRotation);
 

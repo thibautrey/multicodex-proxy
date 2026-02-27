@@ -12,6 +12,7 @@ services:
       - OAUTH_STATE_PATH=/data/oauth-state.json
       - CHATGPT_BASE_URL=https://chatgpt.com
       - UPSTREAM_PATH=/backend-api/codex/responses
+      - PROXY_MODELS=gpt-5.3-codex
       - ADMIN_TOKEN=change-me
       - OAUTH_CLIENT_ID=app_EMoamEEZ73f0CkXaXp7hrann
       - OAUTH_AUTHORIZATION_URL=https://auth.openai.com/oauth/authorize
