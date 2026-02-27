@@ -762,7 +762,7 @@ function convertResponsesSSEToChatCompletionSSE(upstreamLine: string, model: str
           total_tokens: usage?.total_tokens ?? 0,
         },
       };
-      return `data: ${JSON.stringify(finalChunk)}\ndata: [DONE]\n`;
+      return `data: ${JSON.stringify(finalChunk)}\n\ndata: [DONE]\n\n`;
     }
 
     return null;
@@ -789,7 +789,7 @@ function chatCompletionObjectToSSE(chatObj: any): string {
       created,
       model,
       choices: [{ index: 0, delta: { content }, finish_reason: null }],
-    })}\n`);
+    })}\n\n`);
   }
 
   chunks.push(`data: ${JSON.stringify({
@@ -807,9 +807,9 @@ function chatCompletionObjectToSSE(chatObj: any): string {
       completion_tokens: usage?.completion_tokens ?? 0,
       total_tokens: usage?.total_tokens ?? 0,
     },
-  })}\n`);
+  })}\n\n`);
 
-  chunks.push("data: [DONE]\n");
+  chunks.push("data: [DONE]\n\n");
   return chunks.join("");
 }
 
