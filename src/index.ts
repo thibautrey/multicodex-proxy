@@ -281,12 +281,22 @@ function chatCompletionsToResponsesPayload(body: any) {
     .filter(Boolean)
     .join("\n\n");
 
-  const input = messages
+  // Filter out system messages and convert roles
+  let input = messages
     .filter((m: any) => m?.role !== "system")
     .map((m: any) => ({
       role: m?.role === "assistant" ? "assistant" : "user",
       content: toUpstreamInputContent(m?.content),
     }));
+
+  // Ensure first message is a user message (Responses API requirement)
+  if (input.length > 0 && input[0]?.role === "assistant") {
+    // Prepend a dummy user message if the conversation starts with assistant
+    input = [
+      { role: "user", content: [{ type: "input_text", text: " " }] },
+      ...input,
+    ];
+  }
 
   const payload: any = {
     model: body?.model,
