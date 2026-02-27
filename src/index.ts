@@ -27,6 +27,7 @@ const CHATGPT_BASE_URL = process.env.CHATGPT_BASE_URL ?? "https://chatgpt.com";
 const UPSTREAM_PATH = process.env.UPSTREAM_PATH ?? "/backend-api/codex/responses";
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
 const MAX_ACCOUNT_RETRY_ATTEMPTS = Math.max(1, Number(process.env.MAX_ACCOUNT_RETRY_ATTEMPTS ?? 5));
+const FORWARD_REASONING_EFFORT = (process.env.FORWARD_REASONING_EFFORT ?? "false") === "true";
 
 const BUILD_GIT_SHA = process.env.APP_GIT_SHA ?? "unknown";
 const BUILD_ID = process.env.APP_BUILD_ID ?? "unknown";
@@ -813,6 +814,9 @@ function normalizeResponsesPayload(body: any) {
   if (model.startsWith("gpt-5") && typeof b.max_output_tokens !== "undefined") {
     delete b.max_output_tokens;
   }
+  if (!FORWARD_REASONING_EFFORT && typeof b.reasoning_effort !== "undefined") {
+    delete b.reasoning_effort;
+  }
 
   b.stream = true;
   return b;
@@ -925,7 +929,7 @@ function chatCompletionsToResponsesPayload(body: any) {
   if (body?.tool_choice) {
     payload.tool_choice = body.tool_choice;
   }
-  if (body?.reasoning_effort !== undefined) {
+  if (FORWARD_REASONING_EFFORT && body?.reasoning_effort !== undefined) {
     payload.reasoning_effort = body.reasoning_effort;
   }
   if (body?.reasoning !== undefined) {
