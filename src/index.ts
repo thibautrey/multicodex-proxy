@@ -72,13 +72,19 @@ async function ensureValidToken(account: Account): Promise<Account> {
 }
 
 type TraceEntry = {
+  id: string;
   at: number;
   route: string;
   accountId?: string;
   accountEmail?: string;
+  model?: string;
   status: number;
+  isError: boolean;
   stream: boolean;
   latencyMs: number;
+  tokensInput?: number;
+  tokensOutput?: number;
+  tokensTotal?: number;
   usage?: any;
   requestBody?: any;
   error?: string;
@@ -86,19 +92,237 @@ type TraceEntry = {
   upstreamContentType?: string;
 };
 
-async function appendTrace(entry: TraceEntry) {
-  await fs.appendFile(TRACE_FILE_PATH, `${JSON.stringify(entry)}\n`, "utf8");
+type TraceTotals = {
+  requests: number;
+  errors: number;
+  errorRate: number;
+  tokensInput: number;
+  tokensOutput: number;
+  tokensTotal: number;
+  latencyAvgMs: number;
+};
+
+type TraceModelStats = {
+  model: string;
+  count: number;
+  tokensTotal: number;
+};
+
+type TraceTimeseriesBucket = {
+  at: number;
+  requests: number;
+  errors: number;
+  tokensInput: number;
+  tokensOutput: number;
+  tokensTotal: number;
+  latencyP50Ms: number;
+  latencyP95Ms: number;
+};
+
+type TraceStats = {
+  totals: TraceTotals;
+  models: TraceModelStats[];
+  timeseries: TraceTimeseriesBucket[];
+};
+
+const TRACE_RETENTION_MAX = 1000;
+const TRACE_PAGE_SIZE_MAX = 100;
+const TRACE_LEGACY_LIMIT_MAX = 2000;
+
+let traceWriteQueue: Promise<void> = Promise.resolve();
+
+function safeNumber(v: any): number | undefined {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && v.trim()) {
+    const n = Number(v);
+    if (Number.isFinite(n)) return n;
+  }
+  return undefined;
 }
 
-async function readTraces(limit = 200): Promise<TraceEntry[]> {
+function normalizeTokenFields(usage: any, fallback?: { input?: number; output?: number; total?: number }) {
+  const input = safeNumber(usage?.input_tokens) ?? safeNumber(usage?.prompt_tokens) ?? fallback?.input;
+  const output = safeNumber(usage?.output_tokens) ?? safeNumber(usage?.completion_tokens) ?? fallback?.output;
+  const total = safeNumber(usage?.total_tokens) ?? fallback?.total ?? ((input ?? 0) + (output ?? 0));
+  return {
+    tokensInput: input,
+    tokensOutput: output,
+    tokensTotal: total,
+  };
+}
+
+function normalizeTrace(raw: any): TraceEntry | null {
+  if (!raw || typeof raw !== "object") return null;
+  const at = safeNumber(raw.at);
+  const route = typeof raw.route === "string" ? raw.route : "";
+  const status = safeNumber(raw.status);
+  const latencyMs = safeNumber(raw.latencyMs);
+  if (!at || !route || typeof status === "undefined" || typeof latencyMs === "undefined") return null;
+
+  const fallbackModel = typeof raw.requestBody?.model === "string" ? raw.requestBody.model : undefined;
+  const model = typeof raw.model === "string" && raw.model.trim() ? raw.model.trim() : fallbackModel;
+  const normalizedTokens = normalizeTokenFields(raw.usage, {
+    input: safeNumber(raw.tokensInput),
+    output: safeNumber(raw.tokensOutput),
+    total: safeNumber(raw.tokensTotal),
+  });
+
+  return {
+    id: typeof raw.id === "string" && raw.id ? raw.id : `${at}-${route}-${status}`,
+    at,
+    route,
+    accountId: typeof raw.accountId === "string" ? raw.accountId : undefined,
+    accountEmail: typeof raw.accountEmail === "string" ? raw.accountEmail : undefined,
+    model,
+    status,
+    isError: typeof raw.isError === "boolean" ? raw.isError : status >= 400,
+    stream: Boolean(raw.stream),
+    latencyMs,
+    tokensInput: normalizedTokens.tokensInput,
+    tokensOutput: normalizedTokens.tokensOutput,
+    tokensTotal: normalizedTokens.tokensTotal,
+    usage: raw.usage,
+    requestBody: raw.requestBody,
+    error: typeof raw.error === "string" ? raw.error : undefined,
+    upstreamError: typeof raw.upstreamError === "string" ? raw.upstreamError : undefined,
+    upstreamContentType: typeof raw.upstreamContentType === "string" ? raw.upstreamContentType : undefined,
+  };
+}
+
+async function readTraceWindow(): Promise<TraceEntry[]> {
   try {
     const raw = await fs.readFile(TRACE_FILE_PATH, "utf8");
-    const lines = raw.trim().split("\n").filter(Boolean);
-    const sliced = lines.slice(-Math.max(1, Math.min(limit, 2000)));
-    return sliced.map((line) => JSON.parse(line));
+    const lines = raw.split("\n").filter(Boolean);
+    const parsed: TraceEntry[] = [];
+    for (const line of lines) {
+      try {
+        const normalized = normalizeTrace(JSON.parse(line));
+        if (normalized) parsed.push(normalized);
+      } catch {}
+    }
+    return parsed.slice(-TRACE_RETENTION_MAX);
   } catch {
     return [];
   }
+}
+
+async function writeTraceWindow(entries: TraceEntry[]): Promise<void> {
+  const tmp = `${TRACE_FILE_PATH}.tmp-${randomUUID()}`;
+  const content = entries.map((entry) => JSON.stringify(entry)).join("\n");
+  await fs.writeFile(tmp, content ? `${content}\n` : "", "utf8");
+  await fs.rename(tmp, TRACE_FILE_PATH);
+}
+
+async function compactTraceStorageIfNeeded() {
+  const traces = await readTraceWindow();
+  try {
+    const raw = await fs.readFile(TRACE_FILE_PATH, "utf8");
+    const lineCount = raw.split("\n").filter(Boolean).length;
+    if (lineCount !== traces.length || traces.length > TRACE_RETENTION_MAX) {
+      await writeTraceWindow(traces.slice(-TRACE_RETENTION_MAX));
+    }
+  } catch {}
+}
+
+async function appendTrace(entry: Omit<TraceEntry, "id" | "isError" | "tokensInput" | "tokensOutput" | "tokensTotal">) {
+  const normalizedTokens = normalizeTokenFields(entry.usage);
+  const finalEntry: TraceEntry = {
+    ...entry,
+    id: randomUUID(),
+    isError: entry.status >= 400,
+    tokensInput: normalizedTokens.tokensInput,
+    tokensOutput: normalizedTokens.tokensOutput,
+    tokensTotal: normalizedTokens.tokensTotal,
+  };
+
+  const run = traceWriteQueue.then(async () => {
+    const current = await readTraceWindow();
+    const next = [...current, finalEntry].slice(-TRACE_RETENTION_MAX);
+    await writeTraceWindow(next);
+  });
+  traceWriteQueue = run.catch(() => undefined);
+  await run;
+}
+
+function percentile(values: number[], p: number): number {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
+  return sorted[idx];
+}
+
+function buildTraceStats(traces: TraceEntry[]): TraceStats {
+  const requests = traces.length;
+  const errors = traces.filter((t) => t.isError).length;
+  const tokensInput = traces.reduce((sum, t) => sum + (t.tokensInput ?? 0), 0);
+  const tokensOutput = traces.reduce((sum, t) => sum + (t.tokensOutput ?? 0), 0);
+  const tokensTotal = traces.reduce((sum, t) => sum + (t.tokensTotal ?? ((t.tokensInput ?? 0) + (t.tokensOutput ?? 0))), 0);
+  const latencyAvgMs = requests ? traces.reduce((sum, t) => sum + t.latencyMs, 0) / requests : 0;
+  const errorRate = requests ? errors / requests : 0;
+
+  const modelMap = new Map<string, TraceModelStats>();
+  for (const trace of traces) {
+    const key = trace.model || "unknown";
+    const existing = modelMap.get(key);
+    if (!existing) modelMap.set(key, { model: key, count: 1, tokensTotal: trace.tokensTotal ?? 0 });
+    else {
+      existing.count += 1;
+      existing.tokensTotal += trace.tokensTotal ?? 0;
+    }
+  }
+  const models = Array.from(modelMap.values()).sort((a, b) => b.count - a.count);
+
+  const bucketMap = new Map<number, { requests: number; errors: number; tokensInput: number; tokensOutput: number; tokensTotal: number; latencies: number[] }>();
+  for (const trace of traces) {
+    const bucketAt = Math.floor(trace.at / 3_600_000) * 3_600_000;
+    const bucket = bucketMap.get(bucketAt) ?? {
+      requests: 0,
+      errors: 0,
+      tokensInput: 0,
+      tokensOutput: 0,
+      tokensTotal: 0,
+      latencies: [],
+    };
+    bucket.requests += 1;
+    if (trace.isError) bucket.errors += 1;
+    bucket.tokensInput += trace.tokensInput ?? 0;
+    bucket.tokensOutput += trace.tokensOutput ?? 0;
+    bucket.tokensTotal += trace.tokensTotal ?? 0;
+    bucket.latencies.push(trace.latencyMs);
+    bucketMap.set(bucketAt, bucket);
+  }
+  const timeseries = Array.from(bucketMap.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map(([at, bucket]) => ({
+      at,
+      requests: bucket.requests,
+      errors: bucket.errors,
+      tokensInput: bucket.tokensInput,
+      tokensOutput: bucket.tokensOutput,
+      tokensTotal: bucket.tokensTotal,
+      latencyP50Ms: percentile(bucket.latencies, 50),
+      latencyP95Ms: percentile(bucket.latencies, 95),
+    }));
+
+  return {
+    totals: {
+      requests,
+      errors,
+      errorRate,
+      tokensInput,
+      tokensOutput,
+      tokensTotal,
+      latencyAvgMs,
+    },
+    models,
+    timeseries,
+  };
+}
+
+async function readTracesLegacy(limit = 200): Promise<TraceEntry[]> {
+  const traces = await readTraceWindow();
+  const sliced = traces.slice(-Math.max(1, Math.min(limit, TRACE_LEGACY_LIMIT_MAX)));
+  return sliced;
 }
 
 function extractUsageFromPayload(payload: any) {
@@ -108,6 +332,8 @@ function extractUsageFromPayload(payload: any) {
 function setForwardHeaders(from: Response, to: express.Response) {
   for (const [k, v] of from.headers.entries()) if (k.toLowerCase() !== "content-length") to.setHeader(k, v);
 }
+
+await compactTraceStorageIfNeeded();
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 app.get("/admin/config", adminGuard, (_req, res) => {
@@ -124,8 +350,36 @@ app.get("/admin/config", adminGuard, (_req, res) => {
 });
 app.get("/admin/accounts", adminGuard, async (_req, res) => res.json({ accounts: (await store.listAccounts()).map(redact) }));
 app.get("/admin/traces", adminGuard, async (req, res) => {
-  const limit = Number(req.query.limit ?? 100);
-  res.json({ traces: await readTraces(limit) });
+  const hasPaginationQuery = typeof req.query.page !== "undefined" || typeof req.query.pageSize !== "undefined";
+  const hasLegacyLimit = typeof req.query.limit !== "undefined";
+
+  if (hasLegacyLimit && !hasPaginationQuery) {
+    const limit = Number(req.query.limit ?? 100);
+    return res.json({ traces: await readTracesLegacy(limit) });
+  }
+
+  const page = Math.max(1, Number(req.query.page ?? 1) || 1);
+  const pageSize = Math.max(1, Math.min(TRACE_PAGE_SIZE_MAX, Number(req.query.pageSize ?? TRACE_PAGE_SIZE_MAX) || TRACE_PAGE_SIZE_MAX));
+  const traces = await readTraceWindow();
+  const sorted = [...traces].sort((a, b) => b.at - a.at);
+  const total = sorted.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const start = (page - 1) * pageSize;
+  const paged = start >= total ? [] : sorted.slice(start, start + pageSize);
+  const stats = buildTraceStats(sorted);
+
+  return res.json({
+    traces: paged,
+    pagination: {
+      page,
+      pageSize,
+      total,
+      totalPages,
+      hasPrev: page > 1,
+      hasNext: page < totalPages,
+    },
+    stats,
+  });
 });
 
 app.post("/admin/accounts", adminGuard, async (req, res) => {
@@ -579,6 +833,10 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
     // Use path to determine response format, payload format to determine upstream conversion
     const shouldReturnChatCompletions = isChatCompletionsPath;
     const payloadToUpstream = isChatCompletions ? chatCompletionsToResponsesPayload(req.body) : normalizeResponsesPayload(req.body);
+    const requestBody = TRACE_INCLUDE_BODY ? req.body : undefined;
+    const requestModel =
+      (typeof req.body?.model === "string" && req.body.model.trim()) ? req.body.model.trim()
+      : ((typeof payloadToUpstream?.model === "string" && payloadToUpstream.model.trim()) ? payloadToUpstream.model.trim() : undefined);
 
     const headers: Record<string, string> = {
       "content-type": "application/json",
@@ -644,11 +902,12 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
             route: req.path,
             accountId: selected.id,
             accountEmail: selected.email,
+            model: requestModel,
             status: upstream.status,
             stream: true,
             latencyMs: Date.now() - startedAt,
             usage: accumulatedUsage,
-            requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
+            requestBody,
           });
           return;
         }
@@ -664,11 +923,12 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
             route: req.path,
             accountId: selected.id,
             accountEmail: selected.email,
+            model: requestModel,
             status: upstream.status,
             stream: true,
             latencyMs: Date.now() - startedAt,
             usage: chatResp?.usage,
-            requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
+            requestBody,
             upstreamError,
             upstreamContentType: contentType,
           });
@@ -685,11 +945,12 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
             route: req.path,
             accountId: selected.id,
             accountEmail: selected.email,
+            model: requestModel,
             status: upstream.status,
             stream: false,
             latencyMs: Date.now() - startedAt,
             usage: respObj?.usage,
-            requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
+            requestBody,
             upstreamError,
             upstreamContentType: contentType,
           });
@@ -712,10 +973,11 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
           route: req.path,
           accountId: selected.id,
           accountEmail: selected.email,
+          model: requestModel,
           status: upstream.status,
           stream: true,
           latencyMs: Date.now() - startedAt,
-          requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
+          requestBody,
         });
         return;
       }
@@ -744,11 +1006,12 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
             route: req.path,
             accountId: selected.id,
             accountEmail: selected.email,
+            model: requestModel,
             status: upstream.status,
             stream: true,
             latencyMs: Date.now() - startedAt,
             usage: parsed?.usage,
-            requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
+            requestBody,
             upstreamContentType: contentType,
           });
           return;
@@ -769,11 +1032,12 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
             route: req.path,
             accountId: selected.id,
             accountEmail: selected.email,
+            model: requestModel,
             status: upstream.status,
             stream: true,
             latencyMs: Date.now() - startedAt,
             usage: converted?.usage,
-            requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
+            requestBody,
             upstreamContentType: contentType,
           });
           return;
@@ -795,11 +1059,12 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
             route: req.path,
             accountId: selected.id,
             accountEmail: selected.email,
+            model: requestModel,
             status: upstream.status,
             stream: false,
             latencyMs: Date.now() - startedAt,
             usage: chatResp?.usage,
-            requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
+            requestBody,
             upstreamError,
             upstreamContentType: contentType,
           });
@@ -813,11 +1078,12 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
           route: req.path,
           accountId: selected.id,
           accountEmail: selected.email,
+          model: requestModel,
           status: upstream.status,
           stream: false,
           latencyMs: Date.now() - startedAt,
           usage: respObj?.usage,
-          requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
+          requestBody,
           upstreamError,
           upstreamContentType: contentType,
         });
@@ -837,11 +1103,12 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
         route: req.path,
         accountId: selected.id,
         accountEmail: selected.email,
+        model: requestModel,
         status: upstream.status,
         stream: false,
         latencyMs: Date.now() - startedAt,
         usage,
-        requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
+        requestBody,
         upstreamError,
         upstreamContentType: contentType,
       });
@@ -865,11 +1132,12 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
         route: req.path,
         accountId: selected.id,
         accountEmail: selected.email,
+        model: requestModel,
         status: 599,
         stream: false,
         latencyMs: Date.now() - startedAt,
         error: msg,
-        requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
+        requestBody,
       });
     }
   }
