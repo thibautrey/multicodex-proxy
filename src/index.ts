@@ -1,6 +1,7 @@
 import express from "express";
 import path from "node:path";
 import fs from "node:fs/promises";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { AccountStore, OAuthStateStore } from "./store.js";
@@ -16,7 +17,20 @@ import {
 } from "./oauth.js";
 import { chooseAccount, isQuotaErrorText, markQuotaHit, refreshUsageIfNeeded, rememberError } from "./quota.js";
 import type { Account } from "./types.js";
-import { estimateCostUsd } from "./model-pricing.js";
+import { createTraceManager } from "./traces.js";
+import {
+  chatCompletionObjectToSSE,
+  chatCompletionsToResponsesPayload,
+  convertResponsesSSEToChatCompletionSSE,
+  ensureNonEmptyChatCompletion,
+  extractUsageFromPayload,
+  getSessionId,
+  inspectAssistantPayload,
+  normalizeResponsesPayload,
+  parseResponsesSSEToChatCompletion,
+  parseResponsesSSEToResponseObject,
+  responseObjectToChatCompletion,
+} from "./responses-bridge.js";
 
 const PORT = Number(process.env.PORT ?? 4010);
 const STORE_PATH = process.env.STORE_PATH ?? "/data/accounts.json";
@@ -27,7 +41,9 @@ const CHATGPT_BASE_URL = process.env.CHATGPT_BASE_URL ?? "https://chatgpt.com";
 const UPSTREAM_PATH = process.env.UPSTREAM_PATH ?? "/backend-api/codex/responses";
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
 const MAX_ACCOUNT_RETRY_ATTEMPTS = Math.max(1, Number(process.env.MAX_ACCOUNT_RETRY_ATTEMPTS ?? 5));
-const FORWARD_REASONING_EFFORT = (process.env.FORWARD_REASONING_EFFORT ?? "false") === "true";
+const MAX_UPSTREAM_RETRIES = Math.max(0, Number(process.env.MAX_UPSTREAM_RETRIES ?? 3));
+const UPSTREAM_BASE_DELAY_MS = Math.max(100, Number(process.env.UPSTREAM_BASE_DELAY_MS ?? 1000));
+const PI_USER_AGENT = `pi (${os.platform()} ${os.release()}; ${os.arch()})`;
 
 const BUILD_GIT_SHA = process.env.APP_GIT_SHA ?? "unknown";
 const BUILD_ID = process.env.APP_BUILD_ID ?? "unknown";
@@ -84,474 +100,18 @@ async function ensureValidToken(account: Account): Promise<Account> {
   }
 }
 
-type TraceEntry = {
-  id: string;
-  at: number;
-  route: string;
-  accountId?: string;
-  accountEmail?: string;
-  model?: string;
-  status: number;
-  isError: boolean;
-  stream: boolean;
-  latencyMs: number;
-  tokensInput?: number;
-  tokensOutput?: number;
-  tokensTotal?: number;
-  costUsd?: number;
-  usage?: any;
-  requestBody?: any;
-  error?: string;
-  upstreamError?: string;
-  upstreamContentType?: string;
-  upstreamEmptyBody?: boolean;
-  assistantEmptyOutput?: boolean;
-  assistantFinishReason?: string;
-};
-
-type TraceTotals = {
-  requests: number;
-  errors: number;
-  errorRate: number;
-  tokensInput: number;
-  tokensOutput: number;
-  tokensTotal: number;
-  costUsd: number;
-  latencyAvgMs: number;
-};
-
-type TraceModelStats = {
-  model: string;
-  count: number;
-  tokensInput: number;
-  tokensOutput: number;
-  tokensTotal: number;
-  costUsd: number;
-};
-
-type TraceTimeseriesBucket = {
-  at: number;
-  requests: number;
-  errors: number;
-  tokensInput: number;
-  tokensOutput: number;
-  tokensTotal: number;
-  costUsd: number;
-  latencyP50Ms: number;
-  latencyP95Ms: number;
-};
-
-type TraceStats = {
-  totals: TraceTotals;
-  models: TraceModelStats[];
-  timeseries: TraceTimeseriesBucket[];
-};
-
-const TRACE_RETENTION_MAX = 1000;
-const TRACE_PAGE_SIZE_MAX = 100;
-const TRACE_LEGACY_LIMIT_MAX = 2000;
-
-let traceWriteQueue: Promise<void> = Promise.resolve();
-
-function safeNumber(v: any): number | undefined {
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (typeof v === "string" && v.trim()) {
-    const n = Number(v);
-    if (Number.isFinite(n)) return n;
-  }
-  return undefined;
-}
-
-function normalizeTokenFields(usage: any, fallback?: { input?: number; output?: number; total?: number }) {
-  const input = safeNumber(usage?.input_tokens) ?? safeNumber(usage?.prompt_tokens) ?? fallback?.input;
-  const output = safeNumber(usage?.output_tokens) ?? safeNumber(usage?.completion_tokens) ?? fallback?.output;
-  const total = safeNumber(usage?.total_tokens) ?? fallback?.total ?? ((input ?? 0) + (output ?? 0));
-  return {
-    tokensInput: input,
-    tokensOutput: output,
-    tokensTotal: total,
-  };
-}
-
-function normalizeTrace(raw: any): TraceEntry | null {
-  if (!raw || typeof raw !== "object") return null;
-  const at = safeNumber(raw.at);
-  const route = typeof raw.route === "string" ? raw.route : "";
-  const status = safeNumber(raw.status);
-  const latencyMs = safeNumber(raw.latencyMs);
-  if (!at || !route || typeof status === "undefined" || typeof latencyMs === "undefined") return null;
-
-  const fallbackModel = typeof raw.requestBody?.model === "string" ? raw.requestBody.model : undefined;
-  const model = typeof raw.model === "string" && raw.model.trim() ? raw.model.trim() : fallbackModel;
-  const normalizedTokens = normalizeTokenFields(raw.usage, {
-    input: safeNumber(raw.tokensInput),
-    output: safeNumber(raw.tokensOutput),
-    total: safeNumber(raw.tokensTotal),
-  });
-  const costUsd = estimateCostUsd(model, normalizedTokens.tokensInput ?? 0, normalizedTokens.tokensOutput ?? 0);
-
-  return {
-    id: typeof raw.id === "string" && raw.id ? raw.id : `${at}-${route}-${status}`,
-    at,
-    route,
-    accountId: typeof raw.accountId === "string" ? raw.accountId : undefined,
-    accountEmail: typeof raw.accountEmail === "string" ? raw.accountEmail : undefined,
-    model,
-    status,
-    isError: typeof raw.isError === "boolean" ? raw.isError : status >= 400,
-    stream: Boolean(raw.stream),
-    latencyMs,
-    tokensInput: normalizedTokens.tokensInput,
-    tokensOutput: normalizedTokens.tokensOutput,
-    tokensTotal: normalizedTokens.tokensTotal,
-    costUsd,
-    usage: raw.usage,
-    requestBody: raw.requestBody,
-    error: typeof raw.error === "string" ? raw.error : undefined,
-    upstreamError: typeof raw.upstreamError === "string" ? raw.upstreamError : undefined,
-    upstreamContentType: typeof raw.upstreamContentType === "string" ? raw.upstreamContentType : undefined,
-    upstreamEmptyBody: typeof raw.upstreamEmptyBody === "boolean" ? raw.upstreamEmptyBody : undefined,
-    assistantEmptyOutput: typeof raw.assistantEmptyOutput === "boolean" ? raw.assistantEmptyOutput : undefined,
-    assistantFinishReason: typeof raw.assistantFinishReason === "string" ? raw.assistantFinishReason : undefined,
-  };
-}
-
-async function readTraceWindow(): Promise<TraceEntry[]> {
-  try {
-    const raw = await fs.readFile(TRACE_FILE_PATH, "utf8");
-    const lines = raw.split("\n").filter(Boolean);
-    const parsed: TraceEntry[] = [];
-    for (const line of lines) {
-      try {
-        const normalized = normalizeTrace(JSON.parse(line));
-        if (normalized) parsed.push(normalized);
-      } catch {}
-    }
-    return parsed.slice(-TRACE_RETENTION_MAX);
-  } catch {
-    return [];
-  }
-}
-
-async function writeTraceWindow(entries: TraceEntry[]): Promise<void> {
-  const tmp = `${TRACE_FILE_PATH}.tmp-${randomUUID()}`;
-  const content = entries.map((entry) => JSON.stringify(entry)).join("\n");
-  await fs.writeFile(tmp, content ? `${content}\n` : "", "utf8");
-  await fs.rename(tmp, TRACE_FILE_PATH);
-}
-
-async function compactTraceStorageIfNeeded() {
-  const traces = await readTraceWindow();
-  try {
-    const raw = await fs.readFile(TRACE_FILE_PATH, "utf8");
-    const lineCount = raw.split("\n").filter(Boolean).length;
-    if (lineCount !== traces.length || traces.length > TRACE_RETENTION_MAX) {
-      await writeTraceWindow(traces.slice(-TRACE_RETENTION_MAX));
-    }
-  } catch {}
-}
-
-async function appendTrace(entry: Omit<TraceEntry, "id" | "isError" | "tokensInput" | "tokensOutput" | "tokensTotal">) {
-  const normalizedTokens = normalizeTokenFields(entry.usage);
-  const finalEntry: TraceEntry = {
-    ...entry,
-    id: randomUUID(),
-    isError: entry.status >= 400,
-    tokensInput: normalizedTokens.tokensInput,
-    tokensOutput: normalizedTokens.tokensOutput,
-    tokensTotal: normalizedTokens.tokensTotal,
-    costUsd: estimateCostUsd(entry.model, normalizedTokens.tokensInput ?? 0, normalizedTokens.tokensOutput ?? 0),
-  };
-
-  const run = traceWriteQueue.then(async () => {
-    const current = await readTraceWindow();
-    const next = [...current, finalEntry].slice(-TRACE_RETENTION_MAX);
-    await writeTraceWindow(next);
-  });
-  traceWriteQueue = run.catch(() => undefined);
-  await run;
-}
-
-function percentile(values: number[], p: number): number {
-  if (!values.length) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
-  return sorted[idx];
-}
-
-function buildTraceStats(traces: TraceEntry[]): TraceStats {
-  const requests = traces.length;
-  const errors = traces.filter((t) => t.isError).length;
-  const tokensInput = traces.reduce((sum, t) => sum + (t.tokensInput ?? 0), 0);
-  const tokensOutput = traces.reduce((sum, t) => sum + (t.tokensOutput ?? 0), 0);
-  const tokensTotal = traces.reduce((sum, t) => sum + (t.tokensTotal ?? ((t.tokensInput ?? 0) + (t.tokensOutput ?? 0))), 0);
-  const costUsd = traces.reduce((sum, t) => {
-    if (typeof t.costUsd === "number") return sum + t.costUsd;
-    return sum + (estimateCostUsd(t.model, t.tokensInput ?? 0, t.tokensOutput ?? 0) ?? 0);
-  }, 0);
-  const latencyAvgMs = requests ? traces.reduce((sum, t) => sum + t.latencyMs, 0) / requests : 0;
-  const errorRate = requests ? errors / requests : 0;
-
-  const modelMap = new Map<string, TraceModelStats>();
-  for (const trace of traces) {
-    const key = trace.model || "unknown";
-    const existing = modelMap.get(key);
-    const traceCost = typeof trace.costUsd === "number" ? trace.costUsd : (estimateCostUsd(trace.model, trace.tokensInput ?? 0, trace.tokensOutput ?? 0) ?? 0);
-    if (!existing) {
-      modelMap.set(key, {
-        model: key,
-        count: 1,
-        tokensInput: trace.tokensInput ?? 0,
-        tokensOutput: trace.tokensOutput ?? 0,
-        tokensTotal: trace.tokensTotal ?? 0,
-        costUsd: traceCost,
-      });
-    }
-    else {
-      existing.count += 1;
-      existing.tokensInput += trace.tokensInput ?? 0;
-      existing.tokensOutput += trace.tokensOutput ?? 0;
-      existing.tokensTotal += trace.tokensTotal ?? 0;
-      existing.costUsd += traceCost;
-    }
-  }
-  const models = Array.from(modelMap.values()).sort((a, b) => b.count - a.count);
-
-  const bucketMap = new Map<number, { requests: number; errors: number; tokensInput: number; tokensOutput: number; tokensTotal: number; costUsd: number; latencies: number[] }>();
-  for (const trace of traces) {
-    const bucketAt = Math.floor(trace.at / 3_600_000) * 3_600_000;
-    const bucket = bucketMap.get(bucketAt) ?? {
-      requests: 0,
-      errors: 0,
-      tokensInput: 0,
-      tokensOutput: 0,
-      tokensTotal: 0,
-      costUsd: 0,
-      latencies: [],
-    };
-    bucket.requests += 1;
-    if (trace.isError) bucket.errors += 1;
-    bucket.tokensInput += trace.tokensInput ?? 0;
-    bucket.tokensOutput += trace.tokensOutput ?? 0;
-    bucket.tokensTotal += trace.tokensTotal ?? 0;
-    bucket.costUsd += typeof trace.costUsd === "number" ? trace.costUsd : (estimateCostUsd(trace.model, trace.tokensInput ?? 0, trace.tokensOutput ?? 0) ?? 0);
-    bucket.latencies.push(trace.latencyMs);
-    bucketMap.set(bucketAt, bucket);
-  }
-  const timeseries = Array.from(bucketMap.entries())
-    .sort((a, b) => a[0] - b[0])
-    .map(([at, bucket]) => ({
-      at,
-      requests: bucket.requests,
-      errors: bucket.errors,
-      tokensInput: bucket.tokensInput,
-      tokensOutput: bucket.tokensOutput,
-      tokensTotal: bucket.tokensTotal,
-      costUsd: bucket.costUsd,
-      latencyP50Ms: percentile(bucket.latencies, 50),
-      latencyP95Ms: percentile(bucket.latencies, 95),
-    }));
-
-  return {
-    totals: {
-      requests,
-      errors,
-      errorRate,
-      tokensInput,
-      tokensOutput,
-      tokensTotal,
-      costUsd,
-      latencyAvgMs,
-    },
-    models,
-    timeseries,
-  };
-}
-
-async function readTracesLegacy(limit = 200): Promise<TraceEntry[]> {
-  const traces = await readTraceWindow();
-  const sliced = traces.slice(-Math.max(1, Math.min(limit, TRACE_LEGACY_LIMIT_MAX)));
-  return sliced;
-}
-
-function extractUsageFromPayload(payload: any) {
-  return payload?.usage ?? payload?.response?.usage ?? payload?.metrics?.usage;
-}
-
-const EMPTY_ASSISTANT_FALLBACK_TEXT = "[upstream returned no assistant output; please retry]";
-
-function asNonEmptyString(v: any): string | undefined {
-  if (typeof v !== "string") return undefined;
-  const t = v.trim();
-  return t ? t : undefined;
-}
-
-function inspectAssistantPayload(payload: any): { assistantEmptyOutput?: boolean; assistantFinishReason?: string } {
-  if (!payload || typeof payload !== "object") return {};
-
-  if (payload.object === "chat.completion") {
-    const choice = payload?.choices?.[0];
-    if (!choice) return {};
-
-    const finishReason = asNonEmptyString(choice.finish_reason);
-    const content = choice?.message?.content;
-    const contentText = typeof content === "string"
-      ? content
-      : Array.isArray(content)
-        ? content.map((part: any) => (typeof part?.text === "string" ? part.text : "")).join("")
-        : "";
-    const hasText = Boolean(asNonEmptyString(contentText));
-    const hasToolCalls = Array.isArray(choice?.message?.tool_calls) && choice.message.tool_calls.length > 0;
-    const assistantEmptyOutput = !hasText && !hasToolCalls;
-
-    return { assistantEmptyOutput, assistantFinishReason: finishReason };
-  }
-
-  if (payload.object === "response") {
-    const outputs = Array.isArray(payload?.output) ? payload.output : [];
-    const assistantMsg = outputs.find((item: any) => item?.type === "message" && item?.role === "assistant");
-    if (!assistantMsg) return {};
-
-    const contentParts = Array.isArray(assistantMsg?.content) ? assistantMsg.content : [];
-    const hasOutputText = contentParts.some((part: any) => Boolean(asNonEmptyString(part?.text)));
-    const assistantEmptyOutput = !hasOutputText;
-    const assistantFinishReason = asNonEmptyString(payload?.status) ?? asNonEmptyString(payload?.stop_reason);
-    return { assistantEmptyOutput, assistantFinishReason };
-  }
-
-  return {};
-}
-
-function ensureNonEmptyChatCompletion(chat: any): { chat: any; patched: boolean } {
-  if (!chat || typeof chat !== "object" || chat.object !== "chat.completion") return { chat, patched: false };
-  const choice = chat?.choices?.[0];
-  if (!choice) return { chat, patched: false };
-
-  const content = choice?.message?.content;
-  const contentText = typeof content === "string"
-    ? content
-    : Array.isArray(content)
-      ? content.map((part: any) => (typeof part?.text === "string" ? part.text : "")).join("")
-      : "";
-  const hasText = Boolean(asNonEmptyString(contentText));
-  const hasToolCalls = Array.isArray(choice?.message?.tool_calls) && choice.message.tool_calls.length > 0;
-  if (hasText || hasToolCalls) return { chat, patched: false };
-
-  const patched = {
-    ...chat,
-    choices: [
-      {
-        ...choice,
-        message: {
-          ...(choice?.message ?? {}),
-          content: EMPTY_ASSISTANT_FALLBACK_TEXT,
-        },
-        finish_reason: choice?.finish_reason ?? "stop",
-      },
-      ...(Array.isArray(chat?.choices) ? chat.choices.slice(1) : []),
-    ],
-  };
-  return { chat: patched, patched: true };
-}
-
-type UsageTokenTotals = {
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
-};
-
-type UsageAggregate = {
-  requests: number;
-  ok: number;
-  errors: number;
-  stream: number;
-  latencyMsTotal: number;
-  requestsWithUsage: number;
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
-  statusCounts: Record<string, number>;
-  firstAt?: number;
-  lastAt?: number;
-};
-
-function toNumber(v: any): number | undefined {
-  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
-}
-
-function usageToTokens(usage: any): UsageTokenTotals {
-  const promptTokens = toNumber(usage?.prompt_tokens) ?? toNumber(usage?.input_tokens) ?? 0;
-  const completionTokens = toNumber(usage?.completion_tokens) ?? toNumber(usage?.output_tokens) ?? 0;
-  const totalTokens = toNumber(usage?.total_tokens) ?? (promptTokens + completionTokens);
-  return { promptTokens, completionTokens, totalTokens };
-}
-
-function createUsageAggregate(): UsageAggregate {
-  return {
-    requests: 0,
-    ok: 0,
-    errors: 0,
-    stream: 0,
-    latencyMsTotal: 0,
-    requestsWithUsage: 0,
-    promptTokens: 0,
-    completionTokens: 0,
-    totalTokens: 0,
-    statusCounts: {},
-  };
-}
-
-function addTraceToAggregate(agg: UsageAggregate, trace: TraceEntry) {
-  const status = Number(trace.status);
-  const statusKey = Number.isFinite(status) ? String(status) : "unknown";
-  const tokens = usageToTokens(trace.usage);
-
-  agg.requests += 1;
-  if (status >= 200 && status < 400) agg.ok += 1;
-  else agg.errors += 1;
-  if (trace.stream) agg.stream += 1;
-
-  agg.latencyMsTotal += Number.isFinite(trace.latencyMs) ? trace.latencyMs : 0;
-  agg.statusCounts[statusKey] = (agg.statusCounts[statusKey] ?? 0) + 1;
-
-  if (trace.usage) {
-    agg.requestsWithUsage += 1;
-    agg.promptTokens += tokens.promptTokens;
-    agg.completionTokens += tokens.completionTokens;
-    agg.totalTokens += tokens.totalTokens;
-  }
-
-  if (typeof trace.at === "number") {
-    agg.firstAt = typeof agg.firstAt === "number" ? Math.min(agg.firstAt, trace.at) : trace.at;
-    agg.lastAt = typeof agg.lastAt === "number" ? Math.max(agg.lastAt, trace.at) : trace.at;
-  }
-}
-
-function finalizeAggregate(agg: UsageAggregate) {
-  const avgLatencyMs = agg.requests ? Math.round((agg.latencyMsTotal / agg.requests) * 100) / 100 : 0;
-  const successRate = agg.requests ? Math.round((agg.ok / agg.requests) * 10000) / 100 : 0;
-  const streamingRate = agg.requests ? Math.round((agg.stream / agg.requests) * 10000) / 100 : 0;
-
-  return {
-    requests: agg.requests,
-    ok: agg.ok,
-    errors: agg.errors,
-    successRate,
-    stream: agg.stream,
-    streamingRate,
-    latencyMsTotal: agg.latencyMsTotal,
-    avgLatencyMs,
-    requestsWithUsage: agg.requestsWithUsage,
-    tokens: {
-      prompt: agg.promptTokens,
-      completion: agg.completionTokens,
-      total: agg.totalTokens,
-    },
-    statusCounts: agg.statusCounts,
-    firstAt: agg.firstAt,
-    lastAt: agg.lastAt,
-  };
-}
+const traceManager = createTraceManager({ filePath: TRACE_FILE_PATH });
+const {
+  readTraceWindow,
+  compactTraceStorageIfNeeded,
+  appendTrace,
+  readTracesLegacy,
+  buildTraceStats,
+  createUsageAggregate,
+  addTraceToAggregate,
+  finalizeAggregate,
+  pageSizeMax,
+} = traceManager;
 
 function parseQueryNumber(v: unknown): number | undefined {
   if (typeof v === "number" && Number.isFinite(v)) return v;
@@ -592,7 +152,7 @@ app.get("/admin/traces", adminGuard, async (req, res) => {
   }
 
   const page = Math.max(1, Number(req.query.page ?? 1) || 1);
-  const pageSize = Math.max(1, Math.min(TRACE_PAGE_SIZE_MAX, Number(req.query.pageSize ?? TRACE_PAGE_SIZE_MAX) || TRACE_PAGE_SIZE_MAX));
+  const pageSize = Math.max(1, Math.min(pageSizeMax, Number(req.query.pageSize ?? pageSizeMax) || pageSizeMax));
   const traces = await readTraceWindow();
   const sorted = [...traces].sort((a, b) => b.at - a.at);
   const total = sorted.length;
@@ -630,8 +190,8 @@ app.get("/admin/stats/usage", adminGuard, async (req, res) => {
   });
 
   const globalAgg = createUsageAggregate();
-  const byAccount = new Map<string, UsageAggregate>();
-  const byRoute = new Map<string, UsageAggregate>();
+  const byAccount = new Map<string, ReturnType<typeof createUsageAggregate>>();
+  const byRoute = new Map<string, ReturnType<typeof createUsageAggregate>>();
 
   for (const trace of filtered) {
     addTraceToAggregate(globalAgg, trace);
@@ -765,393 +325,37 @@ app.post("/admin/oauth/complete", adminGuard, async (req, res) => {
   }
 });
 
-function toUpstreamInputContent(content: any, role: "user" | "assistant") {
-  const textType = role === "assistant" ? "output_text" : "input_text";
-  if (typeof content === "string") return [{ type: textType, text: content }];
-  if (Array.isArray(content)) {
-    const out: any[] = [];
-    for (const part of content) {
-      if (typeof part === "string") out.push({ type: textType, text: part });
-      else if ((part?.type === "text" || part?.type === "input_text" || part?.type === "output_text") && typeof part?.text === "string") {
-        out.push({ type: textType, text: part.text });
-      }
-    }
-    return out.length ? out : [{ type: textType, text: JSON.stringify(content) }];
-  }
-  return [{ type: textType, text: String(content ?? "") }];
+function isRetryableUpstreamError(status: number, errorText: string): boolean {
+  if (status === 429 || status === 500 || status === 502 || status === 503 || status === 504) return true;
+  return /rate.?limit|overloaded|service.?unavailable|upstream.?connect|connection.?refused/i.test(errorText);
 }
 
-function toolContentToOutput(content: any): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    const texts = content
-      .map((part: any) => {
-        if (typeof part === "string") return part;
-        if (part?.type === "text" && typeof part?.text === "string") return part.text;
-        return "";
-      })
-      .filter(Boolean);
-    if (texts.length) return texts.join("\n");
-  }
-  try {
-    return JSON.stringify(content ?? "");
-  } catch {
-    return String(content ?? "");
-  }
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function normalizeResponsesPayload(body: any) {
-  const b = { ...(body ?? {}) };
-  if (!b.instructions) b.instructions = "You are a helpful assistant.";
-  if (!Array.isArray(b.input)) {
-    const text = typeof b.input === "string" ? b.input : (typeof b.prompt === "string" ? b.prompt : "");
-    b.input = [{ role: "user", content: [{ type: "input_text", text }] }];
-  }
-  if (typeof b.store === "undefined") b.store = false;
-
-  // Upstream codex for recent GPT-5 models rejects max_output_tokens.
-  const model = String(b.model ?? "");
-  if (model.startsWith("gpt-5") && typeof b.max_output_tokens !== "undefined") {
-    delete b.max_output_tokens;
-  }
-  if (!FORWARD_REASONING_EFFORT && typeof b.reasoning_effort !== "undefined") {
-    delete b.reasoning_effort;
-  }
-
-  b.stream = true;
-  return b;
-}
-
-function parseResponsesSSEToResponseObject(sseText: string) {
-  let response: any = null;
-  let outputText = "";
-  for (const rawLine of sseText.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line.startsWith("data:")) continue;
-    const payload = line.slice(5).trim();
-    if (!payload || payload === "[DONE]") continue;
+async function fetchCodexWithRetry(url: string, init: RequestInit): Promise<Response> {
+  let lastError: Error | undefined;
+  for (let attempt = 0; attempt <= MAX_UPSTREAM_RETRIES; attempt++) {
     try {
-      const obj = JSON.parse(payload);
-      if (obj?.type === "response.output_text.delta") outputText += obj?.delta ?? "";
-      if (obj?.type === "response.completed") response = obj?.response;
-    } catch {}
-  }
-  if (!response) {
-    return {
-      id: `resp_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
-      object: "response",
-      status: "completed",
-      output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: outputText }] }],
-    };
-  }
-  return response;
-}
-
-function chatCompletionsToResponsesPayload(body: any) {
-  const messages = Array.isArray(body?.messages) ? body.messages : [];
-  const systemInstructions = messages
-    .filter((m: any) => m?.role === "system")
-    .map((m: any) => (typeof m?.content === "string" ? m.content : ""))
-    .filter(Boolean)
-    .join("\n\n");
-
-  let input: any[] = [];
-  for (const m of messages) {
-    if (m?.role === "system") continue;
-
-    if (m?.role === "tool") {
-      input.push({
-        type: "function_call_output",
-        call_id: m?.tool_call_id ?? `call_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
-        output: toolContentToOutput(m?.content),
-      });
-      continue;
-    }
-
-    if (m?.role === "assistant") {
-      const assistantContent = toUpstreamInputContent(m?.content, "assistant");
-      if (assistantContent.length > 0) {
-        input.push({ role: "assistant", content: assistantContent });
+      const response = await fetch(url, init);
+      if (response.ok) return response;
+      const errorText = await response.clone().text().catch(() => "");
+      if (attempt < MAX_UPSTREAM_RETRIES && isRetryableUpstreamError(response.status, errorText)) {
+        await sleep(UPSTREAM_BASE_DELAY_MS * (2 ** attempt));
+        continue;
       }
-
-      const toolCalls = Array.isArray(m?.tool_calls) ? m.tool_calls : [];
-      for (const tc of toolCalls) {
-        input.push({
-          type: "function_call",
-          call_id: tc?.id ?? `call_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
-          name: tc?.function?.name ?? "unknown",
-          arguments: typeof tc?.function?.arguments === "string"
-            ? tc.function.arguments
-            : JSON.stringify(tc?.function?.arguments ?? {}),
-        });
+      return response;
+    } catch (error: any) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (attempt < MAX_UPSTREAM_RETRIES && !lastError.message.includes("usage limit")) {
+        await sleep(UPSTREAM_BASE_DELAY_MS * (2 ** attempt));
+        continue;
       }
-      continue;
+      throw lastError;
     }
-
-    input.push({
-      role: "user",
-      content: toUpstreamInputContent(m?.content, "user"),
-    });
   }
-
-  // Ensure first message is a user message (Responses API requirement)
-  if (input.length > 0 && input[0]?.role !== "user") {
-    // Prepend a dummy user message if the conversation starts with assistant
-    input = [
-      { role: "user", content: [{ type: "input_text", text: " " }] },
-      ...input,
-    ];
-  }
-
-  const payload: any = {
-    model: body?.model,
-    instructions: body?.instructions || systemInstructions || "You are a helpful assistant.",
-    input,
-    store: false,
-    stream: true,
-  };
-
-  // Forward tools if present (convert to Responses API format)
-  if (body?.tools && Array.isArray(body.tools)) {
-    payload.tools = body.tools.map((tool: any) => {
-      if (tool.type === "function" && tool.function) {
-        return {
-          type: "function",
-          name: tool.function.name,
-          description: tool.function.description,
-          parameters_json: tool.function.parameters,
-          strict: tool.function.strict,
-        };
-      }
-      return tool;
-    });
-  }
-  if (body?.tool_choice) {
-    payload.tool_choice = body.tool_choice;
-  }
-  if (FORWARD_REASONING_EFFORT && body?.reasoning_effort !== undefined) {
-    payload.reasoning_effort = body.reasoning_effort;
-  }
-  if (body?.reasoning !== undefined) {
-    payload.reasoning = body.reasoning;
-  }
-  if (body?.temperature !== undefined) {
-    payload.temperature = body.temperature;
-  }
-  // Note: Responses API doesn't support max_output_tokens, so we skip it
-  // if (body?.max_tokens !== undefined) { payload.max_output_tokens = body.max_tokens; }
-
-  return payload;
-}
-
-function responseObjectToChatCompletion(resp: any, model: string) {
-  let outputText = "";
-  const toolCalls = Array.isArray(resp?.output)
-    ? resp.output
-      .flatMap((it: any) => {
-        if (it?.type === "message") {
-          const parts = Array.isArray(it?.content) ? it.content : [];
-          for (const p of parts) {
-            if ((p?.type === "output_text" || p?.type === "text") && typeof p?.text === "string") outputText += p.text;
-          }
-          return [];
-        }
-        if (it?.type === "function_call") {
-          return [{
-            id: it?.call_id || it?.id || `call_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
-            type: "function",
-            function: {
-              name: it?.name ?? "unknown",
-              arguments: typeof it?.arguments === "string" ? it.arguments : JSON.stringify(it?.arguments ?? {}),
-            },
-          }];
-        }
-        return [];
-      })
-    : [];
-
-  const usage = resp?.usage;
-  const prompt = usage?.input_tokens ?? 0;
-  const completion = usage?.output_tokens ?? 0;
-  const total = usage?.total_tokens ?? prompt + completion;
-  const finishReason = toolCalls.length > 0 ? "tool_calls" : "stop";
-
-  const message: any = { role: "assistant", content: outputText || "" };
-  if (toolCalls.length > 0) {
-    message.tool_calls = toolCalls.map((tc: any, idx: number) => ({ ...tc, index: idx }));
-  }
-
-  return {
-    id: `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
-    object: "chat.completion",
-    created: Math.floor(Date.now() / 1000),
-    model,
-    choices: [{ index: 0, message, finish_reason: finishReason }],
-    usage: { prompt_tokens: prompt, completion_tokens: completion, total_tokens: total },
-  };
-}
-
-function parseResponsesSSEToChatCompletion(sseText: string, model: string) {
-  let outputText = "";
-  let usage: any = undefined;
-  let completedResponse: any = undefined;
-
-  for (const rawLine of sseText.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line.startsWith("data:")) continue;
-    const payload = line.slice(5).trim();
-    if (!payload || payload === "[DONE]") continue;
-    try {
-      const obj = JSON.parse(payload);
-      if (obj?.type === "response.output_text.delta") outputText += obj?.delta ?? "";
-      if (obj?.type === "response.output_text.done" && !outputText) outputText = obj?.text ?? "";
-      if (obj?.type === "response.completed") {
-        usage = obj?.response?.usage;
-        completedResponse = obj?.response;
-      }
-    } catch {}
-  }
-
-  if (completedResponse) {
-    const converted = responseObjectToChatCompletion(completedResponse, model);
-    if (!converted?.choices?.[0]?.message?.content && outputText) {
-      converted.choices[0].message.content = outputText;
-    }
-    return converted;
-  }
-
-  const prompt = usage?.input_tokens ?? 0;
-  const completion = usage?.output_tokens ?? 0;
-  const total = usage?.total_tokens ?? prompt + completion;
-
-  return {
-    id: `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
-    object: "chat.completion",
-    created: Math.floor(Date.now() / 1000),
-    model,
-    choices: [{ index: 0, message: { role: "assistant", content: outputText || "" }, finish_reason: "stop" }],
-    usage: { prompt_tokens: prompt, completion_tokens: completion, total_tokens: total },
-  };
-}
-
-function convertResponsesSSEToChatCompletionSSE(upstreamLine: string, model: string): string | null {
-  if (!upstreamLine.startsWith("data:")) return null;
-  const payload = upstreamLine.slice(5).trim();
-  if (!payload || payload === "[DONE]") return payload === "[DONE]" ? "data: [DONE]\n" : null;
-
-  try {
-    const obj = JSON.parse(payload);
-
-    // Convert response.output_text.delta to chat completion delta
-    if (obj?.type === "response.output_text.delta") {
-      const delta = obj?.delta ?? "";
-      const chatDelta = {
-        id: `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
-        object: "chat.completion.chunk",
-        created: Math.floor(Date.now() / 1000),
-        model,
-        choices: [{ index: 0, delta: delta ? { content: delta } : {}, finish_reason: null }],
-      };
-      return `data: ${JSON.stringify(chatDelta)}\n\n`;
-    }
-
-    // Convert response.output_text.done - contains full text, forward it
-    if (obj?.type === "response.output_text.done") {
-      const text = obj?.text ?? "";
-      if (!text) return null;
-      const chatDelta = {
-        id: `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
-        object: "chat.completion.chunk",
-        created: Math.floor(Date.now() / 1000),
-        model,
-        choices: [{ index: 0, delta: { content: text }, finish_reason: null }],
-      };
-      return `data: ${JSON.stringify(chatDelta)}\n\n`;
-    }
-
-    // Convert response.completed to final chunk (supports tool_calls)
-    if (obj?.type === "response.completed") {
-      const usage = obj?.response?.usage;
-      const toolCalls = Array.isArray(obj?.response?.output)
-        ? obj.response.output
-          .filter((it: any) => it?.type === "function_call")
-          .map((it: any, idx: number) => ({
-            index: idx,
-            id: it?.call_id || it?.id || `call_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
-            type: "function",
-            function: {
-              name: it?.name ?? "unknown",
-              arguments: typeof it?.arguments === "string" ? it.arguments : JSON.stringify(it?.arguments ?? {}),
-            },
-          }))
-        : [];
-
-      const finalChunk = {
-        id: `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
-        object: "chat.completion.chunk",
-        created: Math.floor(Date.now() / 1000),
-        model,
-        choices: [{
-          index: 0,
-          delta: toolCalls.length ? { tool_calls: toolCalls } : {},
-          finish_reason: toolCalls.length ? "tool_calls" : "stop",
-        }],
-        usage: {
-          prompt_tokens: usage?.input_tokens ?? 0,
-          completion_tokens: usage?.output_tokens ?? 0,
-          total_tokens: usage?.total_tokens ?? 0,
-        },
-      };
-      return `data: ${JSON.stringify(finalChunk)}\n\ndata: [DONE]\n\n`;
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-function chatCompletionObjectToSSE(chatObj: any): string {
-  const normalized = ensureNonEmptyChatCompletion(chatObj).chat;
-  const id = normalized?.id || `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
-  const model = normalized?.model || "unknown";
-  const created = normalized?.created || Math.floor(Date.now() / 1000);
-  const choice = normalized?.choices?.[0] || {};
-  const content = choice?.message?.content ?? "";
-  const toolCalls = Array.isArray(choice?.message?.tool_calls) ? choice.message.tool_calls : [];
-  const finishReason = choice?.finish_reason ?? (toolCalls.length ? "tool_calls" : "stop");
-  const usage = normalized?.usage || {};
-
-  const chunks: string[] = [];
-  if (content) {
-    chunks.push(`data: ${JSON.stringify({
-      id,
-      object: "chat.completion.chunk",
-      created,
-      model,
-      choices: [{ index: 0, delta: { content }, finish_reason: null }],
-    })}\n\n`);
-  }
-
-  chunks.push(`data: ${JSON.stringify({
-    id,
-    object: "chat.completion.chunk",
-    created,
-    model,
-    choices: [{
-      index: 0,
-      delta: toolCalls.length ? { tool_calls: toolCalls } : {},
-      finish_reason: finishReason,
-    }],
-    usage: {
-      prompt_tokens: usage?.prompt_tokens ?? 0,
-      completion_tokens: usage?.completion_tokens ?? 0,
-      total_tokens: usage?.total_tokens ?? 0,
-    },
-  })}\n\n`);
-
-  chunks.push("data: [DONE]\n\n");
-  return chunks.join("");
+  throw lastError ?? new Error("failed after retries");
 }
 
 async function proxyWithRotation(req: express.Request, res: express.Response) {
@@ -1161,6 +365,7 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
   const isChatCompletionsPayload = Array.isArray(req.body?.messages);
   const isChatCompletions = isChatCompletionsPath && isChatCompletionsPayload;
   const clientRequestedStream = Boolean(req.body?.stream);
+  const sessionId = getSessionId(req);
 
   let accounts = await store.listAccounts();
   if (!accounts.length) return res.status(503).json({ error: "no accounts configured" });
@@ -1184,7 +389,9 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
 
     // Use path to determine response format, payload format to determine upstream conversion
     const shouldReturnChatCompletions = isChatCompletionsPath;
-    const payloadToUpstream = isChatCompletions ? chatCompletionsToResponsesPayload(req.body) : normalizeResponsesPayload(req.body);
+    const payloadToUpstream = isChatCompletions
+      ? chatCompletionsToResponsesPayload(req.body, sessionId)
+      : normalizeResponsesPayload(req.body, sessionId);
     const requestBody = TRACE_INCLUDE_BODY ? req.body : undefined;
     const requestModel =
       (typeof req.body?.model === "string" && req.body.model.trim()) ? req.body.model.trim()
@@ -1193,13 +400,16 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
     const headers: Record<string, string> = {
       "content-type": "application/json",
       authorization: `Bearer ${selected.accessToken}`,
-      // Force SSE upstream when client requested stream to avoid JSON response passthrough mismatch
-      accept: clientRequestedStream ? "text/event-stream" : (req.header("accept") ?? "application/json"),
+      accept: "text/event-stream",
+      "OpenAI-Beta": "responses=experimental",
+      originator: "pi",
+      "User-Agent": PI_USER_AGENT,
     };
-    if (selected.chatgptAccountId) headers["ChatGPT-Account-Id"] = selected.chatgptAccountId;
+    if (selected.chatgptAccountId) headers["chatgpt-account-id"] = selected.chatgptAccountId;
+    if (sessionId) headers.session_id = sessionId;
 
     try {
-      const upstream = await fetch(`${CHATGPT_BASE_URL}${UPSTREAM_PATH}`, {
+      const upstream = await fetchCodexWithRetry(`${CHATGPT_BASE_URL}${UPSTREAM_PATH}`, {
         method: "POST",
         headers,
         body: JSON.stringify(payloadToUpstream),
