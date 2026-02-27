@@ -1,28 +1,27 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import "./styles.css";
 
 type Account = {
   id: string;
   email?: string;
   enabled: boolean;
-  usage?: {
-    primary?: { usedPercent?: number; resetAt?: number };
-    secondary?: { usedPercent?: number; resetAt?: number };
-  };
-  state?: {
-    blockedUntil?: number;
-    lastError?: string;
-  };
+  usage?: { primary?: { usedPercent?: number; resetAt?: number }; secondary?: { usedPercent?: number; resetAt?: number } };
+  state?: { blockedUntil?: number; lastError?: string };
 };
 
-type OAuthFlow = {
-  id: string;
-  email: string;
-  status: "pending" | "success" | "error";
+type Trace = {
+  at: number;
+  route: string;
+  accountId?: string;
+  accountEmail?: string;
+  status: number;
+  stream: boolean;
+  latencyMs: number;
+  usage?: { total_tokens?: number; input_tokens?: number; output_tokens?: number };
   error?: string;
 };
 
-const token = localStorage.getItem("adminToken") ?? "change-me";
+const tokenDefault = localStorage.getItem("adminToken") ?? "change-me";
 const fmt = (ts?: number) => (!ts ? "-" : new Date(ts).toLocaleString());
 const pct = (v?: number) => (typeof v === "number" ? `${Math.round(v)}%` : "?");
 
@@ -31,141 +30,161 @@ async function api(path: string, init?: RequestInit) {
     ...init,
     headers: {
       "content-type": "application/json",
-      "x-admin-token": localStorage.getItem("adminToken") ?? token,
+      "x-admin-token": localStorage.getItem("adminToken") ?? tokenDefault,
       ...(init?.headers ?? {}),
     },
   });
-  if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
-  return res.json();
+  const txt = await res.text();
+  if (!res.ok) throw new Error(txt || `HTTP ${res.status}`);
+  return txt ? JSON.parse(txt) : {};
 }
 
 export default function App() {
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [traces, setTraces] = useState<Trace[]>([]);
   const [email, setEmail] = useState("");
-  const [flow, setFlow] = useState<OAuthFlow | null>(null);
+  const [flowId, setFlowId] = useState("");
   const [redirectInput, setRedirectInput] = useState("");
   const [expectedRedirect, setExpectedRedirect] = useState("http://localhost:1455/auth/callback");
+  const [adminToken, setAdminToken] = useState(localStorage.getItem("adminToken") ?? tokenDefault);
+  const [storageInfo, setStorageInfo] = useState<any>(null);
   const [error, setError] = useState("");
-  const [adminToken, setAdminToken] = useState(localStorage.getItem("adminToken") ?? token);
 
-  const totals = useMemo(() => {
-    const total = accounts.length;
-    const enabled = accounts.filter((a) => a.enabled).length;
-    const blocked = accounts.filter((a) => a.state?.blockedUntil && a.state.blockedUntil > Date.now()).length;
-    return { total, enabled, blocked };
-  }, [accounts]);
+  const stats = useMemo(() => ({
+    total: accounts.length,
+    enabled: accounts.filter((a) => a.enabled).length,
+    blocked: accounts.filter((a) => a.state?.blockedUntil && a.state.blockedUntil > Date.now()).length,
+  }), [accounts]);
 
   const load = async () => {
     try {
       setError("");
-      const [a, cfg] = await Promise.all([api("/admin/accounts"), api("/admin/config")]);
-      setAccounts(a.accounts ?? []);
+      const [acc, cfg, tr] = await Promise.all([
+        api("/admin/accounts"),
+        api("/admin/config"),
+        api("/admin/traces?limit=40"),
+      ]);
+      setAccounts(acc.accounts ?? []);
       setExpectedRedirect(cfg.oauthRedirectUri ?? expectedRedirect);
+      setStorageInfo(cfg.storage ?? null);
+      setTraces((tr.traces ?? []).reverse());
     } catch (e: any) {
       setError(e?.message ?? String(e));
     }
   };
 
+  useEffect(() => { load(); }, []);
+
   const startOAuth = async () => {
     if (!email.trim()) return;
-    const data = await api("/admin/oauth/start", { method: "POST", body: JSON.stringify({ email }) });
-    setFlow({ id: data.flowId, email, status: "pending" });
-    setExpectedRedirect(data.expectedRedirectUri ?? expectedRedirect);
-    window.open(data.authorizeUrl, "_blank", "noopener,noreferrer");
+    const d = await api("/admin/oauth/start", { method: "POST", body: JSON.stringify({ email }) });
+    setFlowId(d.flowId);
+    setExpectedRedirect(d.expectedRedirectUri ?? expectedRedirect);
+    window.open(d.authorizeUrl, "_blank", "noopener,noreferrer");
   };
 
   const completeOAuth = async () => {
-    if (!flow?.id || !redirectInput.trim()) return;
-    await api("/admin/oauth/complete", { method: "POST", body: JSON.stringify({ flowId: flow.id, input: redirectInput }) });
-    setFlow({ ...flow, status: "success" });
+    await api("/admin/oauth/complete", { method: "POST", body: JSON.stringify({ flowId, input: redirectInput }) });
     setRedirectInput("");
     await load();
   };
 
-  const toggleEnabled = async (a: Account) => { await api(`/admin/accounts/${a.id}`, { method: "PATCH", body: JSON.stringify({ enabled: !a.enabled }) }); await load(); };
-  const unblock = async (a: Account) => { await api(`/admin/accounts/${a.id}/unblock`, { method: "POST" }); await load(); };
-  const refreshUsage = async (a: Account) => { await api(`/admin/accounts/${a.id}/refresh-usage`, { method: "POST" }); await load(); };
-  const remove = async (a: Account) => { if (confirm(`Delete ${a.email ?? a.id}?`)) { await api(`/admin/accounts/${a.id}`, { method: "DELETE" }); await load(); } };
+  const patch = async (id: string, body: any) => { await api(`/admin/accounts/${id}`, { method: "PATCH", body: JSON.stringify(body) }); await load(); };
+  const del = async (id: string) => { if (confirm("Delete account?")) { await api(`/admin/accounts/${id}`, { method: "DELETE" }); await load(); } };
 
   return (
-    <div className="container">
-      <header className="topbar">
-        <h1>MultiCodex Proxy Dashboard</h1>
-        <div className="token-input">
-          <label>Admin token</label>
-          <input value={adminToken} onChange={(e) => setAdminToken(e.target.value)} onBlur={() => localStorage.setItem("adminToken", adminToken)} />
-          <button onClick={load}>Reload</button>
-        </div>
-      </header>
-
-      <section className="grid3"><Card title="Accounts" value={`${totals.total}`} /><Card title="Enabled" value={`${totals.enabled}`} /><Card title="Blocked" value={`${totals.blocked}`} /></section>
-
-      <section className="panel">
-        <h2>Add account via OAuth (manual paste mode)</h2>
-        <div className="row">
-          <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@domain.com" />
-          <button onClick={startOAuth}>Start OAuth</button>
-          <button onClick={() => api("/admin/usage/refresh", { method: "POST" }).then(load)}>Refresh all usage</button>
-        </div>
-        <p className="muted">Expected redirect URL: <span className="mono">{expectedRedirect}</span></p>
-        {flow && <p className="muted">Flow {flow.id} • {flow.email} • <b>{flow.status}</b> {flow.error ? `(${flow.error})` : ""}</p>}
-        <textarea value={redirectInput} onChange={(e) => setRedirectInput(e.target.value)} placeholder="Paste full redirect URL (or code / code#state) here" rows={3} style={{ width: "100%", marginTop: 8 }} />
-        <div className="row" style={{ marginTop: 8 }}><button onClick={completeOAuth}>Complete OAuth from pasted URL</button></div>
-        {error && <p className="err">{error}</p>}
-      </section>
-
-
-      <section className="panel">
-        <h2>API reference</h2>
-        <p className="muted">Base URL: <span className="mono">{window.location.origin}</span></p>
-        <div className="api-grid">
+    <div className="page">
+      <div className="shell">
+        <header className="header card">
           <div>
-            <h3>Proxy endpoints</h3>
-            <ul>
-              <li><span className="mono">GET /v1/models</span></li>
-              <li><span className="mono">GET /v1/models/:id</span></li>
-              <li><span className="mono">POST /v1/chat/completions</span></li>
-              <li><span className="mono">POST /v1/responses</span></li>
-            </ul>
+            <h1>MultiCodex Proxy</h1>
+            <p>Quota-aware multi-account proxy with OAuth and request tracing.</p>
           </div>
-          <div>
-            <h3>Admin endpoints (x-admin-token)</h3>
-            <ul>
-              <li><span className="mono">GET /admin/accounts</span></li>
-              <li><span className="mono">POST /admin/accounts</span></li>
-              <li><span className="mono">PATCH /admin/accounts/:id</span></li>
-              <li><span className="mono">DELETE /admin/accounts/:id</span></li>
-              <li><span className="mono">POST /admin/accounts/:id/unblock</span></li>
-              <li><span className="mono">POST /admin/accounts/:id/refresh-usage</span></li>
-              <li><span className="mono">POST /admin/usage/refresh</span></li>
-              <li><span className="mono">POST /admin/oauth/start</span></li>
-              <li><span className="mono">POST /admin/oauth/complete</span></li>
-              <li><span className="mono">GET /admin/oauth/status/:flowId</span></li>
-            </ul>
+          <div className="inline">
+            <input value={adminToken} onChange={(e) => setAdminToken(e.target.value)} onBlur={() => localStorage.setItem("adminToken", adminToken)} placeholder="Admin token" />
+            <button onClick={load}>Refresh</button>
           </div>
-        </div>
-        <details>
-          <summary>Quick cURL examples</summary>
-          <pre className="mono" style={{ whiteSpace: "pre-wrap" }}>{`# List accounts
-curl -H "x-admin-token: ${adminToken || "change-me"}" ${window.location.origin}/admin/accounts
+        </header>
 
-# Proxy chat
-curl -X POST ${window.location.origin}/v1/chat/completions \
-  -H "content-type: application/json" \
-  -d '{"model":"gpt-5.3-codex","messages":[{"role":"user","content":"hello"}]}'`}</pre>
-        </details>
-      </section>
+        <section className="grid cards3">
+          <Metric title="Accounts" value={`${stats.total}`} />
+          <Metric title="Enabled" value={`${stats.enabled}`} />
+          <Metric title="Blocked" value={`${stats.blocked}`} />
+        </section>
 
-      <section className="panel">
-        <h2>Accounts & usage</h2>
-        <table><thead><tr><th>Email</th><th>ID</th><th>5h</th><th>Weekly</th><th>Blocked until</th><th>Last error</th><th>Actions</th></tr></thead><tbody>
-          {accounts.map((a) => <tr key={a.id}><td>{a.email ?? "-"}</td><td className="mono">{a.id}</td><td>{pct(a.usage?.primary?.usedPercent)} <small>{fmt(a.usage?.primary?.resetAt)}</small></td><td>{pct(a.usage?.secondary?.usedPercent)} <small>{fmt(a.usage?.secondary?.resetAt)}</small></td><td>{fmt(a.state?.blockedUntil)}</td><td className="mono">{a.state?.lastError?.slice(0, 80) ?? "-"}</td><td><div className="actions"><button onClick={() => toggleEnabled(a)}>{a.enabled ? "Disable" : "Enable"}</button><button onClick={() => unblock(a)}>Unblock</button><button onClick={() => refreshUsage(a)}>Refresh</button><button className="danger" onClick={() => remove(a)}>Delete</button></div></td></tr>)}
-        </tbody></table>
-      </section>
+        <section className="card">
+          <h2>Persistence</h2>
+          <p className="muted">Accounts are persisted on disk and survive container restarts.</p>
+          {storageInfo && (
+            <ul>
+              <li className="mono">accounts: {storageInfo.accountsPath}</li>
+              <li className="mono">oauth: {storageInfo.oauthStatePath}</li>
+              <li className="mono">trace: {storageInfo.tracePath}</li>
+              <li>{storageInfo.persistenceLikelyEnabled ? "✅ Persistence mount detected" : "⚠️ Persistence not guaranteed"}</li>
+            </ul>
+          )}
+        </section>
+
+        <section className="card">
+          <h2>OAuth onboarding</h2>
+          <div className="inline wrap">
+            <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="account@email.com" />
+            <button onClick={startOAuth}>Start OAuth</button>
+          </div>
+          <p className="muted">Expected redirect: <span className="mono">{expectedRedirect}</span></p>
+          <div className="inline wrap">
+            <input value={flowId} onChange={(e) => setFlowId(e.target.value)} placeholder="flowId" />
+            <input value={redirectInput} onChange={(e) => setRedirectInput(e.target.value)} placeholder="Paste full redirect URL/code" />
+            <button onClick={completeOAuth}>Complete OAuth</button>
+          </div>
+        </section>
+
+        <section className="card">
+          <h2>Accounts</h2>
+          <table><thead><tr><th>Email</th><th>ID</th><th>5h</th><th>Week</th><th>Blocked</th><th>Error</th><th /></tr></thead><tbody>
+            {accounts.map((a) => (
+              <tr key={a.id}>
+                <td>{a.email ?? "-"}</td>
+                <td className="mono">{a.id}</td>
+                <td>{pct(a.usage?.primary?.usedPercent)}<small>{fmt(a.usage?.primary?.resetAt)}</small></td>
+                <td>{pct(a.usage?.secondary?.usedPercent)}<small>{fmt(a.usage?.secondary?.resetAt)}</small></td>
+                <td>{fmt(a.state?.blockedUntil)}</td>
+                <td className="mono">{a.state?.lastError?.slice(0, 90) ?? "-"}</td>
+                <td className="inline wrap">
+                  <button onClick={() => patch(a.id, { enabled: !a.enabled })}>{a.enabled ? "Disable" : "Enable"}</button>
+                  <button onClick={() => api(`/admin/accounts/${a.id}/unblock`, { method: "POST" }).then(load)}>Unblock</button>
+                  <button onClick={() => api(`/admin/accounts/${a.id}/refresh-usage`, { method: "POST" }).then(load)}>Refresh</button>
+                  <button className="danger" onClick={() => del(a.id)}>Delete</button>
+                </td>
+              </tr>
+            ))}
+          </tbody></table>
+        </section>
+
+        <section className="card">
+          <h2>Request tracing</h2>
+          <p className="muted">Shows account used, latency, status and token usage when returned by upstream.</p>
+          <table><thead><tr><th>Time</th><th>Route</th><th>Account</th><th>Status</th><th>Latency</th><th>Tokens</th><th>Error</th></tr></thead><tbody>
+            {traces.map((t, i) => (
+              <tr key={i}>
+                <td>{fmt(t.at)}</td>
+                <td className="mono">{t.route}{t.stream ? " (stream)" : ""}</td>
+                <td className="mono">{t.accountEmail ?? t.accountId ?? "-"}</td>
+                <td>{t.status}</td>
+                <td>{t.latencyMs}ms</td>
+                <td>{t.usage?.total_tokens ?? "-"}</td>
+                <td className="mono">{t.error?.slice(0, 60) ?? "-"}</td>
+              </tr>
+            ))}
+          </tbody></table>
+        </section>
+
+        {error && <div className="card error">{error}</div>}
+      </div>
     </div>
   );
 }
 
-function Card({ title, value }: { title: string; value: string }) {
-  return <div className="card"><div className="muted">{title}</div><div className="big">{value}</div></div>;
+function Metric({ title, value }: { title: string; value: string }) {
+  return <div className="card metric"><div className="muted">{title}</div><div className="value">{value}</div></div>;
 }
