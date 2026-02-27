@@ -1,11 +1,13 @@
 {
   "name": "multicodex-proxy",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc -p tsconfig.json",
+    "build:api": "tsc -p tsconfig.json",
+    "build:web": "npm --prefix web run build",
+    "build": "npm run build:web && npm run build:api",
     "start": "node dist/index.js"
   },
   "dependencies": {

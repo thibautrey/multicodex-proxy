@@ -1,23 +1,26 @@
-# multicodex-proxy
+# MultiCodex Proxy (Dashboard + OAuth + Quota-aware Rotation)
 
-Proxy OpenAI-compatible (`/v1/chat/completions`, `/v1/responses`) with **multi-account Codex rotation** inspired by `pi-multicodex`.
+OpenAI-compatible proxy (`/v1/chat/completions`, `/v1/responses`) inspired by `pi-multicodex`, with:
 
-## What it does
+- Multi-account Codex rotation
+- 5h + weekly usage probing (`/backend-api/wham/usage`)
+- Automatic account block/rotation on quota errors
+- OAuth login flow from dashboard (email -> browser login -> token stored)
+- React + TypeScript dashboard (shadcn-style cards/panels)
+- File-based persistence in `/data`
 
-- Uses multiple OpenAI/Codex accounts (token per account)
-- Probes ChatGPT quota windows (`/backend-api/wham/usage`)
-- Selection heuristic:
-  1. prefer accounts untouched on both windows (0% / 0%)
-  2. otherwise prefer account with soonest weekly reset
-  3. fallback by priority
-- On 429/quota-like errors, blocks account until reset (or fallback cooldown) and retries with next account
-- Stores everything in a **plain JSON file** (`/data/accounts.json`)
+## How selection works
 
-## Limits / assumptions
+1. Prefer accounts untouched on both windows (0% on 5h + weekly)
+2. Else prefer account with weekly reset soonest
+3. Else fallback by priority
 
-- Upstream defaults to `https://chatgpt.com/backend-api/codex/responses`
-- This is geared to OAuth-style access tokens similar to multicodex usage
-- If your upstream format differs, adapt `UPSTREAM_PATH` and/or payload mapping
+On 429/quota-like errors, account is temporarily blocked until next reset (or fallback cooldown).
+
+## Persisted files
+
+- `/data/accounts.json`: accounts, tokens, usage, state
+- `/data/oauth-state.json`: OAuth flow state tracking
 
 ## Run with Docker
 
@@ -25,50 +28,46 @@ Proxy OpenAI-compatible (`/v1/chat/completions`, `/v1/responses`) with **multi-a
 docker compose up -d --build
 ```
 
-Service: `http://localhost:4010`
-
-## Configure accounts
-
-Set `ADMIN_TOKEN` in `docker-compose.yml`, then:
-
-```bash
-curl -X POST http://localhost:4010/admin/accounts \
-  -H 'content-type: application/json' \
-  -H 'x-admin-token: change-me' \
-  -d '{
-    "id": "acc-1",
-    "email": "you@example.com",
-    "accessToken": "<oauth_access_token>",
-    "chatgptAccountId": "optional-account-id",
-    "enabled": true,
-    "priority": 10
-  }'
-```
-
-List accounts:
-
-```bash
-curl http://localhost:4010/admin/accounts -H 'x-admin-token: change-me'
-```
-
-Unblock account manually:
-
-```bash
-curl -X POST http://localhost:4010/admin/accounts/acc-1/unblock -H 'x-admin-token: change-me'
-```
-
-## Proxy usage
-
-Point your client to:
-
+Dashboard: `http://localhost:4010`
+Proxy endpoints:
 - `http://localhost:4010/v1/chat/completions`
 - `http://localhost:4010/v1/responses`
 
-Body is forwarded upstream as-is.
+## Dashboard workflow (OAuth)
+
+1. Open dashboard
+2. Set admin token (default in compose: `change-me`)
+3. Enter account email
+4. Click **Start OAuth**
+5. Browser opens ChatGPT OAuth login
+6. Callback stores account/token automatically
+7. Account appears with usage + controls
+
+## Admin API (optional)
+
+All admin routes require `x-admin-token` if `ADMIN_TOKEN` is set.
+
+- `GET /admin/accounts`
+- `POST /admin/accounts`
+- `PATCH /admin/accounts/:id`
+- `DELETE /admin/accounts/:id`
+- `POST /admin/accounts/:id/unblock`
+- `POST /admin/accounts/:id/refresh-usage`
+- `POST /admin/usage/refresh`
+- `POST /admin/oauth/start`
+- `GET /admin/oauth/status/:flowId`
+- `GET /admin/oauth/callback`
 
 ## Local dev
 
 ```bash
 npm install
-npm run dev
+npm --prefix web install
+npm run build
+npm run start
 ```
+
+## Notes
+
+- OAuth endpoints/client can evolve. If OpenAI changes them, override env vars in `docker-compose.yml`.
+- This project is for personal/self-hosted use.
