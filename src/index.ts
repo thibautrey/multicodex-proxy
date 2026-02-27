@@ -327,6 +327,51 @@ function parseResponsesSSEToChatCompletion(sseText: string, model: string) {
   };
 }
 
+function convertResponsesSSEToChatCompletionSSE(upstreamLine: string, model: string): string | null {
+  if (!upstreamLine.startsWith("data:")) return null;
+  const payload = upstreamLine.slice(5).trim();
+  if (!payload || payload === "[DONE]") return payload === "[DONE]" ? "data: [DONE]\n" : null;
+
+  try {
+    const obj = JSON.parse(payload);
+
+    // Convert response.output_text.delta to chat completion delta
+    if (obj?.type === "response.output_text.delta") {
+      const delta = obj?.delta ?? "";
+      const chatDelta = {
+        id: `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
+        object: "chat.completion.chunk",
+        created: Math.floor(Date.now() / 1000),
+        model,
+        choices: [{ index: 0, delta: { role: "assistant", content: delta }, finish_reason: null }],
+      };
+      return `data: ${JSON.stringify(chatDelta)}\n`;
+    }
+
+    // Convert response.completed to final chunk with usage
+    if (obj?.type === "response.completed") {
+      const usage = obj?.response?.usage;
+      const finalChunk = {
+        id: `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
+        object: "chat.completion.chunk",
+        created: Math.floor(Date.now() / 1000),
+        model,
+        choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+        usage: {
+          prompt_tokens: usage?.input_tokens ?? 0,
+          completion_tokens: usage?.output_tokens ?? 0,
+          total_tokens: usage?.total_tokens ?? 0,
+        },
+      };
+      return `data: ${JSON.stringify(finalChunk)}\ndata: [DONE]\n`;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 async function proxyWithRotation(req: express.Request, res: express.Response) {
   const startedAt = Date.now();
   const isChatCompletions = (req.path || "").includes("chat/completions") || (req.originalUrl || "").includes("chat/completions");
@@ -371,6 +416,60 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
       const isStream = contentType.includes("text/event-stream");
 
       if (isStream) {
+        if (isChatCompletions && clientRequestedStream) {
+          // Forward SSE stream with conversion from Responses API to Chat Completions format
+          res.set("Content-Type", "text/event-stream");
+          res.set("Cache-Control", "no-cache");
+          res.set("Connection", "keep-alive");
+
+          const model = req.body?.model ?? payloadToUpstream?.model ?? "unknown";
+          let accumulatedUsage: any = null;
+
+          if (!upstream.body) return res.end();
+          const reader = upstream.body.getReader();
+          const decoder = new TextDecoder();
+
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value);
+            const lines = chunk.split("\n");
+
+            for (const line of lines) {
+              if (line.startsWith("data:")) {
+                const converted = convertResponsesSSEToChatCompletionSSE(line, model);
+                if (converted) {
+                  res.write(converted);
+                  // Extract usage from final chunk
+                  if (line.includes("response.completed")) {
+                    try {
+                      const payload = JSON.parse(line.slice(5).trim());
+                      accumulatedUsage = payload?.response?.usage;
+                    } catch {}
+                  }
+                }
+              }
+            }
+          }
+
+          res.write("data: [DONE]\n");
+          res.end();
+
+          await appendTrace({
+            at: Date.now(),
+            route: req.path,
+            accountId: selected.id,
+            accountEmail: selected.email,
+            status: upstream.status,
+            stream: true,
+            latencyMs: Date.now() - startedAt,
+            usage: accumulatedUsage,
+            requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
+          });
+          return;
+        }
+
         if (isChatCompletions) {
           const txt = await upstream.text();
           const chatResp = parseResponsesSSEToChatCompletion(txt, req.body?.model ?? payloadToUpstream?.model ?? "unknown");
