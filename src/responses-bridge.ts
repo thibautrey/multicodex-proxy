@@ -17,7 +17,10 @@ function looksLikeInternalToolProtocolText(text: string): boolean {
 
 function looksLikeInternalPlannerText(text: string): boolean {
   if (!text) return false;
-  if (/\bThe user earlier asked:/i.test(text)) return true;
+  const trimmed = text.trim();
+  if (/\bThe user earlier asked:/i.test(trimmed)) return true;
+  if (/^\s*(Need to|Now run|Let's run|Use tool|Use functions|Input to tool|Command:|We'll run)\b/i.test(trimmed)) return true;
+  if (/^\s*\[Use functions tool/i.test(trimmed)) return true;
 
   const markers = [
     /\bNeed to\b/i,
@@ -196,6 +199,48 @@ export function stripReasoningFromResponseObject(resp: any) {
   const next = { ...resp, output };
   if ("reasoning" in next) delete next.reasoning;
   return next;
+}
+
+export function sanitizeChatCompletionObject(chat: any) {
+  if (!chat || typeof chat !== "object" || chat.object !== "chat.completion") return chat;
+  const rawChoices = Array.isArray(chat?.choices) ? chat.choices : [];
+  const choices = rawChoices.map((choice: any) => {
+    const msg = choice?.message ?? {};
+    const rawContent = msg?.content;
+    let content = rawContent;
+    if (typeof rawContent === "string") {
+      content = sanitizeOutputText(rawContent);
+    } else if (Array.isArray(rawContent)) {
+      content = rawContent
+        .map((part: any) => {
+          if (typeof part === "string") {
+            const next = sanitizeOutputText(part);
+            return next ? next : null;
+          }
+          if (part && typeof part === "object" && typeof part?.text === "string") {
+            const next = sanitizeOutputText(part.text);
+            if (!next) return null;
+            return { ...part, text: next };
+          }
+          return part;
+        })
+        .filter((part: any) => part !== null);
+    }
+
+    const rawToolCalls = Array.isArray(msg?.tool_calls) ? msg.tool_calls : [];
+    const toolCalls = rawToolCalls.filter((tc: any) => shouldExposeFunctionCallName(tc?.function?.name));
+
+    return {
+      ...choice,
+      message: {
+        ...msg,
+        content,
+        tool_calls: toolCalls.length ? toolCalls : undefined,
+      },
+    };
+  });
+
+  return { ...chat, choices };
 }
 
 type SanitizedEventResult = { drop: true; event: null; changed: boolean } | { drop: false; event: any; changed: boolean };
@@ -578,7 +623,8 @@ export function convertResponsesSSEToChatCompletionSSE(upstreamLine: string, mod
 }
 
 export function chatCompletionObjectToSSE(chatObj: any): string {
-  const normalized = ensureNonEmptyChatCompletion(chatObj).chat;
+  const sanitized = sanitizeChatCompletionObject(chatObj);
+  const normalized = ensureNonEmptyChatCompletion(sanitized).chat;
   const id = normalized?.id || `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
   const model = normalized?.model || "unknown";
   const created = normalized?.created || Math.floor(Date.now() / 1000);
