@@ -1,147 +1,22 @@
 import React, { useEffect, useMemo, useState } from "react";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  Legend,
-  Line,
-  LineChart,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import "./styles.css";
 import { estimateCostUsd } from "./model-pricing";
-
-type Account = { id: string; email?: string; enabled: boolean; usage?: any; state?: any };
-type Trace = {
-  id: string;
-  at: number;
-  route: string;
-  accountId?: string;
-  accountEmail?: string;
-  model?: string;
-  status: number;
-  isError: boolean;
-  stream: boolean;
-  latencyMs: number;
-  tokensInput?: number;
-  tokensOutput?: number;
-  tokensTotal?: number;
-  costUsd?: number;
-  usage?: any;
-  error?: string;
-  requestBody?: any;
-};
-type TraceStats = {
-  totals: {
-    requests: number;
-    errors: number;
-    errorRate: number;
-    tokensInput: number;
-    tokensOutput: number;
-    tokensTotal: number;
-    costUsd: number;
-    latencyAvgMs: number;
-  };
-  models: Array<{ model: string; count: number; tokensInput: number; tokensOutput: number; tokensTotal: number; costUsd: number }>;
-  timeseries: Array<{
-    at: number;
-    requests: number;
-    errors: number;
-    tokensInput: number;
-    tokensOutput: number;
-    tokensTotal: number;
-    costUsd: number;
-    latencyP50Ms: number;
-    latencyP95Ms: number;
-  }>;
-};
-type TracePagination = {
-  page: number;
-  pageSize: number;
-  total: number;
-  totalPages: number;
-  hasPrev: boolean;
-  hasNext: boolean;
-};
-type Tab = "overview" | "accounts" | "tracing" | "playground" | "docs";
-
-const tokenDefault = localStorage.getItem("adminToken") ?? "change-me";
-const fmt = (ts?: number) => (!ts ? "-" : new Date(ts).toLocaleString());
-const clampPct = (v: number) => Math.max(0, Math.min(100, v));
-const TRACE_PAGE_SIZE = 100;
-const CHART_COLORS = ["#1f7a8c", "#2da4b8", "#4c956c", "#f4a259", "#e76f51", "#8a5a44", "#355070", "#43aa8b"];
-
-const EMPTY_TRACE_STATS: TraceStats = {
-  totals: {
-    requests: 0,
-    errors: 0,
-    errorRate: 0,
-    tokensInput: 0,
-    tokensOutput: 0,
-    tokensTotal: 0,
-    costUsd: 0,
-    latencyAvgMs: 0,
-  },
-  models: [],
-  timeseries: [],
-};
-
-const EMPTY_TRACE_PAGINATION: TracePagination = {
-  page: 1,
-  pageSize: TRACE_PAGE_SIZE,
-  total: 0,
-  totalPages: 1,
-  hasPrev: false,
-  hasNext: false,
-};
+import { api, tokenDefault } from "./lib/api";
+import {
+  EMPTY_TRACE_PAGINATION,
+  EMPTY_TRACE_STATS,
+  TRACE_PAGE_SIZE,
+} from "./lib/ui";
+import type { Account, Tab, Trace, TracePagination, TraceStats } from "./types";
+import { AccountsTab } from "./components/tabs/AccountsTab";
+import { DocsTab } from "./components/tabs/DocsTab";
+import { OverviewTab } from "./components/tabs/OverviewTab";
+import { PlaygroundTab } from "./components/tabs/PlaygroundTab";
+import { TracingTab } from "./components/tabs/TracingTab";
 
 const q = new URLSearchParams(window.location.search);
 const initialTab = (q.get("tab") as Tab) || "overview";
 const initialSanitized = q.get("sanitized") === "1" || q.get("safe") === "1";
-
-async function api(path: string, init?: RequestInit) {
-  const res = await fetch(path, {
-    ...init,
-    headers: { "content-type": "application/json", "x-admin-token": localStorage.getItem("adminToken") ?? tokenDefault, ...(init?.headers ?? {}) },
-  });
-  const txt = await res.text();
-  if (!res.ok) throw new Error(txt || `HTTP ${res.status}`);
-  return txt ? JSON.parse(txt) : {};
-}
-
-function maskEmail(v?: string) {
-  if (!v) return "hidden@email";
-  return "*";
-}
-
-function maskId(v?: string) {
-  if (!v) return "acc-xxxx";
-  return "*";
-}
-
-function compactNumber(v: number) {
-  return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(v);
-}
-
-function pct(v: number) {
-  return `${(v * 100).toFixed(1)}%`;
-}
-
-function usd(v: number) {
-  return new Intl.NumberFormat(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(v);
-}
-
-function routeLabel(v: string) {
-  if (v.includes("chat/completions")) return "chat/completions";
-  if (v.includes("responses")) return "responses";
-  return v;
-}
 
 export default function App() {
   const [tab, setTab] = useState<Tab>(initialTab);
@@ -237,7 +112,7 @@ export default function App() {
       api("/admin/config"),
       fetch("/v1/models").then((r) => r.json()),
     ]);
-    setAccounts(acc.accounts ?? []);
+    setAccounts((acc.accounts ?? []) as Account[]);
     setExpectedRedirect(cfg.oauthRedirectUri ?? expectedRedirect);
     setStorageInfo(cfg.storage ?? null);
     setModels((mdl.data ?? []).map((x: any) => x.id));
@@ -246,9 +121,9 @@ export default function App() {
   const loadTracing = async (page: number) => {
     const safePage = Math.max(1, page || 1);
     const tr = await api(`/admin/traces?page=${safePage}&pageSize=${TRACE_PAGE_SIZE}`);
-    setTraces(tr.traces ?? []);
-    setTraceStats(tr.stats ?? EMPTY_TRACE_STATS);
-    setTracePagination(tr.pagination ?? { ...EMPTY_TRACE_PAGINATION, page: safePage });
+    setTraces((tr.traces ?? []) as Trace[]);
+    setTraceStats((tr.stats ?? EMPTY_TRACE_STATS) as TraceStats);
+    setTracePagination((tr.pagination ?? { ...EMPTY_TRACE_PAGINATION, page: safePage }) as TracePagination);
     setExpandedTraceId(null);
   };
 
@@ -270,22 +145,22 @@ export default function App() {
         setError(e?.message ?? String(e));
       }
     };
-    load();
+    void load();
   }, []);
 
   useEffect(() => {
     if (tab !== "tracing") return;
     const timer = window.setInterval(() => {
-      loadTracing(tracePagination.page).catch((e: any) => setError(e?.message ?? String(e)));
+      void loadTracing(tracePagination.page).catch((e: any) => setError(e?.message ?? String(e)));
     }, 10_000);
     return () => window.clearInterval(timer);
   }, [tab, tracePagination.page]);
 
   const startOAuth = async () => {
     const d = await api("/admin/oauth/start", { method: "POST", body: JSON.stringify({ email }) });
-    setFlowId(d.flowId);
-    setExpectedRedirect(d.expectedRedirectUri ?? expectedRedirect);
-    window.open(d.authorizeUrl, "_blank", "noopener,noreferrer");
+    setFlowId(d.flowId as string);
+    setExpectedRedirect((d.expectedRedirectUri as string) ?? expectedRedirect);
+    window.open(d.authorizeUrl as string, "_blank", "noopener,noreferrer");
   };
 
   const completeOAuth = async () => {
@@ -306,6 +181,16 @@ export default function App() {
     }
   };
 
+  const unblock = async (id: string) => {
+    await api(`/admin/accounts/${id}/unblock`, { method: "POST" });
+    await loadBase();
+  };
+
+  const refreshUsage = async (id: string) => {
+    await api(`/admin/accounts/${id}/refresh-usage`, { method: "POST" });
+    await loadBase();
+  };
+
   const runChatTest = async () => {
     setChatOut("Running...");
     const r = await fetch("/v1/chat/completions", {
@@ -314,7 +199,7 @@ export default function App() {
       body: JSON.stringify({ model: models[0] || "gpt-5.3-codex", messages: [{ role: "user", content: chatPrompt }] }),
     });
     const j = await r.json();
-    setChatOut(j?.choices?.[0]?.message?.content || JSON.stringify(j, null, 2));
+    setChatOut((j?.choices?.[0]?.message?.content as string) || JSON.stringify(j, null, 2));
   };
 
   const gotoTracePage = async (page: number) => {
@@ -336,7 +221,7 @@ export default function App() {
           </div>
           <div className="inline wrap">
             <input value={adminToken} onChange={(e) => setAdminToken(e.target.value)} onBlur={() => localStorage.setItem("adminToken", adminToken)} placeholder="Admin token" />
-            <button className="btn secondary" onClick={refreshData}>Refresh data</button>
+            <button className="btn secondary" onClick={() => void refreshData()}>Refresh data</button>
           </div>
         </header>
 
@@ -352,365 +237,66 @@ export default function App() {
         </nav>
 
         {tab === "overview" && (
-          <>
-            <section className="grid cards3">
-              <Metric title="Accounts" value={`${stats.total}`} />
-              <Metric title="Enabled" value={`${stats.enabled}`} />
-              <Metric title="Blocked" value={`${stats.blocked}`} />
-            </section>
-
-            <section className="grid cards3">
-              <Metric title="Requests (trace window)" value={`${traceStats.totals.requests}`} />
-              <Metric title="Tokens (trace window)" value={compactNumber(traceStats.totals.tokensTotal)} />
-              <Metric title="Estimated cost (trace window)" value={usd(traceStats.totals.costUsd)} />
-            </section>
-
-            <section className="panel">
-              <h2>Aggregated usage</h2>
-              <ProgressStat label="5h average" value={usageStats.primaryAvg} count={usageStats.primaryCount} />
-              <ProgressStat label="Weekly average" value={usageStats.secondaryAvg} count={usageStats.secondaryCount} />
-            </section>
-
-            <section className="grid cards2">
-              <section className="panel">
-                <h2>Persistence</h2>
-                {storageInfo && (
-                  <ul className="clean-list">
-                    <li className="mono">accounts: {storageInfo.accountsPath}</li>
-                    <li className="mono">oauth: {storageInfo.oauthStatePath}</li>
-                    <li className="mono">trace: {storageInfo.tracePath}</li>
-                    <li>{storageInfo.persistenceLikelyEnabled ? "Persistence mount detected" : "Persistence not guaranteed"}</li>
-                  </ul>
-                )}
-              </section>
-              <section className="panel">
-                <h2>Models exposed</h2>
-                <div className="chips">{models.map((m) => <span key={m} className="chip mono">{m}</span>)}</div>
-              </section>
-            </section>
-          </>
+          <OverviewTab
+            stats={stats}
+            usageStats={usageStats}
+            traceStats={traceStats}
+            storageInfo={storageInfo}
+            models={models}
+          />
         )}
 
         {tab === "accounts" && (
-          <>
-            <section className="grid cards3">
-              <Metric title="Requests (trace window)" value={`${traceStats.totals.requests}`} />
-              <Metric title="Estimated cost (trace window)" value={usd(traceStats.totals.costUsd)} />
-              <Metric title="Top model by volume" value={traceStats.models[0]?.model ?? "-"} />
-            </section>
-
-            <section className="panel">
-              <h2>OAuth onboarding</h2>
-              <div className="inline wrap">
-                <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="account@email.com" />
-                <button className="btn" onClick={startOAuth}>Start OAuth</button>
-              </div>
-              <p className="muted">Expected redirect: <span className="mono">{expectedRedirect}</span></p>
-              <div className="inline wrap">
-                <input value={flowId} onChange={(e) => setFlowId(e.target.value)} placeholder="flowId" />
-                <input value={redirectInput} onChange={(e) => setRedirectInput(e.target.value)} placeholder="Paste full redirect URL/code" />
-                <button className="btn" onClick={completeOAuth}>Complete OAuth</button>
-              </div>
-            </section>
-
-            <section className="panel">
-              <h2>Accounts</h2>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Email</th>
-                      <th>ID</th>
-                      <th>5h</th>
-                      <th>Week</th>
-                      <th>Blocked</th>
-                      <th>Error</th>
-                      <th />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {accounts.map((a) => (
-                      <tr key={a.id}>
-                        <td>{sanitized ? maskEmail(a.email) : a.email ?? "-"}</td>
-                        <td className="mono">{sanitized ? maskId(a.id) : a.id}</td>
-                        <td>{typeof a.usage?.primary?.usedPercent === "number" ? `${Math.round(a.usage.primary.usedPercent)}%` : "?"}<small>{fmt(a.usage?.primary?.resetAt)}</small></td>
-                        <td>{typeof a.usage?.secondary?.usedPercent === "number" ? `${Math.round(a.usage.secondary.usedPercent)}%` : "?"}<small>{fmt(a.usage?.secondary?.resetAt)}</small></td>
-                        <td>{fmt(a.state?.blockedUntil)}</td>
-                        <td className="mono">{a.state?.lastError?.slice(0, 80) ?? "-"}</td>
-                        <td className="inline wrap">
-                          <button className="btn ghost" onClick={() => patch(a.id, { enabled: !a.enabled })}>{a.enabled ? "Disable" : "Enable"}</button>
-                          <button className="btn ghost" onClick={() => api(`/admin/accounts/${a.id}/unblock`, { method: "POST" }).then(loadBase)}>Unblock</button>
-                          <button className="btn ghost" onClick={() => api(`/admin/accounts/${a.id}/refresh-usage`, { method: "POST" }).then(loadBase)}>Refresh</button>
-                          <button className="btn danger" onClick={() => del(a.id)}>Delete</button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          </>
+          <AccountsTab
+            traceStats={traceStats}
+            email={email}
+            setEmail={setEmail}
+            startOAuth={startOAuth}
+            expectedRedirect={expectedRedirect}
+            flowId={flowId}
+            setFlowId={setFlowId}
+            redirectInput={redirectInput}
+            setRedirectInput={setRedirectInput}
+            completeOAuth={completeOAuth}
+            accounts={accounts}
+            sanitized={sanitized}
+            patch={patch}
+            del={del}
+            unblock={unblock}
+            refreshUsage={refreshUsage}
+          />
         )}
 
         {tab === "tracing" && (
-          <>
-            <section className="grid cards5">
-              <Metric title="Requests" value={`${traceStats.totals.requests}`} />
-              <Metric title="Error rate" value={pct(traceStats.totals.errorRate)} />
-              <Metric title="Total tokens" value={compactNumber(traceStats.totals.tokensTotal)} />
-              <Metric title="Total cost" value={usd(traceStats.totals.costUsd)} />
-              <Metric title="Avg latency" value={`${Math.round(traceStats.totals.latencyAvgMs)}ms`} />
-            </section>
-
-            <section className="grid cards2">
-              <section className="panel">
-                <h2>Tokens over time (hourly)</h2>
-                <div className="chart-wrap">
-                  <ResponsiveContainer width="100%" height={260}>
-                    <LineChart data={tokensTimeseries}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#d6dde4" />
-                      <XAxis dataKey="label" minTickGap={24} />
-                      <YAxis />
-                      <Tooltip />
-                      <Legend />
-                      <Line type="monotone" dataKey="tokensInput" name="input" stroke="#1f7a8c" strokeWidth={2} dot={false} />
-                      <Line type="monotone" dataKey="tokensOutput" name="output" stroke="#2da4b8" strokeWidth={2} dot={false} />
-                      <Line type="monotone" dataKey="tokensTotal" name="total" stroke="#4c956c" strokeWidth={2} dot={false} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              </section>
-              <section className="panel">
-                <h2>Model usage</h2>
-                <div className="chart-wrap">
-                  <ResponsiveContainer width="100%" height={260}>
-                    <BarChart data={modelChartData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#d6dde4" />
-                      <XAxis dataKey="label" interval={0} angle={-15} textAnchor="end" height={56} />
-                      <YAxis />
-                      <Tooltip />
-                      <Legend />
-                      <Bar dataKey="count" name="requests" fill="#1f7a8c" />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </section>
-            </section>
-
-            <section className="grid cards2">
-              <section className="panel">
-                <h2>Model cost (USD)</h2>
-                <div className="chart-wrap">
-                  <ResponsiveContainer width="100%" height={260}>
-                    <BarChart data={modelCostChartData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#d6dde4" />
-                      <XAxis dataKey="label" interval={0} angle={-15} textAnchor="end" height={56} />
-                      <YAxis />
-                      <Tooltip formatter={(v: any) => usd(Number(v) || 0)} />
-                      <Legend />
-                      <Bar dataKey="costUsd" name="cost usd" fill="#4c956c" />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </section>
-              <section className="panel">
-                <h2>Error trend (hourly)</h2>
-                <div className="chart-wrap">
-                  <ResponsiveContainer width="100%" height={260}>
-                    <LineChart data={tokensTimeseries}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#d6dde4" />
-                      <XAxis dataKey="label" minTickGap={24} />
-                      <YAxis />
-                      <Tooltip />
-                      <Legend />
-                      <Line type="monotone" dataKey="errors" name="errors" stroke="#c44545" strokeWidth={2} dot={false} />
-                      <Line type="monotone" dataKey="requests" name="requests" stroke="#355070" strokeWidth={2} dot={false} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              </section>
-              <section className="panel">
-                <h2>Cost over time (hourly)</h2>
-                <div className="chart-wrap">
-                  <ResponsiveContainer width="100%" height={260}>
-                    <LineChart data={tokensTimeseries}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#d6dde4" />
-                      <XAxis dataKey="label" minTickGap={24} />
-                      <YAxis />
-                      <Tooltip formatter={(v: any) => usd(Number(v) || 0)} />
-                      <Legend />
-                      <Line type="monotone" dataKey="costUsd" name="cost usd" stroke="#4c956c" strokeWidth={2} dot={false} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              </section>
-            </section>
-
-            <section className="panel">
-              <h2>Latency p50/p95 (hourly)</h2>
-              <div className="chart-wrap">
-                <ResponsiveContainer width="100%" height={260}>
-                  <LineChart data={tokensTimeseries}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#d6dde4" />
-                    <XAxis dataKey="label" minTickGap={24} />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    <Line type="monotone" dataKey="latencyP50Ms" name="p50" stroke="#f4a259" strokeWidth={2} dot={false} />
-                    <Line type="monotone" dataKey="latencyP95Ms" name="p95" stroke="#e76f51" strokeWidth={2} dot={false} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </section>
-
-            <section className="panel">
-              <h2>Model split by token volume</h2>
-              <div className="chart-wrap">
-                <ResponsiveContainer width="100%" height={260}>
-                  <PieChart>
-                    <Pie data={modelChartData} dataKey="tokensTotal" nameKey="label" outerRadius={90} label>
-                      {modelChartData.map((entry, idx) => (
-                        <Cell key={`${entry.label}-${idx}`} fill={CHART_COLORS[idx % CHART_COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip />
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-            </section>
-
-            <section className="panel">
-              <div className="trace-head">
-                <h2>Request tracing</h2>
-                <div className="inline wrap">
-                  <button className="btn ghost" onClick={() => gotoTracePage(tracePagination.page - 1)} disabled={!tracePagination.hasPrev}>Previous</button>
-                  <span className="mono">Page {tracePagination.page} / {tracePagination.totalPages} ({tracePagination.total} traces)</span>
-                  <button className="btn ghost" onClick={() => gotoTracePage(tracePagination.page + 1)} disabled={!tracePagination.hasNext}>Next</button>
-                </div>
-              </div>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Time</th>
-                      <th>Route</th>
-                      <th>Model</th>
-                      <th>Account</th>
-                      <th>Status</th>
-                      <th>Latency</th>
-                      <th>Tokens</th>
-                      <th>Cost</th>
-                      <th>Error</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {traces.map((t) => {
-                      const isExpanded = expandedTraceId === t.id;
-                      const rowCost = typeof t.costUsd === "number" ? t.costUsd : (estimateCostUsd(t.model, t.tokensInput ?? 0, t.tokensOutput ?? 0) ?? 0);
-                      return (
-                        <React.Fragment key={t.id}>
-                          <tr onClick={() => setExpandedTraceId(isExpanded ? null : t.id)} className="trace-row">
-                            <td>{fmt(t.at)}</td>
-                            <td className="mono">{routeLabel(t.route)}</td>
-                            <td className="mono">{t.model ?? "-"}</td>
-                            <td className="mono">{sanitized ? maskEmail(t.accountEmail) || maskId(t.accountId) : t.accountEmail ?? t.accountId ?? "-"}</td>
-                            <td>{t.status}</td>
-                            <td>{t.latencyMs}ms</td>
-                            <td>{t.tokensTotal ?? t.usage?.total_tokens ?? "-"}</td>
-                            <td className="mono">{usd(rowCost)}</td>
-                            <td className="mono">{t.error?.slice(0, 60) ?? "-"}</td>
-                          </tr>
-                          {isExpanded && (
-                            <tr>
-                              <td colSpan={9}>
-                                <div className="expanded-trace">
-                                  <details open>
-                                    <summary>Request Body</summary>
-                                    <pre className="mono pre">{JSON.stringify(t.requestBody, null, 2)}</pre>
-                                  </details>
-                                  <details>
-                                    <summary>Full Trace Object</summary>
-                                    <pre className="mono pre">{JSON.stringify(t, null, 2)}</pre>
-                                  </details>
-                                </div>
-                              </td>
-                            </tr>
-                          )}
-                        </React.Fragment>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          </>
+          <TracingTab
+            traceStats={traceStats}
+            tokensTimeseries={tokensTimeseries}
+            modelChartData={modelChartData}
+            modelCostChartData={modelCostChartData}
+            tracePagination={tracePagination}
+            gotoTracePage={gotoTracePage}
+            traces={traces}
+            expandedTraceId={expandedTraceId}
+            setExpandedTraceId={setExpandedTraceId}
+            sanitized={sanitized}
+          />
         )}
 
         {tab === "playground" && (
-          <section className="panel">
-            <h2>Chat test</h2>
-            <div className="inline wrap">
-              <input value={chatPrompt} onChange={(e) => setChatPrompt(e.target.value)} placeholder="Type a prompt" />
-              <button className="btn" onClick={runChatTest}>Run</button>
-            </div>
-            <pre className="mono pre">{chatOut || "No output yet."}</pre>
-          </section>
+          <PlaygroundTab
+            chatPrompt={chatPrompt}
+            setChatPrompt={setChatPrompt}
+            runChatTest={runChatTest}
+            chatOut={chatOut}
+          />
         )}
 
         {tab === "docs" && (
-          <>
-            <section className="panel">
-              <h2>API reference</h2>
-              <ul className="clean-list">
-                <li className="mono">GET /v1/models</li>
-                <li className="mono">GET /v1/models/:id</li>
-                <li className="mono">POST /v1/chat/completions</li>
-                <li className="mono">POST /v1/responses</li>
-                <li className="mono">GET /admin/accounts</li>
-                <li className="mono">GET /admin/traces?page=1&amp;pageSize=100</li>
-                <li className="mono">GET /admin/traces?limit=50 (legacy compatibility)</li>
-                <li className="mono">POST /admin/oauth/start</li>
-                <li className="mono">POST /admin/oauth/complete</li>
-              </ul>
-              <p className="muted">Admin endpoints require <span className="mono">x-admin-token</span>.</p>
-              <p className="muted">Sanitized mode: use URL flag <span className="mono">?sanitized=1</span> or shortcut <span className="mono">Ctrl/Cmd + Shift + S</span>.</p>
-            </section>
-            <section className="panel">
-              <h2>Pricing snapshot</h2>
-              <p className="muted">Costs are estimated from input/output tokens using model pricing. UI totals include requests, per-model spend, and global totals.</p>
-              <p className="mono">Current page estimated cost: {usd(totalTraceCostFromRows)}</p>
-            </section>
-          </>
+          <DocsTab totalTraceCostFromRows={totalTraceCostFromRows} />
         )}
 
         {error && <div className="panel error">{error}</div>}
       </div>
-    </div>
-  );
-}
-
-function Metric({ title, value }: { title: string; value: string }) {
-  return (
-    <div className="panel metric">
-      <div className="muted metric-title">{title}</div>
-      <div className="value">{value}</div>
-    </div>
-  );
-}
-
-function ProgressStat({ label, value, count }: { label: string; value: number; count: number }) {
-  const rounded = Math.round(value);
-  return (
-    <div className="progress-stat">
-      <div className="progress-head">
-        <span>{label}</span>
-        <span>{rounded}%</span>
-      </div>
-      <div className="progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={rounded} aria-label={label}>
-        <div className="progress-fill" style={{ width: `${clampPct(value)}%` }} />
-      </div>
-      <small>{count} account(s) included</small>
     </div>
   );
 }
