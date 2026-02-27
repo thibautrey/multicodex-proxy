@@ -9,6 +9,20 @@ function asNonEmptyString(v: any): string | undefined {
   return t ? t : undefined;
 }
 
+function looksLikeInternalToolProtocolText(text: string): boolean {
+  return /\bassistant\s+to=functions\./i.test(text) || /\bto=functions\.[a-z0-9_]+/i.test(text);
+}
+
+function sanitizeOutputText(text: string): string {
+  if (!text) return text;
+  return looksLikeInternalToolProtocolText(text) ? "" : text;
+}
+
+function shouldExposeFunctionCallName(name: any): boolean {
+  if (typeof name !== "string") return true;
+  return !name.trim().toLowerCase().startsWith("functions.");
+}
+
 export function extractUsageFromPayload(payload: any) {
   return payload?.usage ?? payload?.response?.usage ?? payload?.metrics?.usage;
 }
@@ -256,7 +270,9 @@ export function parseResponsesSSEToResponseObject(sseText: string) {
       const sanitized = sanitizeResponsesEvent(obj);
       if (sanitized.drop) continue;
       const event = sanitized.event;
-      if (event?.type === "response.output_text.delta") outputText += event?.delta ?? "";
+      if (event?.type === "response.output_text.delta") {
+        outputText += sanitizeOutputText(event?.delta ?? "");
+      }
       if (event?.type === "response.completed") response = stripReasoningFromResponseObject(event?.response);
     } catch {}
   }
@@ -371,12 +387,13 @@ export function responseObjectToChatCompletion(resp: any, model: string) {
         if (it?.type === "message") {
           const parts = Array.isArray(it?.content) ? it.content : [];
           for (const p of parts) {
-            if (p?.type === "output_text" && typeof p?.text === "string") outputText += p.text;
-            if (p?.type === "refusal" && typeof p?.refusal === "string") outputText += p.refusal;
+            if (p?.type === "output_text" && typeof p?.text === "string") outputText += sanitizeOutputText(p.text);
+            if (p?.type === "refusal" && typeof p?.refusal === "string") outputText += sanitizeOutputText(p.refusal);
           }
           return [];
         }
         if (it?.type === "function_call") {
+          if (!shouldExposeFunctionCallName(it?.name)) return [];
           return [{
             id: it?.call_id || it?.id || `call_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
             type: "function",
@@ -426,8 +443,8 @@ export function parseResponsesSSEToChatCompletion(sseText: string, model: string
       const sanitized = sanitizeResponsesEvent(obj);
       if (sanitized.drop) continue;
       const event = sanitized.event;
-      if (event?.type === "response.output_text.delta") outputText += event?.delta ?? "";
-      if (event?.type === "response.output_text.done" && !outputText) outputText = event?.text ?? "";
+      if (event?.type === "response.output_text.delta") outputText += sanitizeOutputText(event?.delta ?? "");
+      if (event?.type === "response.output_text.done" && !outputText) outputText = sanitizeOutputText(event?.text ?? "");
       if (event?.type === "response.completed") {
         usage = event?.response?.usage;
         completedResponse = event?.response;
@@ -469,7 +486,8 @@ export function convertResponsesSSEToChatCompletionSSE(upstreamLine: string, mod
     const event = sanitized.event;
 
     if (event?.type === "response.output_text.delta") {
-      const delta = event?.delta ?? "";
+      const delta = sanitizeOutputText(event?.delta ?? "");
+      if (!delta) return null;
       const chatDelta = {
         id: `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
         object: "chat.completion.chunk",
@@ -481,7 +499,7 @@ export function convertResponsesSSEToChatCompletionSSE(upstreamLine: string, mod
     }
 
     if (event?.type === "response.output_text.done") {
-      const text = event?.text ?? "";
+      const text = sanitizeOutputText(event?.text ?? "");
       if (!text) return null;
       const chatDelta = {
         id: `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
@@ -497,7 +515,7 @@ export function convertResponsesSSEToChatCompletionSSE(upstreamLine: string, mod
       const usage = event?.response?.usage;
       const toolCalls = Array.isArray(event?.response?.output)
         ? event.response.output
-          .filter((it: any) => it?.type === "function_call")
+          .filter((it: any) => it?.type === "function_call" && shouldExposeFunctionCallName(it?.name))
           .map((it: any, idx: number) => ({
             index: idx,
             id: it?.call_id || it?.id || `call_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
