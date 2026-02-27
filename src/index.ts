@@ -237,6 +237,13 @@ function normalizeResponsesPayload(body: any) {
     b.input = [{ role: "user", content: [{ type: "input_text", text }] }];
   }
   if (typeof b.store === "undefined") b.store = false;
+
+  // Upstream codex for recent GPT-5 models rejects max_output_tokens.
+  const model = String(b.model ?? "");
+  if (model.startsWith("gpt-5") && typeof b.max_output_tokens !== "undefined") {
+    delete b.max_output_tokens;
+  }
+
   b.stream = true;
   return b;
 }
@@ -425,7 +432,8 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
         return;
       }
 
-      const text = await upstream.text();
+      let text = await upstream.text();
+      if (!text) text = JSON.stringify({ error: `upstream ${upstream.status} with empty body` });
 
       if (text.includes("event: response.")) {
         if (isChatCompletions) {
