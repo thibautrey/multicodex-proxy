@@ -30,6 +30,7 @@ import {
   parseResponsesSSEToChatCompletion,
   parseResponsesSSEToResponseObject,
   responseObjectToChatCompletion,
+  sanitizeAssistantTextChunk,
   sanitizeChatCompletionObject,
   sanitizeResponsesSSEFrame,
   stripReasoningFromResponseObject,
@@ -443,6 +444,7 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
 
           const model = req.body?.model ?? payloadToUpstream?.model ?? "unknown";
           let accumulatedUsage: any = null;
+          let streamedFallbackText = "";
 
           if (!upstream.body) return res.end();
           const reader = upstream.body.getReader();
@@ -459,7 +461,19 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
             for (const line of lines) {
               if (!line.startsWith("data:")) continue;
 
-              const converted = convertResponsesSSEToChatCompletionSSE(line, model);
+              const payload = line.slice(5).trim();
+              if (payload && payload !== "[DONE]") {
+                try {
+                  const event = JSON.parse(payload);
+                  if (event?.type === "response.output_text.delta" && typeof event?.delta === "string") {
+                    streamedFallbackText += sanitizeAssistantTextChunk(event.delta);
+                  } else if (event?.type === "response.output_text.done" && !streamedFallbackText && typeof event?.text === "string") {
+                    streamedFallbackText = sanitizeAssistantTextChunk(event.text);
+                  }
+                } catch {}
+              }
+
+              const converted = convertResponsesSSEToChatCompletionSSE(line, model, streamedFallbackText);
               if (converted) {
                 res.write(converted);
                 if (converted.includes("[DONE]")) doneSent = true;
