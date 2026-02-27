@@ -329,12 +329,8 @@ function chatCompletionsToResponsesPayload(body: any) {
   if (body?.temperature !== undefined) {
     payload.temperature = body.temperature;
   }
-  if (body?.max_tokens !== undefined) {
-    payload.max_output_tokens = body.max_tokens;
-  }
-  if (body?.max_completion_tokens !== undefined) {
-    payload.max_output_tokens = body.max_completion_tokens;
-  }
+  // Note: Responses API doesn't support max_output_tokens, so we skip it
+  // if (body?.max_tokens !== undefined) { payload.max_output_tokens = body.max_tokens; }
 
   return payload;
 }
