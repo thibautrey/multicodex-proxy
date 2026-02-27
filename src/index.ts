@@ -1060,6 +1060,48 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
       if (!text) text = JSON.stringify({ error: `upstream ${upstream.status} with empty body` });
       const upstreamError = !upstream.ok ? text.slice(0, 500) : undefined;
 
+      let parsed: any = undefined;
+      try { parsed = JSON.parse(text); } catch {}
+
+      // Hard guarantee for chat-completions streaming clients:
+      // always return SSE, even when upstream returns JSON or SSE-like text without content-type.
+      if (shouldReturnChatCompletions && clientRequestedStream && upstream.ok) {
+        let chatResp: any = undefined;
+
+        if (parsed?.object === "chat.completion") {
+          chatResp = parsed;
+        } else if (parsed?.object === "response") {
+          chatResp = responseObjectToChatCompletion(parsed, req.body?.model ?? payloadToUpstream?.model ?? "unknown");
+        } else if (text.includes("data:")) {
+          chatResp = parseResponsesSSEToChatCompletion(text, req.body?.model ?? payloadToUpstream?.model ?? "unknown");
+        }
+
+        if (chatResp) {
+          res.status(200);
+          res.set("Content-Type", "text/event-stream");
+          res.set("Cache-Control", "no-cache");
+          res.set("Connection", "keep-alive");
+          res.write(chatCompletionObjectToSSE(chatResp));
+          res.end();
+
+          await appendTrace({
+            at: Date.now(),
+            route: req.path,
+            accountId: selected.id,
+            accountEmail: selected.email,
+            model: requestModel,
+            status: upstream.status,
+            stream: true,
+            latencyMs: Date.now() - startedAt,
+            usage: chatResp?.usage,
+            requestBody,
+            upstreamError,
+            upstreamContentType: contentType,
+          });
+          return;
+        }
+      }
+
       if (text.includes("event: response.")) {
         if (shouldReturnChatCompletions) {
           const chatResp = parseResponsesSSEToChatCompletion(text, req.body?.model ?? payloadToUpstream?.model ?? "unknown");
@@ -1104,8 +1146,6 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
       setForwardHeaders(upstream, res);
       res.type(contentType || "application/json").send(text);
 
-      let parsed: any = undefined;
-      try { parsed = JSON.parse(text); } catch {}
       const usage = extractUsageFromPayload(parsed);
 
       await appendTrace({
