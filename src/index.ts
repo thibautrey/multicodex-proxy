@@ -288,13 +288,32 @@ function chatCompletionsToResponsesPayload(body: any) {
       content: toUpstreamInputContent(m?.content),
     }));
 
-  return {
+  const payload: any = {
     model: body?.model,
     instructions: body?.instructions || systemInstructions || "You are a helpful assistant.",
     input,
     store: false,
     stream: true,
   };
+
+  // Forward tools if present
+  if (body?.tools) {
+    payload.tools = body.tools;
+  }
+  if (body?.tool_choice) {
+    payload.tool_choice = body.tool_choice;
+  }
+  if (body?.temperature !== undefined) {
+    payload.temperature = body.temperature;
+  }
+  if (body?.max_tokens !== undefined) {
+    payload.max_output_tokens = body.max_tokens;
+  }
+  if (body?.max_completion_tokens !== undefined) {
+    payload.max_output_tokens = body.max_completion_tokens;
+  }
+
+  return payload;
 }
 
 function parseResponsesSSEToChatCompletion(sseText: string, model: string) {
@@ -338,14 +357,32 @@ function convertResponsesSSEToChatCompletionSSE(upstreamLine: string, model: str
     // Convert response.output_text.delta to chat completion delta
     if (obj?.type === "response.output_text.delta") {
       const delta = obj?.delta ?? "";
+      // First chunk includes role, subsequent chunks only content
+      const deltaObj: any = delta ? { content: delta } : {};
       const chatDelta = {
         id: `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
         object: "chat.completion.chunk",
         created: Math.floor(Date.now() / 1000),
         model,
-        choices: [{ index: 0, delta: { role: "assistant", content: delta }, finish_reason: null }],
+        choices: [{ index: 0, delta: deltaObj, finish_reason: null }],
       };
       return `data: ${JSON.stringify(chatDelta)}\n`;
+    }
+
+    // Convert response.output_text.done - contains full text, forward it
+    if (obj?.type === "response.output_text.done") {
+      const text = obj?.text ?? "";
+      if (text) {
+        const chatDelta = {
+          id: `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
+          object: "chat.completion.chunk",
+          created: Math.floor(Date.now() / 1000),
+          model,
+          choices: [{ index: 0, delta: { content: text }, finish_reason: null }],
+        };
+        return `data: ${JSON.stringify(chatDelta)}\n`;
+      }
+      return null;
     }
 
     // Convert response.completed to final chunk with usage
@@ -366,6 +403,7 @@ function convertResponsesSSEToChatCompletionSSE(upstreamLine: string, model: str
       return `data: ${JSON.stringify(finalChunk)}\ndata: [DONE]\n`;
     }
 
+    // Ignore other event types (response.created, etc.)
     return null;
   } catch {
     return null;
