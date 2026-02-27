@@ -10,12 +10,37 @@ function asNonEmptyString(v: any): string | undefined {
 }
 
 function looksLikeInternalToolProtocolText(text: string): boolean {
-  return /\bassistant\s+to=functions\./i.test(text) || /\bto=functions\.[a-z0-9_]+/i.test(text);
+  return /\bassistant\s+to=functions\./i.test(text)
+    || /\bto=functions\.[a-z0-9_]+/i.test(text)
+    || /\bfunctions\.[a-z0-9_]+\b/i.test(text);
+}
+
+function looksLikeInternalPlannerText(text: string): boolean {
+  if (!text) return false;
+  if (/\bThe user earlier asked:/i.test(text)) return true;
+
+  const markers = [
+    /\bNeed to\b/i,
+    /\bNow run command\b/i,
+    /\bLet's run\b/i,
+    /\bUse functions\b/i,
+    /\bUse tool\b/i,
+    /\bInput to tool\b/i,
+    /\bUse functions\.[a-z0-9_]+\b/i,
+    /\bCommand:\b/i,
+  ];
+
+  let hits = 0;
+  for (const marker of markers) {
+    if (marker.test(text)) hits += 1;
+    if (hits >= 2) return true;
+  }
+  return false;
 }
 
 function sanitizeOutputText(text: string): string {
   if (!text) return text;
-  return looksLikeInternalToolProtocolText(text) ? "" : text;
+  return (looksLikeInternalToolProtocolText(text) || looksLikeInternalPlannerText(text)) ? "" : text;
 }
 
 function shouldExposeFunctionCallName(name: any): boolean {
