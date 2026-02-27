@@ -1,0 +1,16 @@
+version: "3.9"
+services:
+  multicodex-proxy:
+    build: .
+    container_name: multicodex-proxy
+    ports:
+      - "4010:4010"
+    environment:
+      - PORT=4010
+      - STORE_PATH=/data/accounts.json
+      - CHATGPT_BASE_URL=https://chatgpt.com
+      - UPSTREAM_PATH=/backend-api/codex/responses
+      - ADMIN_TOKEN=change-me
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
