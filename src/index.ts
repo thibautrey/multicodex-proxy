@@ -229,6 +229,43 @@ function toUpstreamInputContent(content: any) {
   return [{ type: "input_text", text: String(content ?? "") }];
 }
 
+function normalizeResponsesPayload(body: any) {
+  const b = { ...(body ?? {}) };
+  if (!b.instructions) b.instructions = "You are a helpful assistant.";
+  if (!Array.isArray(b.input)) {
+    const text = typeof b.input === "string" ? b.input : (typeof b.prompt === "string" ? b.prompt : "");
+    b.input = [{ role: "user", content: [{ type: "input_text", text }] }];
+  }
+  if (typeof b.store === "undefined") b.store = false;
+  b.stream = true;
+  return b;
+}
+
+function parseResponsesSSEToResponseObject(sseText: string) {
+  let response: any = null;
+  let outputText = "";
+  for (const rawLine of sseText.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line.startsWith("data:")) continue;
+    const payload = line.slice(5).trim();
+    if (!payload || payload === "[DONE]") continue;
+    try {
+      const obj = JSON.parse(payload);
+      if (obj?.type === "response.output_text.delta") outputText += obj?.delta ?? "";
+      if (obj?.type === "response.completed") response = obj?.response;
+    } catch {}
+  }
+  if (!response) {
+    return {
+      id: `resp_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
+      object: "response",
+      status: "completed",
+      output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: outputText }] }],
+    };
+  }
+  return response;
+}
+
 function chatCompletionsToResponsesPayload(body: any) {
   const messages = Array.isArray(body?.messages) ? body.messages : [];
   const systemInstructions = messages
@@ -307,7 +344,7 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
     selected.state = { ...selected.state, lastSelectedAt: Date.now() };
     await store.upsertAccount(selected);
 
-    const payloadToUpstream = isChatCompletions ? chatCompletionsToResponsesPayload(req.body) : (req.body ?? {});
+    const payloadToUpstream = isChatCompletions ? chatCompletionsToResponsesPayload(req.body) : normalizeResponsesPayload(req.body);
 
     const headers: Record<string, string> = {
       "content-type": "application/json",
@@ -346,6 +383,24 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
           return;
         }
 
+        if (!clientRequestedStream) {
+          const txt = await upstream.text();
+          const respObj = parseResponsesSSEToResponseObject(txt);
+          res.status(upstream.ok ? 200 : upstream.status).json(respObj);
+          await appendTrace({
+            at: Date.now(),
+            route: req.path,
+            accountId: selected.id,
+            accountEmail: selected.email,
+            status: upstream.status,
+            stream: false,
+            latencyMs: Date.now() - startedAt,
+            usage: respObj?.usage,
+            requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
+          });
+          return;
+        }
+
         res.status(upstream.status);
         setForwardHeaders(upstream, res);
         if (!upstream.body) return res.end();
@@ -372,9 +427,26 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
 
       const text = await upstream.text();
 
-      if (isChatCompletions && text.includes("event: response.")) {
-        const chatResp = parseResponsesSSEToChatCompletion(text, req.body?.model ?? payloadToUpstream?.model ?? "unknown");
-        res.status(upstream.ok ? 200 : upstream.status).json(chatResp);
+      if (text.includes("event: response.")) {
+        if (isChatCompletions) {
+          const chatResp = parseResponsesSSEToChatCompletion(text, req.body?.model ?? payloadToUpstream?.model ?? "unknown");
+          res.status(upstream.ok ? 200 : upstream.status).json(chatResp);
+          await appendTrace({
+            at: Date.now(),
+            route: req.path,
+            accountId: selected.id,
+            accountEmail: selected.email,
+            status: upstream.status,
+            stream: false,
+            latencyMs: Date.now() - startedAt,
+            usage: chatResp?.usage,
+            requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
+          });
+          return;
+        }
+
+        const respObj = parseResponsesSSEToResponseObject(text);
+        res.status(upstream.ok ? 200 : upstream.status).json(respObj);
         await appendTrace({
           at: Date.now(),
           route: req.path,
@@ -383,7 +455,7 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
           status: upstream.status,
           stream: false,
           latencyMs: Date.now() - startedAt,
-          usage: chatResp?.usage,
+          usage: respObj?.usage,
           requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
         });
         return;
