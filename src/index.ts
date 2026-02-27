@@ -1454,14 +1454,69 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
 const PROXY_MODELS = (process.env.PROXY_MODELS ?? "gpt-5.3-codex,gpt-5.2-codex,gpt-5-codex").split(",").map((s) => s.trim()).filter(Boolean);
 const MODELS_CLIENT_VERSION = process.env.MODELS_CLIENT_VERSION ?? "1.0.0";
 const MODELS_CACHE_MS = Number(process.env.MODELS_CACHE_MS ?? 10 * 60_000);
-let modelsCache: { at: number; ids: string[] } = { at: 0, ids: [] };
+type ExposedModel = {
+  id: string;
+  object: "model";
+  created: number;
+  owned_by: string;
+  metadata: {
+    context_window: number | null;
+    max_output_tokens: number | null;
+    supports_reasoning: boolean;
+    supports_tools: boolean;
+    supported_tool_types: string[];
+  };
+};
 
-function modelObject(id: string) {
-  return { id, object: "model", created: Math.floor(Date.now() / 1000), owned_by: "multicodex-proxy" };
+let modelsCache: { at: number; models: ExposedModel[] } = { at: 0, models: [] };
+
+function toSafeNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
 }
 
-async function discoverModelIds(): Promise<string[]> {
-  if (Date.now() - modelsCache.at < MODELS_CACHE_MS && modelsCache.ids.length) return modelsCache.ids;
+function firstKnownNumber(source: Record<string, unknown>, keys: string[]): number | null {
+  for (const key of keys) {
+    const found = toSafeNumber(source[key]);
+    if (found !== null) return found;
+  }
+  return null;
+}
+
+function modelObject(id: string, upstream?: Record<string, unknown>): ExposedModel {
+  const upstreamObject = upstream ?? {};
+  const contextWindow = firstKnownNumber(upstreamObject, ["context_window", "contextWindow", "max_context_tokens", "max_input_tokens"]);
+  const maxOutputTokens = firstKnownNumber(upstreamObject, ["max_output_tokens", "maxOutputTokens"]);
+  const toolTypesRaw = upstreamObject.tool_types;
+  const supportedToolTypes = Array.isArray(toolTypesRaw)
+    ? toolTypesRaw.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+    : ["function"];
+  const supportsTools = supportedToolTypes.length > 0;
+  const supportsReasoning = typeof upstreamObject.supports_reasoning === "boolean"
+    ? upstreamObject.supports_reasoning
+    : id.includes("gpt-5") || id.includes("codex");
+
+  return {
+    id,
+    object: "model",
+    created: Math.floor(Date.now() / 1000),
+    owned_by: "multicodex-proxy",
+    metadata: {
+      context_window: contextWindow,
+      max_output_tokens: maxOutputTokens,
+      supports_reasoning: supportsReasoning,
+      supports_tools: supportsTools,
+      supported_tool_types: supportedToolTypes,
+    },
+  };
+}
+
+async function discoverModels(): Promise<ExposedModel[]> {
+  if (Date.now() - modelsCache.at < MODELS_CACHE_MS && modelsCache.models.length) return modelsCache.models;
 
   try {
     const accounts = await store.listAccounts();
@@ -1475,29 +1530,38 @@ async function discoverModelIds(): Promise<string[]> {
     const r = await fetch(url, { headers });
     if (!r.ok) throw new Error(`models upstream ${r.status}`);
     const json: any = await r.json();
-    const ids = Array.isArray(json?.models)
-      ? json.models.map((m: any) => m?.slug).filter((x: any) => typeof x === "string" && x)
-      : [];
+    const upstream = Array.isArray(json?.models) ? json.models : [];
+    const byId = new Map<string, ExposedModel>();
 
-    const merged = Array.from(new Set([...PROXY_MODELS, ...ids]));
-    modelsCache = { at: Date.now(), ids: merged };
+    for (const entry of upstream) {
+      const slug = typeof entry?.slug === "string" && entry.slug.trim() ? entry.slug.trim() : "";
+      if (!slug) continue;
+      byId.set(slug, modelObject(slug, entry));
+    }
+    for (const id of PROXY_MODELS) {
+      if (!byId.has(id)) byId.set(id, modelObject(id));
+    }
+
+    const merged = Array.from(byId.values());
+    modelsCache = { at: Date.now(), models: merged };
     return merged;
   } catch {
-    const fallback = Array.from(new Set(PROXY_MODELS));
-    modelsCache = { at: Date.now(), ids: fallback };
+    const fallback = Array.from(new Set(PROXY_MODELS)).map((id) => modelObject(id));
+    modelsCache = { at: Date.now(), models: fallback };
     return fallback;
   }
 }
 
 app.get("/v1/models", async (_req, res) => {
-  const ids = await discoverModelIds();
-  res.json({ object: "list", data: ids.map(modelObject) });
+  const models = await discoverModels();
+  res.json({ object: "list", data: models });
 });
 app.get("/v1/models/:id", async (req, res) => {
   const id = req.params.id;
-  const ids = await discoverModelIds();
-  if (!ids.includes(id)) return res.status(404).json({ error: { message: `The model '${id}' does not exist`, type: "invalid_request_error" } });
-  res.json(modelObject(id));
+  const models = await discoverModels();
+  const model = models.find((m) => m.id === id);
+  if (!model) return res.status(404).json({ error: { message: `The model '${id}' does not exist`, type: "invalid_request_error" } });
+  res.json(model);
 });
 
 app.post("/v1/chat/completions", proxyWithRotation);

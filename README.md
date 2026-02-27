@@ -114,6 +114,24 @@ http://localhost:1455/auth/callback
 curl http://localhost:4010/v1/models
 ```
 
+Example model object returned:
+
+```json
+{
+  "id": "gpt-5.3-codex",
+  "object": "model",
+  "created": 1730000000,
+  "owned_by": "multicodex-proxy",
+  "metadata": {
+    "context_window": null,
+    "max_output_tokens": null,
+    "supports_reasoning": true,
+    "supports_tools": true,
+    "supported_tool_types": ["function"]
+  }
+}
+```
+
 ### Chat completion
 
 ```bash
