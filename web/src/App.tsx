@@ -26,11 +26,11 @@ async function api(path: string, init?: RequestInit) {
 function maskEmail(v?: string) {
   if (!v) return "hidden@email";
   const [a, d] = v.split("@");
-  return `${a.slice(0, 2)}***@${d || "hidden"}`;
+  return "*";
 }
 function maskId(v?: string) {
   if (!v) return "acc-xxxx";
-  return `${v.slice(0, 4)}••••${v.slice(-4)}`;
+  return "*";
 }
 
 export default function App() {
@@ -121,7 +121,6 @@ export default function App() {
 
     <nav className="tabs card">
       {(["overview","accounts","tracing","playground","docs"] as Tab[]).map((t)=><button key={t} className={tab===t?"tab active":"tab"} onClick={()=>setTab(t)}>{t}</button>)}
-      <button className={sanitized?"tab active":"tab"} onClick={()=>setSanitized(v=>!v)} title="Shortcut: Ctrl/Cmd+Shift+S">sanitized</button>
     </nav>
 
     {tab==="overview" && <>
