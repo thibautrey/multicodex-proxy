@@ -14,7 +14,9 @@ services:
       - TRACE_INCLUDE_BODY=true
       - CHATGPT_BASE_URL=https://chatgpt.com
       - UPSTREAM_PATH=/backend-api/codex/responses
-      - PROXY_MODELS=gpt-5.3-codex
+      - PROXY_MODELS=gpt-5.3-codex,gpt-5.2-codex,gpt-5-codex
+      - MODELS_CLIENT_VERSION=1.0.0
+      - MODELS_CACHE_MS=600000
       - ADMIN_TOKEN=change-me
       - OAUTH_CLIENT_ID=app_EMoamEEZ73f0CkXaXp7hrann
       - OAUTH_AUTHORIZATION_URL=https://auth.openai.com/oauth/authorize

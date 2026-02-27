@@ -440,14 +440,52 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
   res.status(429).json({ error: "all accounts exhausted or unavailable" });
 }
 
-const PROXY_MODELS = (process.env.PROXY_MODELS ?? "gpt-5.3-codex").split(",").map((s) => s.trim()).filter(Boolean);
+const PROXY_MODELS = (process.env.PROXY_MODELS ?? "gpt-5.3-codex,gpt-5.2-codex,gpt-5-codex").split(",").map((s) => s.trim()).filter(Boolean);
+const MODELS_CLIENT_VERSION = process.env.MODELS_CLIENT_VERSION ?? "1.0.0";
+const MODELS_CACHE_MS = Number(process.env.MODELS_CACHE_MS ?? 10 * 60_000);
+let modelsCache: { at: number; ids: string[] } = { at: 0, ids: [] };
+
 function modelObject(id: string) {
   return { id, object: "model", created: Math.floor(Date.now() / 1000), owned_by: "multicodex-proxy" };
 }
-app.get("/v1/models", (_req, res) => res.json({ object: "list", data: PROXY_MODELS.map(modelObject) }));
-app.get("/v1/models/:id", (req, res) => {
+
+async function discoverModelIds(): Promise<string[]> {
+  if (Date.now() - modelsCache.at < MODELS_CACHE_MS && modelsCache.ids.length) return modelsCache.ids;
+
+  try {
+    const accounts = await store.listAccounts();
+    const usable = accounts.find((a) => a.enabled && a.accessToken);
+    if (!usable) throw new Error("no usable account");
+
+    const headers: Record<string, string> = { authorization: `Bearer ${usable.accessToken}`, accept: "application/json" };
+    if (usable.chatgptAccountId) headers["ChatGPT-Account-Id"] = usable.chatgptAccountId;
+
+    const url = `${CHATGPT_BASE_URL}/backend-api/codex/models?client_version=${encodeURIComponent(MODELS_CLIENT_VERSION)}`;
+    const r = await fetch(url, { headers });
+    if (!r.ok) throw new Error(`models upstream ${r.status}`);
+    const json: any = await r.json();
+    const ids = Array.isArray(json?.models)
+      ? json.models.map((m: any) => m?.slug).filter((x: any) => typeof x === "string" && x)
+      : [];
+
+    const merged = Array.from(new Set([...PROXY_MODELS, ...ids]));
+    modelsCache = { at: Date.now(), ids: merged };
+    return merged;
+  } catch {
+    const fallback = Array.from(new Set(PROXY_MODELS));
+    modelsCache = { at: Date.now(), ids: fallback };
+    return fallback;
+  }
+}
+
+app.get("/v1/models", async (_req, res) => {
+  const ids = await discoverModelIds();
+  res.json({ object: "list", data: ids.map(modelObject) });
+});
+app.get("/v1/models/:id", async (req, res) => {
   const id = req.params.id;
-  if (!PROXY_MODELS.includes(id)) return res.status(404).json({ error: { message: `The model '${id}' does not exist`, type: "invalid_request_error" } });
+  const ids = await discoverModelIds();
+  if (!ids.includes(id)) return res.status(404).json({ error: { message: `The model '${id}' does not exist`, type: "invalid_request_error" } });
   res.json(modelObject(id));
 });
 
