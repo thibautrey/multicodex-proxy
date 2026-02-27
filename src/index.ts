@@ -26,6 +26,16 @@ const CHATGPT_BASE_URL = process.env.CHATGPT_BASE_URL ?? "https://chatgpt.com";
 const UPSTREAM_PATH = process.env.UPSTREAM_PATH ?? "/backend-api/codex/responses";
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
 
+const BUILD_GIT_SHA = process.env.APP_GIT_SHA ?? "unknown";
+const BUILD_ID = process.env.APP_BUILD_ID ?? "unknown";
+let APP_VERSION = process.env.APP_VERSION ?? "unknown";
+try {
+  const packageJsonPath = path.resolve(process.cwd(), "package.json");
+  const packageRaw = await fs.readFile(packageJsonPath, "utf8");
+  const pkg = JSON.parse(packageRaw);
+  if (typeof pkg?.version === "string" && pkg.version) APP_VERSION = pkg.version;
+} catch {}
+
 const oauthConfig: OAuthConfig = {
   authorizationUrl: process.env.OAUTH_AUTHORIZATION_URL ?? "https://auth.openai.com/oauth/authorize",
   tokenUrl: process.env.OAUTH_TOKEN_URL ?? "https://auth.openai.com/oauth/token",
