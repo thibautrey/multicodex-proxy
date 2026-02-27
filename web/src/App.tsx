@@ -1,13 +1,100 @@
 import React, { useEffect, useMemo, useState } from "react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Legend,
+  Line,
+  LineChart,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import "./styles.css";
 
 type Account = { id: string; email?: string; enabled: boolean; usage?: any; state?: any };
-type Trace = { at: number; route: string; accountId?: string; accountEmail?: string; status: number; latencyMs: number; usage?: any; error?: string; requestBody?: any };
+type Trace = {
+  id: string;
+  at: number;
+  route: string;
+  accountId?: string;
+  accountEmail?: string;
+  model?: string;
+  status: number;
+  isError: boolean;
+  stream: boolean;
+  latencyMs: number;
+  tokensInput?: number;
+  tokensOutput?: number;
+  tokensTotal?: number;
+  usage?: any;
+  error?: string;
+  requestBody?: any;
+};
+type TraceStats = {
+  totals: {
+    requests: number;
+    errors: number;
+    errorRate: number;
+    tokensInput: number;
+    tokensOutput: number;
+    tokensTotal: number;
+    latencyAvgMs: number;
+  };
+  models: Array<{ model: string; count: number; tokensTotal: number }>;
+  timeseries: Array<{
+    at: number;
+    requests: number;
+    errors: number;
+    tokensInput: number;
+    tokensOutput: number;
+    tokensTotal: number;
+    latencyP50Ms: number;
+    latencyP95Ms: number;
+  }>;
+};
+type TracePagination = {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+  hasPrev: boolean;
+  hasNext: boolean;
+};
 type Tab = "overview" | "accounts" | "tracing" | "playground" | "docs";
 
 const tokenDefault = localStorage.getItem("adminToken") ?? "change-me";
 const fmt = (ts?: number) => (!ts ? "-" : new Date(ts).toLocaleString());
 const clampPct = (v: number) => Math.max(0, Math.min(100, v));
+const TRACE_PAGE_SIZE = 100;
+const CHART_COLORS = ["#1f7a8c", "#2da4b8", "#4c956c", "#f4a259", "#e76f51", "#8a5a44", "#355070", "#43aa8b"];
+
+const EMPTY_TRACE_STATS: TraceStats = {
+  totals: {
+    requests: 0,
+    errors: 0,
+    errorRate: 0,
+    tokensInput: 0,
+    tokensOutput: 0,
+    tokensTotal: 0,
+    latencyAvgMs: 0,
+  },
+  models: [],
+  timeseries: [],
+};
+
+const EMPTY_TRACE_PAGINATION: TracePagination = {
+  page: 1,
+  pageSize: TRACE_PAGE_SIZE,
+  total: 0,
+  totalPages: 1,
+  hasPrev: false,
+  hasNext: false,
+};
 
 const q = new URLSearchParams(window.location.search);
 const initialTab = (q.get("tab") as Tab) || "overview";
@@ -33,11 +120,27 @@ function maskId(v?: string) {
   return "*";
 }
 
+function compactNumber(v: number) {
+  return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(v);
+}
+
+function pct(v: number) {
+  return `${(v * 100).toFixed(1)}%`;
+}
+
+function routeLabel(v: string) {
+  if (v.includes("chat/completions")) return "chat/completions";
+  if (v.includes("responses")) return "responses";
+  return v;
+}
+
 export default function App() {
   const [tab, setTab] = useState<Tab>(initialTab);
   const [sanitized, setSanitized] = useState(initialSanitized);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [traces, setTraces] = useState<Trace[]>([]);
+  const [traceStats, setTraceStats] = useState<TraceStats>(EMPTY_TRACE_STATS);
+  const [tracePagination, setTracePagination] = useState<TracePagination>(EMPTY_TRACE_PAGINATION);
   const [models, setModels] = useState<string[]>([]);
   const [email, setEmail] = useState("");
   const [flowId, setFlowId] = useState("");
@@ -48,7 +151,7 @@ export default function App() {
   const [chatPrompt, setChatPrompt] = useState("Give me a one-line hello");
   const [chatOut, setChatOut] = useState("");
   const [error, setError] = useState("");
-  const [expandedTrace, setExpandedTrace] = useState<number | null>(null);
+  const [expandedTraceId, setExpandedTraceId] = useState<string | null>(null);
 
   const stats = useMemo(
     () => ({
@@ -75,6 +178,19 @@ export default function App() {
     };
   }, [accounts]);
 
+  const modelChartData = useMemo(
+    () => traceStats.models.slice(0, 8).map((m) => ({ ...m, label: m.model })),
+    [traceStats.models],
+  );
+
+  const tokensTimeseries = useMemo(
+    () => traceStats.timeseries.map((b) => ({
+      ...b,
+      label: new Date(b.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    })),
+    [traceStats.timeseries],
+  );
+
   useEffect(() => {
     const u = new URL(window.location.href);
     u.searchParams.set("tab", tab);
@@ -94,28 +210,59 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const load = async () => {
+  const loadBase = async () => {
+    const [acc, cfg, mdl] = await Promise.all([
+      api("/admin/accounts"),
+      api("/admin/config"),
+      fetch("/v1/models").then((r) => r.json()),
+    ]);
+    setAccounts(acc.accounts ?? []);
+    setExpectedRedirect(cfg.oauthRedirectUri ?? expectedRedirect);
+    setStorageInfo(cfg.storage ?? null);
+    setModels((mdl.data ?? []).map((x: any) => x.id));
+  };
+
+  const loadTracing = async (page: number) => {
+    const safePage = Math.max(1, page || 1);
+    const tr = await api(`/admin/traces?page=${safePage}&pageSize=${TRACE_PAGE_SIZE}`);
+    setTraces(tr.traces ?? []);
+    setTraceStats(tr.stats ?? EMPTY_TRACE_STATS);
+    setTracePagination(tr.pagination ?? { ...EMPTY_TRACE_PAGINATION, page: safePage });
+    setExpandedTraceId(null);
+  };
+
+  const refreshData = async () => {
     try {
       setError("");
-      const [acc, cfg, tr, mdl] = await Promise.all([
-        api("/admin/accounts"),
-        api("/admin/config"),
-        api("/admin/traces?limit=50"),
-        fetch("/v1/models").then((r) => r.json()),
-      ]);
-      setAccounts(acc.accounts ?? []);
-      setExpectedRedirect(cfg.oauthRedirectUri ?? expectedRedirect);
-      setStorageInfo(cfg.storage ?? null);
-      setTraces((tr.traces ?? []).reverse());
-      setModels((mdl.data ?? []).map((x: any) => x.id));
+      if (tab === "tracing") {
+        await Promise.all([loadBase(), loadTracing(tracePagination.page)]);
+      } else {
+        await loadBase();
+      }
     } catch (e: any) {
       setError(e?.message ?? String(e));
     }
   };
 
   useEffect(() => {
+    const load = async () => {
+      try {
+        setError("");
+        await Promise.all([loadBase(), loadTracing(1)]);
+      } catch (e: any) {
+        setError(e?.message ?? String(e));
+      }
+    };
     load();
   }, []);
+
+  useEffect(() => {
+    if (tab !== "tracing") return;
+    const timer = window.setInterval(() => {
+      loadTracing(tracePagination.page).catch((e: any) => setError(e?.message ?? String(e)));
+    }, 10_000);
+    return () => window.clearInterval(timer);
+  }, [tab, tracePagination.page]);
 
   const startOAuth = async () => {
     const d = await api("/admin/oauth/start", { method: "POST", body: JSON.stringify({ email }) });
@@ -127,18 +274,18 @@ export default function App() {
   const completeOAuth = async () => {
     await api("/admin/oauth/complete", { method: "POST", body: JSON.stringify({ flowId, input: redirectInput }) });
     setRedirectInput("");
-    await load();
+    await loadBase();
   };
 
   const patch = async (id: string, body: any) => {
     await api(`/admin/accounts/${id}`, { method: "PATCH", body: JSON.stringify(body) });
-    await load();
+    await loadBase();
   };
 
   const del = async (id: string) => {
     if (confirm("Delete account?")) {
       await api(`/admin/accounts/${id}`, { method: "DELETE" });
-      await load();
+      await loadBase();
     }
   };
 
@@ -153,6 +300,15 @@ export default function App() {
     setChatOut(j?.choices?.[0]?.message?.content || JSON.stringify(j, null, 2));
   };
 
+  const gotoTracePage = async (page: number) => {
+    try {
+      setError("");
+      await loadTracing(page);
+    } catch (e: any) {
+      setError(e?.message ?? String(e));
+    }
+  };
+
   return (
     <div className="page">
       <div className="shell">
@@ -163,7 +319,7 @@ export default function App() {
           </div>
           <div className="inline wrap">
             <input value={adminToken} onChange={(e) => setAdminToken(e.target.value)} onBlur={() => localStorage.setItem("adminToken", adminToken)} placeholder="Admin token" />
-            <button className="btn secondary" onClick={load}>Refresh data</button>
+            <button className="btn secondary" onClick={refreshData}>Refresh data</button>
           </div>
         </header>
 
@@ -254,8 +410,8 @@ export default function App() {
                         <td className="mono">{a.state?.lastError?.slice(0, 80) ?? "-"}</td>
                         <td className="inline wrap">
                           <button className="btn ghost" onClick={() => patch(a.id, { enabled: !a.enabled })}>{a.enabled ? "Disable" : "Enable"}</button>
-                          <button className="btn ghost" onClick={() => api(`/admin/accounts/${a.id}/unblock`, { method: "POST" }).then(load)}>Unblock</button>
-                          <button className="btn ghost" onClick={() => api(`/admin/accounts/${a.id}/refresh-usage`, { method: "POST" }).then(load)}>Refresh</button>
+                          <button className="btn ghost" onClick={() => api(`/admin/accounts/${a.id}/unblock`, { method: "POST" }).then(loadBase)}>Unblock</button>
+                          <button className="btn ghost" onClick={() => api(`/admin/accounts/${a.id}/refresh-usage`, { method: "POST" }).then(loadBase)}>Refresh</button>
                           <button className="btn danger" onClick={() => del(a.id)}>Delete</button>
                         </td>
                       </tr>
@@ -268,58 +424,163 @@ export default function App() {
         )}
 
         {tab === "tracing" && (
-          <section className="panel">
-            <h2>Request tracing</h2>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Time</th>
-                    <th>Route</th>
-                    <th>Account</th>
-                    <th>Status</th>
-                    <th>Latency</th>
-                    <th>Tokens</th>
-                    <th>Error</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {traces.map((t, i) => {
-                    const isExpanded = expandedTrace === i;
-                    return (
-                      <React.Fragment key={i}>
-                        <tr onClick={() => setExpandedTrace(isExpanded ? null : i)} className="trace-row">
-                          <td>{fmt(t.at)}</td>
-                          <td className="mono">{t.route}</td>
-                          <td className="mono">{sanitized ? maskEmail(t.accountEmail) || maskId(t.accountId) : t.accountEmail ?? t.accountId ?? "-"}</td>
-                          <td>{t.status}</td>
-                          <td>{t.latencyMs}ms</td>
-                          <td>{t.usage?.total_tokens ?? "-"}</td>
-                          <td className="mono">{t.error?.slice(0, 60) ?? "-"}</td>
-                        </tr>
-                        {isExpanded && (
-                          <tr>
-                            <td colSpan={7}>
-                              <div className="expanded-trace">
-                                <details open>
-                                  <summary>Request Body</summary>
-                                  <pre className="mono pre">{JSON.stringify(t.requestBody, null, 2)}</pre>
-                                </details>
-                                <details>
-                                  <summary>Full Trace Object</summary>
-                                  <pre className="mono pre">{JSON.stringify(t, null, 2)}</pre>
-                                </details>
-                              </div>
-                            </td>
+          <>
+            <section className="grid cards4">
+              <Metric title="Requests" value={`${traceStats.totals.requests}`} />
+              <Metric title="Error rate" value={pct(traceStats.totals.errorRate)} />
+              <Metric title="Total tokens" value={compactNumber(traceStats.totals.tokensTotal)} />
+              <Metric title="Avg latency" value={`${Math.round(traceStats.totals.latencyAvgMs)}ms`} />
+            </section>
+
+            <section className="grid cards2">
+              <section className="panel">
+                <h2>Tokens over time (hourly)</h2>
+                <div className="chart-wrap">
+                  <ResponsiveContainer width="100%" height={260}>
+                    <LineChart data={tokensTimeseries}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#d6dde4" />
+                      <XAxis dataKey="label" minTickGap={24} />
+                      <YAxis />
+                      <Tooltip />
+                      <Legend />
+                      <Line type="monotone" dataKey="tokensInput" name="input" stroke="#1f7a8c" strokeWidth={2} dot={false} />
+                      <Line type="monotone" dataKey="tokensOutput" name="output" stroke="#2da4b8" strokeWidth={2} dot={false} />
+                      <Line type="monotone" dataKey="tokensTotal" name="total" stroke="#4c956c" strokeWidth={2} dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </section>
+              <section className="panel">
+                <h2>Model usage</h2>
+                <div className="chart-wrap">
+                  <ResponsiveContainer width="100%" height={260}>
+                    <BarChart data={modelChartData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#d6dde4" />
+                      <XAxis dataKey="label" interval={0} angle={-15} textAnchor="end" height={56} />
+                      <YAxis />
+                      <Tooltip />
+                      <Legend />
+                      <Bar dataKey="count" name="requests" fill="#1f7a8c" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </section>
+            </section>
+
+            <section className="grid cards2">
+              <section className="panel">
+                <h2>Error trend (hourly)</h2>
+                <div className="chart-wrap">
+                  <ResponsiveContainer width="100%" height={260}>
+                    <LineChart data={tokensTimeseries}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#d6dde4" />
+                      <XAxis dataKey="label" minTickGap={24} />
+                      <YAxis />
+                      <Tooltip />
+                      <Legend />
+                      <Line type="monotone" dataKey="errors" name="errors" stroke="#c44545" strokeWidth={2} dot={false} />
+                      <Line type="monotone" dataKey="requests" name="requests" stroke="#355070" strokeWidth={2} dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </section>
+              <section className="panel">
+                <h2>Latency p50/p95 (hourly)</h2>
+                <div className="chart-wrap">
+                  <ResponsiveContainer width="100%" height={260}>
+                    <LineChart data={tokensTimeseries}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#d6dde4" />
+                      <XAxis dataKey="label" minTickGap={24} />
+                      <YAxis />
+                      <Tooltip />
+                      <Legend />
+                      <Line type="monotone" dataKey="latencyP50Ms" name="p50" stroke="#f4a259" strokeWidth={2} dot={false} />
+                      <Line type="monotone" dataKey="latencyP95Ms" name="p95" stroke="#e76f51" strokeWidth={2} dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </section>
+            </section>
+
+            <section className="panel">
+              <h2>Model split by token volume</h2>
+              <div className="chart-wrap">
+                <ResponsiveContainer width="100%" height={260}>
+                  <PieChart>
+                    <Pie data={modelChartData} dataKey="tokensTotal" nameKey="label" outerRadius={90} label>
+                      {modelChartData.map((entry, idx) => (
+                        <Cell key={`${entry.label}-${idx}`} fill={CHART_COLORS[idx % CHART_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            </section>
+
+            <section className="panel">
+              <div className="trace-head">
+                <h2>Request tracing</h2>
+                <div className="inline wrap">
+                  <button className="btn ghost" onClick={() => gotoTracePage(tracePagination.page - 1)} disabled={!tracePagination.hasPrev}>Previous</button>
+                  <span className="mono">Page {tracePagination.page} / {tracePagination.totalPages} ({tracePagination.total} traces)</span>
+                  <button className="btn ghost" onClick={() => gotoTracePage(tracePagination.page + 1)} disabled={!tracePagination.hasNext}>Next</button>
+                </div>
+              </div>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Route</th>
+                      <th>Model</th>
+                      <th>Account</th>
+                      <th>Status</th>
+                      <th>Latency</th>
+                      <th>Tokens</th>
+                      <th>Error</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {traces.map((t) => {
+                      const isExpanded = expandedTraceId === t.id;
+                      return (
+                        <React.Fragment key={t.id}>
+                          <tr onClick={() => setExpandedTraceId(isExpanded ? null : t.id)} className="trace-row">
+                            <td>{fmt(t.at)}</td>
+                            <td className="mono">{routeLabel(t.route)}</td>
+                            <td className="mono">{t.model ?? "-"}</td>
+                            <td className="mono">{sanitized ? maskEmail(t.accountEmail) || maskId(t.accountId) : t.accountEmail ?? t.accountId ?? "-"}</td>
+                            <td>{t.status}</td>
+                            <td>{t.latencyMs}ms</td>
+                            <td>{t.tokensTotal ?? t.usage?.total_tokens ?? "-"}</td>
+                            <td className="mono">{t.error?.slice(0, 60) ?? "-"}</td>
                           </tr>
-                        )}
-                      </React.Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </section>
+                          {isExpanded && (
+                            <tr>
+                              <td colSpan={8}>
+                                <div className="expanded-trace">
+                                  <details open>
+                                    <summary>Request Body</summary>
+                                    <pre className="mono pre">{JSON.stringify(t.requestBody, null, 2)}</pre>
+                                  </details>
+                                  <details>
+                                    <summary>Full Trace Object</summary>
+                                    <pre className="mono pre">{JSON.stringify(t, null, 2)}</pre>
+                                  </details>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </>
         )}
 
         {tab === "playground" && (
@@ -342,7 +603,8 @@ export default function App() {
               <li className="mono">POST /v1/chat/completions</li>
               <li className="mono">POST /v1/responses</li>
               <li className="mono">GET /admin/accounts</li>
-              <li className="mono">GET /admin/traces?limit=50</li>
+              <li className="mono">GET /admin/traces?page=1&amp;pageSize=100</li>
+              <li className="mono">GET /admin/traces?limit=50 (legacy compatibility)</li>
               <li className="mono">POST /admin/oauth/start</li>
               <li className="mono">POST /admin/oauth/complete</li>
             </ul>

@@ -25,7 +25,7 @@ MultiCodex Proxy sits between your clients and OpenAI/Codex endpoints and gives 
 - **Multi-account routing** with quota-aware failover
 - **OAuth onboarding** from dashboard (manual redirect paste flow)
 - **Persistent account storage** across container restarts
-- **Request tracing** (account used, status, latency, usage/tokens, optional full payload)
+- **Request tracing v2** (retention capped at 1000, server pagination, tokens/model/error/latency stats, optional full payload)
 
 ---
 
@@ -68,6 +68,8 @@ Everything important is file-based and survives restart (if `/data` is mounted):
 - `/data/accounts.json`
 - `/data/oauth-state.json`
 - `/data/requests-trace.jsonl`
+
+Trace retention is capped to the latest **1000** entries.
 
 > Docker compose already mounts `./data:/data`.
 
@@ -125,6 +127,13 @@ curl -X POST http://localhost:4010/v1/chat/completions \
 ### Read traces
 
 ```bash
+# Paginated API (recommended)
+curl -H "x-admin-token: change-me" \
+  "http://localhost:4010/admin/traces?page=1&pageSize=100"
+```
+
+```bash
+# Legacy compatibility mode
 curl -H "x-admin-token: change-me" \
   "http://localhost:4010/admin/traces?limit=50"
 ```
@@ -138,8 +147,8 @@ curl -H "x-admin-token: change-me" \
 | `PORT` | `4010` | HTTP server port |
 | `STORE_PATH` | `/data/accounts.json` | Accounts store |
 | `OAUTH_STATE_PATH` | `/data/oauth-state.json` | OAuth flow state |
-| `TRACE_FILE_PATH` | `/data/requests-trace.jsonl` | Request trace file |
-| `TRACE_INCLUDE_BODY` | `true` | Persist full request payloads |
+| `TRACE_FILE_PATH` | `/data/requests-trace.jsonl` | Request trace file (retained to latest 1000 entries) |
+| `TRACE_INCLUDE_BODY` | `true` | Persist full request payloads; trace stats still work when disabled |
 | `PROXY_MODELS` | `gpt-5.3-codex,gpt-5.2-codex,gpt-5-codex` | Fallback comma-separated model list for `/v1/models` |
 | `MODELS_CLIENT_VERSION` | `1.0.0` | Version sent to `/backend-api/codex/models` for model discovery |
 | `MODELS_CACHE_MS` | `600000` | Model discovery cache duration (ms) |
@@ -181,4 +190,3 @@ If you open a PR:
 - keep it focused
 - include before/after behavior
 - include screenshots for UI changes
-
