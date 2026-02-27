@@ -3,12 +3,15 @@ import "./styles.css";
 
 type Account = { id: string; email?: string; enabled: boolean; usage?: any; state?: any };
 type Trace = { at: number; route: string; accountId?: string; accountEmail?: string; status: number; latencyMs: number; usage?: any; error?: string };
-
 type Tab = "overview" | "accounts" | "tracing" | "playground" | "docs";
 
 const tokenDefault = localStorage.getItem("adminToken") ?? "change-me";
 const fmt = (ts?: number) => (!ts ? "-" : new Date(ts).toLocaleString());
 const pct = (v?: number) => (typeof v === "number" ? `${Math.round(v)}%` : "?");
+
+const q = new URLSearchParams(window.location.search);
+const initialTab = (q.get("tab") as Tab) || "overview";
+const initialSanitized = q.get("sanitized") === "1" || q.get("safe") === "1";
 
 async function api(path: string, init?: RequestInit) {
   const res = await fetch(path, {
@@ -20,8 +23,19 @@ async function api(path: string, init?: RequestInit) {
   return txt ? JSON.parse(txt) : {};
 }
 
+function maskEmail(v?: string) {
+  if (!v) return "hidden@email";
+  const [a, d] = v.split("@");
+  return `${a.slice(0, 2)}***@${d || "hidden"}`;
+}
+function maskId(v?: string) {
+  if (!v) return "acc-xxxx";
+  return `${v.slice(0, 4)}••••${v.slice(-4)}`;
+}
+
 export default function App() {
-  const [tab, setTab] = useState<Tab>("overview");
+  const [tab, setTab] = useState<Tab>(initialTab);
+  const [sanitized, setSanitized] = useState(initialSanitized);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [traces, setTraces] = useState<Trace[]>([]);
   const [models, setModels] = useState<string[]>([]);
@@ -40,6 +54,24 @@ export default function App() {
     enabled: accounts.filter((a) => a.enabled).length,
     blocked: accounts.filter((a) => a.state?.blockedUntil && a.state.blockedUntil > Date.now()).length,
   }), [accounts]);
+
+  useEffect(() => {
+    const u = new URL(window.location.href);
+    u.searchParams.set("tab", tab);
+    if (sanitized) u.searchParams.set("sanitized", "1"); else u.searchParams.delete("sanitized");
+    window.history.replaceState({}, "", u.toString());
+  }, [tab, sanitized]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        setSanitized((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const load = async () => {
     try {
@@ -87,7 +119,10 @@ export default function App() {
       <div className="inline"><input value={adminToken} onChange={(e) => setAdminToken(e.target.value)} onBlur={() => localStorage.setItem("adminToken", adminToken)} placeholder="Admin token"/><button onClick={load}>Refresh</button></div>
     </header>
 
-    <nav className="tabs card">{(["overview","accounts","tracing","playground","docs"] as Tab[]).map((t)=><button key={t} className={tab===t?"tab active":"tab"} onClick={()=>setTab(t)}>{t}</button>)}</nav>
+    <nav className="tabs card">
+      {(["overview","accounts","tracing","playground","docs"] as Tab[]).map((t)=><button key={t} className={tab===t?"tab active":"tab"} onClick={()=>setTab(t)}>{t}</button>)}
+      <button className={sanitized?"tab active":"tab"} onClick={()=>setSanitized(v=>!v)} title="Shortcut: Ctrl/Cmd+Shift+S">sanitized</button>
+    </nav>
 
     {tab==="overview" && <>
       <section className="grid cards3"><Metric title="Accounts" value={`${stats.total}`}/><Metric title="Enabled" value={`${stats.enabled}`}/><Metric title="Blocked" value={`${stats.blocked}`}/></section>
@@ -97,14 +132,14 @@ export default function App() {
 
     {tab==="accounts" && <>
       <section className="card"><h2>OAuth onboarding</h2><div className="inline wrap"><input value={email} onChange={(e)=>setEmail(e.target.value)} placeholder="account@email.com"/><button onClick={startOAuth}>Start OAuth</button></div><p className="muted">Expected redirect: <span className="mono">{expectedRedirect}</span></p><div className="inline wrap"><input value={flowId} onChange={(e)=>setFlowId(e.target.value)} placeholder="flowId"/><input value={redirectInput} onChange={(e)=>setRedirectInput(e.target.value)} placeholder="Paste full redirect URL/code"/><button onClick={completeOAuth}>Complete OAuth</button></div></section>
-      <section className="card"><h2>Accounts</h2><table><thead><tr><th>Email</th><th>ID</th><th>5h</th><th>Week</th><th>Blocked</th><th>Error</th><th/></tr></thead><tbody>{accounts.map((a)=><tr key={a.id}><td>{a.email??"-"}</td><td className="mono">{a.id}</td><td>{pct(a.usage?.primary?.usedPercent)}<small>{fmt(a.usage?.primary?.resetAt)}</small></td><td>{pct(a.usage?.secondary?.usedPercent)}<small>{fmt(a.usage?.secondary?.resetAt)}</small></td><td>{fmt(a.state?.blockedUntil)}</td><td className="mono">{a.state?.lastError?.slice(0,80)??"-"}</td><td className="inline wrap"><button onClick={()=>patch(a.id,{enabled:!a.enabled})}>{a.enabled?"Disable":"Enable"}</button><button onClick={()=>api(`/admin/accounts/${a.id}/unblock`,{method:"POST"}).then(load)}>Unblock</button><button onClick={()=>api(`/admin/accounts/${a.id}/refresh-usage`,{method:"POST"}).then(load)}>Refresh</button><button className="danger" onClick={()=>del(a.id)}>Delete</button></td></tr>)}</tbody></table></section>
+      <section className="card"><h2>Accounts</h2><table><thead><tr><th>Email</th><th>ID</th><th>5h</th><th>Week</th><th>Blocked</th><th>Error</th><th/></tr></thead><tbody>{accounts.map((a)=><tr key={a.id}><td>{sanitized?maskEmail(a.email):a.email??"-"}</td><td className="mono">{sanitized?maskId(a.id):a.id}</td><td>{pct(a.usage?.primary?.usedPercent)}<small>{fmt(a.usage?.primary?.resetAt)}</small></td><td>{pct(a.usage?.secondary?.usedPercent)}<small>{fmt(a.usage?.secondary?.resetAt)}</small></td><td>{fmt(a.state?.blockedUntil)}</td><td className="mono">{a.state?.lastError?.slice(0,80)??"-"}</td><td className="inline wrap"><button onClick={()=>patch(a.id,{enabled:!a.enabled})}>{a.enabled?"Disable":"Enable"}</button><button onClick={()=>api(`/admin/accounts/${a.id}/unblock`,{method:"POST"}).then(load)}>Unblock</button><button onClick={()=>api(`/admin/accounts/${a.id}/refresh-usage`,{method:"POST"}).then(load)}>Refresh</button><button className="danger" onClick={()=>del(a.id)}>Delete</button></td></tr>)}</tbody></table></section>
     </>}
 
-    {tab==="tracing" && <section className="card"><h2>Request tracing</h2><table><thead><tr><th>Time</th><th>Route</th><th>Account</th><th>Status</th><th>Latency</th><th>Tokens</th><th>Error</th></tr></thead><tbody>{traces.map((t,i)=><tr key={i}><td>{fmt(t.at)}</td><td className="mono">{t.route}</td><td className="mono">{t.accountEmail??t.accountId??"-"}</td><td>{t.status}</td><td>{t.latencyMs}ms</td><td>{t.usage?.total_tokens??"-"}</td><td className="mono">{t.error?.slice(0,60)??"-"}</td></tr>)}</tbody></table></section>}
+    {tab==="tracing" && <section className="card"><h2>Request tracing</h2><table><thead><tr><th>Time</th><th>Route</th><th>Account</th><th>Status</th><th>Latency</th><th>Tokens</th><th>Error</th></tr></thead><tbody>{traces.map((t,i)=><tr key={i}><td>{fmt(t.at)}</td><td className="mono">{t.route}</td><td className="mono">{sanitized?maskEmail(t.accountEmail)||maskId(t.accountId):t.accountEmail??t.accountId??"-"}</td><td>{t.status}</td><td>{t.latencyMs}ms</td><td>{t.usage?.total_tokens??"-"}</td><td className="mono">{t.error?.slice(0,60)??"-"}</td></tr>)}</tbody></table></section>}
 
     {tab==="playground" && <section className="card"><h2>Chat test</h2><div className="inline wrap"><input value={chatPrompt} onChange={(e)=>setChatPrompt(e.target.value)} placeholder="Type a prompt"/><button onClick={runChatTest}>Run</button></div><pre className="mono pre">{chatOut || "No output yet."}</pre></section>}
 
-    {tab==="docs" && <section className="card"><h2>API reference</h2><ul><li className="mono">GET /v1/models</li><li className="mono">GET /v1/models/:id</li><li className="mono">POST /v1/chat/completions</li><li className="mono">POST /v1/responses</li><li className="mono">GET /admin/accounts</li><li className="mono">GET /admin/traces?limit=50</li><li className="mono">POST /admin/oauth/start</li><li className="mono">POST /admin/oauth/complete</li></ul><p className="muted">Admin endpoints require <span className="mono">x-admin-token</span>.</p></section>}
+    {tab==="docs" && <section className="card"><h2>API reference</h2><ul><li className="mono">GET /v1/models</li><li className="mono">GET /v1/models/:id</li><li className="mono">POST /v1/chat/completions</li><li className="mono">POST /v1/responses</li><li className="mono">GET /admin/accounts</li><li className="mono">GET /admin/traces?limit=50</li><li className="mono">POST /admin/oauth/start</li><li className="mono">POST /admin/oauth/complete</li></ul><p className="muted">Admin endpoints require <span className="mono">x-admin-token</span>.</p><p className="muted">Sanitized mode: use URL flag <span className="mono">?sanitized=1</span> or shortcut <span className="mono">Ctrl/Cmd + Shift + S</span>.</p></section>}
 
     {error && <div className="card error">{error}</div>}
   </div></div>;
