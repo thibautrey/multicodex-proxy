@@ -2,7 +2,7 @@
 
 <p align="center">
   <strong>OpenAI-compatible multi-account Codex proxy</strong><br/>
-  <sub>Quota-aware routing • OAuth onboarding • Persistent storage • Request tracing</sub>
+  <sub>Quota-aware routing • OAuth onboarding • Persistent storage • Request tracing • Automatic model discovery</sub>
 </p>
 
 <p align="center">
@@ -127,7 +127,9 @@ curl -H "x-admin-token: change-me" \
 | `OAUTH_STATE_PATH` | `/data/oauth-state.json` | OAuth flow state |
 | `TRACE_FILE_PATH` | `/data/requests-trace.jsonl` | Request trace file |
 | `TRACE_INCLUDE_BODY` | `true` | Persist full request payloads |
-| `PROXY_MODELS` | `gpt-5.3-codex` | Comma-separated model list for `/v1/models` |
+| `PROXY_MODELS` | `gpt-5.3-codex,gpt-5.2-codex,gpt-5-codex` | Fallback comma-separated model list for `/v1/models` |
+| `MODELS_CLIENT_VERSION` | `1.0.0` | Version sent to `/backend-api/codex/models` for model discovery |
+| `MODELS_CACHE_MS` | `600000` | Model discovery cache duration (ms) |
 | `ADMIN_TOKEN` | `change-me` | Admin endpoints auth token |
 | `CHATGPT_BASE_URL` | `https://chatgpt.com` | Upstream base URL |
 | `UPSTREAM_PATH` | `/backend-api/codex/responses` | Upstream request path |
