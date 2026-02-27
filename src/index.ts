@@ -285,26 +285,25 @@ function chatCompletionsToResponsesPayload(body: any) {
     .filter(Boolean)
     .join("\n\n");
 
-  // Responses API only accepts user messages in input array
-  // Convert all messages to a single user message with formatted history
-  const nonSystemMessages = messages.filter((m: any) => m?.role !== "system");
-  let inputText = "";
-  
-  for (const msg of nonSystemMessages) {
-    const roleLabel = msg?.role === "assistant" ? "Assistant" : "User";
-    const content = typeof msg?.content === "string" ? msg.content : JSON.stringify(msg?.content || "");
-    inputText += `${roleLabel}: ${content}\n\n`;
-  }
+  // Filter out system messages and convert roles
+  let input = messages
+    .filter((m: any) => m?.role !== "system")
+    .map((m: any) => {
+      const role = m?.role === "assistant" ? "assistant" : "user";
+      return {
+        role,
+        content: toUpstreamInputContent(m?.content, role),
+      };
+    });
 
-  // If no messages, use a default prompt
-  if (!inputText.trim()) {
-    inputText = "Hello";
+  // Ensure first message is a user message (Responses API requirement)
+  if (input.length > 0 && input[0]?.role === "assistant") {
+    // Prepend a dummy user message if the conversation starts with assistant
+    input = [
+      { role: "user", content: [{ type: "input_text", text: " " }] },
+      ...input,
+    ];
   }
-
-  let input = [{
-    role: "user",
-    content: [{ type: "input_text", text: inputText }],
-  }];
 
   const payload: any = {
     model: body?.model,
@@ -341,9 +340,58 @@ function chatCompletionsToResponsesPayload(body: any) {
   return payload;
 }
 
+function responseObjectToChatCompletion(resp: any, model: string) {
+  let outputText = "";
+  const toolCalls = Array.isArray(resp?.output)
+    ? resp.output
+      .flatMap((it: any) => {
+        if (it?.type === "message") {
+          const parts = Array.isArray(it?.content) ? it.content : [];
+          for (const p of parts) {
+            if ((p?.type === "output_text" || p?.type === "text") && typeof p?.text === "string") outputText += p.text;
+          }
+          return [];
+        }
+        if (it?.type === "function_call") {
+          return [{
+            id: it?.call_id || it?.id || `call_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
+            type: "function",
+            function: {
+              name: it?.name ?? "unknown",
+              arguments: typeof it?.arguments === "string" ? it.arguments : JSON.stringify(it?.arguments ?? {}),
+            },
+          }];
+        }
+        return [];
+      })
+    : [];
+
+  const usage = resp?.usage;
+  const prompt = usage?.input_tokens ?? 0;
+  const completion = usage?.output_tokens ?? 0;
+  const total = usage?.total_tokens ?? prompt + completion;
+  const finishReason = toolCalls.length > 0 ? "tool_calls" : "stop";
+
+  const message: any = { role: "assistant", content: outputText || "" };
+  if (toolCalls.length > 0) {
+    message.tool_calls = toolCalls.map((tc: any, idx: number) => ({ ...tc, index: idx }));
+  }
+
+  return {
+    id: `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
+    object: "chat.completion",
+    created: Math.floor(Date.now() / 1000),
+    model,
+    choices: [{ index: 0, message, finish_reason: finishReason }],
+    usage: { prompt_tokens: prompt, completion_tokens: completion, total_tokens: total },
+  };
+}
+
 function parseResponsesSSEToChatCompletion(sseText: string, model: string) {
   let outputText = "";
   let usage: any = undefined;
+  let completedResponse: any = undefined;
+
   for (const rawLine of sseText.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line.startsWith("data:")) continue;
@@ -353,8 +401,19 @@ function parseResponsesSSEToChatCompletion(sseText: string, model: string) {
       const obj = JSON.parse(payload);
       if (obj?.type === "response.output_text.delta") outputText += obj?.delta ?? "";
       if (obj?.type === "response.output_text.done" && !outputText) outputText = obj?.text ?? "";
-      if (obj?.type === "response.completed") usage = obj?.response?.usage;
+      if (obj?.type === "response.completed") {
+        usage = obj?.response?.usage;
+        completedResponse = obj?.response;
+      }
     } catch {}
+  }
+
+  if (completedResponse) {
+    const converted = responseObjectToChatCompletion(completedResponse, model);
+    if (!converted?.choices?.[0]?.message?.content && outputText) {
+      converted.choices[0].message.content = outputText;
+    }
+    return converted;
   }
 
   const prompt = usage?.input_tokens ?? 0;
@@ -366,7 +425,7 @@ function parseResponsesSSEToChatCompletion(sseText: string, model: string) {
     object: "chat.completion",
     created: Math.floor(Date.now() / 1000),
     model,
-    choices: [{ index: 0, message: { role: "assistant", content: outputText }, finish_reason: "stop" }],
+    choices: [{ index: 0, message: { role: "assistant", content: outputText || "" }, finish_reason: "stop" }],
     usage: { prompt_tokens: prompt, completion_tokens: completion, total_tokens: total },
   };
 }
@@ -382,14 +441,12 @@ function convertResponsesSSEToChatCompletionSSE(upstreamLine: string, model: str
     // Convert response.output_text.delta to chat completion delta
     if (obj?.type === "response.output_text.delta") {
       const delta = obj?.delta ?? "";
-      // First chunk includes role, subsequent chunks only content
-      const deltaObj: any = delta ? { content: delta } : {};
       const chatDelta = {
         id: `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
         object: "chat.completion.chunk",
         created: Math.floor(Date.now() / 1000),
         model,
-        choices: [{ index: 0, delta: deltaObj, finish_reason: null }],
+        choices: [{ index: 0, delta: delta ? { content: delta } : {}, finish_reason: null }],
       };
       return `data: ${JSON.stringify(chatDelta)}\n`;
     }
@@ -397,28 +454,44 @@ function convertResponsesSSEToChatCompletionSSE(upstreamLine: string, model: str
     // Convert response.output_text.done - contains full text, forward it
     if (obj?.type === "response.output_text.done") {
       const text = obj?.text ?? "";
-      if (text) {
-        const chatDelta = {
-          id: `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
-          object: "chat.completion.chunk",
-          created: Math.floor(Date.now() / 1000),
-          model,
-          choices: [{ index: 0, delta: { content: text }, finish_reason: null }],
-        };
-        return `data: ${JSON.stringify(chatDelta)}\n`;
-      }
-      return null;
+      if (!text) return null;
+      const chatDelta = {
+        id: `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
+        object: "chat.completion.chunk",
+        created: Math.floor(Date.now() / 1000),
+        model,
+        choices: [{ index: 0, delta: { content: text }, finish_reason: null }],
+      };
+      return `data: ${JSON.stringify(chatDelta)}\n`;
     }
 
-    // Convert response.completed to final chunk with usage
+    // Convert response.completed to final chunk (supports tool_calls)
     if (obj?.type === "response.completed") {
       const usage = obj?.response?.usage;
+      const toolCalls = Array.isArray(obj?.response?.output)
+        ? obj.response.output
+          .filter((it: any) => it?.type === "function_call")
+          .map((it: any, idx: number) => ({
+            index: idx,
+            id: it?.call_id || it?.id || `call_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
+            type: "function",
+            function: {
+              name: it?.name ?? "unknown",
+              arguments: typeof it?.arguments === "string" ? it.arguments : JSON.stringify(it?.arguments ?? {}),
+            },
+          }))
+        : [];
+
       const finalChunk = {
         id: `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
         object: "chat.completion.chunk",
         created: Math.floor(Date.now() / 1000),
         model,
-        choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+        choices: [{
+          index: 0,
+          delta: toolCalls.length ? { tool_calls: toolCalls } : {},
+          finish_reason: toolCalls.length ? "tool_calls" : "stop",
+        }],
         usage: {
           prompt_tokens: usage?.input_tokens ?? 0,
           completion_tokens: usage?.output_tokens ?? 0,
@@ -428,7 +501,6 @@ function convertResponsesSSEToChatCompletionSSE(upstreamLine: string, model: str
       return `data: ${JSON.stringify(finalChunk)}\ndata: [DONE]\n`;
     }
 
-    // Ignore other event types (response.created, etc.)
     return null;
   } catch {
     return null;
