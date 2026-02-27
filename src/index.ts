@@ -217,18 +217,20 @@ app.post("/admin/oauth/complete", adminGuard, async (req, res) => {
   }
 });
 
-function toUpstreamInputContent(content: any) {
-  if (typeof content === "string") return [{ type: "input_text", text: content }];
+function toUpstreamInputContent(content: any, role: "user" | "assistant") {
+  const textType = role === "assistant" ? "output_text" : "input_text";
+  if (typeof content === "string") return [{ type: textType, text: content }];
   if (Array.isArray(content)) {
     const out: any[] = [];
     for (const part of content) {
-      if (typeof part === "string") out.push({ type: "input_text", text: part });
-      else if (part?.type === "text" && typeof part?.text === "string") out.push({ type: "input_text", text: part.text });
-      else if (part?.type === "input_text" && typeof part?.text === "string") out.push({ type: "input_text", text: part.text });
+      if (typeof part === "string") out.push({ type: textType, text: part });
+      else if ((part?.type === "text" || part?.type === "input_text" || part?.type === "output_text") && typeof part?.text === "string") {
+        out.push({ type: textType, text: part.text });
+      }
     }
-    return out.length ? out : [{ type: "input_text", text: JSON.stringify(content) }];
+    return out.length ? out : [{ type: textType, text: JSON.stringify(content) }];
   }
-  return [{ type: "input_text", text: String(content ?? "") }];
+  return [{ type: textType, text: String(content ?? "") }];
 }
 
 function normalizeResponsesPayload(body: any) {
@@ -286,10 +288,13 @@ function chatCompletionsToResponsesPayload(body: any) {
   // Filter out system messages and convert roles
   let input = messages
     .filter((m: any) => m?.role !== "system")
-    .map((m: any) => ({
-      role: m?.role === "assistant" ? "assistant" : "user",
-      content: toUpstreamInputContent(m?.content),
-    }));
+    .map((m: any) => {
+      const role = m?.role === "assistant" ? "assistant" : "user";
+      return {
+        role,
+        content: toUpstreamInputContent(m?.content, role),
+      };
+    });
 
   // Ensure first message is a user message (Responses API requirement)
   if (input.length > 0 && input[0]?.role === "assistant") {
