@@ -437,7 +437,10 @@ function convertResponsesSSEToChatCompletionSSE(upstreamLine: string, model: str
 
 async function proxyWithRotation(req: express.Request, res: express.Response) {
   const startedAt = Date.now();
-  const isChatCompletions = (req.path || "").includes("chat/completions") || (req.originalUrl || "").includes("chat/completions");
+  const isChatCompletionsPath = (req.path || "").includes("chat/completions") || (req.originalUrl || "").includes("chat/completions");
+  // Detect payload format: Chat Completions uses 'messages', Responses API uses 'input'
+  const isChatCompletionsPayload = Array.isArray(req.body?.messages);
+  const isChatCompletions = isChatCompletionsPath && isChatCompletionsPayload;
   const clientRequestedStream = Boolean(req.body?.stream);
 
   let accounts = await store.listAccounts();
@@ -459,6 +462,8 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
     selected.state = { ...selected.state, lastSelectedAt: Date.now() };
     await store.upsertAccount(selected);
 
+    // Use path to determine response format, payload format to determine upstream conversion
+    const shouldReturnChatCompletions = isChatCompletionsPath;
     const payloadToUpstream = isChatCompletions ? chatCompletionsToResponsesPayload(req.body) : normalizeResponsesPayload(req.body);
 
     const headers: Record<string, string> = {
@@ -479,7 +484,7 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
       const isStream = contentType.includes("text/event-stream");
 
       if (isStream) {
-        if (isChatCompletions && clientRequestedStream) {
+        if (shouldReturnChatCompletions && clientRequestedStream) {
           // Forward SSE stream with conversion from Responses API to Chat Completions format
           res.set("Content-Type", "text/event-stream");
           res.set("Cache-Control", "no-cache");
@@ -533,7 +538,7 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
           return;
         }
 
-        if (isChatCompletions) {
+        if (shouldReturnChatCompletions) {
           const txt = await upstream.text();
           const chatResp = parseResponsesSSEToChatCompletion(txt, req.body?.model ?? payloadToUpstream?.model ?? "unknown");
           res.status(upstream.ok ? 200 : upstream.status).json(chatResp);
@@ -605,7 +610,7 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
       const upstreamError = !upstream.ok ? text.slice(0, 500) : undefined;
 
       if (text.includes("event: response.")) {
-        if (isChatCompletions) {
+        if (shouldReturnChatCompletions) {
           const chatResp = parseResponsesSSEToChatCompletion(text, req.body?.model ?? payloadToUpstream?.model ?? "unknown");
           res.status(upstream.ok ? 200 : upstream.status).json(chatResp);
           await appendTrace({
