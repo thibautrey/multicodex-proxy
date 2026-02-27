@@ -9,6 +9,7 @@ import {
   createOAuthState,
   exchangeCodeForToken,
   mergeTokenIntoAccount,
+  parseAuthorizationInput,
   refreshAccessToken,
   type OAuthConfig,
 } from "./oauth.js";
@@ -21,15 +22,14 @@ const OAUTH_STATE_PATH = process.env.OAUTH_STATE_PATH ?? "/data/oauth-state.json
 const CHATGPT_BASE_URL = process.env.CHATGPT_BASE_URL ?? "https://chatgpt.com";
 const UPSTREAM_PATH = process.env.UPSTREAM_PATH ?? "/backend-api/codex/responses";
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
-const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL ?? `http://localhost:${PORT}`;
 
 const oauthConfig: OAuthConfig = {
   authorizationUrl: process.env.OAUTH_AUTHORIZATION_URL ?? "https://auth.openai.com/oauth/authorize",
   tokenUrl: process.env.OAUTH_TOKEN_URL ?? "https://auth.openai.com/oauth/token",
-  clientId: process.env.OAUTH_CLIENT_ID ?? "openai-chatgpt",
+  clientId: process.env.OAUTH_CLIENT_ID ?? "app_EMoamEEZ73f0CkXaXp7hrann",
   scope: process.env.OAUTH_SCOPE ?? "openid profile email offline_access",
-  audience: process.env.OAUTH_AUDIENCE ?? "https://api.openai.com/v1",
-  redirectUri: process.env.OAUTH_REDIRECT_URI ?? `${PUBLIC_BASE_URL}/admin/oauth/callback`,
+  audience: process.env.OAUTH_AUDIENCE,
+  redirectUri: process.env.OAUTH_REDIRECT_URI ?? "http://localhost:1455/auth/callback",
 };
 
 const app = express();
@@ -69,28 +69,17 @@ async function ensureValidToken(account: Account): Promise<Account> {
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 app.get("/admin/config", adminGuard, (_req, res) => {
-  res.json({ ok: true, publicBaseUrl: PUBLIC_BASE_URL, oauthRedirectUri: oauthConfig.redirectUri });
+  res.json({ ok: true, oauthRedirectUri: oauthConfig.redirectUri });
 });
-
-app.get("/admin/accounts", adminGuard, async (_req, res) => {
-  const accounts = await store.listAccounts();
-  res.json({ accounts: accounts.map(redact) });
-});
+app.get("/admin/accounts", adminGuard, async (_req, res) => res.json({ accounts: (await store.listAccounts()).map(redact) }));
 
 app.post("/admin/accounts", adminGuard, async (req, res) => {
   const body = req.body ?? {};
   if (!body.accessToken) return res.status(400).json({ error: "accessToken required" });
   const acc: Account = {
-    id: body.id ?? randomUUID(),
-    email: body.email,
-    accessToken: body.accessToken,
-    refreshToken: body.refreshToken,
-    expiresAt: body.expiresAt,
-    chatgptAccountId: body.chatgptAccountId,
-    enabled: body.enabled ?? true,
-    priority: body.priority ?? 0,
-    usage: body.usage,
-    state: body.state,
+    id: body.id ?? randomUUID(), email: body.email, accessToken: body.accessToken, refreshToken: body.refreshToken,
+    expiresAt: body.expiresAt, chatgptAccountId: body.chatgptAccountId, enabled: body.enabled ?? true,
+    priority: body.priority ?? 0, usage: body.usage, state: body.state,
   };
   await store.upsertAccount(acc);
   res.json({ ok: true, account: redact(acc) });
@@ -101,16 +90,13 @@ app.patch("/admin/accounts/:id", adminGuard, async (req, res) => {
   if (!updated) return res.status(404).json({ error: "not found" });
   res.json({ ok: true, account: redact(updated) });
 });
-
 app.delete("/admin/accounts/:id", adminGuard, async (req, res) => {
   const ok = await store.deleteAccount(req.params.id);
   if (!ok) return res.status(404).json({ error: "not found" });
   res.json({ ok: true });
 });
-
 app.post("/admin/accounts/:id/unblock", adminGuard, async (req, res) => {
-  const accs = await store.listAccounts();
-  const acc = accs.find((a) => a.id === req.params.id);
+  const acc = (await store.listAccounts()).find((a) => a.id === req.params.id);
   if (!acc) return res.status(404).json({ error: "not found" });
   acc.state = { ...acc.state, blockedUntil: undefined, blockedReason: undefined };
   await store.upsertAccount(acc);
@@ -118,23 +104,19 @@ app.post("/admin/accounts/:id/unblock", adminGuard, async (req, res) => {
 });
 
 app.post("/admin/accounts/:id/refresh-usage", adminGuard, async (req, res) => {
-  const accs = await store.listAccounts();
-  let acc = accs.find((a) => a.id === req.params.id);
+  let acc = (await store.listAccounts()).find((a) => a.id === req.params.id);
   if (!acc) return res.status(404).json({ error: "not found" });
   acc = await ensureValidToken(acc);
   await refreshUsageIfNeeded(acc, CHATGPT_BASE_URL, true);
   await store.upsertAccount(acc);
   res.json({ ok: true, account: redact(acc) });
 });
-
 app.post("/admin/usage/refresh", adminGuard, async (_req, res) => {
-  const refreshed = await Promise.all(
-    (await store.listAccounts()).map(async (a) => {
-      const valid = await ensureValidToken(a);
-      await refreshUsageIfNeeded(valid, CHATGPT_BASE_URL, true);
-      return valid;
-    }),
-  );
+  const refreshed = await Promise.all((await store.listAccounts()).map(async (a) => {
+    const valid = await ensureValidToken(a);
+    await refreshUsageIfNeeded(valid, CHATGPT_BASE_URL, true);
+    return valid;
+  }));
   await Promise.all(refreshed.map((a) => store.upsertAccount(a)));
   res.json({ ok: true, accounts: refreshed.map(redact) });
 });
@@ -145,7 +127,7 @@ app.post("/admin/oauth/start", adminGuard, async (req, res) => {
   const flow = createOAuthState(email);
   await oauthStore.create(flow);
   const authorizeUrl = buildAuthorizationUrl(oauthConfig, flow);
-  res.json({ ok: true, flowId: flow.id, authorizeUrl });
+  res.json({ ok: true, flowId: flow.id, authorizeUrl, expectedRedirectUri: oauthConfig.redirectUri });
 });
 
 app.get("/admin/oauth/status/:flowId", adminGuard, async (req, res) => {
@@ -154,48 +136,36 @@ app.get("/admin/oauth/status/:flowId", adminGuard, async (req, res) => {
   res.json({ ok: true, flow: { ...flow, codeVerifier: undefined } });
 });
 
-app.get("/admin/oauth/callback", async (req, res) => {
-  const state = String(req.query.state ?? "");
-  const code = String(req.query.code ?? "");
-  const error = req.query.error ? String(req.query.error) : undefined;
+app.post("/admin/oauth/complete", adminGuard, async (req, res) => {
+  const flowId = String(req.body?.flowId ?? "").trim();
+  const input = String(req.body?.input ?? "").trim();
+  if (!flowId || !input) return res.status(400).json({ error: "flowId and input are required" });
 
-  const flow = await oauthStore.get(state);
-  if (!flow) return res.status(400).send("Invalid OAuth state");
+  const flow = await oauthStore.get(flowId);
+  if (!flow) return res.status(404).json({ error: "flow not found" });
 
-  if (error) {
-    await oauthStore.update(flow.id, { status: "error", error, completedAt: Date.now() });
-    return res.status(400).send(`OAuth failed: ${error}`);
-  }
-  if (!code) {
-    await oauthStore.update(flow.id, { status: "error", error: "missing code", completedAt: Date.now() });
-    return res.status(400).send("Missing code");
-  }
+  const parsed = parseAuthorizationInput(input);
+  if (!parsed.code) return res.status(400).json({ error: "missing code in pasted input" });
+  if (parsed.state && parsed.state !== flow.id) return res.status(400).json({ error: "state mismatch" });
 
   try {
-    const tokenData = await exchangeCodeForToken(oauthConfig, code, flow.codeVerifier);
+    const tokenData = await exchangeCodeForToken(oauthConfig, parsed.code, flow.codeVerifier);
     let account = accountFromOAuth(flow, tokenData);
     account = await refreshUsageIfNeeded(account, CHATGPT_BASE_URL, true);
     await store.upsertAccount(account);
     await oauthStore.update(flow.id, { status: "success", completedAt: Date.now(), accountId: account.id });
-
-    return res.type("html").send(`<html><body style="font-family: sans-serif; padding: 2rem;"><h2>Login complete</h2><p>Account saved for ${account.email ?? "(unknown email)"}.</p><p>You can close this tab and return to the dashboard.</p></body></html>`);
+    return res.json({ ok: true, account: redact(account) });
   } catch (err: any) {
     const message = err?.message ?? String(err);
     await oauthStore.update(flow.id, { status: "error", error: message, completedAt: Date.now() });
-    return res.status(500).send(`OAuth exchange failed: ${message}`);
+    return res.status(500).json({ error: `OAuth exchange failed: ${message}` });
   }
 });
 
 async function streamOrJson(resUp: Response, res: express.Response) {
   res.status(resUp.status);
-  for (const [k, v] of resUp.headers.entries()) {
-    if (k.toLowerCase() === "content-length") continue;
-    res.setHeader(k, v);
-  }
-  if (!resUp.body) {
-    res.end();
-    return;
-  }
+  for (const [k, v] of resUp.headers.entries()) if (k.toLowerCase() !== "content-length") res.setHeader(k, v);
+  if (!resUp.body) return void res.end();
   const reader = resUp.body.getReader();
   while (true) {
     const { value, done } = await reader.read();
@@ -209,22 +179,18 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
   let accounts = await store.listAccounts();
   if (!accounts.length) return res.status(503).json({ error: "no accounts configured" });
 
-  accounts = await Promise.all(
-    accounts.map(async (a) => {
-      const valid = await ensureValidToken(a);
-      await refreshUsageIfNeeded(valid, CHATGPT_BASE_URL);
-      return valid;
-    }),
-  );
+  accounts = await Promise.all(accounts.map(async (a) => {
+    const valid = await ensureValidToken(a);
+    await refreshUsageIfNeeded(valid, CHATGPT_BASE_URL);
+    return valid;
+  }));
   await Promise.all(accounts.map((a) => store.upsertAccount(a)));
 
   const tried = new Set<string>();
-
   for (let i = 0; i < accounts.length; i++) {
     const selected = chooseAccount(accounts.filter((a) => !tried.has(a.id)));
     if (!selected) break;
     tried.add(selected.id);
-
     selected.state = { ...selected.state, lastSelectedAt: Date.now() };
     await store.upsertAccount(selected);
 
@@ -236,21 +202,14 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
     if (selected.chatgptAccountId) headers["ChatGPT-Account-Id"] = selected.chatgptAccountId;
 
     try {
-      const upstream = await fetch(`${CHATGPT_BASE_URL}${UPSTREAM_PATH}`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(req.body ?? {}),
-      });
-
+      const upstream = await fetch(`${CHATGPT_BASE_URL}${UPSTREAM_PATH}`, { method: "POST", headers, body: JSON.stringify(req.body ?? {}) });
       if (upstream.ok) return streamOrJson(upstream, res);
-
       const text = await upstream.text();
       if (upstream.status === 429 || isQuotaErrorText(text)) {
         markQuotaHit(selected, `quota/rate-limit: ${upstream.status}`);
         await store.upsertAccount(selected);
         continue;
       }
-
       rememberError(selected, `upstream ${upstream.status}: ${text.slice(0, 200)}`);
       await store.upsertAccount(selected);
       return res.status(upstream.status).type("application/json").send(text);
@@ -259,7 +218,6 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
       await store.upsertAccount(selected);
     }
   }
-
   res.status(429).json({ error: "all accounts exhausted or unavailable" });
 }
 
@@ -271,12 +229,10 @@ const webDist = path.resolve(__dirname, "../web-dist");
 app.use(express.static(webDist));
 app.get("*", (req, res, next) => {
   if (req.path.startsWith("/admin/") || req.path.startsWith("/v1/") || req.path === "/health") return next();
-  res.sendFile(path.join(webDist, "index.html"), (err) => {
-    if (err) next();
-  });
+  res.sendFile(path.join(webDist, "index.html"), (err) => { if (err) next(); });
 });
 
 app.listen(PORT, () => {
   console.log(`multicodex-proxy listening on :${PORT}`);
-  console.log(`store=${STORE_PATH} oauth=${OAUTH_STATE_PATH} upstream=${CHATGPT_BASE_URL}${UPSTREAM_PATH}`);
+  console.log(`store=${STORE_PATH} oauth=${OAUTH_STATE_PATH} redirect=${oauthConfig.redirectUri} upstream=${CHATGPT_BASE_URL}${UPSTREAM_PATH}`);
 });

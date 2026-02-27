@@ -47,8 +47,41 @@ export function buildAuthorizationUrl(config: OAuthConfig, flow: OAuthFlowState)
   url.searchParams.set("code_challenge", challenge);
   url.searchParams.set("code_challenge_method", "S256");
   url.searchParams.set("login_hint", flow.email);
+  url.searchParams.set("id_token_add_organizations", "true");
+  url.searchParams.set("codex_cli_simplified_flow", "true");
+  url.searchParams.set("originator", "pi");
   if (config.audience) url.searchParams.set("audience", config.audience);
   return url.toString();
+}
+
+export function parseAuthorizationInput(input: string): { code?: string; state?: string } {
+  const value = input.trim();
+  if (!value) return {};
+
+  try {
+    const url = new URL(value);
+    return {
+      code: url.searchParams.get("code") ?? undefined,
+      state: url.searchParams.get("state") ?? undefined,
+    };
+  } catch {
+    // not a URL
+  }
+
+  if (value.includes("#")) {
+    const [code, state] = value.split("#", 2);
+    return { code, state };
+  }
+
+  if (value.includes("code=")) {
+    const params = new URLSearchParams(value);
+    return {
+      code: params.get("code") ?? undefined,
+      state: params.get("state") ?? undefined,
+    };
+  }
+
+  return { code: value };
 }
 
 async function postForm(url: string, body: URLSearchParams): Promise<TokenResponse> {

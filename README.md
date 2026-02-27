@@ -40,8 +40,9 @@ Proxy endpoints:
 3. Enter account email
 4. Click **Start OAuth**
 5. Browser opens ChatGPT OAuth login
-6. Callback stores account/token automatically
-7. Account appears with usage + controls
+6. After login, copy the full redirected URL shown by the browser
+7. Paste that URL in the dashboard and click **Complete OAuth from pasted URL**
+8. Account appears with usage + controls
 
 ## Admin API (optional)
 
@@ -56,7 +57,7 @@ All admin routes require `x-admin-token` if `ADMIN_TOKEN` is set.
 - `POST /admin/usage/refresh`
 - `POST /admin/oauth/start`
 - `GET /admin/oauth/status/:flowId`
-- `GET /admin/oauth/callback`
+- `POST /admin/oauth/complete`
 
 ## Local dev
 

@@ -18,7 +18,7 @@ services:
       - OAUTH_TOKEN_URL=https://auth.openai.com/oauth/token
       - OAUTH_SCOPE=openid profile email offline_access
       - OAUTH_AUDIENCE=https://api.openai.com/v1
-      - OAUTH_REDIRECT_URI=http://localhost:4010/admin/oauth/callback
+      - OAUTH_REDIRECT_URI=http://localhost:1455/auth/callback
     volumes:
       - ./data:/data
     restart: unless-stopped
