@@ -30,6 +30,7 @@ import {
   parseResponsesSSEToChatCompletion,
   parseResponsesSSEToResponseObject,
   responseObjectToChatCompletion,
+  sanitizeChatCompletionObject,
   sanitizeResponsesSSEFrame,
   stripReasoningFromResponseObject,
 } from "./responses-bridge.js";
@@ -601,7 +602,7 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
         try { parsed = JSON.parse(raw); } catch {}
 
         if (upstream.ok && parsed && parsed.object === "chat.completion") {
-          const normalized = ensureNonEmptyChatCompletion(parsed);
+          const normalized = ensureNonEmptyChatCompletion(sanitizeChatCompletionObject(parsed));
           res.status(200);
           res.set("Content-Type", "text/event-stream");
           res.set("Cache-Control", "no-cache");
@@ -665,7 +666,10 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
 
       let parsed: any = undefined;
       try { parsed = JSON.parse(text); } catch {}
-      if (parsed?.object === "response") {
+      if (parsed?.object === "chat.completion") {
+        parsed = sanitizeChatCompletionObject(parsed);
+        text = JSON.stringify(parsed);
+      } else if (parsed?.object === "response") {
         parsed = stripReasoningFromResponseObject(parsed);
         text = JSON.stringify(parsed);
       }
@@ -676,7 +680,7 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
         let chatResp: any = undefined;
 
         if (parsed?.object === "chat.completion") {
-          chatResp = ensureNonEmptyChatCompletion(parsed).chat;
+          chatResp = ensureNonEmptyChatCompletion(sanitizeChatCompletionObject(parsed)).chat;
         } else if (parsed?.object === "response") {
           chatResp = responseObjectToChatCompletion(parsed, req.body?.model ?? payloadToUpstream?.model ?? "unknown");
         } else if (text.includes("data:")) {
