@@ -8,6 +8,7 @@ type Tab = "overview" | "accounts" | "tracing" | "playground" | "docs";
 const tokenDefault = localStorage.getItem("adminToken") ?? "change-me";
 const fmt = (ts?: number) => (!ts ? "-" : new Date(ts).toLocaleString());
 const pct = (v?: number) => (typeof v === "number" ? `${Math.round(v)}%` : "?");
+const clampPct = (v: number) => Math.max(0, Math.min(100, v));
 
 const q = new URLSearchParams(window.location.search);
 const initialTab = (q.get("tab") as Tab) || "overview";
@@ -55,6 +56,21 @@ export default function App() {
     enabled: accounts.filter((a) => a.enabled).length,
     blocked: accounts.filter((a) => a.state?.blockedUntil && a.state.blockedUntil > Date.now()).length,
   }), [accounts]);
+  const usageStats = useMemo(() => {
+    const primary = accounts
+      .map((a) => a.usage?.primary?.usedPercent)
+      .filter((v): v is number => typeof v === "number");
+    const secondary = accounts
+      .map((a) => a.usage?.secondary?.usedPercent)
+      .filter((v): v is number => typeof v === "number");
+    const avg = (arr: number[]) => (arr.length ? arr.reduce((sum, n) => sum + n, 0) / arr.length : 0);
+    return {
+      primaryAvg: avg(primary),
+      secondaryAvg: avg(secondary),
+      primaryCount: primary.length,
+      secondaryCount: secondary.length,
+    };
+  }, [accounts]);
 
   useEffect(() => {
     const u = new URL(window.location.href);
@@ -126,6 +142,11 @@ export default function App() {
 
     {tab==="overview" && <>
       <section className="grid cards3"><Metric title="Accounts" value={`${stats.total}`}/><Metric title="Enabled" value={`${stats.enabled}`}/><Metric title="Blocked" value={`${stats.blocked}`}/></section>
+      <section className="card">
+        <h2>Usage agrégé</h2>
+        <ProgressStat label="Moyenne 5h" value={usageStats.primaryAvg} count={usageStats.primaryCount} />
+        <ProgressStat label="Moyenne week" value={usageStats.secondaryAvg} count={usageStats.secondaryCount} />
+      </section>
       <section className="card"><h2>Persistence</h2>{storageInfo && <ul><li className="mono">accounts: {storageInfo.accountsPath}</li><li className="mono">oauth: {storageInfo.oauthStatePath}</li><li className="mono">trace: {storageInfo.tracePath}</li><li>{storageInfo.persistenceLikelyEnabled ? "✅ Persistence mount detected" : "⚠️ Persistence not guaranteed"}</li></ul>}</section>
       <section className="card"><h2>Models exposed</h2><div className="chips">{models.map((m)=><span key={m} className="chip mono">{m}</span>)}</div></section>
     </>}
@@ -177,3 +198,19 @@ export default function App() {
 }
 
 function Metric({ title, value }: { title: string; value: string }) { return <div className="card metric"><div className="muted">{title}</div><div className="value">{value}</div></div>; }
+
+function ProgressStat({ label, value, count }: { label: string; value: number; count: number }) {
+  const rounded = Math.round(value);
+  return (
+    <div className="progress-stat">
+      <div className="progress-head">
+        <span>{label}</span>
+        <span>{rounded}%</span>
+      </div>
+      <div className="progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={rounded} aria-label={label}>
+        <div className="progress-fill" style={{ width: `${clampPct(value)}%` }} />
+      </div>
+      <small>{count} compte(s) pris en compte</small>
+    </div>
+  );
+}

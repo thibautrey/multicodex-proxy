@@ -12,6 +12,11 @@ button{border:0;border-radius:10px;padding:9px 12px;color:#fff;background:var(--
 .pre{background:#0c1428;border:1px solid var(--line);border-radius:10px;padding:10px;white-space:pre-wrap;min-height:120px}
 table{width:100%;border-collapse:collapse;font-size:13px} th,td{border-bottom:1px solid #243350;padding:8px;text-align:left;vertical-align:top} small{display:block;color:var(--muted)}
 .error{color:#fecaca;border-color:#7f1d1d}
+.progress-stat{display:grid;gap:6px;margin-bottom:12px}
+.progress-stat:last-child{margin-bottom:0}
+.progress-head{display:flex;justify-content:space-between;gap:10px;font-weight:600}
+.progress-track{height:10px;border-radius:999px;background:#111b34;border:1px solid var(--line);overflow:hidden}
+.progress-fill{height:100%;background:linear-gradient(90deg,#2ec5a7 0%,#4f8cff 100%)}
 .expanded-trace{padding:12px;background:#0c1428;border-radius:8px;margin-top:8px;display:flex;flex-direction:column;gap:12px}
 details summary{cursor:pointer;font-weight:600;color:var(--primary);margin-bottom:8px}
 details pre{margin-top:4px}
