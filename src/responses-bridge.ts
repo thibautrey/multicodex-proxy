@@ -19,7 +19,9 @@ function looksLikeInternalPlannerText(text: string): boolean {
   if (!text) return false;
   const trimmed = text.trim();
   if (/\bThe user earlier asked:/i.test(trimmed)) return true;
+  if (/^\s*Now we need to reply final message/i.test(trimmed)) return true;
   if (/^\s*(Need to|Now run|Let's run|Use tool|Use functions|Input to tool|Command:|We'll run)\b/i.test(trimmed)) return true;
+  if (/^\s*(Need summary:|List commands run:|Need final instructions:)\b/i.test(trimmed)) return true;
   if (/^\s*\[Use functions tool/i.test(trimmed)) return true;
 
   const markers = [
@@ -279,22 +281,9 @@ export function sanitizeResponsesEvent(event: any): SanitizedEventResult {
     return { drop: false, event: { ...event, item: sanitizeResponseMessageItem(event.item) }, changed: true };
   }
 
-  if (type === "response.output_text.delta") {
-    const delta = sanitizeOutputText(typeof event?.delta === "string" ? event.delta : "");
-    if (!delta) return { drop: true, event: null, changed: true };
-    return { drop: false, event: { ...event, delta }, changed: true };
-  }
-
-  if (type === "response.output_text.done") {
-    const text = sanitizeOutputText(typeof event?.text === "string" ? event.text : "");
-    if (!text) return { drop: true, event: null, changed: true };
-    return { drop: false, event: { ...event, text }, changed: true };
-  }
-
-  if (type === "response.refusal.delta") {
-    const delta = sanitizeOutputText(typeof event?.delta === "string" ? event.delta : "");
-    if (!delta) return { drop: true, event: null, changed: true };
-    return { drop: false, event: { ...event, delta }, changed: true };
+  // Zero-trust policy for /responses streaming: never forward raw text deltas.
+  if (type === "response.output_text.delta" || type === "response.output_text.done" || type === "response.refusal.delta") {
+    return { drop: true, event: null, changed: true };
   }
 
   return { drop: false, event, changed: false };
@@ -555,11 +544,7 @@ export function parseResponsesSSEToChatCompletion(sseText: string, model: string
   }
 
   if (completedResponse) {
-    const converted = responseObjectToChatCompletion(completedResponse, model);
-    if (!converted?.choices?.[0]?.message?.content && outputText) {
-      converted.choices[0].message.content = outputText;
-    }
-    return converted;
+    return responseObjectToChatCompletion(completedResponse, model);
   }
 
   const prompt = usage?.input_tokens ?? 0;
@@ -587,65 +572,14 @@ export function convertResponsesSSEToChatCompletionSSE(upstreamLine: string, mod
     if (sanitized.drop) return null;
     const event = sanitized.event;
 
-    if (event?.type === "response.output_text.delta") {
-      const delta = sanitizeOutputText(event?.delta ?? "");
-      if (!delta) return null;
-      const chatDelta = {
-        id: `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
-        object: "chat.completion.chunk",
-        created: Math.floor(Date.now() / 1000),
-        model,
-        choices: [{ index: 0, delta: delta ? { content: delta } : {}, finish_reason: null }],
-      };
-      return `data: ${JSON.stringify(chatDelta)}\n\n`;
-    }
-
-    if (event?.type === "response.output_text.done") {
-      const text = sanitizeOutputText(event?.text ?? "");
-      if (!text) return null;
-      const chatDelta = {
-        id: `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
-        object: "chat.completion.chunk",
-        created: Math.floor(Date.now() / 1000),
-        model,
-        choices: [{ index: 0, delta: { content: text }, finish_reason: null }],
-      };
-      return `data: ${JSON.stringify(chatDelta)}\n\n`;
+    // Zero-trust policy for chat streaming: ignore raw deltas and emit sanitized final content only.
+    if (event?.type === "response.output_text.delta" || event?.type === "response.output_text.done" || event?.type === "response.refusal.delta") {
+      return null;
     }
 
     if (event?.type === "response.completed") {
-      const usage = event?.response?.usage;
-      const toolCalls = Array.isArray(event?.response?.output)
-        ? event.response.output
-          .filter((it: any) => it?.type === "function_call" && shouldExposeFunctionCallName(it?.name))
-          .map((it: any, idx: number) => ({
-            index: idx,
-            id: it?.call_id || it?.id || `call_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
-            type: "function",
-            function: {
-              name: it?.name ?? "unknown",
-              arguments: typeof it?.arguments === "string" ? it.arguments : JSON.stringify(it?.arguments ?? {}),
-            },
-          }))
-        : [];
-
-      const finalChunk = {
-        id: `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
-        object: "chat.completion.chunk",
-        created: Math.floor(Date.now() / 1000),
-        model,
-        choices: [{
-          index: 0,
-          delta: toolCalls.length ? { tool_calls: toolCalls } : {},
-          finish_reason: toolCalls.length ? "tool_calls" : "stop",
-        }],
-        usage: {
-          prompt_tokens: usage?.input_tokens ?? 0,
-          completion_tokens: usage?.output_tokens ?? 0,
-          total_tokens: usage?.total_tokens ?? 0,
-        },
-      };
-      return `data: ${JSON.stringify(finalChunk)}\n\ndata: [DONE]\n\n`;
+      const converted = responseObjectToChatCompletion(event?.response, model);
+      return chatCompletionObjectToSSE(converted);
     }
 
     return null;

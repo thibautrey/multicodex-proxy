@@ -447,35 +447,36 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
           if (!upstream.body) return res.end();
           const reader = upstream.body.getReader();
           const decoder = new TextDecoder();
+          let doneSent = false;
 
           while (true) {
             const { value, done } = await reader.read();
             if (done) break;
 
-            const chunk = decoder.decode(value);
+            const chunk = decoder.decode(value, { stream: true });
             const lines = chunk.split("\n");
 
             for (const line of lines) {
-              if (line.startsWith("data:")) {
-                const converted = convertResponsesSSEToChatCompletionSSE(line, model);
-                if (converted) {
-                  res.write(converted);
-                  // Extract usage from final chunk
-                  if (line.includes("response.completed")) {
-                    try {
-                      const payload = JSON.parse(line.slice(5).trim());
-                      accumulatedUsage = payload?.response?.usage;
-                    } catch {}
-                } else {
-                  // Keep streaming clients alive when upstream emits non-text events (e.g. reasoning/thinking).
-                  res.write(": keepalive\n\n");
-                }
+              if (!line.startsWith("data:")) continue;
+
+              const converted = convertResponsesSSEToChatCompletionSSE(line, model);
+              if (converted) {
+                res.write(converted);
+                if (converted.includes("[DONE]")) doneSent = true;
+              } else if (line.includes("\"response.reasoning")) {
+                // Keep streaming clients alive for hidden reasoning events.
+                res.write(": keepalive\n\n");
+              }
+
+              if (line.includes("response.completed")) {
+                try {
+                  const payload = JSON.parse(line.slice(5).trim());
+                  accumulatedUsage = payload?.response?.usage;
+                } catch {}
               }
             }
           }
-          }
-
-          res.write("data: [DONE]\n");
+          if (!doneSent) res.write("data: [DONE]\n\n");
           res.end();
 
           await appendTrace({
