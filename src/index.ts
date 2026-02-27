@@ -296,9 +296,20 @@ function chatCompletionsToResponsesPayload(body: any) {
     stream: true,
   };
 
-  // Forward tools if present
-  if (body?.tools) {
-    payload.tools = body.tools;
+  // Forward tools if present (convert to Responses API format)
+  if (body?.tools && Array.isArray(body.tools)) {
+    payload.tools = body.tools.map((tool: any) => {
+      if (tool.type === "function" && tool.function) {
+        return {
+          type: "function",
+          name: tool.function.name,
+          description: tool.function.description,
+          parameters_json: tool.function.parameters,
+          strict: tool.function.strict,
+        };
+      }
+      return tool;
+    });
   }
   if (body?.tool_choice) {
     payload.tool_choice = body.tool_choice;
