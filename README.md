@@ -30,6 +30,8 @@ docker compose up -d --build
 
 Dashboard: `http://localhost:4010`
 Proxy endpoints:
+- `http://localhost:4010/v1/models`
+- `http://localhost:4010/v1/models/:id`
 - `http://localhost:4010/v1/chat/completions`
 - `http://localhost:4010/v1/responses`
 
@@ -72,3 +74,6 @@ npm run start
 
 - OAuth endpoints/client can evolve. If OpenAI changes them, override env vars in `docker-compose.yml`.
 - This project is for personal/self-hosted use.
+
+
+Model list is configurable with env `PROXY_MODELS` (comma-separated), e.g. `gpt-5.3-codex,gpt-5.3-codex-codex`.
