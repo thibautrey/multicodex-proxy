@@ -285,7 +285,7 @@ function parseResponsesSSEToChatCompletion(sseText: string, model: string) {
 
 async function proxyWithRotation(req: express.Request, res: express.Response) {
   const startedAt = Date.now();
-  const isChatCompletions = (req.originalUrl || req.path).startsWith("/v1/chat/completions");
+  const isChatCompletions = (req.path || "").includes("chat/completions") || (req.originalUrl || "").includes("chat/completions");
   const clientRequestedStream = Boolean(req.body?.stream);
 
   let accounts = await store.listAccounts();
