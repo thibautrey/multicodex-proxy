@@ -9,17 +9,24 @@ export type UsageSnapshot = {
   fetchedAt: number;
 };
 
+export type AccountError = {
+  at: number;
+  message: string;
+};
+
 export type AccountState = {
   blockedUntil?: number;
   blockedReason?: string;
   lastError?: string;
   lastSelectedAt?: number;
+  recentErrors?: AccountError[];
 };
 
 export type Account = {
   id: string;
   email?: string;
   accessToken: string;
+  refreshToken?: string;
   chatgptAccountId?: string;
   enabled: boolean;
   priority?: number;
@@ -29,4 +36,19 @@ export type Account = {
 
 export type StoreFile = {
   accounts: Account[];
+};
+
+export type OAuthFlowState = {
+  id: string;
+  email: string;
+  codeVerifier: string;
+  createdAt: number;
+  status: "pending" | "success" | "error";
+  error?: string;
+  completedAt?: number;
+  accountId?: string;
+};
+
+export type OAuthStateFile = {
+  states: OAuthFlowState[];
 };
