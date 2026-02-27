@@ -17,6 +17,11 @@ function parseUsage(data: any): UsageSnapshot {
   return { primary: toWindow(primary), secondary: toWindow(secondary), fetchedAt: Date.now() };
 }
 
+export function rememberError(account: Account, message: string) {
+  const next = [{ at: Date.now(), message }, ...(account.state?.recentErrors ?? [])].slice(0, 10);
+  account.state = { ...account.state, lastError: message, recentErrors: next };
+}
+
 export function usageUntouched(usage?: UsageSnapshot): boolean {
   return usage?.primary?.usedPercent === 0 && usage?.secondary?.usedPercent === 0;
 }
@@ -64,8 +69,8 @@ export function chooseAccount(accounts: Account[]): Account | null {
   return pool[0];
 }
 
-export async function refreshUsageIfNeeded(account: Account, chatgptBaseUrl: string): Promise<Account> {
-  if (account.usage && Date.now() - account.usage.fetchedAt < USAGE_CACHE_TTL_MS) return account;
+export async function refreshUsageIfNeeded(account: Account, chatgptBaseUrl: string, force = false): Promise<Account> {
+  if (!force && account.usage && Date.now() - account.usage.fetchedAt < USAGE_CACHE_TTL_MS) return account;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), USAGE_TIMEOUT_MS);
@@ -83,7 +88,7 @@ export async function refreshUsageIfNeeded(account: Account, chatgptBaseUrl: str
     account.state = { ...account.state, lastError: undefined };
     return account;
   } catch (err: any) {
-    account.state = { ...account.state, lastError: err?.message ?? String(err) };
+    rememberError(account, err?.message ?? String(err));
     return account;
   } finally {
     clearTimeout(timeout);
@@ -96,6 +101,6 @@ export function markQuotaHit(account: Account, message: string) {
     ...account.state,
     blockedUntil: until,
     blockedReason: message,
-    lastError: message,
   };
+  rememberError(account, message);
 }
