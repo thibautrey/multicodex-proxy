@@ -371,6 +371,24 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
       }
 
       const text = await upstream.text();
+
+      if (isChatCompletions && text.includes("event: response.")) {
+        const chatResp = parseResponsesSSEToChatCompletion(text, req.body?.model ?? payloadToUpstream?.model ?? "unknown");
+        res.status(upstream.ok ? 200 : upstream.status).json(chatResp);
+        await appendTrace({
+          at: Date.now(),
+          route: req.path,
+          accountId: selected.id,
+          accountEmail: selected.email,
+          status: upstream.status,
+          stream: false,
+          latencyMs: Date.now() - startedAt,
+          usage: chatResp?.usage,
+          requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
+        });
+        return;
+      }
+
       res.status(upstream.status);
       setForwardHeaders(upstream, res);
       res.type(contentType || "application/json").send(text);
