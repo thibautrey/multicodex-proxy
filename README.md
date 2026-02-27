@@ -32,7 +32,7 @@ MultiCodex Proxy sits between your clients and OpenAI/Codex endpoints and gives 
 ## 🖼️ Dashboard
 
 <p align="center">
-  <img src="./assets/dashboard-unraid.png" alt="MultiCodex Proxy dashboard running on private environment" width="1100"/>
+  <img src="./assets/dashboard-unraid.jpg" alt="MultiCodex Proxy dashboard running on private environment" width="1100"/>
 </p>
 
 ---
