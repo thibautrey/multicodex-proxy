@@ -15,6 +15,7 @@ import {
   YAxis,
 } from "recharts";
 import "./styles.css";
+import { estimateCostUsd } from "./model-pricing";
 
 type Account = { id: string; email?: string; enabled: boolean; usage?: any; state?: any };
 type Trace = {
@@ -31,6 +32,7 @@ type Trace = {
   tokensInput?: number;
   tokensOutput?: number;
   tokensTotal?: number;
+  costUsd?: number;
   usage?: any;
   error?: string;
   requestBody?: any;
@@ -43,9 +45,10 @@ type TraceStats = {
     tokensInput: number;
     tokensOutput: number;
     tokensTotal: number;
+    costUsd: number;
     latencyAvgMs: number;
   };
-  models: Array<{ model: string; count: number; tokensTotal: number }>;
+  models: Array<{ model: string; count: number; tokensInput: number; tokensOutput: number; tokensTotal: number; costUsd: number }>;
   timeseries: Array<{
     at: number;
     requests: number;
@@ -53,6 +56,7 @@ type TraceStats = {
     tokensInput: number;
     tokensOutput: number;
     tokensTotal: number;
+    costUsd: number;
     latencyP50Ms: number;
     latencyP95Ms: number;
   }>;
@@ -81,6 +85,7 @@ const EMPTY_TRACE_STATS: TraceStats = {
     tokensInput: 0,
     tokensOutput: 0,
     tokensTotal: 0,
+    costUsd: 0,
     latencyAvgMs: 0,
   },
   models: [],
@@ -126,6 +131,10 @@ function compactNumber(v: number) {
 
 function pct(v: number) {
   return `${(v * 100).toFixed(1)}%`;
+}
+
+function usd(v: number) {
+  return new Intl.NumberFormat(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(v);
 }
 
 function routeLabel(v: string) {
@@ -182,6 +191,10 @@ export default function App() {
     () => traceStats.models.slice(0, 8).map((m) => ({ ...m, label: m.model })),
     [traceStats.models],
   );
+  const modelCostChartData = useMemo(
+    () => [...traceStats.models].sort((a, b) => b.costUsd - a.costUsd).slice(0, 8).map((m) => ({ ...m, label: m.model })),
+    [traceStats.models],
+  );
 
   const tokensTimeseries = useMemo(
     () => traceStats.timeseries.map((b) => ({
@@ -189,6 +202,14 @@ export default function App() {
       label: new Date(b.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     })),
     [traceStats.timeseries],
+  );
+  const totalTraceCostFromRows = useMemo(
+    () =>
+      traces.reduce(
+        (sum, t) => sum + (typeof t.costUsd === "number" ? t.costUsd : (estimateCostUsd(t.model, t.tokensInput ?? 0, t.tokensOutput ?? 0) ?? 0)),
+        0,
+      ),
+    [traces],
   );
 
   useEffect(() => {
@@ -234,11 +255,7 @@ export default function App() {
   const refreshData = async () => {
     try {
       setError("");
-      if (tab === "tracing") {
-        await Promise.all([loadBase(), loadTracing(tracePagination.page)]);
-      } else {
-        await loadBase();
-      }
+      await Promise.all([loadBase(), loadTracing(tab === "tracing" ? tracePagination.page : 1)]);
     } catch (e: any) {
       setError(e?.message ?? String(e));
     }
@@ -342,6 +359,12 @@ export default function App() {
               <Metric title="Blocked" value={`${stats.blocked}`} />
             </section>
 
+            <section className="grid cards3">
+              <Metric title="Requests (trace window)" value={`${traceStats.totals.requests}`} />
+              <Metric title="Tokens (trace window)" value={compactNumber(traceStats.totals.tokensTotal)} />
+              <Metric title="Estimated cost (trace window)" value={usd(traceStats.totals.costUsd)} />
+            </section>
+
             <section className="panel">
               <h2>Aggregated usage</h2>
               <ProgressStat label="5h average" value={usageStats.primaryAvg} count={usageStats.primaryCount} />
@@ -370,6 +393,12 @@ export default function App() {
 
         {tab === "accounts" && (
           <>
+            <section className="grid cards3">
+              <Metric title="Requests (trace window)" value={`${traceStats.totals.requests}`} />
+              <Metric title="Estimated cost (trace window)" value={usd(traceStats.totals.costUsd)} />
+              <Metric title="Top model by volume" value={traceStats.models[0]?.model ?? "-"} />
+            </section>
+
             <section className="panel">
               <h2>OAuth onboarding</h2>
               <div className="inline wrap">
@@ -425,10 +454,11 @@ export default function App() {
 
         {tab === "tracing" && (
           <>
-            <section className="grid cards4">
+            <section className="grid cards5">
               <Metric title="Requests" value={`${traceStats.totals.requests}`} />
               <Metric title="Error rate" value={pct(traceStats.totals.errorRate)} />
               <Metric title="Total tokens" value={compactNumber(traceStats.totals.tokensTotal)} />
+              <Metric title="Total cost" value={usd(traceStats.totals.costUsd)} />
               <Metric title="Avg latency" value={`${Math.round(traceStats.totals.latencyAvgMs)}ms`} />
             </section>
 
@@ -469,6 +499,21 @@ export default function App() {
 
             <section className="grid cards2">
               <section className="panel">
+                <h2>Model cost (USD)</h2>
+                <div className="chart-wrap">
+                  <ResponsiveContainer width="100%" height={260}>
+                    <BarChart data={modelCostChartData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#d6dde4" />
+                      <XAxis dataKey="label" interval={0} angle={-15} textAnchor="end" height={56} />
+                      <YAxis />
+                      <Tooltip formatter={(v: any) => usd(Number(v) || 0)} />
+                      <Legend />
+                      <Bar dataKey="costUsd" name="cost usd" fill="#4c956c" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </section>
+              <section className="panel">
                 <h2>Error trend (hourly)</h2>
                 <div className="chart-wrap">
                   <ResponsiveContainer width="100%" height={260}>
@@ -485,21 +530,37 @@ export default function App() {
                 </div>
               </section>
               <section className="panel">
-                <h2>Latency p50/p95 (hourly)</h2>
+                <h2>Cost over time (hourly)</h2>
                 <div className="chart-wrap">
                   <ResponsiveContainer width="100%" height={260}>
                     <LineChart data={tokensTimeseries}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#d6dde4" />
                       <XAxis dataKey="label" minTickGap={24} />
                       <YAxis />
-                      <Tooltip />
+                      <Tooltip formatter={(v: any) => usd(Number(v) || 0)} />
                       <Legend />
-                      <Line type="monotone" dataKey="latencyP50Ms" name="p50" stroke="#f4a259" strokeWidth={2} dot={false} />
-                      <Line type="monotone" dataKey="latencyP95Ms" name="p95" stroke="#e76f51" strokeWidth={2} dot={false} />
+                      <Line type="monotone" dataKey="costUsd" name="cost usd" stroke="#4c956c" strokeWidth={2} dot={false} />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
               </section>
+            </section>
+
+            <section className="panel">
+              <h2>Latency p50/p95 (hourly)</h2>
+              <div className="chart-wrap">
+                <ResponsiveContainer width="100%" height={260}>
+                  <LineChart data={tokensTimeseries}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#d6dde4" />
+                    <XAxis dataKey="label" minTickGap={24} />
+                    <YAxis />
+                    <Tooltip />
+                    <Legend />
+                    <Line type="monotone" dataKey="latencyP50Ms" name="p50" stroke="#f4a259" strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="latencyP95Ms" name="p95" stroke="#e76f51" strokeWidth={2} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
             </section>
 
             <section className="panel">
@@ -539,12 +600,14 @@ export default function App() {
                       <th>Status</th>
                       <th>Latency</th>
                       <th>Tokens</th>
+                      <th>Cost</th>
                       <th>Error</th>
                     </tr>
                   </thead>
                   <tbody>
                     {traces.map((t) => {
                       const isExpanded = expandedTraceId === t.id;
+                      const rowCost = typeof t.costUsd === "number" ? t.costUsd : (estimateCostUsd(t.model, t.tokensInput ?? 0, t.tokensOutput ?? 0) ?? 0);
                       return (
                         <React.Fragment key={t.id}>
                           <tr onClick={() => setExpandedTraceId(isExpanded ? null : t.id)} className="trace-row">
@@ -555,11 +618,12 @@ export default function App() {
                             <td>{t.status}</td>
                             <td>{t.latencyMs}ms</td>
                             <td>{t.tokensTotal ?? t.usage?.total_tokens ?? "-"}</td>
+                            <td className="mono">{usd(rowCost)}</td>
                             <td className="mono">{t.error?.slice(0, 60) ?? "-"}</td>
                           </tr>
                           {isExpanded && (
                             <tr>
-                              <td colSpan={8}>
+                              <td colSpan={9}>
                                 <div className="expanded-trace">
                                   <details open>
                                     <summary>Request Body</summary>
@@ -595,22 +659,29 @@ export default function App() {
         )}
 
         {tab === "docs" && (
-          <section className="panel">
-            <h2>API reference</h2>
-            <ul className="clean-list">
-              <li className="mono">GET /v1/models</li>
-              <li className="mono">GET /v1/models/:id</li>
-              <li className="mono">POST /v1/chat/completions</li>
-              <li className="mono">POST /v1/responses</li>
-              <li className="mono">GET /admin/accounts</li>
-              <li className="mono">GET /admin/traces?page=1&amp;pageSize=100</li>
-              <li className="mono">GET /admin/traces?limit=50 (legacy compatibility)</li>
-              <li className="mono">POST /admin/oauth/start</li>
-              <li className="mono">POST /admin/oauth/complete</li>
-            </ul>
-            <p className="muted">Admin endpoints require <span className="mono">x-admin-token</span>.</p>
-            <p className="muted">Sanitized mode: use URL flag <span className="mono">?sanitized=1</span> or shortcut <span className="mono">Ctrl/Cmd + Shift + S</span>.</p>
-          </section>
+          <>
+            <section className="panel">
+              <h2>API reference</h2>
+              <ul className="clean-list">
+                <li className="mono">GET /v1/models</li>
+                <li className="mono">GET /v1/models/:id</li>
+                <li className="mono">POST /v1/chat/completions</li>
+                <li className="mono">POST /v1/responses</li>
+                <li className="mono">GET /admin/accounts</li>
+                <li className="mono">GET /admin/traces?page=1&amp;pageSize=100</li>
+                <li className="mono">GET /admin/traces?limit=50 (legacy compatibility)</li>
+                <li className="mono">POST /admin/oauth/start</li>
+                <li className="mono">POST /admin/oauth/complete</li>
+              </ul>
+              <p className="muted">Admin endpoints require <span className="mono">x-admin-token</span>.</p>
+              <p className="muted">Sanitized mode: use URL flag <span className="mono">?sanitized=1</span> or shortcut <span className="mono">Ctrl/Cmd + Shift + S</span>.</p>
+            </section>
+            <section className="panel">
+              <h2>Pricing snapshot</h2>
+              <p className="muted">Costs are estimated from input/output tokens using model pricing. UI totals include requests, per-model spend, and global totals.</p>
+              <p className="mono">Current page estimated cost: {usd(totalTraceCostFromRows)}</p>
+            </section>
+          </>
         )}
 
         {error && <div className="panel error">{error}</div>}

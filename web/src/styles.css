@@ -169,6 +169,8 @@ button.danger {
 
 .cards4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 
+.cards5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+
 .metric {
   min-height: 112px;
   display: flex;
@@ -315,7 +317,8 @@ details summary {
 @media (max-width: 1060px) {
   .cards3,
   .cards2,
-  .cards4 {
+  .cards4,
+  .cards5 {
     grid-template-columns: 1fr;
   }
 
