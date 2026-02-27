@@ -26,6 +26,7 @@ const TRACE_INCLUDE_BODY = (process.env.TRACE_INCLUDE_BODY ?? "true") === "true"
 const CHATGPT_BASE_URL = process.env.CHATGPT_BASE_URL ?? "https://chatgpt.com";
 const UPSTREAM_PATH = process.env.UPSTREAM_PATH ?? "/backend-api/codex/responses";
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
+const MAX_ACCOUNT_RETRY_ATTEMPTS = Math.max(1, Number(process.env.MAX_ACCOUNT_RETRY_ATTEMPTS ?? 5));
 
 const BUILD_GIT_SHA = process.env.APP_GIT_SHA ?? "unknown";
 const BUILD_ID = process.env.APP_BUILD_ID ?? "unknown";
@@ -376,6 +377,8 @@ function extractUsageFromPayload(payload: any) {
   return payload?.usage ?? payload?.response?.usage ?? payload?.metrics?.usage;
 }
 
+const EMPTY_ASSISTANT_FALLBACK_TEXT = "[upstream returned no assistant output; please retry]";
+
 function asNonEmptyString(v: any): string | undefined {
   if (typeof v !== "string") return undefined;
   const t = v.trim();
@@ -416,6 +419,38 @@ function inspectAssistantPayload(payload: any): { assistantEmptyOutput?: boolean
   }
 
   return {};
+}
+
+function ensureNonEmptyChatCompletion(chat: any): { chat: any; patched: boolean } {
+  if (!chat || typeof chat !== "object" || chat.object !== "chat.completion") return { chat, patched: false };
+  const choice = chat?.choices?.[0];
+  if (!choice) return { chat, patched: false };
+
+  const content = choice?.message?.content;
+  const contentText = typeof content === "string"
+    ? content
+    : Array.isArray(content)
+      ? content.map((part: any) => (typeof part?.text === "string" ? part.text : "")).join("")
+      : "";
+  const hasText = Boolean(asNonEmptyString(contentText));
+  const hasToolCalls = Array.isArray(choice?.message?.tool_calls) && choice.message.tool_calls.length > 0;
+  if (hasText || hasToolCalls) return { chat, patched: false };
+
+  const patched = {
+    ...chat,
+    choices: [
+      {
+        ...choice,
+        message: {
+          ...(choice?.message ?? {}),
+          content: EMPTY_ASSISTANT_FALLBACK_TEXT,
+        },
+        finish_reason: choice?.finish_reason ?? "stop",
+      },
+      ...(Array.isArray(chat?.choices) ? chat.choices.slice(1) : []),
+    ],
+  };
+  return { chat: patched, patched: true };
 }
 
 type UsageTokenTotals = {
@@ -1073,14 +1108,15 @@ function convertResponsesSSEToChatCompletionSSE(upstreamLine: string, model: str
 }
 
 function chatCompletionObjectToSSE(chatObj: any): string {
-  const id = chatObj?.id || `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
-  const model = chatObj?.model || "unknown";
-  const created = chatObj?.created || Math.floor(Date.now() / 1000);
-  const choice = chatObj?.choices?.[0] || {};
+  const normalized = ensureNonEmptyChatCompletion(chatObj).chat;
+  const id = normalized?.id || `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
+  const model = normalized?.model || "unknown";
+  const created = normalized?.created || Math.floor(Date.now() / 1000);
+  const choice = normalized?.choices?.[0] || {};
   const content = choice?.message?.content ?? "";
   const toolCalls = Array.isArray(choice?.message?.tool_calls) ? choice.message.tool_calls : [];
   const finishReason = choice?.finish_reason ?? (toolCalls.length ? "tool_calls" : "stop");
-  const usage = chatObj?.usage || {};
+  const usage = normalized?.usage || {};
 
   const chunks: string[] = [];
   if (content) {
@@ -1133,7 +1169,8 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
   await Promise.all(accounts.map((a) => store.upsertAccount(a)));
 
   const tried = new Set<string>();
-  for (let i = 0; i < accounts.length; i++) {
+  const maxAttempts = Math.min(accounts.length, MAX_ACCOUNT_RETRY_ATTEMPTS);
+  for (let i = 0; i < maxAttempts; i++) {
     const selected = chooseAccount(accounts.filter((a) => !tried.has(a.id)));
     if (!selected) break;
 
@@ -1228,8 +1265,9 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
 
         if (shouldReturnChatCompletions) {
           const txt = await upstream.text();
-          const chatResp = parseResponsesSSEToChatCompletion(txt, req.body?.model ?? payloadToUpstream?.model ?? "unknown");
-          res.status(upstream.ok ? 200 : upstream.status).json(chatResp);
+          const parsedChat = parseResponsesSSEToChatCompletion(txt, req.body?.model ?? payloadToUpstream?.model ?? "unknown");
+          const normalized = ensureNonEmptyChatCompletion(parsedChat);
+          res.status(upstream.ok ? 200 : upstream.status).json(normalized.chat);
 
           const upstreamError = !upstream.ok ? txt.slice(0, 500) : undefined;
           await appendTrace({
@@ -1241,10 +1279,11 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
             status: upstream.status,
             stream: true,
             latencyMs: Date.now() - startedAt,
-            usage: chatResp?.usage,
+            usage: normalized.chat?.usage,
             requestBody,
             upstreamError,
             upstreamContentType: contentType,
+            ...inspectAssistantPayload(normalized.chat),
           });
           return;
         }
@@ -1309,11 +1348,12 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
         try { parsed = JSON.parse(raw); } catch {}
 
         if (upstream.ok && parsed && parsed.object === "chat.completion") {
+          const normalized = ensureNonEmptyChatCompletion(parsed);
           res.status(200);
           res.set("Content-Type", "text/event-stream");
           res.set("Cache-Control", "no-cache");
           res.set("Connection", "keep-alive");
-          res.write(chatCompletionObjectToSSE(parsed));
+          res.write(chatCompletionObjectToSSE(normalized.chat));
           res.end();
 
           await appendTrace({
@@ -1325,11 +1365,11 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
             status: upstream.status,
             stream: true,
             latencyMs: Date.now() - startedAt,
-            usage: parsed?.usage,
+            usage: normalized.chat?.usage,
             requestBody,
             upstreamContentType: contentType,
             upstreamEmptyBody,
-            ...inspectAssistantPayload(parsed),
+            ...inspectAssistantPayload(normalized.chat),
           });
           return;
         }
@@ -1379,7 +1419,7 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
         let chatResp: any = undefined;
 
         if (parsed?.object === "chat.completion") {
-          chatResp = parsed;
+          chatResp = ensureNonEmptyChatCompletion(parsed).chat;
         } else if (parsed?.object === "response") {
           chatResp = responseObjectToChatCompletion(parsed, req.body?.model ?? payloadToUpstream?.model ?? "unknown");
         } else if (text.includes("data:")) {
@@ -1387,6 +1427,7 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
         }
 
         if (chatResp) {
+          chatResp = ensureNonEmptyChatCompletion(chatResp).chat;
           res.status(200);
           res.set("Content-Type", "text/event-stream");
           res.set("Cache-Control", "no-cache");
@@ -1416,8 +1457,9 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
 
       if (text.includes("event: response.")) {
         if (shouldReturnChatCompletions) {
-          const chatResp = parseResponsesSSEToChatCompletion(text, req.body?.model ?? payloadToUpstream?.model ?? "unknown");
-          res.status(upstream.ok ? 200 : upstream.status).json(chatResp);
+          const parsedChat = parseResponsesSSEToChatCompletion(text, req.body?.model ?? payloadToUpstream?.model ?? "unknown");
+          const normalized = ensureNonEmptyChatCompletion(parsedChat);
+          res.status(upstream.ok ? 200 : upstream.status).json(normalized.chat);
           await appendTrace({
             at: Date.now(),
             route: req.path,
@@ -1427,12 +1469,12 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
             status: upstream.status,
             stream: false,
             latencyMs: Date.now() - startedAt,
-            usage: chatResp?.usage,
+            usage: normalized.chat?.usage,
             requestBody,
             upstreamError,
             upstreamContentType: contentType,
             upstreamEmptyBody,
-            ...inspectAssistantPayload(chatResp),
+            ...inspectAssistantPayload(normalized.chat),
           });
           return;
         }
