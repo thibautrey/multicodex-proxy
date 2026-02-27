@@ -82,6 +82,8 @@ type TraceEntry = {
   usage?: any;
   requestBody?: any;
   error?: string;
+  upstreamError?: string;
+  upstreamContentType?: string;
 };
 
 async function appendTrace(entry: TraceEntry) {
@@ -534,6 +536,7 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
           const chatResp = parseResponsesSSEToChatCompletion(txt, req.body?.model ?? payloadToUpstream?.model ?? "unknown");
           res.status(upstream.ok ? 200 : upstream.status).json(chatResp);
 
+          const upstreamError = !upstream.ok ? txt.slice(0, 500) : undefined;
           await appendTrace({
             at: Date.now(),
             route: req.path,
@@ -544,6 +547,8 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
             latencyMs: Date.now() - startedAt,
             usage: chatResp?.usage,
             requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
+            upstreamError,
+            upstreamContentType: contentType,
           });
           return;
         }
@@ -552,6 +557,7 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
           const txt = await upstream.text();
           const respObj = parseResponsesSSEToResponseObject(txt);
           res.status(upstream.ok ? 200 : upstream.status).json(respObj);
+          const upstreamError = !upstream.ok ? txt.slice(0, 500) : undefined;
           await appendTrace({
             at: Date.now(),
             route: req.path,
@@ -562,6 +568,8 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
             latencyMs: Date.now() - startedAt,
             usage: respObj?.usage,
             requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
+            upstreamError,
+            upstreamContentType: contentType,
           });
           return;
         }
@@ -592,6 +600,7 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
 
       let text = await upstream.text();
       if (!text) text = JSON.stringify({ error: `upstream ${upstream.status} with empty body` });
+      const upstreamError = !upstream.ok ? text.slice(0, 500) : undefined;
 
       if (text.includes("event: response.")) {
         if (isChatCompletions) {
@@ -607,6 +616,8 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
             latencyMs: Date.now() - startedAt,
             usage: chatResp?.usage,
             requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
+            upstreamError,
+            upstreamContentType: contentType,
           });
           return;
         }
@@ -623,6 +634,8 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
           latencyMs: Date.now() - startedAt,
           usage: respObj?.usage,
           requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
+          upstreamError,
+          upstreamContentType: contentType,
         });
         return;
       }
@@ -645,6 +658,8 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
         latencyMs: Date.now() - startedAt,
         usage,
         requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
+        upstreamError,
+        upstreamContentType: contentType,
       });
 
       if (upstream.ok) return;
