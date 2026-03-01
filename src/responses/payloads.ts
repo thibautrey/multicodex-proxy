@@ -65,7 +65,7 @@ export function inspectAssistantPayload(payload: any): {
     const contentParts = Array.isArray(assistantMsg?.content)
       ? assistantMsg.content
       : [];
-    const hasOutputText = contentParts.some((part) =>
+    const hasOutputText = contentParts.some((part: any) =>
       Boolean(asNonEmptyString(part?.text)),
     );
     const assistantEmptyOutput = !hasOutputText;
@@ -76,51 +76,6 @@ export function inspectAssistantPayload(payload: any): {
   }
 
   return {};
-}
-
-function applyCodexParityDefaults(payload: any, sessionId?: string) {
-  const modelId = typeof payload?.model === "string" ? payload.model : "";
-  payload.store = false;
-  payload.stream = true;
-  payload.tool_choice = payload.tool_choice ?? "auto";
-  payload.parallel_tool_calls = payload.parallel_tool_calls ?? true;
-  payload.text =
-    typeof payload.text === "object" && payload.text !== null
-      ? payload.text
-      : {};
-  payload.text.verbosity = payload.text.verbosity ?? "medium";
-  if (!Array.isArray(payload.include))
-    payload.include = ["reasoning.encrypted_content"];
-  else if (!payload.include.includes("reasoning.encrypted_content"))
-    payload.include.push("reasoning.encrypted_content");
-  if (sessionId && typeof payload.prompt_cache_key === "undefined")
-    payload.prompt_cache_key = sessionId;
-
-  const instructions =
-    typeof payload.instructions === "string" ? payload.instructions.trim() : "";
-  if (!instructions) payload.instructions = "You are a helpful assistant.";
-  else payload.instructions = instructions;
-
-  if (typeof payload.reasoning_effort !== "undefined") {
-    payload.reasoning =
-      typeof payload.reasoning === "object" && payload.reasoning !== null
-        ? payload.reasoning
-        : {};
-    payload.reasoning.effort = payload.reasoning_effort;
-    delete payload.reasoning_effort;
-  }
-  if (
-    payload.reasoning &&
-    typeof payload.reasoning === "object" &&
-    typeof payload.reasoning.effort === "string"
-  ) {
-    payload.reasoning.effort = clampReasoningEffort(
-      modelId,
-      payload.reasoning.effort,
-    );
-    if (typeof payload.reasoning.summary === "undefined")
-      payload.reasoning.summary = "auto";
-  }
 }
 
 export function normalizeResponsesPayload(body: any, sessionId?: string) {

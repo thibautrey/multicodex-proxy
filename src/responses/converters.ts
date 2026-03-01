@@ -1,5 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { sanitizeAssistantTextChunk, sanitizeResponsesEvent, sanitizeResponsesSSEFrame, stripReasoningFromResponseObject, withFallbackAssistantContent, ensureNonEmptyChatCompletion } from "./sanitizers.js";
+import {
+  sanitizeAssistantTextChunk,
+  sanitizeChatCompletionObject,
+  sanitizeResponsesEvent,
+  sanitizeResponsesSSEFrame,
+  stripReasoningFromResponseObject,
+  withFallbackAssistantContent,
+  ensureNonEmptyChatCompletion,
+} from "./sanitizers.js";
 import { sanitizeOutputText, shouldExposeFunctionCallName } from "./helpers.js";
 
 function chatCompletionStreamFrame(
@@ -42,6 +50,33 @@ function chatCompletionStreamFrame(
     "data: [DONE]\n\n",
   ].join("");
 }
+export function chatCompletionObjectToSSE(chatObj: any): string {
+  const sanitized = sanitizeChatCompletionObject(chatObj);
+  const normalized = ensureNonEmptyChatCompletion(sanitized).chat;
+  const id =
+    normalized?.id || `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
+  const model = normalized?.model || "unknown";
+  const created = normalized?.created || Math.floor(Date.now() / 1000);
+  const choice = normalized?.choices?.[0] || {};
+  const content = choice?.message?.content ?? "";
+  const toolCalls = Array.isArray(choice?.message?.tool_calls)
+    ? choice.message.tool_calls
+    : [];
+  const finishReason =
+    choice?.finish_reason ?? (toolCalls.length ? "tool_calls" : "stop");
+  const usage = normalized?.usage || {};
+
+  return chatCompletionStreamFrame(
+    id,
+    model,
+    created,
+    content,
+    toolCalls,
+    finishReason,
+    usage,
+  );
+}
+
 export function responseObjectToSSE(respObj: any): string {
   if (!respObj || typeof respObj !== "object") return "";
   const sanitized = stripReasoningFromResponseObject(respObj);
