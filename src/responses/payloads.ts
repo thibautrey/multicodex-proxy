@@ -1,13 +1,12 @@
-import express from "express";
-import { randomUUID } from "node:crypto";
 import {
   applyCodexParityDefaults,
-  clampReasoningEffort,
-  sanitizeOutputText,
+  asNonEmptyString,
   toUpstreamInputContent,
   toolContentToOutput,
-  asNonEmptyString,
 } from "./helpers.js";
+
+import express from "express";
+import { randomUUID } from "node:crypto";
 
 export function extractUsageFromPayload(payload: any) {
   return payload?.usage ?? payload?.response?.usage ?? payload?.metrics?.usage;

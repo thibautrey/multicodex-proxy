@@ -1,12 +1,11 @@
-import { EMPTY_ASSISTANT_FALLBACK_TEXT } from "./helpers.js";
 import {
   asNonEmptyString,
+  isVisibleAssistantContentPart,
   sanitizeOutputText,
   shouldExposeFunctionCallName,
-  toUpstreamInputContent,
-  toolContentToOutput,
-  isVisibleAssistantContentPart,
 } from "./helpers.js";
+
+import { EMPTY_ASSISTANT_FALLBACK_TEXT } from "./helpers.js";
 
 type SanitizedEventResult =
   | { drop: true; event: null; changed: boolean }
@@ -97,7 +96,11 @@ function sanitizeMessageContent(content: any) {
           const next = sanitizeOutputText(part);
           return next ? next : null;
         }
-        if (part && typeof part === "object" && typeof part?.text === "string") {
+        if (
+          part &&
+          typeof part === "object" &&
+          typeof part?.text === "string"
+        ) {
           const next = sanitizeOutputText(part.text);
           if (!next) return null;
           return { ...part, text: next };

@@ -1,34 +1,3 @@
-import express from "express";
-import { AccountStore } from "../../store.js";
-import { TraceManager } from "../../traces.js";
-import {
-  sanitizeAssistantTextChunk,
-  ensureNonEmptyChatCompletion,
-  sanitizeResponsesSSEFrame,
-} from "../../responses/sanitizers.js";
-import {
-  chatCompletionObjectToSSE,
-  convertResponsesSSEToChatCompletionSSE,
-  parseResponsesSSEToChatCompletion,
-  parseResponsesSSEToResponseObject,
-  responseObjectToChatCompletion,
-  responseObjectToSSE,
-} from "../../responses/converters.js";
-import {
-  chatCompletionsToResponsesPayload,
-  normalizeResponsesPayload,
-  extractUsageFromPayload,
-  inspectAssistantPayload,
-  getSessionId,
-} from "../../responses/payloads.js";
-import {
-  chooseAccount,
-  isQuotaErrorText,
-  markQuotaHit,
-  refreshUsageIfNeeded,
-  rememberError,
-} from "../../quota.js";
-import { ensureValidToken } from "../../account-utils.js";
 import {
   CHATGPT_BASE_URL,
   MAX_ACCOUNT_RETRY_ATTEMPTS,
@@ -41,7 +10,41 @@ import {
   UPSTREAM_BASE_DELAY_MS,
   UPSTREAM_PATH,
 } from "../../config.js";
+import {
+  chatCompletionObjectToSSE,
+  convertResponsesSSEToChatCompletionSSE,
+  parseResponsesSSEToChatCompletion,
+  parseResponsesSSEToResponseObject,
+  responseObjectToChatCompletion,
+  responseObjectToSSE,
+} from "../../responses/converters.js";
+import {
+  chatCompletionsToResponsesPayload,
+  extractUsageFromPayload,
+  getSessionId,
+  inspectAssistantPayload,
+  normalizeResponsesPayload,
+} from "../../responses/payloads.js";
+import {
+  chooseAccount,
+  isQuotaErrorText,
+  markQuotaHit,
+  refreshUsageIfNeeded,
+  rememberError,
+} from "../../quota.js";
+import {
+  ensureNonEmptyChatCompletion,
+  sanitizeAssistantTextChunk,
+  sanitizeChatCompletionObject,
+  sanitizeResponsesSSEFrame,
+  stripReasoningFromResponseObject,
+} from "../../responses/sanitizers.js";
+
+import { AccountStore } from "../../store.js";
 import type { OAuthConfig } from "../../oauth.js";
+import { TraceManager } from "../../traces.js";
+import { ensureValidToken } from "../../account-utils.js";
+import express from "express";
 
 type ProxyRoutesOptions = {
   store: AccountStore;
@@ -50,7 +53,10 @@ type ProxyRoutesOptions = {
   oauthConfig: OAuthConfig;
 };
 
-const modelsCache: { at: number; models: ExposedModel[] } = { at: 0, models: [] };
+const modelsCache: { at: number; models: ExposedModel[] } = {
+  at: 0,
+  models: [],
+};
 
 type ExposedModel = {
   id: string;
@@ -132,7 +138,10 @@ async function discoverModels(
   store: AccountStore,
   chatgptBaseUrl: string,
 ): Promise<ExposedModel[]> {
-  if (Date.now() - modelsCache.at < MODELS_CACHE_MS && modelsCache.models.length)
+  if (
+    Date.now() - modelsCache.at < MODELS_CACHE_MS &&
+    modelsCache.models.length
+  )
     return modelsCache.models;
 
   try {
@@ -207,10 +216,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function isRetryableUpstreamError(
-  status: number,
-  errorText: string,
-): boolean {
+function isRetryableUpstreamError(status: number, errorText: string): boolean {
   if (
     status === 429 ||
     status === 500 ||
@@ -654,7 +660,11 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           text = JSON.stringify(parsed);
         }
 
-        if (shouldReturnChatCompletions && clientRequestedStream && upstream.ok) {
+        if (
+          shouldReturnChatCompletions &&
+          clientRequestedStream &&
+          upstream.ok
+        ) {
           let chatResp: any = undefined;
 
           if (parsed?.object === "chat.completion") {
@@ -702,7 +712,11 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           }
         }
 
-        if (!shouldReturnChatCompletions && clientRequestedStream && upstream.ok) {
+        if (
+          !shouldReturnChatCompletions &&
+          clientRequestedStream &&
+          upstream.ok
+        ) {
           if (parsed?.object === "response") {
             const sanitized = stripReasoningFromResponseObject(parsed);
             res.status(200);
