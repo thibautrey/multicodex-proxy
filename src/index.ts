@@ -965,6 +965,15 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
 
       // Hard guarantee for /responses streaming clients:
       // always return SSE, even when upstream returns JSON Response object.
+      console.log("[DEBUG-SSE]", {
+        shouldReturnChatCompletions,
+        clientRequestedStream,
+        upstreamOk: upstream.ok,
+        parsedObject: parsed?.object,
+        contentType,
+        isStream,
+        textLen: text?.length,
+      });
       if (
         !shouldReturnChatCompletions &&
         clientRequestedStream &&
