@@ -49,6 +49,9 @@ export function TracingTab(props: Props) {
     setExpandedTraceId,
     sanitized,
   } = props;
+  const formatTokenChartValue = (value: number | string | undefined) => formatTokenCount(Number(value ?? 0));
+
+  const formatTooltipValue = (value: any) => formatTokenChartValue(value?.[0] ?? value ?? 0);
 
   return (
     <>
@@ -68,8 +71,8 @@ export function TracingTab(props: Props) {
               <LineChart data={tokensTimeseries}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#d6dde4" />
                 <XAxis dataKey="label" minTickGap={24} />
-                <YAxis />
-                <Tooltip />
+                <YAxis tickFormatter={formatTokenChartValue} />
+                <Tooltip formatter={formatTooltipValue} />
                 <Legend />
                 <Line type="monotone" dataKey="tokensInput" name="input" stroke="#1f7a8c" strokeWidth={2} dot={false} />
                 <Line type="monotone" dataKey="tokensOutput" name="output" stroke="#2da4b8" strokeWidth={2} dot={false} />
