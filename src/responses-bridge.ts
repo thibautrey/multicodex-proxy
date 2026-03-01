@@ -432,10 +432,9 @@ export function sanitizeResponsesEvent(event: any): SanitizedEventResult {
 }
 
 export function sanitizeResponsesSSEFrame(frame: string): string | null {
-  const dataLines = frame
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("data:"));
+  const lines = frame.split(/\r?\n/).map((line) => line.trim());
+  const eventLine = lines.find((line) => line.startsWith("event:"));
+  const dataLines = lines.filter((line) => line.startsWith("data:"));
   if (!dataLines.length) return frame;
 
   const payload = dataLines
@@ -449,7 +448,8 @@ export function sanitizeResponsesSSEFrame(frame: string): string | null {
     const sanitized = sanitizeResponsesEvent(parsed);
     if (sanitized.drop) return null;
     if (!sanitized.changed) return frame;
-    return `data: ${JSON.stringify(sanitized.event)}`;
+    const sanitizedData = `data: ${JSON.stringify(sanitized.event)}`;
+    return eventLine ? `${eventLine}\n${sanitizedData}` : sanitizedData;
   } catch {
     return frame;
   }
