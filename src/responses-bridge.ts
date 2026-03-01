@@ -881,3 +881,9 @@ export function chatCompletionObjectToSSE(chatObj: any): string {
   chunks.push("data: [DONE]\n\n");
   return chunks.join("");
 }
+
+export function responseObjectToSSE(respObj: any): string {
+  if (!respObj || typeof respObj !== "object") return "";
+  const sanitized = stripReasoningFromResponseObject(respObj);
+  return `event: response.completed\ndata: ${JSON.stringify({ type: "response.completed", response: sanitized })}\n\n`;
+}
