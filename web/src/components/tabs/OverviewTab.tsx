@@ -22,9 +22,9 @@ export function OverviewTab({ stats, usageStats, traceStats, storageInfo, models
       </section>
 
       <section className="grid cards3">
-        <Metric title="Requests (trace window)" value={`${traceStats.totals.requests}`} />
-        <Metric title="Tokens (trace window)" value={formatTokenCount(traceStats.totals.tokensTotal)} />
-        <Metric title="Estimated cost (trace window)" value={usd(traceStats.totals.costUsd)} />
+        <Metric title="Requests (selected range)" value={`${traceStats.totals.requests}`} />
+        <Metric title="Tokens (selected range)" value={formatTokenCount(traceStats.totals.tokensTotal)} />
+        <Metric title="Estimated cost (selected range)" value={usd(traceStats.totals.costUsd)} />
       </section>
 
       <section className="panel">

@@ -7,7 +7,7 @@ import {
   EMPTY_TRACE_STATS,
   TRACE_PAGE_SIZE,
 } from "./lib/ui";
-import type { Account, Tab, Trace, TracePagination, TraceStats } from "./types";
+import type { Account, Tab, Trace, TracePagination, TraceRangePreset, TraceStats } from "./types";
 import { AccountsTab } from "./components/tabs/AccountsTab";
 import { DocsTab } from "./components/tabs/DocsTab";
 import { OverviewTab } from "./components/tabs/OverviewTab";
@@ -36,6 +36,7 @@ export default function App() {
   const [chatOut, setChatOut] = useState("");
   const [error, setError] = useState("");
   const [expandedTraceId, setExpandedTraceId] = useState<string | null>(null);
+  const [traceRange, setTraceRange] = useState<TraceRangePreset>("7d");
 
   const stats = useMemo(
     () => ({
@@ -118,11 +119,29 @@ export default function App() {
     setModels((mdl.data ?? []).map((x: any) => x.id));
   };
 
-  const loadTracing = async (page: number) => {
+  const getRangeBounds = (range: TraceRangePreset): { sinceMs?: number; untilMs?: number } => {
+    const now = Date.now();
+    if (range === "24h") return { sinceMs: now - 24 * 60 * 60 * 1000, untilMs: now };
+    if (range === "7d") return { sinceMs: now - 7 * 24 * 60 * 60 * 1000, untilMs: now };
+    if (range === "30d") return { sinceMs: now - 30 * 24 * 60 * 60 * 1000, untilMs: now };
+    return {};
+  };
+
+  const loadTracing = async (page: number, range: TraceRangePreset = traceRange) => {
     const safePage = Math.max(1, page || 1);
-    const tr = await api(`/admin/traces?page=${safePage}&pageSize=${TRACE_PAGE_SIZE}`);
+    const { sinceMs, untilMs } = getRangeBounds(range);
+    const params = new URLSearchParams();
+    params.set("page", String(safePage));
+    params.set("pageSize", String(TRACE_PAGE_SIZE));
+    if (typeof sinceMs === "number") params.set("sinceMs", String(sinceMs));
+    if (typeof untilMs === "number") params.set("untilMs", String(untilMs));
+
+    const [tr, statsRes] = await Promise.all([
+      api(`/admin/traces?${params.toString()}`),
+      api(`/admin/stats/traces?${params.toString()}`),
+    ]);
     setTraces((tr.traces ?? []) as Trace[]);
-    setTraceStats((tr.stats ?? EMPTY_TRACE_STATS) as TraceStats);
+    setTraceStats((statsRes.stats ?? tr.stats ?? EMPTY_TRACE_STATS) as TraceStats);
     setTracePagination((tr.pagination ?? { ...EMPTY_TRACE_PAGINATION, page: safePage }) as TracePagination);
     setExpandedTraceId(null);
   };
@@ -130,7 +149,7 @@ export default function App() {
   const refreshData = async () => {
     try {
       setError("");
-      await Promise.all([loadBase(), loadTracing(tab === "tracing" ? tracePagination.page : 1)]);
+      await Promise.all([loadBase(), loadTracing(tab === "tracing" ? tracePagination.page : 1, traceRange)]);
     } catch (e: any) {
       setError(e?.message ?? String(e));
     }
@@ -140,7 +159,7 @@ export default function App() {
     const load = async () => {
       try {
         setError("");
-        await Promise.all([loadBase(), loadTracing(1)]);
+        await Promise.all([loadBase(), loadTracing(1, traceRange)]);
       } catch (e: any) {
         setError(e?.message ?? String(e));
       }
@@ -151,10 +170,10 @@ export default function App() {
   useEffect(() => {
     if (tab !== "tracing") return;
     const timer = window.setInterval(() => {
-      void loadTracing(tracePagination.page).catch((e: any) => setError(e?.message ?? String(e)));
+      void loadTracing(tracePagination.page, traceRange).catch((e: any) => setError(e?.message ?? String(e)));
     }, 10_000);
     return () => window.clearInterval(timer);
-  }, [tab, tracePagination.page]);
+  }, [tab, tracePagination.page, traceRange]);
 
   const startOAuth = async () => {
     const d = await api("/admin/oauth/start", { method: "POST", body: JSON.stringify({ email }) });
@@ -205,7 +224,7 @@ export default function App() {
   const gotoTracePage = async (page: number) => {
     try {
       setError("");
-      await loadTracing(page);
+      await loadTracing(page, traceRange);
     } catch (e: any) {
       setError(e?.message ?? String(e));
     }
@@ -275,6 +294,8 @@ export default function App() {
             modelCostChartData={modelCostChartData}
             tracePagination={tracePagination}
             gotoTracePage={gotoTracePage}
+            traceRange={traceRange}
+            setTraceRange={setTraceRange}
             traces={traces}
             expandedTraceId={expandedTraceId}
             setExpandedTraceId={setExpandedTraceId}

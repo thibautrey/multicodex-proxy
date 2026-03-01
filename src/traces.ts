@@ -88,6 +88,7 @@ export type UsageAggregate = {
 
 export type TraceManagerConfig = {
   filePath: string;
+  historyFilePath?: string;
   retentionMax?: number;
   pageSizeMax?: number;
   legacyLimitMax?: number;
@@ -349,12 +350,14 @@ export type TraceManager = ReturnType<typeof createTraceManager>;
 export function createTraceManager(config: TraceManagerConfig) {
   const {
     filePath,
+    historyFilePath = `${filePath}.stats-history`,
     retentionMax = DEFAULT_RETENTION_MAX,
     pageSizeMax = DEFAULT_PAGE_SIZE_MAX,
     legacyLimitMax = DEFAULT_LEGACY_LIMIT_MAX,
   } = config;
 
   let traceWriteQueue: Promise<void> = Promise.resolve();
+  let historyWriteQueue: Promise<void> = Promise.resolve();
 
   async function readTraceWindow(): Promise<TraceEntry[]> {
     try {
@@ -378,6 +381,67 @@ export function createTraceManager(config: TraceManagerConfig) {
     const content = entries.map((entry) => JSON.stringify(entry)).join("\n");
     await fs.writeFile(tmp, content ? `${content}\n` : "", "utf8");
     await fs.rename(tmp, filePath);
+  }
+
+  function toStatsHistoryEntry(entry: TraceEntry): TraceEntry {
+    const {
+      requestBody: _requestBody,
+      usage: _usage,
+      error: _error,
+      upstreamError: _upstreamError,
+      upstreamContentType: _upstreamContentType,
+      upstreamEmptyBody: _upstreamEmptyBody,
+      assistantEmptyOutput: _assistantEmptyOutput,
+      assistantFinishReason: _assistantFinishReason,
+      ...rest
+    } = entry;
+    return rest;
+  }
+
+  async function appendStatsHistory(entry: TraceEntry): Promise<void> {
+    const line = `${JSON.stringify(toStatsHistoryEntry(entry))}\n`;
+    const run = historyWriteQueue.then(async () => {
+      await fs.appendFile(historyFilePath, line, "utf8");
+    });
+    historyWriteQueue = run.catch(() => undefined);
+    await run;
+  }
+
+  async function readStatsHistory(): Promise<TraceEntry[]> {
+    try {
+      const raw = await fs.readFile(historyFilePath, "utf8");
+      const lines = raw.split("\n").filter(Boolean);
+      const parsed: TraceEntry[] = [];
+      for (const line of lines) {
+        try {
+          const normalized = normalizeTrace(JSON.parse(line));
+          if (normalized) parsed.push(normalized);
+        } catch {}
+      }
+      return parsed;
+    } catch {
+      return [];
+    }
+  }
+
+  async function readStatsHistoryRange(sinceMs?: number, untilMs?: number): Promise<TraceEntry[]> {
+    const all = await readStatsHistory();
+    return all.filter((t) => {
+      if (typeof sinceMs === "number" && Number.isFinite(sinceMs) && t.at < sinceMs) return false;
+      if (typeof untilMs === "number" && Number.isFinite(untilMs) && t.at > untilMs) return false;
+      return true;
+    });
+  }
+
+  async function seedStatsHistoryIfMissing() {
+    try {
+      const existing = await fs.readFile(historyFilePath, "utf8");
+      if (existing.trim()) return;
+    } catch {}
+    const traces = await readTraceWindow();
+    if (!traces.length) return;
+    const content = traces.map((entry) => JSON.stringify(toStatsHistoryEntry(entry))).join("\n");
+    await fs.writeFile(historyFilePath, `${content}\n`, "utf8");
   }
 
   async function compactTraceStorageIfNeeded() {
@@ -409,7 +473,7 @@ export function createTraceManager(config: TraceManagerConfig) {
       await writeTraceWindow(next);
     });
     traceWriteQueue = run.catch(() => undefined);
-    await run;
+    await Promise.all([run, appendStatsHistory(finalEntry)]);
   }
 
   async function readTracesLegacy(limit = 200): Promise<TraceEntry[]> {
@@ -421,6 +485,9 @@ export function createTraceManager(config: TraceManagerConfig) {
   return {
     readTraceWindow,
     writeTraceWindow,
+    readStatsHistory,
+    readStatsHistoryRange,
+    seedStatsHistoryIfMissing,
     compactTraceStorageIfNeeded,
     appendTrace,
     readTracesLegacy,
