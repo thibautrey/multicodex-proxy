@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Account, OAuthFlowState, OAuthStateFile, StoreFile } from "./types.js";
+import { ACCOUNT_FLUSH_INTERVAL_MS } from "./config.js";
 
 const DEFAULT_FILE: StoreFile = { accounts: [] };
 const DEFAULT_OAUTH_FILE: OAuthStateFile = { states: [] };
@@ -22,56 +23,93 @@ async function writeJsonAtomic(filePath: string, data: unknown): Promise<void> {
 }
 
 export class AccountStore {
+  private inMemoryAccounts: Account[] = [];
+  private dirty = false;
+  private flushTimer: NodeJS.Timeout | null = null;
+
   constructor(private filePath: string) {}
 
   async init() {
     await ensureFile(this.filePath, DEFAULT_FILE);
+    await this.reloadFromDisk();
   }
 
-  async read(): Promise<StoreFile> {
+  private async reloadFromDisk() {
     const raw = await fs.readFile(this.filePath, "utf8");
-    return JSON.parse(raw) as StoreFile;
+    const data = JSON.parse(raw) as StoreFile;
+    this.inMemoryAccounts = data.accounts;
+    this.dirty = false;
   }
 
-  async write(data: StoreFile): Promise<void> {
-    await writeJsonAtomic(this.filePath, data);
+  private scheduleFlush() {
+    if (this.dirty && !this.flushTimer) {
+      this.flushTimer = setTimeout(() => {
+        this.flushIfDirty().catch(() => undefined);
+      }, ACCOUNT_FLUSH_INTERVAL_MS);
+    }
   }
 
-  async listAccounts(): Promise<Account[]> {
-    const data = await this.read();
-    return data.accounts;
+  async flushIfDirty() {
+    if (!this.dirty) return;
+    await writeJsonAtomic(this.filePath, { accounts: this.inMemoryAccounts });
+    this.dirty = false;
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+  }
+
+  getCachedAccounts(): Account[] {
+    return [...this.inMemoryAccounts];
+  }
+
+  markAccountModified(accountId: string, account: Account) {
+    const idx = this.inMemoryAccounts.findIndex((a) => a.id === accountId);
+    if (idx === -1) {
+      this.inMemoryAccounts.push(account);
+    } else {
+      this.inMemoryAccounts[idx] = account;
+    }
+    this.dirty = true;
+    this.scheduleFlush();
+  }
+
+  async addOrUpdate(account: Account) {
+    this.markAccountModified(account.id, account);
+    await this.flushIfDirty();
+    return account;
   }
 
   async upsertAccount(account: Account): Promise<Account> {
-    const data = await this.read();
-    const idx = data.accounts.findIndex((a) => a.id === account.id);
-    if (idx === -1) data.accounts.push(account);
-    else data.accounts[idx] = account;
-    await this.write(data);
+    this.markAccountModified(account.id, account);
     return account;
   }
 
   async patchAccount(id: string, patch: Partial<Account>): Promise<Account | null> {
-    const data = await this.read();
-    const idx = data.accounts.findIndex((a) => a.id === id);
+    const idx = this.inMemoryAccounts.findIndex((a) => a.id === id);
     if (idx === -1) return null;
-    data.accounts[idx] = {
-      ...data.accounts[idx],
+    const existing = this.inMemoryAccounts[idx];
+    const updated = {
+      ...existing,
       ...patch,
-      state: { ...data.accounts[idx].state, ...patch.state },
-      usage: patch.usage ?? data.accounts[idx].usage,
+      state: { ...existing.state, ...patch.state },
+      usage: patch.usage ?? existing.usage,
     };
-    await this.write(data);
-    return data.accounts[idx];
+    this.markAccountModified(id, updated);
+    return updated;
   }
 
   async deleteAccount(id: string): Promise<boolean> {
-    const data = await this.read();
-    const before = data.accounts.length;
-    data.accounts = data.accounts.filter((a) => a.id !== id);
-    if (data.accounts.length === before) return false;
-    await this.write(data);
+    const before = this.inMemoryAccounts.length;
+    this.inMemoryAccounts = this.inMemoryAccounts.filter((a) => a.id !== id);
+    if (this.inMemoryAccounts.length === before) return false;
+    this.dirty = true;
+    this.scheduleFlush();
     return true;
+  }
+
+  async listAccounts(): Promise<Account[]> {
+    return this.getCachedAccounts();
   }
 }
 

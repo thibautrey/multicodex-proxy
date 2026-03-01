@@ -1,4 +1,5 @@
 import {
+  ACCOUNT_FLUSH_INTERVAL_MS,
   CHATGPT_BASE_URL,
   MAX_ACCOUNT_RETRY_ATTEMPTS,
   MAX_UPSTREAM_RETRIES,
@@ -7,6 +8,7 @@ import {
   PI_USER_AGENT,
   PROXY_MODELS,
   TRACE_INCLUDE_BODY,
+  TOKEN_REFRESH_MARGIN_MS,
   UPSTREAM_BASE_DELAY_MS,
   UPSTREAM_PATH,
 } from "../../config.js";
@@ -284,7 +286,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     const clientRequestedStream = Boolean(req.body?.stream);
     const sessionId = getSessionId(req);
 
-    let accounts = await store.listAccounts();
+let accounts = store.getCachedAccounts();
     if (!accounts.length)
       return res.status(503).json({ error: "no accounts configured" });
 
@@ -295,7 +297,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         return valid;
       }),
     );
-    await Promise.all(accounts.map((account) => store.upsertAccount(account)));
+    for (const account of accounts) store.markAccountModified(account.id, account);
 
     const tried = new Set<string>();
     const maxAttempts = Math.min(accounts.length, MAX_ACCOUNT_RETRY_ATTEMPTS);

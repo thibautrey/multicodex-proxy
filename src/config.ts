@@ -10,7 +10,7 @@ export const TRACE_STATS_HISTORY_PATH =
   process.env.TRACE_STATS_HISTORY_PATH ??
   "/data/requests-stats-history.jsonl";
 export const TRACE_INCLUDE_BODY =
-  (process.env.TRACE_INCLUDE_BODY ?? "true") === "true";
+  (process.env.TRACE_INCLUDE_BODY ?? "false") === "true"; // disabling the body trace by default keeps disk writes smaller
 export const CHATGPT_BASE_URL =
   process.env.CHATGPT_BASE_URL ?? "https://chatgpt.com";
 export const UPSTREAM_PATH =
@@ -39,4 +39,12 @@ export const MODELS_CLIENT_VERSION =
   process.env.MODELS_CLIENT_VERSION ?? "1.0.0";
 export const MODELS_CACHE_MS = Number(
   process.env.MODELS_CACHE_MS ?? 10 * 60_000,
+);
+
+export const TOKEN_REFRESH_MARGIN_MS = Number(
+  process.env.TOKEN_REFRESH_MARGIN_MS ?? 60_000,
+);
+
+export const ACCOUNT_FLUSH_INTERVAL_MS = Number(
+  process.env.ACCOUNT_FLUSH_INTERVAL_MS ?? 5_000,
 );

@@ -16,12 +16,21 @@ export async function ensureValidToken(
       oauthConfig,
       account.refreshToken,
     );
-    return mergeTokenIntoAccount(account, refreshed);
+    const merged = mergeTokenIntoAccount(account, refreshed);
+    merged.state = {
+      ...merged.state,
+      needsTokenRefresh: false,
+    };
+    return merged;
   } catch (err: any) {
     rememberError(
       account,
       `refresh token failed: ${err?.message ?? String(err)}`,
     );
+    account.state = {
+      ...account.state,
+      needsTokenRefresh: true,
+    };
     return account;
   }
 }
