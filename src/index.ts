@@ -1030,7 +1030,9 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
           for (const rawFrame of rawFrames) {
             const filtered = sanitizeResponsesSSEFrame(rawFrame);
             if (filtered) {
-              res.write(filtered.endsWith("\n\n") ? filtered : filtered + "\n\n");
+              res.write(
+                filtered.endsWith("\n\n") ? filtered : filtered + "\n\n",
+              );
               // Track response.completed for usage
               if (rawFrame.includes('"response.completed"')) {
                 try {

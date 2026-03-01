@@ -420,11 +420,18 @@ export function sanitizeResponsesEvent(event: any): SanitizedEventResult {
   }
 
   // Sanitize text deltas: drop internal tool/planner text, pass through normal content.
-  if (type === "response.output_text.delta" && typeof event?.delta === "string") {
+  if (
+    type === "response.output_text.delta" &&
+    typeof event?.delta === "string"
+  ) {
     const sanitized = sanitizeOutputText(event.delta);
     if (!sanitized) return { drop: true, event: null, changed: true };
     if (sanitized !== event.delta)
-      return { drop: false, event: { ...event, delta: sanitized }, changed: true };
+      return {
+        drop: false,
+        event: { ...event, delta: sanitized },
+        changed: true,
+      };
     return { drop: false, event, changed: false };
   }
 
@@ -432,7 +439,11 @@ export function sanitizeResponsesEvent(event: any): SanitizedEventResult {
     const sanitized = sanitizeOutputText(event.text);
     if (!sanitized) return { drop: true, event: null, changed: true };
     if (sanitized !== event.text)
-      return { drop: false, event: { ...event, text: sanitized }, changed: true };
+      return {
+        drop: false,
+        event: { ...event, text: sanitized },
+        changed: true,
+      };
     return { drop: false, event, changed: false };
   }
 
