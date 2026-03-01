@@ -20,4 +20,4 @@ COPY --from=build /app/web-dist ./web-dist
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
 EXPOSE 4010
-CMD ["node", "dist/index.js"]
+CMD ["node", "dist/server.js"]
