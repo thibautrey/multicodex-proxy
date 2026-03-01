@@ -26,7 +26,8 @@ MultiCodex Proxy sits between your clients and OpenAI/Codex endpoints and gives 
 - **OAuth onboarding** from dashboard (manual redirect paste flow)
 - **Persistent account storage** across container restarts
 - **Request tracing v2** (retention capped at 1000, server pagination, tokens/model/error/latency stats, optional full payload)
-- **Usage stats endpoint** with global + per-account + per-route aggregates
+- **Usage stats endpoint** with global + per-account + per-route aggregates over full history
+- **Time-range stats** (`sinceMs` / `untilMs`) while keeping only the latest 1000 full traces
 
 ---
 
@@ -69,8 +70,10 @@ Everything important is file-based and survives restart (if `/data` is mounted):
 - `/data/accounts.json`
 - `/data/oauth-state.json`
 - `/data/requests-trace.jsonl`
+- `/data/requests-stats-history.jsonl`
 
 Trace retention is capped to the latest **1000** entries.
+Stats history is append-only and keeps lightweight request metadata for long-term cost/volume tracking.
 
 > Docker compose already mounts `./data:/data`.
 
@@ -161,13 +164,21 @@ curl -H "x-admin-token: change-me" \
 
 ```bash
 curl -H "x-admin-token: change-me" \
-  "http://localhost:4010/admin/stats/usage?limit=1000"
+  "http://localhost:4010/admin/stats/usage?sinceMs=1735689600000&untilMs=1738291200000"
+```
+
+### Trace stats (historical)
+
+```bash
+curl -H "x-admin-token: change-me" \
+  "http://localhost:4010/admin/stats/traces?sinceMs=1735689600000&untilMs=1738291200000"
 ```
 
 Optional filters:
 - `accountId=<id>`
 - `route=/v1/chat/completions`
 - `sinceMs=<epoch_ms>`
+- `untilMs=<epoch_ms>`
 
 ---
 
@@ -179,6 +190,7 @@ Optional filters:
 | `STORE_PATH` | `/data/accounts.json` | Accounts store |
 | `OAUTH_STATE_PATH` | `/data/oauth-state.json` | OAuth flow state |
 | `TRACE_FILE_PATH` | `/data/requests-trace.jsonl` | Request trace file (retained to latest 1000 entries) |
+| `TRACE_STATS_HISTORY_PATH` | `/data/requests-stats-history.jsonl` | Lightweight request history for long-term stats |
 | `TRACE_INCLUDE_BODY` | `true` | Persist full request payloads; trace stats still work when disabled |
 | `PROXY_MODELS` | `gpt-5.3-codex,gpt-5.2-codex,gpt-5-codex` | Fallback comma-separated model list for `/v1/models` |
 | `MODELS_CLIENT_VERSION` | `1.0.0` | Version sent to `/backend-api/codex/models` for model discovery |

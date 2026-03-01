@@ -49,6 +49,8 @@ const OAUTH_STATE_PATH =
   process.env.OAUTH_STATE_PATH ?? "/data/oauth-state.json";
 const TRACE_FILE_PATH =
   process.env.TRACE_FILE_PATH ?? "/data/requests-trace.jsonl";
+const TRACE_STATS_HISTORY_PATH =
+  process.env.TRACE_STATS_HISTORY_PATH ?? "/data/requests-stats-history.jsonl";
 const TRACE_INCLUDE_BODY =
   (process.env.TRACE_INCLUDE_BODY ?? "true") === "true";
 const CHATGPT_BASE_URL = process.env.CHATGPT_BASE_URL ?? "https://chatgpt.com";
@@ -145,9 +147,15 @@ async function ensureValidToken(account: Account): Promise<Account> {
   }
 }
 
-const traceManager = createTraceManager({ filePath: TRACE_FILE_PATH });
+const traceManager = createTraceManager({
+  filePath: TRACE_FILE_PATH,
+  historyFilePath: TRACE_STATS_HISTORY_PATH,
+});
 const {
   readTraceWindow,
+  readStatsHistory,
+  readStatsHistoryRange,
+  seedStatsHistoryIfMissing,
   compactTraceStorageIfNeeded,
   appendTrace,
   readTracesLegacy,
@@ -173,6 +181,7 @@ function setForwardHeaders(from: Response, to: express.Response) {
 }
 
 await compactTraceStorageIfNeeded();
+await seedStatsHistoryIfMissing();
 
 app.get("/health", (_req, res) =>
   res.json({
@@ -190,6 +199,7 @@ app.get("/admin/config", adminGuard, (_req, res) => {
       accountsPath: STORE_PATH,
       oauthStatePath: OAUTH_STATE_PATH,
       tracePath: TRACE_FILE_PATH,
+      traceStatsHistoryPath: TRACE_STATS_HISTORY_PATH,
       persistenceLikelyEnabled:
         STORE_PATH.startsWith("/data/") || STORE_PATH.startsWith("/data"),
     },
@@ -239,27 +249,17 @@ app.get("/admin/traces", adminGuard, async (req, res) => {
   });
 });
 app.get("/admin/stats/usage", adminGuard, async (req, res) => {
-  const limit = Math.max(
-    1,
-    Math.min(5000, parseQueryNumber(req.query.limit) ?? 500),
-  );
   const accountIdFilter =
     typeof req.query.accountId === "string" ? req.query.accountId.trim() : "";
   const routeFilter =
     typeof req.query.route === "string" ? req.query.route.trim() : "";
   const sinceMs = parseQueryNumber(req.query.sinceMs);
+  const untilMs = parseQueryNumber(req.query.untilMs);
 
-  const windowed = await readTraceWindow();
-  const traces = windowed.slice(-limit);
+  const traces = await readStatsHistoryRange(sinceMs, untilMs);
   const filtered = traces.filter((t) => {
     if (accountIdFilter && t.accountId !== accountIdFilter) return false;
     if (routeFilter && t.route !== routeFilter) return false;
-    if (
-      typeof sinceMs === "number" &&
-      Number.isFinite(sinceMs) &&
-      t.at < sinceMs
-    )
-      return false;
     return true;
   });
 
@@ -307,16 +307,33 @@ app.get("/admin/stats/usage", adminGuard, async (req, res) => {
   res.json({
     ok: true,
     filters: {
-      limit,
       accountId: accountIdFilter || undefined,
       route: routeFilter || undefined,
       sinceMs,
+      untilMs,
     },
     totals: finalizeAggregate(globalAgg),
     byAccount: byAccountOut,
     byRoute: byRouteOut,
     tracesEvaluated: traces.length,
     tracesMatched: filtered.length,
+  });
+});
+
+app.get("/admin/stats/traces", adminGuard, async (req, res) => {
+  const sinceMs = parseQueryNumber(req.query.sinceMs);
+  const untilMs = parseQueryNumber(req.query.untilMs);
+  const traces = await readStatsHistoryRange(sinceMs, untilMs);
+  const sorted = [...traces].sort((a, b) => b.at - a.at);
+  const stats = buildTraceStats(sorted);
+  const totalStored = (await readStatsHistory()).length;
+
+  res.json({
+    ok: true,
+    filters: { sinceMs, untilMs },
+    totalStored,
+    matched: sorted.length,
+    stats,
   });
 });
 
@@ -1332,6 +1349,6 @@ app.get("*", (req, res, next) => {
 app.listen(PORT, () => {
   console.log(`multicodex-proxy listening on :${PORT}`);
   console.log(
-    `store=${STORE_PATH} oauth=${OAUTH_STATE_PATH} trace=${TRACE_FILE_PATH} redirect=${oauthConfig.redirectUri} upstream=${CHATGPT_BASE_URL}${UPSTREAM_PATH}`,
+    `store=${STORE_PATH} oauth=${OAUTH_STATE_PATH} trace=${TRACE_FILE_PATH} traceStats=${TRACE_STATS_HISTORY_PATH} redirect=${oauthConfig.redirectUri} upstream=${CHATGPT_BASE_URL}${UPSTREAM_PATH}`,
   );
 });

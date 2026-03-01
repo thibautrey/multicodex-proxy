@@ -45,8 +45,8 @@ export function AccountsTab(props: Props) {
   return (
     <>
       <section className="grid cards3">
-        <Metric title="Requests (trace window)" value={`${traceStats.totals.requests}`} />
-        <Metric title="Estimated cost (trace window)" value={usd(traceStats.totals.costUsd)} />
+        <Metric title="Requests (selected range)" value={`${traceStats.totals.requests}`} />
+        <Metric title="Estimated cost (selected range)" value={usd(traceStats.totals.costUsd)} />
         <Metric title="Top model by volume" value={traceStats.models[0]?.model ?? "-"} />
       </section>
 

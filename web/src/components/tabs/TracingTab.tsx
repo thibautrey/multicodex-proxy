@@ -17,7 +17,7 @@ import {
 import { estimateCostUsd } from "../../model-pricing";
 import { CHART_COLORS, fmt, formatTokenCount, maskEmail, maskId, pct, routeLabel, usd } from "../../lib/ui";
 import { Metric } from "../Metric";
-import type { Trace, TracePagination, TraceStats } from "../../types";
+import type { Trace, TracePagination, TraceRangePreset, TraceStats } from "../../types";
 
 type Props = {
   traceStats: TraceStats;
@@ -26,6 +26,8 @@ type Props = {
   modelCostChartData: Array<any>;
   tracePagination: TracePagination;
   gotoTracePage: (page: number) => Promise<void>;
+  traceRange: TraceRangePreset;
+  setTraceRange: (range: TraceRangePreset) => void;
   traces: Trace[];
   expandedTraceId: string | null;
   setExpandedTraceId: (id: string | null) => void;
@@ -40,6 +42,8 @@ export function TracingTab(props: Props) {
     modelCostChartData,
     tracePagination,
     gotoTracePage,
+    traceRange,
+    setTraceRange,
     traces,
     expandedTraceId,
     setExpandedTraceId,
@@ -178,6 +182,18 @@ export function TracingTab(props: Props) {
         <div className="trace-head">
           <h2>Request tracing</h2>
           <div className="inline wrap">
+            <select
+              value={traceRange}
+              onChange={(e) => {
+                setTraceRange(e.target.value as TraceRangePreset);
+                void gotoTracePage(1);
+              }}
+            >
+              <option value="24h">Last 24h</option>
+              <option value="7d">Last 7d</option>
+              <option value="30d">Last 30d</option>
+              <option value="all">All time</option>
+            </select>
             <button className="btn ghost" onClick={() => void gotoTracePage(tracePagination.page - 1)} disabled={!tracePagination.hasPrev}>Previous</button>
             <span className="mono">Page {tracePagination.page} / {tracePagination.totalPages} ({tracePagination.total} traces)</span>
             <button className="btn ghost" onClick={() => void gotoTracePage(tracePagination.page + 1)} disabled={!tracePagination.hasNext}>Next</button>

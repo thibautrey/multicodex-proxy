@@ -54,4 +54,6 @@ export type TracePagination = {
   hasNext: boolean;
 };
 
+export type TraceRangePreset = "24h" | "7d" | "30d" | "all";
+
 export type Tab = "overview" | "accounts" | "tracing" | "playground" | "docs";
