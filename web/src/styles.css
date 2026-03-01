@@ -205,7 +205,7 @@ button.danger {
 
 .tab.active {
   background: var(--text);
-  color: #fff;
+  color: var(--bg);
   border-color: var(--text);
 }
 
@@ -322,6 +322,21 @@ small { display: block; color: var(--muted); }
   width: 100%;
   min-height: 260px;
 }
+
+.recharts-default-tooltip {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  font-size: 14px;
+}
+
+.recharts-default-tooltip .recharts-tooltip-item-list {
+  padding: 4px 8px;
+}
+
+.recharts-default-tooltip .recharts-tooltip-item {display:block; padding: 2px 0;}
 
 button:disabled,
 .btn:disabled {

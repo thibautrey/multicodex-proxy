@@ -53,6 +53,8 @@ export function TracingTab(props: Props) {
 
   const formatTooltipValue = (value: any) => formatTokenChartValue(value?.[0] ?? value ?? 0);
 
+  const formatPieTokenLabel = ({ value }: { value?: number }) => formatTokenChartValue(value);
+
   return (
     <>
       <section className="grid cards5">
@@ -168,13 +170,19 @@ export function TracingTab(props: Props) {
         <h2>Model split by token volume</h2>
         <div className="chart-wrap">
           <ResponsiveContainer width="100%" height={260}>
-            <PieChart>
-              <Pie data={modelChartData} dataKey="tokensTotal" nameKey="label" outerRadius={90} label>
+              <PieChart>
+              <Pie
+                data={modelChartData}
+                dataKey="tokensTotal"
+                nameKey="label"
+                outerRadius={90}
+                label={formatPieTokenLabel}
+              >
                 {modelChartData.map((entry, idx) => (
                   <Cell key={`${entry.label}-${idx}`} fill={CHART_COLORS[idx % CHART_COLORS.length]} />
                 ))}
               </Pie>
-              <Tooltip />
+              <Tooltip formatter={(value: any) => formatTokenChartValue(value)} />
               <Legend />
             </PieChart>
           </ResponsiveContainer>
