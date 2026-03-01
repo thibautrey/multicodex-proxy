@@ -36,6 +36,7 @@ import {
   parseResponsesSSEToChatCompletion,
   parseResponsesSSEToResponseObject,
   responseObjectToChatCompletion,
+  responseObjectToSSE,
   sanitizeAssistantTextChunk,
   sanitizeChatCompletionObject,
   sanitizeResponsesSSEFrame,
@@ -957,6 +958,42 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
             upstreamContentType: contentType,
             upstreamEmptyBody,
             ...inspectAssistantPayload(chatResp),
+          });
+          return;
+        }
+      }
+
+      // Hard guarantee for /responses streaming clients:
+      // always return SSE, even when upstream returns JSON Response object.
+      if (
+        !shouldReturnChatCompletions &&
+        clientRequestedStream &&
+        upstream.ok
+      ) {
+        if (parsed?.object === "response") {
+          const sanitized = stripReasoningFromResponseObject(parsed);
+          res.status(200);
+          res.set("Content-Type", "text/event-stream");
+          res.set("Cache-Control", "no-cache");
+          res.set("Connection", "keep-alive");
+          res.write(responseObjectToSSE(sanitized));
+          res.end();
+
+          await appendTrace({
+            at: Date.now(),
+            route: req.path,
+            accountId: selected.id,
+            accountEmail: selected.email,
+            model: requestModel,
+            status: upstream.status,
+            stream: true,
+            latencyMs: Date.now() - startedAt,
+            usage: sanitized?.usage,
+            requestBody,
+            upstreamError,
+            upstreamContentType: contentType,
+            upstreamEmptyBody,
+            ...inspectAssistantPayload(sanitized),
           });
           return;
         }
