@@ -15,7 +15,13 @@ import {
   refreshAccessToken,
   type OAuthConfig,
 } from "./oauth.js";
-import { chooseAccount, isQuotaErrorText, markQuotaHit, refreshUsageIfNeeded, rememberError } from "./quota.js";
+import {
+  chooseAccount,
+  isQuotaErrorText,
+  markQuotaHit,
+  refreshUsageIfNeeded,
+  rememberError,
+} from "./quota.js";
 import type { Account } from "./types.js";
 import { createTraceManager } from "./traces.js";
 import {
@@ -38,15 +44,28 @@ import {
 
 const PORT = Number(process.env.PORT ?? 4010);
 const STORE_PATH = process.env.STORE_PATH ?? "/data/accounts.json";
-const OAUTH_STATE_PATH = process.env.OAUTH_STATE_PATH ?? "/data/oauth-state.json";
-const TRACE_FILE_PATH = process.env.TRACE_FILE_PATH ?? "/data/requests-trace.jsonl";
-const TRACE_INCLUDE_BODY = (process.env.TRACE_INCLUDE_BODY ?? "true") === "true";
+const OAUTH_STATE_PATH =
+  process.env.OAUTH_STATE_PATH ?? "/data/oauth-state.json";
+const TRACE_FILE_PATH =
+  process.env.TRACE_FILE_PATH ?? "/data/requests-trace.jsonl";
+const TRACE_INCLUDE_BODY =
+  (process.env.TRACE_INCLUDE_BODY ?? "true") === "true";
 const CHATGPT_BASE_URL = process.env.CHATGPT_BASE_URL ?? "https://chatgpt.com";
-const UPSTREAM_PATH = process.env.UPSTREAM_PATH ?? "/backend-api/codex/responses";
+const UPSTREAM_PATH =
+  process.env.UPSTREAM_PATH ?? "/backend-api/codex/responses";
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
-const MAX_ACCOUNT_RETRY_ATTEMPTS = Math.max(1, Number(process.env.MAX_ACCOUNT_RETRY_ATTEMPTS ?? 5));
-const MAX_UPSTREAM_RETRIES = Math.max(0, Number(process.env.MAX_UPSTREAM_RETRIES ?? 3));
-const UPSTREAM_BASE_DELAY_MS = Math.max(100, Number(process.env.UPSTREAM_BASE_DELAY_MS ?? 1000));
+const MAX_ACCOUNT_RETRY_ATTEMPTS = Math.max(
+  1,
+  Number(process.env.MAX_ACCOUNT_RETRY_ATTEMPTS ?? 5),
+);
+const MAX_UPSTREAM_RETRIES = Math.max(
+  0,
+  Number(process.env.MAX_UPSTREAM_RETRIES ?? 3),
+);
+const UPSTREAM_BASE_DELAY_MS = Math.max(
+  100,
+  Number(process.env.UPSTREAM_BASE_DELAY_MS ?? 1000),
+);
 const PI_USER_AGENT = `pi (${os.platform()} ${os.release()}; ${os.arch()})`;
 
 const BUILD_GIT_SHA = process.env.APP_GIT_SHA ?? "unknown";
@@ -56,16 +75,21 @@ try {
   const packageJsonPath = path.resolve(process.cwd(), "package.json");
   const packageRaw = await fs.readFile(packageJsonPath, "utf8");
   const pkg = JSON.parse(packageRaw);
-  if (typeof pkg?.version === "string" && pkg.version) APP_VERSION = pkg.version;
+  if (typeof pkg?.version === "string" && pkg.version)
+    APP_VERSION = pkg.version;
 } catch {}
 
 const oauthConfig: OAuthConfig = {
-  authorizationUrl: process.env.OAUTH_AUTHORIZATION_URL ?? "https://auth.openai.com/oauth/authorize",
-  tokenUrl: process.env.OAUTH_TOKEN_URL ?? "https://auth.openai.com/oauth/token",
+  authorizationUrl:
+    process.env.OAUTH_AUTHORIZATION_URL ??
+    "https://auth.openai.com/oauth/authorize",
+  tokenUrl:
+    process.env.OAUTH_TOKEN_URL ?? "https://auth.openai.com/oauth/token",
   clientId: process.env.OAUTH_CLIENT_ID ?? "app_EMoamEEZ73f0CkXaXp7hrann",
   scope: process.env.OAUTH_SCOPE ?? "openid profile email offline_access",
   audience: process.env.OAUTH_AUDIENCE,
-  redirectUri: process.env.OAUTH_REDIRECT_URI ?? "http://localhost:1455/auth/callback",
+  redirectUri:
+    process.env.OAUTH_REDIRECT_URI ?? "http://localhost:1455/auth/callback",
 };
 
 const app = express();
@@ -77,10 +101,17 @@ await store.init();
 await oauthStore.init();
 await fs.mkdir(path.dirname(TRACE_FILE_PATH), { recursive: true });
 
-function adminGuard(req: express.Request, res: express.Response, next: express.NextFunction) {
+function adminGuard(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+) {
   if (!ADMIN_TOKEN) return next();
-  const token = req.header("x-admin-token") || req.header("authorization")?.replace(/^Bearer\s+/i, "");
-  if (token !== ADMIN_TOKEN) return res.status(401).json({ error: "unauthorized" });
+  const token =
+    req.header("x-admin-token") ||
+    req.header("authorization")?.replace(/^Bearer\s+/i, "");
+  if (token !== ADMIN_TOKEN)
+    return res.status(401).json({ error: "unauthorized" });
   next();
 }
 
@@ -88,18 +119,27 @@ function redact(a: Account) {
   return {
     ...a,
     accessToken: a.accessToken ? `${a.accessToken.slice(0, 8)}...` : "",
-    refreshToken: a.refreshToken ? `${a.refreshToken.slice(0, 8)}...` : undefined,
+    refreshToken: a.refreshToken
+      ? `${a.refreshToken.slice(0, 8)}...`
+      : undefined,
   };
 }
 
 async function ensureValidToken(account: Account): Promise<Account> {
-  if (!account.expiresAt || Date.now() < account.expiresAt - 5 * 60_000) return account;
+  if (!account.expiresAt || Date.now() < account.expiresAt - 5 * 60_000)
+    return account;
   if (!account.refreshToken) return account;
   try {
-    const refreshed = await refreshAccessToken(oauthConfig, account.refreshToken);
+    const refreshed = await refreshAccessToken(
+      oauthConfig,
+      account.refreshToken,
+    );
     return mergeTokenIntoAccount(account, refreshed);
   } catch (err: any) {
-    rememberError(account, `refresh token failed: ${err?.message ?? String(err)}`);
+    rememberError(
+      account,
+      `refresh token failed: ${err?.message ?? String(err)}`,
+    );
     return account;
   }
 }
@@ -127,12 +167,20 @@ function parseQueryNumber(v: unknown): number | undefined {
 }
 
 function setForwardHeaders(from: Response, to: express.Response) {
-  for (const [k, v] of from.headers.entries()) if (k.toLowerCase() !== "content-length") to.setHeader(k, v);
+  for (const [k, v] of from.headers.entries())
+    if (k.toLowerCase() !== "content-length") to.setHeader(k, v);
 }
 
 await compactTraceStorageIfNeeded();
 
-app.get("/health", (_req, res) => res.json({ ok: true, version: APP_VERSION, gitSha: BUILD_GIT_SHA, buildId: BUILD_ID }));
+app.get("/health", (_req, res) =>
+  res.json({
+    ok: true,
+    version: APP_VERSION,
+    gitSha: BUILD_GIT_SHA,
+    buildId: BUILD_ID,
+  }),
+);
 app.get("/admin/config", adminGuard, (_req, res) => {
   res.json({
     ok: true,
@@ -141,13 +189,18 @@ app.get("/admin/config", adminGuard, (_req, res) => {
       accountsPath: STORE_PATH,
       oauthStatePath: OAUTH_STATE_PATH,
       tracePath: TRACE_FILE_PATH,
-      persistenceLikelyEnabled: STORE_PATH.startsWith("/data/") || STORE_PATH.startsWith("/data"),
+      persistenceLikelyEnabled:
+        STORE_PATH.startsWith("/data/") || STORE_PATH.startsWith("/data"),
     },
   });
 });
-app.get("/admin/accounts", adminGuard, async (_req, res) => res.json({ accounts: (await store.listAccounts()).map(redact) }));
+app.get("/admin/accounts", adminGuard, async (_req, res) =>
+  res.json({ accounts: (await store.listAccounts()).map(redact) }),
+);
 app.get("/admin/traces", adminGuard, async (req, res) => {
-  const hasPaginationQuery = typeof req.query.page !== "undefined" || typeof req.query.pageSize !== "undefined";
+  const hasPaginationQuery =
+    typeof req.query.page !== "undefined" ||
+    typeof req.query.pageSize !== "undefined";
   const hasLegacyLimit = typeof req.query.limit !== "undefined";
 
   if (hasLegacyLimit && !hasPaginationQuery) {
@@ -156,7 +209,13 @@ app.get("/admin/traces", adminGuard, async (req, res) => {
   }
 
   const page = Math.max(1, Number(req.query.page ?? 1) || 1);
-  const pageSize = Math.max(1, Math.min(pageSizeMax, Number(req.query.pageSize ?? pageSizeMax) || pageSizeMax));
+  const pageSize = Math.max(
+    1,
+    Math.min(
+      pageSizeMax,
+      Number(req.query.pageSize ?? pageSizeMax) || pageSizeMax,
+    ),
+  );
   const traces = await readTraceWindow();
   const sorted = [...traces].sort((a, b) => b.at - a.at);
   const total = sorted.length;
@@ -179,9 +238,14 @@ app.get("/admin/traces", adminGuard, async (req, res) => {
   });
 });
 app.get("/admin/stats/usage", adminGuard, async (req, res) => {
-  const limit = Math.max(1, Math.min(5000, parseQueryNumber(req.query.limit) ?? 500));
-  const accountIdFilter = typeof req.query.accountId === "string" ? req.query.accountId.trim() : "";
-  const routeFilter = typeof req.query.route === "string" ? req.query.route.trim() : "";
+  const limit = Math.max(
+    1,
+    Math.min(5000, parseQueryNumber(req.query.limit) ?? 500),
+  );
+  const accountIdFilter =
+    typeof req.query.accountId === "string" ? req.query.accountId.trim() : "";
+  const routeFilter =
+    typeof req.query.route === "string" ? req.query.route.trim() : "";
   const sinceMs = parseQueryNumber(req.query.sinceMs);
 
   const windowed = await readTraceWindow();
@@ -189,7 +253,12 @@ app.get("/admin/stats/usage", adminGuard, async (req, res) => {
   const filtered = traces.filter((t) => {
     if (accountIdFilter && t.accountId !== accountIdFilter) return false;
     if (routeFilter && t.route !== routeFilter) return false;
-    if (typeof sinceMs === "number" && Number.isFinite(sinceMs) && t.at < sinceMs) return false;
+    if (
+      typeof sinceMs === "number" &&
+      Number.isFinite(sinceMs) &&
+      t.at < sinceMs
+    )
+      return false;
     return true;
   });
 
@@ -201,7 +270,8 @@ app.get("/admin/stats/usage", adminGuard, async (req, res) => {
     addTraceToAggregate(globalAgg, trace);
 
     const accountKey = trace.accountId ?? "unknown";
-    if (!byAccount.has(accountKey)) byAccount.set(accountKey, createUsageAggregate());
+    if (!byAccount.has(accountKey))
+      byAccount.set(accountKey, createUsageAggregate());
     addTraceToAggregate(byAccount.get(accountKey)!, trace);
 
     const routeKey = trace.route ?? "unknown";
@@ -210,12 +280,21 @@ app.get("/admin/stats/usage", adminGuard, async (req, res) => {
   }
 
   const accounts = await store.listAccounts();
-  const accountMeta = new Map(accounts.map((a) => [a.id, { id: a.id, email: a.email, enabled: a.enabled }]));
+  const accountMeta = new Map(
+    accounts.map((a) => [
+      a.id,
+      { id: a.id, email: a.email, enabled: a.enabled },
+    ]),
+  );
 
   const byAccountOut = Array.from(byAccount.entries())
     .map(([accountId, agg]) => ({
       accountId,
-      account: accountMeta.get(accountId) ?? { id: accountId, email: undefined, enabled: undefined },
+      account: accountMeta.get(accountId) ?? {
+        id: accountId,
+        email: undefined,
+        enabled: undefined,
+      },
       ...finalizeAggregate(agg),
     }))
     .sort((a, b) => b.requests - a.requests);
@@ -242,11 +321,19 @@ app.get("/admin/stats/usage", adminGuard, async (req, res) => {
 
 app.post("/admin/accounts", adminGuard, async (req, res) => {
   const body = req.body ?? {};
-  if (!body.accessToken) return res.status(400).json({ error: "accessToken required" });
+  if (!body.accessToken)
+    return res.status(400).json({ error: "accessToken required" });
   const acc: Account = {
-    id: body.id ?? randomUUID(), email: body.email, accessToken: body.accessToken, refreshToken: body.refreshToken,
-    expiresAt: body.expiresAt, chatgptAccountId: body.chatgptAccountId, enabled: body.enabled ?? true,
-    priority: body.priority ?? 0, usage: body.usage, state: body.state,
+    id: body.id ?? randomUUID(),
+    email: body.email,
+    accessToken: body.accessToken,
+    refreshToken: body.refreshToken,
+    expiresAt: body.expiresAt,
+    chatgptAccountId: body.chatgptAccountId,
+    enabled: body.enabled ?? true,
+    priority: body.priority ?? 0,
+    usage: body.usage,
+    state: body.state,
   };
   await store.upsertAccount(acc);
   res.json({ ok: true, account: redact(acc) });
@@ -265,7 +352,11 @@ app.delete("/admin/accounts/:id", adminGuard, async (req, res) => {
 app.post("/admin/accounts/:id/unblock", adminGuard, async (req, res) => {
   const acc = (await store.listAccounts()).find((a) => a.id === req.params.id);
   if (!acc) return res.status(404).json({ error: "not found" });
-  acc.state = { ...acc.state, blockedUntil: undefined, blockedReason: undefined };
+  acc.state = {
+    ...acc.state,
+    blockedUntil: undefined,
+    blockedReason: undefined,
+  };
   await store.upsertAccount(acc);
   res.json({ ok: true, account: redact(acc) });
 });
@@ -279,11 +370,13 @@ app.post("/admin/accounts/:id/refresh-usage", adminGuard, async (req, res) => {
   res.json({ ok: true, account: redact(acc) });
 });
 app.post("/admin/usage/refresh", adminGuard, async (_req, res) => {
-  const refreshed = await Promise.all((await store.listAccounts()).map(async (a) => {
-    const valid = await ensureValidToken(a);
-    await refreshUsageIfNeeded(valid, CHATGPT_BASE_URL, true);
-    return valid;
-  }));
+  const refreshed = await Promise.all(
+    (await store.listAccounts()).map(async (a) => {
+      const valid = await ensureValidToken(a);
+      await refreshUsageIfNeeded(valid, CHATGPT_BASE_URL, true);
+      return valid;
+    }),
+  );
   await Promise.all(refreshed.map((a) => store.upsertAccount(a)));
   res.json({ ok: true, accounts: refreshed.map(redact) });
 });
@@ -294,7 +387,12 @@ app.post("/admin/oauth/start", adminGuard, async (req, res) => {
   const flow = createOAuthState(email);
   await oauthStore.create(flow);
   const authorizeUrl = buildAuthorizationUrl(oauthConfig, flow);
-  res.json({ ok: true, flowId: flow.id, authorizeUrl, expectedRedirectUri: oauthConfig.redirectUri });
+  res.json({
+    ok: true,
+    flowId: flow.id,
+    authorizeUrl,
+    expectedRedirectUri: oauthConfig.redirectUri,
+  });
 });
 
 app.get("/admin/oauth/status/:flowId", adminGuard, async (req, res) => {
@@ -306,67 +404,111 @@ app.get("/admin/oauth/status/:flowId", adminGuard, async (req, res) => {
 app.post("/admin/oauth/complete", adminGuard, async (req, res) => {
   const flowId = String(req.body?.flowId ?? "").trim();
   const input = String(req.body?.input ?? "").trim();
-  if (!flowId || !input) return res.status(400).json({ error: "flowId and input are required" });
+  if (!flowId || !input)
+    return res.status(400).json({ error: "flowId and input are required" });
 
   const flow = await oauthStore.get(flowId);
   if (!flow) return res.status(404).json({ error: "flow not found" });
 
   const parsed = parseAuthorizationInput(input);
-  if (!parsed.code) return res.status(400).json({ error: "missing code in pasted input" });
-  if (parsed.state && parsed.state !== flow.id) return res.status(400).json({ error: "state mismatch" });
+  if (!parsed.code)
+    return res.status(400).json({ error: "missing code in pasted input" });
+  if (parsed.state && parsed.state !== flow.id)
+    return res.status(400).json({ error: "state mismatch" });
 
   try {
-    const tokenData = await exchangeCodeForToken(oauthConfig, parsed.code, flow.codeVerifier);
+    const tokenData = await exchangeCodeForToken(
+      oauthConfig,
+      parsed.code,
+      flow.codeVerifier,
+    );
     let account = accountFromOAuth(flow, tokenData);
     account = await refreshUsageIfNeeded(account, CHATGPT_BASE_URL, true);
     await store.upsertAccount(account);
-    await oauthStore.update(flow.id, { status: "success", completedAt: Date.now(), accountId: account.id });
+    await oauthStore.update(flow.id, {
+      status: "success",
+      completedAt: Date.now(),
+      accountId: account.id,
+    });
     return res.json({ ok: true, account: redact(account) });
   } catch (err: any) {
     const message = err?.message ?? String(err);
-    await oauthStore.update(flow.id, { status: "error", error: message, completedAt: Date.now() });
+    await oauthStore.update(flow.id, {
+      status: "error",
+      error: message,
+      completedAt: Date.now(),
+    });
     return res.status(500).json({ error: `OAuth exchange failed: ${message}` });
   }
 });
 
 function isRetryableUpstreamError(status: number, errorText: string): boolean {
-  if (status === 429 || status === 500 || status === 502 || status === 503 || status === 504) return true;
-  return /rate.?limit|overloaded|service.?unavailable|upstream.?connect|connection.?refused/i.test(errorText);
+  if (
+    status === 429 ||
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504
+  )
+    return true;
+  return /rate.?limit|overloaded|service.?unavailable|upstream.?connect|connection.?refused/i.test(
+    errorText,
+  );
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function takeNextSSEFrame(buffer: string): { frame: string; rest: string } | null {
+function takeNextSSEFrame(
+  buffer: string,
+): { frame: string; rest: string } | null {
   const crlfBoundary = buffer.indexOf("\r\n\r\n");
   const lfBoundary = buffer.indexOf("\n\n");
 
   if (crlfBoundary === -1 && lfBoundary === -1) return null;
 
   if (crlfBoundary !== -1 && (lfBoundary === -1 || crlfBoundary < lfBoundary)) {
-    return { frame: buffer.slice(0, crlfBoundary), rest: buffer.slice(crlfBoundary + 4) };
+    return {
+      frame: buffer.slice(0, crlfBoundary),
+      rest: buffer.slice(crlfBoundary + 4),
+    };
   }
 
-  return { frame: buffer.slice(0, lfBoundary), rest: buffer.slice(lfBoundary + 2) };
+  return {
+    frame: buffer.slice(0, lfBoundary),
+    rest: buffer.slice(lfBoundary + 2),
+  };
 }
 
-async function fetchCodexWithRetry(url: string, init: RequestInit): Promise<Response> {
+async function fetchCodexWithRetry(
+  url: string,
+  init: RequestInit,
+): Promise<Response> {
   let lastError: Error | undefined;
   for (let attempt = 0; attempt <= MAX_UPSTREAM_RETRIES; attempt++) {
     try {
       const response = await fetch(url, init);
       if (response.ok) return response;
-      const errorText = await response.clone().text().catch(() => "");
-      if (attempt < MAX_UPSTREAM_RETRIES && isRetryableUpstreamError(response.status, errorText)) {
-        await sleep(UPSTREAM_BASE_DELAY_MS * (2 ** attempt));
+      const errorText = await response
+        .clone()
+        .text()
+        .catch(() => "");
+      if (
+        attempt < MAX_UPSTREAM_RETRIES &&
+        isRetryableUpstreamError(response.status, errorText)
+      ) {
+        await sleep(UPSTREAM_BASE_DELAY_MS * 2 ** attempt);
         continue;
       }
       return response;
     } catch (error: any) {
       lastError = error instanceof Error ? error : new Error(String(error));
-      if (attempt < MAX_UPSTREAM_RETRIES && !lastError.message.includes("usage limit")) {
-        await sleep(UPSTREAM_BASE_DELAY_MS * (2 ** attempt));
+      if (
+        attempt < MAX_UPSTREAM_RETRIES &&
+        !lastError.message.includes("usage limit")
+      ) {
+        await sleep(UPSTREAM_BASE_DELAY_MS * 2 ** attempt);
         continue;
       }
       throw lastError;
@@ -377,7 +519,9 @@ async function fetchCodexWithRetry(url: string, init: RequestInit): Promise<Resp
 
 async function proxyWithRotation(req: express.Request, res: express.Response) {
   const startedAt = Date.now();
-  const isChatCompletionsPath = (req.path || "").includes("chat/completions") || (req.originalUrl || "").includes("chat/completions");
+  const isChatCompletionsPath =
+    (req.path || "").includes("chat/completions") ||
+    (req.originalUrl || "").includes("chat/completions");
   // Detect payload format: Chat Completions uses 'messages', Responses API uses 'input'
   const isChatCompletionsPayload = Array.isArray(req.body?.messages);
   const isChatCompletions = isChatCompletionsPath && isChatCompletionsPayload;
@@ -385,13 +529,16 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
   const sessionId = getSessionId(req);
 
   let accounts = await store.listAccounts();
-  if (!accounts.length) return res.status(503).json({ error: "no accounts configured" });
+  if (!accounts.length)
+    return res.status(503).json({ error: "no accounts configured" });
 
-  accounts = await Promise.all(accounts.map(async (a) => {
-    const valid = await ensureValidToken(a);
-    await refreshUsageIfNeeded(valid, CHATGPT_BASE_URL);
-    return valid;
-  }));
+  accounts = await Promise.all(
+    accounts.map(async (a) => {
+      const valid = await ensureValidToken(a);
+      await refreshUsageIfNeeded(valid, CHATGPT_BASE_URL);
+      return valid;
+    }),
+  );
   await Promise.all(accounts.map((a) => store.upsertAccount(a)));
 
   const tried = new Set<string>();
@@ -411,8 +558,12 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
       : normalizeResponsesPayload(req.body, sessionId);
     const requestBody = TRACE_INCLUDE_BODY ? req.body : undefined;
     const requestModel =
-      (typeof req.body?.model === "string" && req.body.model.trim()) ? req.body.model.trim()
-      : ((typeof payloadToUpstream?.model === "string" && payloadToUpstream.model.trim()) ? payloadToUpstream.model.trim() : undefined);
+      typeof req.body?.model === "string" && req.body.model.trim()
+        ? req.body.model.trim()
+        : typeof payloadToUpstream?.model === "string" &&
+            payloadToUpstream.model.trim()
+          ? payloadToUpstream.model.trim()
+          : undefined;
 
     const headers: Record<string, string> = {
       "content-type": "application/json",
@@ -422,15 +573,19 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
       originator: "pi",
       "User-Agent": PI_USER_AGENT,
     };
-    if (selected.chatgptAccountId) headers["chatgpt-account-id"] = selected.chatgptAccountId;
+    if (selected.chatgptAccountId)
+      headers["chatgpt-account-id"] = selected.chatgptAccountId;
     if (sessionId) headers.session_id = sessionId;
 
     try {
-      const upstream = await fetchCodexWithRetry(`${CHATGPT_BASE_URL}${UPSTREAM_PATH}`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(payloadToUpstream),
-      });
+      const upstream = await fetchCodexWithRetry(
+        `${CHATGPT_BASE_URL}${UPSTREAM_PATH}`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payloadToUpstream),
+        },
+      );
 
       const contentType = upstream.headers.get("content-type") ?? "";
       const isStream = contentType.includes("text/event-stream");
@@ -442,7 +597,8 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
           res.set("Cache-Control", "no-cache");
           res.set("Connection", "keep-alive");
 
-          const model = req.body?.model ?? payloadToUpstream?.model ?? "unknown";
+          const model =
+            req.body?.model ?? payloadToUpstream?.model ?? "unknown";
           let accumulatedUsage: any = null;
           let streamedFallbackText = "";
 
@@ -465,19 +621,34 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
               if (payload && payload !== "[DONE]") {
                 try {
                   const event = JSON.parse(payload);
-                  if (event?.type === "response.output_text.delta" && typeof event?.delta === "string") {
-                    streamedFallbackText += sanitizeAssistantTextChunk(event.delta);
-                  } else if (event?.type === "response.output_text.done" && !streamedFallbackText && typeof event?.text === "string") {
-                    streamedFallbackText = sanitizeAssistantTextChunk(event.text);
+                  if (
+                    event?.type === "response.output_text.delta" &&
+                    typeof event?.delta === "string"
+                  ) {
+                    streamedFallbackText += sanitizeAssistantTextChunk(
+                      event.delta,
+                    );
+                  } else if (
+                    event?.type === "response.output_text.done" &&
+                    !streamedFallbackText &&
+                    typeof event?.text === "string"
+                  ) {
+                    streamedFallbackText = sanitizeAssistantTextChunk(
+                      event.text,
+                    );
                   }
                 } catch {}
               }
 
-              const converted = convertResponsesSSEToChatCompletionSSE(line, model, streamedFallbackText);
+              const converted = convertResponsesSSEToChatCompletionSSE(
+                line,
+                model,
+                streamedFallbackText,
+              );
               if (converted) {
                 res.write(converted);
                 if (converted.includes("[DONE]")) doneSent = true;
-              } else if (line.includes("\"response.reasoning")) {
+              } else if (line.includes('"response.reasoning')) {
                 // Keep streaming clients alive for hidden reasoning events.
                 res.write(": keepalive\n\n");
               }
@@ -510,7 +681,10 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
 
         if (shouldReturnChatCompletions) {
           const txt = await upstream.text();
-          const parsedChat = parseResponsesSSEToChatCompletion(txt, req.body?.model ?? payloadToUpstream?.model ?? "unknown");
+          const parsedChat = parseResponsesSSEToChatCompletion(
+            txt,
+            req.body?.model ?? payloadToUpstream?.model ?? "unknown",
+          );
           const normalized = ensureNonEmptyChatCompletion(parsedChat);
           res.status(upstream.ok ? 200 : upstream.status).json(normalized.chat);
 
@@ -561,6 +735,7 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
         const reader = upstream.body.getReader();
         const decoder = new TextDecoder();
         let sseBuffer = "";
+        let accumulatedUsage: any = null;
 
         while (true) {
           const { value, done } = await reader.read();
@@ -571,6 +746,22 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
             const next = takeNextSSEFrame(sseBuffer);
             if (!next) break;
             sseBuffer = next.rest;
+
+            // Track usage from response.completed events
+            if (next.frame.includes("response.completed")) {
+              try {
+                const dataLine = next.frame
+                  .split(/\r?\n/)
+                  .find((line) => line.trim().startsWith("data:"));
+                if (dataLine) {
+                  const payload = JSON.parse(dataLine.slice(5).trim());
+                  if (payload?.response?.usage) {
+                    accumulatedUsage = payload.response.usage;
+                  }
+                }
+              } catch {}
+            }
+
             const filtered = sanitizeResponsesSSEFrame(next.frame);
             if (filtered !== null) res.write(`${filtered}\n\n`);
           }
@@ -581,6 +772,22 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
           const next = takeNextSSEFrame(sseBuffer);
           if (!next) break;
           sseBuffer = next.rest;
+
+          // Track usage from response.completed events
+          if (next.frame.includes("response.completed")) {
+            try {
+              const dataLine = next.frame
+                .split(/\r?\n/)
+                .find((line) => line.trim().startsWith("data:"));
+              if (dataLine) {
+                const payload = JSON.parse(dataLine.slice(5).trim());
+                if (payload?.response?.usage) {
+                  accumulatedUsage = payload.response.usage;
+                }
+              }
+            } catch {}
+          }
+
           const filtered = sanitizeResponsesSSEFrame(next.frame);
           if (filtered !== null) res.write(`${filtered}\n\n`);
         }
@@ -599,6 +806,7 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
           status: upstream.status,
           stream: true,
           latencyMs: Date.now() - startedAt,
+          usage: accumulatedUsage,
           requestBody,
         });
         return;
@@ -610,14 +818,21 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
       if (shouldReturnChatCompletions && clientRequestedStream) {
         let raw = await upstream.text();
         const upstreamEmptyBody = !raw;
-        if (!raw) raw = JSON.stringify({ error: `upstream ${upstream.status} with empty body` });
+        if (!raw)
+          raw = JSON.stringify({
+            error: `upstream ${upstream.status} with empty body`,
+          });
         bufferedText = raw;
 
         let parsed: any = undefined;
-        try { parsed = JSON.parse(raw); } catch {}
+        try {
+          parsed = JSON.parse(raw);
+        } catch {}
 
         if (upstream.ok && parsed && parsed.object === "chat.completion") {
-          const normalized = ensureNonEmptyChatCompletion(sanitizeChatCompletionObject(parsed));
+          const normalized = ensureNonEmptyChatCompletion(
+            sanitizeChatCompletionObject(parsed),
+          );
           res.status(200);
           res.set("Content-Type", "text/event-stream");
           res.set("Cache-Control", "no-cache");
@@ -645,7 +860,10 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
 
         // If it's a JSON Responses object, convert to chat completion first then to SSE.
         if (upstream.ok && parsed && parsed.object === "response") {
-          const converted = responseObjectToChatCompletion(parsed, req.body?.model ?? payloadToUpstream?.model ?? "unknown");
+          const converted = responseObjectToChatCompletion(
+            parsed,
+            req.body?.model ?? payloadToUpstream?.model ?? "unknown",
+          );
           res.status(200);
           res.set("Content-Type", "text/event-stream");
           res.set("Cache-Control", "no-cache");
@@ -674,13 +892,18 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
         // On error, fall through to normal handling.
       }
 
-      let text = bufferedText ?? await upstream.text();
+      let text = bufferedText ?? (await upstream.text());
       const upstreamEmptyBody = !text;
-      if (!text) text = JSON.stringify({ error: `upstream ${upstream.status} with empty body` });
+      if (!text)
+        text = JSON.stringify({
+          error: `upstream ${upstream.status} with empty body`,
+        });
       const upstreamError = !upstream.ok ? text.slice(0, 500) : undefined;
 
       let parsed: any = undefined;
-      try { parsed = JSON.parse(text); } catch {}
+      try {
+        parsed = JSON.parse(text);
+      } catch {}
       if (parsed?.object === "chat.completion") {
         parsed = sanitizeChatCompletionObject(parsed);
         text = JSON.stringify(parsed);
@@ -695,11 +918,19 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
         let chatResp: any = undefined;
 
         if (parsed?.object === "chat.completion") {
-          chatResp = ensureNonEmptyChatCompletion(sanitizeChatCompletionObject(parsed)).chat;
+          chatResp = ensureNonEmptyChatCompletion(
+            sanitizeChatCompletionObject(parsed),
+          ).chat;
         } else if (parsed?.object === "response") {
-          chatResp = responseObjectToChatCompletion(parsed, req.body?.model ?? payloadToUpstream?.model ?? "unknown");
+          chatResp = responseObjectToChatCompletion(
+            parsed,
+            req.body?.model ?? payloadToUpstream?.model ?? "unknown",
+          );
         } else if (text.includes("data:")) {
-          chatResp = parseResponsesSSEToChatCompletion(text, req.body?.model ?? payloadToUpstream?.model ?? "unknown");
+          chatResp = parseResponsesSSEToChatCompletion(
+            text,
+            req.body?.model ?? payloadToUpstream?.model ?? "unknown",
+          );
         }
 
         if (chatResp) {
@@ -733,7 +964,10 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
 
       if (text.includes("event: response.")) {
         if (shouldReturnChatCompletions) {
-          const parsedChat = parseResponsesSSEToChatCompletion(text, req.body?.model ?? payloadToUpstream?.model ?? "unknown");
+          const parsedChat = parseResponsesSSEToChatCompletion(
+            text,
+            req.body?.model ?? payloadToUpstream?.model ?? "unknown",
+          );
           const normalized = ensureNonEmptyChatCompletion(parsedChat);
           res.status(upstream.ok ? 200 : upstream.status).json(normalized.chat);
           await appendTrace({
@@ -806,7 +1040,10 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
         continue;
       }
 
-      rememberError(selected, `upstream ${upstream.status}: ${text.slice(0, 200)}`);
+      rememberError(
+        selected,
+        `upstream ${upstream.status}: ${text.slice(0, 200)}`,
+      );
       await store.upsertAccount(selected);
       return;
     } catch (err: any) {
@@ -831,7 +1068,12 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
   res.status(429).json({ error: "all accounts exhausted or unavailable" });
 }
 
-const PROXY_MODELS = (process.env.PROXY_MODELS ?? "gpt-5.3-codex,gpt-5.2-codex,gpt-5-codex").split(",").map((s) => s.trim()).filter(Boolean);
+const PROXY_MODELS = (
+  process.env.PROXY_MODELS ?? "gpt-5.3-codex,gpt-5.2-codex,gpt-5-codex"
+)
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 const MODELS_CLIENT_VERSION = process.env.MODELS_CLIENT_VERSION ?? "1.0.0";
 const MODELS_CACHE_MS = Number(process.env.MODELS_CACHE_MS ?? 10 * 60_000);
 type ExposedModel = {
@@ -859,7 +1101,10 @@ function toSafeNumber(value: unknown): number | null {
   return null;
 }
 
-function firstKnownNumber(source: Record<string, unknown>, keys: string[]): number | null {
+function firstKnownNumber(
+  source: Record<string, unknown>,
+  keys: string[],
+): number | null {
   for (const key of keys) {
     const found = toSafeNumber(source[key]);
     if (found !== null) return found;
@@ -867,18 +1112,32 @@ function firstKnownNumber(source: Record<string, unknown>, keys: string[]): numb
   return null;
 }
 
-function modelObject(id: string, upstream?: Record<string, unknown>): ExposedModel {
+function modelObject(
+  id: string,
+  upstream?: Record<string, unknown>,
+): ExposedModel {
   const upstreamObject = upstream ?? {};
-  const contextWindow = firstKnownNumber(upstreamObject, ["context_window", "contextWindow", "max_context_tokens", "max_input_tokens"]);
-  const maxOutputTokens = firstKnownNumber(upstreamObject, ["max_output_tokens", "maxOutputTokens"]);
+  const contextWindow = firstKnownNumber(upstreamObject, [
+    "context_window",
+    "contextWindow",
+    "max_context_tokens",
+    "max_input_tokens",
+  ]);
+  const maxOutputTokens = firstKnownNumber(upstreamObject, [
+    "max_output_tokens",
+    "maxOutputTokens",
+  ]);
   const toolTypesRaw = upstreamObject.tool_types;
   const supportedToolTypes = Array.isArray(toolTypesRaw)
-    ? toolTypesRaw.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+    ? toolTypesRaw.filter(
+        (x): x is string => typeof x === "string" && x.trim().length > 0,
+      )
     : ["function"];
   const supportsTools = supportedToolTypes.length > 0;
-  const supportsReasoning = typeof upstreamObject.supports_reasoning === "boolean"
-    ? upstreamObject.supports_reasoning
-    : id.includes("gpt-5") || id.includes("codex");
+  const supportsReasoning =
+    typeof upstreamObject.supports_reasoning === "boolean"
+      ? upstreamObject.supports_reasoning
+      : id.includes("gpt-5") || id.includes("codex");
 
   return {
     id,
@@ -896,15 +1155,23 @@ function modelObject(id: string, upstream?: Record<string, unknown>): ExposedMod
 }
 
 async function discoverModels(): Promise<ExposedModel[]> {
-  if (Date.now() - modelsCache.at < MODELS_CACHE_MS && modelsCache.models.length) return modelsCache.models;
+  if (
+    Date.now() - modelsCache.at < MODELS_CACHE_MS &&
+    modelsCache.models.length
+  )
+    return modelsCache.models;
 
   try {
     const accounts = await store.listAccounts();
     const usable = accounts.find((a) => a.enabled && a.accessToken);
     if (!usable) throw new Error("no usable account");
 
-    const headers: Record<string, string> = { authorization: `Bearer ${usable.accessToken}`, accept: "application/json" };
-    if (usable.chatgptAccountId) headers["ChatGPT-Account-Id"] = usable.chatgptAccountId;
+    const headers: Record<string, string> = {
+      authorization: `Bearer ${usable.accessToken}`,
+      accept: "application/json",
+    };
+    if (usable.chatgptAccountId)
+      headers["ChatGPT-Account-Id"] = usable.chatgptAccountId;
 
     const url = `${CHATGPT_BASE_URL}/backend-api/codex/models?client_version=${encodeURIComponent(MODELS_CLIENT_VERSION)}`;
     const r = await fetch(url, { headers });
@@ -914,7 +1181,10 @@ async function discoverModels(): Promise<ExposedModel[]> {
     const byId = new Map<string, ExposedModel>();
 
     for (const entry of upstream) {
-      const slug = typeof entry?.slug === "string" && entry.slug.trim() ? entry.slug.trim() : "";
+      const slug =
+        typeof entry?.slug === "string" && entry.slug.trim()
+          ? entry.slug.trim()
+          : "";
       if (!slug) continue;
       byId.set(slug, modelObject(slug, entry));
     }
@@ -926,7 +1196,9 @@ async function discoverModels(): Promise<ExposedModel[]> {
     modelsCache = { at: Date.now(), models: merged };
     return merged;
   } catch {
-    const fallback = Array.from(new Set(PROXY_MODELS)).map((id) => modelObject(id));
+    const fallback = Array.from(new Set(PROXY_MODELS)).map((id) =>
+      modelObject(id),
+    );
     modelsCache = { at: Date.now(), models: fallback };
     return fallback;
   }
@@ -940,7 +1212,13 @@ app.get("/v1/models/:id", async (req, res) => {
   const id = req.params.id;
   const models = await discoverModels();
   const model = models.find((m) => m.id === id);
-  if (!model) return res.status(404).json({ error: { message: `The model '${id}' does not exist`, type: "invalid_request_error" } });
+  if (!model)
+    return res.status(404).json({
+      error: {
+        message: `The model '${id}' does not exist`,
+        type: "invalid_request_error",
+      },
+    });
   res.json(model);
 });
 
@@ -951,11 +1229,20 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const webDist = path.resolve(__dirname, "../web-dist");
 app.use(express.static(webDist));
 app.get("*", (req, res, next) => {
-  if (req.path.startsWith("/admin/") || req.path.startsWith("/v1/") || req.path === "/health") return next();
-  res.sendFile(path.join(webDist, "index.html"), (err) => { if (err) next(); });
+  if (
+    req.path.startsWith("/admin/") ||
+    req.path.startsWith("/v1/") ||
+    req.path === "/health"
+  )
+    return next();
+  res.sendFile(path.join(webDist, "index.html"), (err) => {
+    if (err) next();
+  });
 });
 
 app.listen(PORT, () => {
   console.log(`multicodex-proxy listening on :${PORT}`);
-  console.log(`store=${STORE_PATH} oauth=${OAUTH_STATE_PATH} trace=${TRACE_FILE_PATH} redirect=${oauthConfig.redirectUri} upstream=${CHATGPT_BASE_URL}${UPSTREAM_PATH}`);
+  console.log(
+    `store=${STORE_PATH} oauth=${OAUTH_STATE_PATH} trace=${TRACE_FILE_PATH} redirect=${oauthConfig.redirectUri} upstream=${CHATGPT_BASE_URL}${UPSTREAM_PATH}`,
+  );
 });
