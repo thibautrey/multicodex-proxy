@@ -1,14 +1,14 @@
-import { randomUUID } from "node:crypto";
 import {
+  ensureNonEmptyChatCompletion,
   sanitizeAssistantTextChunk,
   sanitizeChatCompletionObject,
   sanitizeResponsesEvent,
-  sanitizeResponsesSSEFrame,
   stripReasoningFromResponseObject,
   withFallbackAssistantContent,
-  ensureNonEmptyChatCompletion,
 } from "./sanitizers.js";
 import { sanitizeOutputText, shouldExposeFunctionCallName } from "./helpers.js";
+
+import { randomUUID } from "node:crypto";
 
 function chatCompletionStreamFrame(
   id: string,
