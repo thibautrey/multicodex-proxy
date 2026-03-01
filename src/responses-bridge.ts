@@ -1,7 +1,8 @@
-import { randomUUID } from "node:crypto";
 import type express from "express";
+import { randomUUID } from "node:crypto";
 
-const EMPTY_ASSISTANT_FALLBACK_TEXT = "[upstream returned no assistant output; please retry]";
+const EMPTY_ASSISTANT_FALLBACK_TEXT =
+  "[upstream returned no assistant output; please retry]";
 
 function asNonEmptyString(v: any): string | undefined {
   if (typeof v !== "string") return undefined;
@@ -10,9 +11,11 @@ function asNonEmptyString(v: any): string | undefined {
 }
 
 function looksLikeInternalToolProtocolText(text: string): boolean {
-  return /\bassistant\s+to=functions\./i.test(text)
-    || /\bto=functions\.[a-z0-9_]+/i.test(text)
-    || /\bfunctions\.[a-z0-9_]+\b/i.test(text);
+  return (
+    /\bassistant\s+to=functions\./i.test(text) ||
+    /\bto=functions\.[a-z0-9_]+/i.test(text) ||
+    /\bfunctions\.[a-z0-9_]+\b/i.test(text)
+  );
 }
 
 function looksLikeInternalPlannerText(text: string): boolean {
@@ -20,8 +23,18 @@ function looksLikeInternalPlannerText(text: string): boolean {
   const trimmed = text.trim();
   if (/\bThe user earlier asked:/i.test(trimmed)) return true;
   if (/^\s*Now we need to reply final message/i.test(trimmed)) return true;
-  if (/^\s*(Need to|Now run|Let's run|Use tool|Use functions|Input to tool|Command:|We'll run)\b/i.test(trimmed)) return true;
-  if (/^\s*(Need summary:|List commands run:|Need final instructions:)\b/i.test(trimmed)) return true;
+  if (
+    /^\s*(Need to|Now run|Let's run|Use tool|Use functions|Input to tool|Command:|We'll run)\b/i.test(
+      trimmed,
+    )
+  )
+    return true;
+  if (
+    /^\s*(Need summary:|List commands run:|Need final instructions:)\b/i.test(
+      trimmed,
+    )
+  )
+    return true;
   if (/^\s*\[Use functions tool/i.test(trimmed)) return true;
 
   const markers = [
@@ -45,7 +58,10 @@ function looksLikeInternalPlannerText(text: string): boolean {
 
 function sanitizeOutputText(text: string): string {
   if (!text) return text;
-  return (looksLikeInternalToolProtocolText(text) || looksLikeInternalPlannerText(text)) ? "" : text;
+  return looksLikeInternalToolProtocolText(text) ||
+    looksLikeInternalPlannerText(text)
+    ? ""
+    : text;
 }
 
 export function sanitizeAssistantTextChunk(text: string): string {
@@ -55,18 +71,26 @@ export function sanitizeAssistantTextChunk(text: string): string {
 function withFallbackAssistantContent(chat: any, fallbackText: string): any {
   const safeFallback = asNonEmptyString(sanitizeOutputText(fallbackText));
   if (!safeFallback) return chat;
-  if (!chat || typeof chat !== "object" || chat.object !== "chat.completion") return chat;
+  if (!chat || typeof chat !== "object" || chat.object !== "chat.completion")
+    return chat;
   const choice = chat?.choices?.[0];
   if (!choice) return chat;
 
   const existingContent = choice?.message?.content;
-  const existingContentText = typeof existingContent === "string"
-    ? existingContent
-    : Array.isArray(existingContent)
-      ? existingContent.map((part: any) => (typeof part?.text === "string" ? part.text : "")).join("")
-      : "";
+  const existingContentText =
+    typeof existingContent === "string"
+      ? existingContent
+      : Array.isArray(existingContent)
+        ? existingContent
+            .map((part: any) =>
+              typeof part?.text === "string" ? part.text : "",
+            )
+            .join("")
+        : "";
   const hasText = Boolean(asNonEmptyString(existingContentText));
-  const hasToolCalls = Array.isArray(choice?.message?.tool_calls) && choice.message.tool_calls.length > 0;
+  const hasToolCalls =
+    Array.isArray(choice?.message?.tool_calls) &&
+    choice.message.tool_calls.length > 0;
   if (hasText || hasToolCalls) return chat;
 
   return {
@@ -93,7 +117,10 @@ export function extractUsageFromPayload(payload: any) {
   return payload?.usage ?? payload?.response?.usage ?? payload?.metrics?.usage;
 }
 
-export function inspectAssistantPayload(payload: any): { assistantEmptyOutput?: boolean; assistantFinishReason?: string } {
+export function inspectAssistantPayload(payload: any): {
+  assistantEmptyOutput?: boolean;
+  assistantFinishReason?: string;
+} {
   if (!payload || typeof payload !== "object") return {};
 
   if (payload.object === "chat.completion") {
@@ -102,13 +129,20 @@ export function inspectAssistantPayload(payload: any): { assistantEmptyOutput?: 
 
     const finishReason = asNonEmptyString(choice.finish_reason);
     const content = choice?.message?.content;
-    const contentText = typeof content === "string"
-      ? content
-      : Array.isArray(content)
-        ? content.map((part: any) => (typeof part?.text === "string" ? part.text : "")).join("")
-        : "";
+    const contentText =
+      typeof content === "string"
+        ? content
+        : Array.isArray(content)
+          ? content
+              .map((part: any) =>
+                typeof part?.text === "string" ? part.text : "",
+              )
+              .join("")
+          : "";
     const hasText = Boolean(asNonEmptyString(contentText));
-    const hasToolCalls = Array.isArray(choice?.message?.tool_calls) && choice.message.tool_calls.length > 0;
+    const hasToolCalls =
+      Array.isArray(choice?.message?.tool_calls) &&
+      choice.message.tool_calls.length > 0;
     const assistantEmptyOutput = !hasText && !hasToolCalls;
 
     return { assistantEmptyOutput, assistantFinishReason: finishReason };
@@ -116,32 +150,51 @@ export function inspectAssistantPayload(payload: any): { assistantEmptyOutput?: 
 
   if (payload.object === "response") {
     const outputs = Array.isArray(payload?.output) ? payload.output : [];
-    const assistantMsg = outputs.find((item: any) => item?.type === "message" && item?.role === "assistant");
+    const assistantMsg = outputs.find(
+      (item: any) => item?.type === "message" && item?.role === "assistant",
+    );
     if (!assistantMsg) return {};
 
-    const contentParts = Array.isArray(assistantMsg?.content) ? assistantMsg.content : [];
-    const hasOutputText = contentParts.some((part: any) => Boolean(asNonEmptyString(part?.text)));
+    const contentParts = Array.isArray(assistantMsg?.content)
+      ? assistantMsg.content
+      : [];
+    const hasOutputText = contentParts.some((part: any) =>
+      Boolean(asNonEmptyString(part?.text)),
+    );
     const assistantEmptyOutput = !hasOutputText;
-    const assistantFinishReason = asNonEmptyString(payload?.status) ?? asNonEmptyString(payload?.stop_reason);
+    const assistantFinishReason =
+      asNonEmptyString(payload?.status) ??
+      asNonEmptyString(payload?.stop_reason);
     return { assistantEmptyOutput, assistantFinishReason };
   }
 
   return {};
 }
 
-export function ensureNonEmptyChatCompletion(chat: any): { chat: any; patched: boolean } {
-  if (!chat || typeof chat !== "object" || chat.object !== "chat.completion") return { chat, patched: false };
+export function ensureNonEmptyChatCompletion(chat: any): {
+  chat: any;
+  patched: boolean;
+} {
+  if (!chat || typeof chat !== "object" || chat.object !== "chat.completion")
+    return { chat, patched: false };
   const choice = chat?.choices?.[0];
   if (!choice) return { chat, patched: false };
 
   const content = choice?.message?.content;
-  const contentText = typeof content === "string"
-    ? content
-    : Array.isArray(content)
-      ? content.map((part: any) => (typeof part?.text === "string" ? part.text : "")).join("")
-      : "";
+  const contentText =
+    typeof content === "string"
+      ? content
+      : Array.isArray(content)
+        ? content
+            .map((part: any) =>
+              typeof part?.text === "string" ? part.text : "",
+            )
+            .join("")
+        : "";
   const hasText = Boolean(asNonEmptyString(contentText));
-  const hasToolCalls = Array.isArray(choice?.message?.tool_calls) && choice.message.tool_calls.length > 0;
+  const hasToolCalls =
+    Array.isArray(choice?.message?.tool_calls) &&
+    choice.message.tool_calls.length > 0;
   if (hasText || hasToolCalls) return { chat, patched: false };
 
   const patched = {
@@ -168,11 +221,18 @@ function toUpstreamInputContent(content: any, role: "user" | "assistant") {
     const out: any[] = [];
     for (const part of content) {
       if (typeof part === "string") out.push({ type: textType, text: part });
-      else if ((part?.type === "text" || part?.type === "input_text" || part?.type === "output_text") && typeof part?.text === "string") {
+      else if (
+        (part?.type === "text" ||
+          part?.type === "input_text" ||
+          part?.type === "output_text") &&
+        typeof part?.text === "string"
+      ) {
         out.push({ type: textType, text: part.text });
       }
     }
-    return out.length ? out : [{ type: textType, text: JSON.stringify(content) }];
+    return out.length
+      ? out
+      : [{ type: textType, text: JSON.stringify(content) }];
   }
   return [{ type: textType, text: String(content ?? "") }];
 }
@@ -183,7 +243,8 @@ function toolContentToOutput(content: any): string {
     const texts = content
       .map((part: any) => {
         if (typeof part === "string") return part;
-        if (part?.type === "text" && typeof part?.text === "string") return part.text;
+        if (part?.type === "text" && typeof part?.text === "string")
+          return part.text;
         return "";
       })
       .filter(Boolean);
@@ -197,20 +258,28 @@ function toolContentToOutput(content: any): string {
 }
 
 export function getSessionId(req: express.Request): string | undefined {
-  const raw = req.header("session_id")
-    ?? req.header("session-id")
-    ?? req.header("x-session-id")
-    ?? req.header("x-session_id");
+  const raw =
+    req.header("session_id") ??
+    req.header("session-id") ??
+    req.header("x-session-id") ??
+    req.header("x-session_id");
   if (!raw) return undefined;
   const value = String(raw).trim();
   return value || undefined;
 }
 
 function clampReasoningEffort(modelId: string, effort: string): string {
-  const id = modelId.includes("/") ? modelId.split("/").pop() || modelId : modelId;
-  if ((id.startsWith("gpt-5.2") || id.startsWith("gpt-5.3")) && effort === "minimal") return "low";
+  const id = modelId.includes("/")
+    ? modelId.split("/").pop() || modelId
+    : modelId;
+  if (
+    (id.startsWith("gpt-5.2") || id.startsWith("gpt-5.3")) &&
+    effort === "minimal"
+  )
+    return "low";
   if (id === "gpt-5.1" && effort === "xhigh") return "high";
-  if (id === "gpt-5.1-codex-mini") return (effort === "high" || effort === "xhigh") ? "high" : "medium";
+  if (id === "gpt-5.1-codex-mini")
+    return effort === "high" || effort === "xhigh" ? "high" : "medium";
   return effort;
 }
 
@@ -223,19 +292,19 @@ function sanitizeResponseMessageItem(item: any): any {
   if (item.type !== "message") return item;
   const content = Array.isArray(item.content)
     ? item.content
-      .filter((part: any) => isVisibleAssistantContentPart(part))
-      .map((part: any) => {
-        if (part?.type === "output_text" && typeof part?.text === "string") {
-          const text = sanitizeOutputText(part.text);
-          return text ? { ...part, text } : null;
-        }
-        if (part?.type === "refusal" && typeof part?.refusal === "string") {
-          const refusal = sanitizeOutputText(part.refusal);
-          return refusal ? { ...part, refusal } : null;
-        }
-        return part;
-      })
-      .filter((part: any) => part !== null)
+        .filter((part: any) => isVisibleAssistantContentPart(part))
+        .map((part: any) => {
+          if (part?.type === "output_text" && typeof part?.text === "string") {
+            const text = sanitizeOutputText(part.text);
+            return text ? { ...part, text } : null;
+          }
+          if (part?.type === "refusal" && typeof part?.refusal === "string") {
+            const refusal = sanitizeOutputText(part.refusal);
+            return refusal ? { ...part, refusal } : null;
+          }
+          return part;
+        })
+        .filter((part: any) => part !== null)
     : [];
   return { ...item, content };
 }
@@ -244,9 +313,13 @@ export function stripReasoningFromResponseObject(resp: any) {
   if (!resp || typeof resp !== "object") return resp;
   const output = Array.isArray(resp.output)
     ? resp.output
-      .filter((item: any) => item?.type !== "reasoning")
-      .filter((item: any) => item?.type !== "function_call" || shouldExposeFunctionCallName(item?.name))
-      .map((item: any) => sanitizeResponseMessageItem(item))
+        .filter((item: any) => item?.type !== "reasoning")
+        .filter(
+          (item: any) =>
+            item?.type !== "function_call" ||
+            shouldExposeFunctionCallName(item?.name),
+        )
+        .map((item: any) => sanitizeResponseMessageItem(item))
     : resp.output;
   const next = { ...resp, output };
   if ("reasoning" in next) delete next.reasoning;
@@ -254,7 +327,8 @@ export function stripReasoningFromResponseObject(resp: any) {
 }
 
 export function sanitizeChatCompletionObject(chat: any) {
-  if (!chat || typeof chat !== "object" || chat.object !== "chat.completion") return chat;
+  if (!chat || typeof chat !== "object" || chat.object !== "chat.completion")
+    return chat;
   const rawChoices = Array.isArray(chat?.choices) ? chat.choices : [];
   const choices = rawChoices.map((choice: any) => {
     const msg = choice?.message ?? {};
@@ -269,7 +343,11 @@ export function sanitizeChatCompletionObject(chat: any) {
             const next = sanitizeOutputText(part);
             return next ? next : null;
           }
-          if (part && typeof part === "object" && typeof part?.text === "string") {
+          if (
+            part &&
+            typeof part === "object" &&
+            typeof part?.text === "string"
+          ) {
             const next = sanitizeOutputText(part.text);
             if (!next) return null;
             return { ...part, text: next };
@@ -280,7 +358,9 @@ export function sanitizeChatCompletionObject(chat: any) {
     }
 
     const rawToolCalls = Array.isArray(msg?.tool_calls) ? msg.tool_calls : [];
-    const toolCalls = rawToolCalls.filter((tc: any) => shouldExposeFunctionCallName(tc?.function?.name));
+    const toolCalls = rawToolCalls.filter((tc: any) =>
+      shouldExposeFunctionCallName(tc?.function?.name),
+    );
 
     return {
       ...choice,
@@ -295,30 +375,56 @@ export function sanitizeChatCompletionObject(chat: any) {
   return { ...chat, choices };
 }
 
-type SanitizedEventResult = { drop: true; event: null; changed: boolean } | { drop: false; event: any; changed: boolean };
+type SanitizedEventResult =
+  | { drop: true; event: null; changed: boolean }
+  | { drop: false; event: any; changed: boolean };
 
 export function sanitizeResponsesEvent(event: any): SanitizedEventResult {
-  if (!event || typeof event !== "object") return { drop: false, event, changed: false };
+  if (!event || typeof event !== "object")
+    return { drop: false, event, changed: false };
   const type = typeof event.type === "string" ? event.type : "";
 
   if (
-    type.startsWith("response.reasoning")
-    || ((type === "response.output_item.added" || type === "response.output_item.done") && event?.item?.type === "reasoning")
-    || ((type === "response.content_part.added" || type === "response.content_part.done") && !isVisibleAssistantContentPart(event?.part))
+    type.startsWith("response.reasoning") ||
+    ((type === "response.output_item.added" ||
+      type === "response.output_item.done") &&
+      event?.item?.type === "reasoning") ||
+    ((type === "response.content_part.added" ||
+      type === "response.content_part.done") &&
+      !isVisibleAssistantContentPart(event?.part))
   ) {
     return { drop: true, event: null, changed: true };
   }
 
-  if (type === "response.completed" && event?.response && typeof event.response === "object") {
-    return { drop: false, event: { ...event, response: stripReasoningFromResponseObject(event.response) }, changed: true };
+  if (
+    type === "response.completed" &&
+    event?.response &&
+    typeof event.response === "object"
+  ) {
+    return {
+      drop: false,
+      event: {
+        ...event,
+        response: stripReasoningFromResponseObject(event.response),
+      },
+      changed: true,
+    };
   }
 
   if (type === "response.output_item.done" && event?.item?.type === "message") {
-    return { drop: false, event: { ...event, item: sanitizeResponseMessageItem(event.item) }, changed: true };
+    return {
+      drop: false,
+      event: { ...event, item: sanitizeResponseMessageItem(event.item) },
+      changed: true,
+    };
   }
 
   // Zero-trust policy for /responses streaming: never forward raw text deltas.
-  if (type === "response.output_text.delta" || type === "response.output_text.done" || type === "response.refusal.delta") {
+  if (
+    type === "response.output_text.delta" ||
+    type === "response.output_text.done" ||
+    type === "response.refusal.delta"
+  ) {
     return { drop: true, event: null, changed: true };
   }
 
@@ -332,7 +438,10 @@ export function sanitizeResponsesSSEFrame(frame: string): string | null {
     .filter((line) => line.startsWith("data:"));
   if (!dataLines.length) return frame;
 
-  const payload = dataLines.map((line) => line.slice(5).trim()).join("\n").trim();
+  const payload = dataLines
+    .map((line) => line.slice(5).trim())
+    .join("\n")
+    .trim();
   if (!payload || payload === "[DONE]") return frame;
 
   try {
@@ -352,27 +461,56 @@ function applyCodexParityDefaults(payload: any, sessionId?: string) {
   payload.stream = true;
   payload.tool_choice = payload.tool_choice ?? "auto";
   payload.parallel_tool_calls = payload.parallel_tool_calls ?? true;
-  payload.text = typeof payload.text === "object" && payload.text !== null ? payload.text : {};
+  payload.text =
+    typeof payload.text === "object" && payload.text !== null
+      ? payload.text
+      : {};
   payload.text.verbosity = payload.text.verbosity ?? "medium";
-  if (!Array.isArray(payload.include)) payload.include = ["reasoning.encrypted_content"];
-  else if (!payload.include.includes("reasoning.encrypted_content")) payload.include.push("reasoning.encrypted_content");
-  if (sessionId && typeof payload.prompt_cache_key === "undefined") payload.prompt_cache_key = sessionId;
+  if (!Array.isArray(payload.include))
+    payload.include = ["reasoning.encrypted_content"];
+  else if (!payload.include.includes("reasoning.encrypted_content"))
+    payload.include.push("reasoning.encrypted_content");
+  if (sessionId && typeof payload.prompt_cache_key === "undefined")
+    payload.prompt_cache_key = sessionId;
+
+  // Keep client API OpenAI-compatible (instructions optional), while ensuring
+  // upstream compatibility when a strict backend expects non-empty instructions.
+  const instructions =
+    typeof payload.instructions === "string" ? payload.instructions.trim() : "";
+  if (!instructions) payload.instructions = "You are a helpful assistant.";
+  else payload.instructions = instructions;
 
   if (typeof payload.reasoning_effort !== "undefined") {
-    payload.reasoning = typeof payload.reasoning === "object" && payload.reasoning !== null ? payload.reasoning : {};
+    payload.reasoning =
+      typeof payload.reasoning === "object" && payload.reasoning !== null
+        ? payload.reasoning
+        : {};
     payload.reasoning.effort = payload.reasoning_effort;
     delete payload.reasoning_effort;
   }
-  if (payload.reasoning && typeof payload.reasoning === "object" && typeof payload.reasoning.effort === "string") {
-    payload.reasoning.effort = clampReasoningEffort(modelId, payload.reasoning.effort);
-    if (typeof payload.reasoning.summary === "undefined") payload.reasoning.summary = "auto";
+  if (
+    payload.reasoning &&
+    typeof payload.reasoning === "object" &&
+    typeof payload.reasoning.effort === "string"
+  ) {
+    payload.reasoning.effort = clampReasoningEffort(
+      modelId,
+      payload.reasoning.effort,
+    );
+    if (typeof payload.reasoning.summary === "undefined")
+      payload.reasoning.summary = "auto";
   }
 }
 
 export function normalizeResponsesPayload(body: any, sessionId?: string) {
   const b = { ...(body ?? {}) };
   if (!Array.isArray(b.input)) {
-    const text = typeof b.input === "string" ? b.input : (typeof b.prompt === "string" ? b.prompt : "");
+    const text =
+      typeof b.input === "string"
+        ? b.input
+        : typeof b.prompt === "string"
+          ? b.prompt
+          : "";
     b.input = [{ role: "user", content: [{ type: "input_text", text }] }];
   }
 
@@ -400,7 +538,8 @@ export function parseResponsesSSEToResponseObject(sseText: string) {
       if (event?.type === "response.output_text.delta") {
         outputText += sanitizeOutputText(event?.delta ?? "");
       }
-      if (event?.type === "response.completed") response = stripReasoningFromResponseObject(event?.response);
+      if (event?.type === "response.completed")
+        response = stripReasoningFromResponseObject(event?.response);
     } catch {}
   }
   if (!response) {
@@ -408,13 +547,22 @@ export function parseResponsesSSEToResponseObject(sseText: string) {
       id: `resp_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
       object: "response",
       status: "completed",
-      output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: outputText }] }],
+      output: [
+        {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: outputText }],
+        },
+      ],
     };
   }
   return response;
 }
 
-export function chatCompletionsToResponsesPayload(body: any, sessionId?: string) {
+export function chatCompletionsToResponsesPayload(
+  body: any,
+  sessionId?: string,
+) {
   const messages = Array.isArray(body?.messages) ? body.messages : [];
   const systemInstructions = messages
     .filter((m: any) => m?.role === "system")
@@ -429,7 +577,9 @@ export function chatCompletionsToResponsesPayload(body: any, sessionId?: string)
     if (m?.role === "tool") {
       input.push({
         type: "function_call_output",
-        call_id: m?.tool_call_id ?? `call_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
+        call_id:
+          m?.tool_call_id ??
+          `call_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
         output: toolContentToOutput(m?.content),
       });
       continue;
@@ -445,11 +595,13 @@ export function chatCompletionsToResponsesPayload(body: any, sessionId?: string)
       for (const tc of toolCalls) {
         input.push({
           type: "function_call",
-          call_id: tc?.id ?? `call_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
+          call_id:
+            tc?.id ?? `call_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
           name: tc?.function?.name ?? "unknown",
-          arguments: typeof tc?.function?.arguments === "string"
-            ? tc.function.arguments
-            : JSON.stringify(tc?.function?.arguments ?? {}),
+          arguments:
+            typeof tc?.function?.arguments === "string"
+              ? tc.function.arguments
+              : JSON.stringify(tc?.function?.arguments ?? {}),
         });
       }
       continue;
@@ -509,26 +661,35 @@ export function responseObjectToChatCompletion(resp: any, model: string) {
   const sanitizedResp = stripReasoningFromResponseObject(resp);
   let outputText = "";
   const toolCalls = Array.isArray(sanitizedResp?.output)
-    ? sanitizedResp.output
-      .flatMap((it: any) => {
+    ? sanitizedResp.output.flatMap((it: any) => {
         if (it?.type === "message") {
           const parts = Array.isArray(it?.content) ? it.content : [];
           for (const p of parts) {
-            if (p?.type === "output_text" && typeof p?.text === "string") outputText += sanitizeOutputText(p.text);
-            if (p?.type === "refusal" && typeof p?.refusal === "string") outputText += sanitizeOutputText(p.refusal);
+            if (p?.type === "output_text" && typeof p?.text === "string")
+              outputText += sanitizeOutputText(p.text);
+            if (p?.type === "refusal" && typeof p?.refusal === "string")
+              outputText += sanitizeOutputText(p.refusal);
           }
           return [];
         }
         if (it?.type === "function_call") {
           if (!shouldExposeFunctionCallName(it?.name)) return [];
-          return [{
-            id: it?.call_id || it?.id || `call_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
-            type: "function",
-            function: {
-              name: it?.name ?? "unknown",
-              arguments: typeof it?.arguments === "string" ? it.arguments : JSON.stringify(it?.arguments ?? {}),
+          return [
+            {
+              id:
+                it?.call_id ||
+                it?.id ||
+                `call_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
+              type: "function",
+              function: {
+                name: it?.name ?? "unknown",
+                arguments:
+                  typeof it?.arguments === "string"
+                    ? it.arguments
+                    : JSON.stringify(it?.arguments ?? {}),
+              },
             },
-          }];
+          ];
         }
         return [];
       })
@@ -542,7 +703,10 @@ export function responseObjectToChatCompletion(resp: any, model: string) {
 
   const message: any = { role: "assistant", content: outputText || "" };
   if (toolCalls.length > 0) {
-    message.tool_calls = toolCalls.map((tc: any, idx: number) => ({ ...tc, index: idx }));
+    message.tool_calls = toolCalls.map((tc: any, idx: number) => ({
+      ...tc,
+      index: idx,
+    }));
   }
 
   return {
@@ -551,11 +715,18 @@ export function responseObjectToChatCompletion(resp: any, model: string) {
     created: Math.floor(Date.now() / 1000),
     model,
     choices: [{ index: 0, message, finish_reason: finishReason }],
-    usage: { prompt_tokens: prompt, completion_tokens: completion, total_tokens: total },
+    usage: {
+      prompt_tokens: prompt,
+      completion_tokens: completion,
+      total_tokens: total,
+    },
   };
 }
 
-export function parseResponsesSSEToChatCompletion(sseText: string, model: string) {
+export function parseResponsesSSEToChatCompletion(
+  sseText: string,
+  model: string,
+) {
   let outputText = "";
   let usage: any = undefined;
   let completedResponse: any = undefined;
@@ -567,10 +738,17 @@ export function parseResponsesSSEToChatCompletion(sseText: string, model: string
     if (!payload || payload === "[DONE]") continue;
     try {
       const obj = JSON.parse(payload);
-      if (obj?.type === "response.output_text.delta" && typeof obj?.delta === "string") {
+      if (
+        obj?.type === "response.output_text.delta" &&
+        typeof obj?.delta === "string"
+      ) {
         outputText += sanitizeAssistantTextChunk(obj.delta);
       }
-      if (obj?.type === "response.output_text.done" && !outputText && typeof obj?.text === "string") {
+      if (
+        obj?.type === "response.output_text.done" &&
+        !outputText &&
+        typeof obj?.text === "string"
+      ) {
         outputText = sanitizeAssistantTextChunk(obj.text);
       }
       const sanitized = sanitizeResponsesEvent(obj);
@@ -597,15 +775,30 @@ export function parseResponsesSSEToChatCompletion(sseText: string, model: string
     object: "chat.completion",
     created: Math.floor(Date.now() / 1000),
     model,
-    choices: [{ index: 0, message: { role: "assistant", content: outputText || "" }, finish_reason: "stop" }],
-    usage: { prompt_tokens: prompt, completion_tokens: completion, total_tokens: total },
+    choices: [
+      {
+        index: 0,
+        message: { role: "assistant", content: outputText || "" },
+        finish_reason: "stop",
+      },
+    ],
+    usage: {
+      prompt_tokens: prompt,
+      completion_tokens: completion,
+      total_tokens: total,
+    },
   };
 }
 
-export function convertResponsesSSEToChatCompletionSSE(upstreamLine: string, model: string, fallbackText = ""): string | null {
+export function convertResponsesSSEToChatCompletionSSE(
+  upstreamLine: string,
+  model: string,
+  fallbackText = "",
+): string | null {
   if (!upstreamLine.startsWith("data:")) return null;
   const payload = upstreamLine.slice(5).trim();
-  if (!payload || payload === "[DONE]") return payload === "[DONE]" ? "data: [DONE]\n" : null;
+  if (!payload || payload === "[DONE]")
+    return payload === "[DONE]" ? "data: [DONE]\n" : null;
 
   try {
     const obj = JSON.parse(payload);
@@ -614,13 +807,19 @@ export function convertResponsesSSEToChatCompletionSSE(upstreamLine: string, mod
     const event = sanitized.event;
 
     // Zero-trust policy for chat streaming: ignore raw deltas and emit sanitized final content only.
-    if (event?.type === "response.output_text.delta" || event?.type === "response.output_text.done" || event?.type === "response.refusal.delta") {
+    if (
+      event?.type === "response.output_text.delta" ||
+      event?.type === "response.output_text.done" ||
+      event?.type === "response.refusal.delta"
+    ) {
       return null;
     }
 
     if (event?.type === "response.completed") {
       const converted = responseObjectToChatCompletion(event?.response, model);
-      return chatCompletionObjectToSSE(withFallbackAssistantContent(converted, fallbackText));
+      return chatCompletionObjectToSSE(
+        withFallbackAssistantContent(converted, fallbackText),
+      );
     }
 
     return null;
@@ -632,42 +831,52 @@ export function convertResponsesSSEToChatCompletionSSE(upstreamLine: string, mod
 export function chatCompletionObjectToSSE(chatObj: any): string {
   const sanitized = sanitizeChatCompletionObject(chatObj);
   const normalized = ensureNonEmptyChatCompletion(sanitized).chat;
-  const id = normalized?.id || `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
+  const id =
+    normalized?.id || `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
   const model = normalized?.model || "unknown";
   const created = normalized?.created || Math.floor(Date.now() / 1000);
   const choice = normalized?.choices?.[0] || {};
   const content = choice?.message?.content ?? "";
-  const toolCalls = Array.isArray(choice?.message?.tool_calls) ? choice.message.tool_calls : [];
-  const finishReason = choice?.finish_reason ?? (toolCalls.length ? "tool_calls" : "stop");
+  const toolCalls = Array.isArray(choice?.message?.tool_calls)
+    ? choice.message.tool_calls
+    : [];
+  const finishReason =
+    choice?.finish_reason ?? (toolCalls.length ? "tool_calls" : "stop");
   const usage = normalized?.usage || {};
 
   const chunks: string[] = [];
   if (content) {
-    chunks.push(`data: ${JSON.stringify({
+    chunks.push(
+      `data: ${JSON.stringify({
+        id,
+        object: "chat.completion.chunk",
+        created,
+        model,
+        choices: [{ index: 0, delta: { content }, finish_reason: null }],
+      })}\n\n`,
+    );
+  }
+
+  chunks.push(
+    `data: ${JSON.stringify({
       id,
       object: "chat.completion.chunk",
       created,
       model,
-      choices: [{ index: 0, delta: { content }, finish_reason: null }],
-    })}\n\n`);
-  }
-
-  chunks.push(`data: ${JSON.stringify({
-    id,
-    object: "chat.completion.chunk",
-    created,
-    model,
-    choices: [{
-      index: 0,
-      delta: toolCalls.length ? { tool_calls: toolCalls } : {},
-      finish_reason: finishReason,
-    }],
-    usage: {
-      prompt_tokens: usage?.prompt_tokens ?? 0,
-      completion_tokens: usage?.completion_tokens ?? 0,
-      total_tokens: usage?.total_tokens ?? 0,
-    },
-  })}\n\n`);
+      choices: [
+        {
+          index: 0,
+          delta: toolCalls.length ? { tool_calls: toolCalls } : {},
+          finish_reason: finishReason,
+        },
+      ],
+      usage: {
+        prompt_tokens: usage?.prompt_tokens ?? 0,
+        completion_tokens: usage?.completion_tokens ?? 0,
+        total_tokens: usage?.total_tokens ?? 0,
+      },
+    })}\n\n`,
+  );
 
   chunks.push("data: [DONE]\n\n");
   return chunks.join("");
