@@ -6,10 +6,42 @@
   --line-strong: #b9c4cf;
   --text: #13202b;
   --muted: #5f7285;
+  --heading-muted: #3f5367;
   --primary: #1f7a8c;
   --primary-strong: #166273;
   --danger: #c44545;
   --shadow: 0 16px 40px rgba(10, 24, 35, 0.08);
+  --surface: #ffffff;
+  --surface-muted: #f8fbfd;
+  --surface-strong: #fbfdff;
+  --error-bg: #fff6f6;
+  --error-border: #efc1c1;
+  --gradient-sparkle: #ffffff;
+  --gradient-cloud: #d7e6ea;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #05070a;
+    --bg-accent: #0c1119;
+    --panel: rgba(12, 18, 30, 0.85);
+    --line: #2d3948;
+    --line-strong: #3d4b60;
+    --text: #f5f7fb;
+    --muted: #96a7c4;
+    --heading-muted: #8ea6c5;
+    --primary: #3da7c6;
+    --primary-strong: #1f7a8c;
+    --danger: #f36a6a;
+    --shadow: 0 16px 40px rgba(0, 0, 0, 0.65);
+    --surface: rgba(255, 255, 255, 0.05);
+    --surface-muted: rgba(255, 255, 255, 0.02);
+    --surface-strong: rgba(255, 255, 255, 0.03);
+    --error-bg: rgba(243, 108, 108, 0.15);
+    --error-border: rgba(243, 108, 108, 0.45);
+    --gradient-sparkle: rgba(255, 255, 255, 0.08);
+    --gradient-cloud: rgba(255, 255, 255, 0.03);
+  }
 }
 
 * { box-sizing: border-box; }
@@ -19,8 +51,8 @@ body {
   font-family: "Manrope", "Avenir Next", "Segoe UI", sans-serif;
   color: var(--text);
   background:
-    radial-gradient(1200px 600px at 10% -20%, #ffffff 0%, transparent 60%),
-    radial-gradient(900px 500px at 110% 10%, #d7e6ea 0%, transparent 65%),
+    radial-gradient(1200px 600px at 10% -20%, var(--gradient-sparkle) 0%, transparent 60%),
+    radial-gradient(900px 500px at 110% 10%, var(--gradient-cloud) 0%, transparent 65%),
     linear-gradient(170deg, var(--bg) 0%, var(--bg-accent) 100%);
 }
 
@@ -60,7 +92,7 @@ h2 {
   font-size: 15px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: #3f5367;
+  color: var(--heading-muted);
 }
 
 p { margin: 6px 0; }
@@ -84,7 +116,7 @@ input {
   min-width: 220px;
   flex: 1;
   border: 1px solid var(--line);
-  background: #ffffff;
+  background: var(--surface);
   color: var(--text);
   border-radius: 10px;
   padding: 10px 12px;
@@ -94,7 +126,7 @@ input {
 select {
   min-width: 140px;
   border: 1px solid var(--line);
-  background: #ffffff;
+  background: var(--surface);
   color: var(--text);
   border-radius: 10px;
   padding: 10px 12px;
@@ -132,14 +164,14 @@ button:hover {
 }
 
 .btn.secondary {
-  background: #fff;
+  background: var(--surface);
   color: var(--text);
   border-color: var(--line);
 }
 
 .btn.secondary:hover {
   border-color: var(--line-strong);
-  background: #f8fbfd;
+  background: var(--surface-muted);
 }
 
 .btn.ghost {
@@ -149,7 +181,7 @@ button:hover {
 }
 
 .btn.ghost:hover {
-  background: #f7fafc;
+  background: var(--surface-muted);
 }
 
 .btn.danger,
@@ -165,7 +197,7 @@ button.danger {
 }
 
 .tab {
-  background: #ffffff;
+  background: var(--surface);
   color: #33485b;
   border: 1px solid var(--line);
   text-transform: capitalize;
@@ -221,7 +253,7 @@ button.danger {
   border-radius: 999px;
   overflow: hidden;
   border: 1px solid var(--line);
-  background: #f0f5f8;
+  background: var(--surface-muted);
 }
 
 .progress-fill {
@@ -244,7 +276,7 @@ button.danger {
 
 .chip {
   border: 1px solid var(--line);
-  background: #fff;
+  background: var(--surface);
   padding: 6px 10px;
   border-radius: 999px;
 }
@@ -276,7 +308,7 @@ small { display: block; color: var(--muted); }
 
 .trace-row { cursor: pointer; }
 
-.trace-row:hover { background: #f8fbfd; }
+.trace-row:hover { background: var(--surface-muted); }
 
 .trace-head {
   display: flex;
@@ -303,7 +335,7 @@ button:disabled,
   min-height: 120px;
   border-radius: 10px;
   border: 1px solid var(--line);
-  background: #fbfdff;
+  background: var(--surface-strong);
   white-space: pre-wrap;
   padding: 10px;
 }
@@ -314,7 +346,7 @@ button:disabled,
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #f9fcff;
+  background: var(--surface-strong);
 }
 
 details summary {
@@ -325,9 +357,9 @@ details summary {
 }
 
 .error {
-  color: #8d1b1b;
-  border-color: #efc1c1;
-  background: #fff6f6;
+  color: var(--danger);
+  border-color: var(--error-border);
+  background: var(--error-bg);
 }
 
 @media (max-width: 1060px) {
