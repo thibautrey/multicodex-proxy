@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import "./styles.css";
 import { estimateCostUsd } from "./model-pricing";
 import { api, tokenDefault } from "./lib/api";
@@ -37,6 +37,8 @@ export default function App() {
   const [error, setError] = useState("");
   const [expandedTraceId, setExpandedTraceId] = useState<string | null>(null);
   const [traceRange, setTraceRange] = useState<TraceRangePreset>("7d");
+  const tracePageRef = useRef(tracePagination.page);
+  const traceRangeRef = useRef(traceRange);
 
   const stats = useMemo(
     () => ({
@@ -146,10 +148,21 @@ export default function App() {
     setExpandedTraceId(null);
   };
 
+  useEffect(() => {
+    tracePageRef.current = tracePagination.page;
+  }, [tracePagination.page]);
+
+  useEffect(() => {
+    traceRangeRef.current = traceRange;
+  }, [traceRange]);
+
   const refreshData = async () => {
     try {
       setError("");
-      await Promise.all([loadBase(), loadTracing(tab === "tracing" ? tracePagination.page : 1, traceRange)]);
+      await loadBase();
+      if (tab === "tracing") {
+        await loadTracing(tracePageRef.current, traceRangeRef.current);
+      }
     } catch (e: any) {
       setError(e?.message ?? String(e));
     }
@@ -159,13 +172,26 @@ export default function App() {
     const load = async () => {
       try {
         setError("");
-        await Promise.all([loadBase(), loadTracing(1, traceRange)]);
+        await loadBase();
       } catch (e: any) {
         setError(e?.message ?? String(e));
       }
     };
     void load();
   }, []);
+
+  useEffect(() => {
+    if (tab !== "tracing") return;
+    const load = async () => {
+      try {
+        setError("");
+        await loadTracing(tracePageRef.current, traceRangeRef.current);
+      } catch (e: any) {
+        setError(e?.message ?? String(e));
+      }
+    };
+    void load();
+  }, [tab]);
 
   useEffect(() => {
     if (tab !== "tracing") return;
