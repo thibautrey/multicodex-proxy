@@ -999,35 +999,55 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
           return;
         }
 
-        // Upstream returned SSE text without content-type header — parse and re-emit as proper SSE.
+        // Upstream returned SSE text without content-type header — re-emit each frame individually, sanitized.
         if (!parsed && text.includes("data:")) {
-          const respObj = parseResponsesSSEToResponseObject(text);
-          if (respObj && typeof respObj === "object") {
-            res.status(200);
-            res.set("Content-Type", "text/event-stream");
-            res.set("Cache-Control", "no-cache");
-            res.set("Connection", "keep-alive");
-            res.write(responseObjectToSSE(respObj));
-            res.end();
+          res.status(200);
+          res.set("Content-Type", "text/event-stream");
+          res.set("Cache-Control", "no-cache");
+          res.set("Connection", "keep-alive");
 
-            await appendTrace({
-              at: Date.now(),
-              route: req.path,
-              accountId: selected.id,
-              accountEmail: selected.email,
-              model: requestModel,
-              status: upstream.status,
-              stream: true,
-              latencyMs: Date.now() - startedAt,
-              usage: respObj?.usage,
-              requestBody,
-              upstreamError,
-              upstreamContentType: contentType,
-              upstreamEmptyBody,
-              ...inspectAssistantPayload(respObj),
-            });
-            return;
+          // Split SSE text into individual frames (double-newline separated)
+          const rawFrames = text.split(/\n\n/).filter((f) => f.trim());
+          let lastResponseObj: any = null;
+
+          for (const rawFrame of rawFrames) {
+            const filtered = sanitizeResponsesSSEFrame(rawFrame);
+            if (filtered) {
+              res.write(filtered.endsWith("\n\n") ? filtered : filtered + "\n\n");
+              // Track response.completed for usage
+              if (rawFrame.includes('"response.completed"')) {
+                try {
+                  const dataLine = rawFrame
+                    .split("\n")
+                    .find((l) => l.startsWith("data:"));
+                  if (dataLine) {
+                    const obj = JSON.parse(dataLine.slice(5).trim());
+                    if (obj?.response) lastResponseObj = obj.response;
+                  }
+                } catch {}
+              }
+            }
           }
+
+          res.end();
+
+          await appendTrace({
+            at: Date.now(),
+            route: req.path,
+            accountId: selected.id,
+            accountEmail: selected.email,
+            model: requestModel,
+            status: upstream.status,
+            stream: true,
+            latencyMs: Date.now() - startedAt,
+            usage: lastResponseObj?.usage,
+            requestBody,
+            upstreamError,
+            upstreamContentType: contentType,
+            upstreamEmptyBody,
+            ...inspectAssistantPayload(lastResponseObj),
+          });
+          return;
         }
       }
 
