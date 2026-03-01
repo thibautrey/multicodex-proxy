@@ -419,12 +419,24 @@ export function sanitizeResponsesEvent(event: any): SanitizedEventResult {
     };
   }
 
-  // Zero-trust policy for /responses streaming: never forward raw text deltas.
-  if (
-    type === "response.output_text.delta" ||
-    type === "response.output_text.done" ||
-    type === "response.refusal.delta"
-  ) {
+  // Sanitize text deltas: drop internal tool/planner text, pass through normal content.
+  if (type === "response.output_text.delta" && typeof event?.delta === "string") {
+    const sanitized = sanitizeOutputText(event.delta);
+    if (!sanitized) return { drop: true, event: null, changed: true };
+    if (sanitized !== event.delta)
+      return { drop: false, event: { ...event, delta: sanitized }, changed: true };
+    return { drop: false, event, changed: false };
+  }
+
+  if (type === "response.output_text.done" && typeof event?.text === "string") {
+    const sanitized = sanitizeOutputText(event.text);
+    if (!sanitized) return { drop: true, event: null, changed: true };
+    if (sanitized !== event.text)
+      return { drop: false, event: { ...event, text: sanitized }, changed: true };
+    return { drop: false, event, changed: false };
+  }
+
+  if (type === "response.refusal.delta") {
     return { drop: true, event: null, changed: true };
   }
 
