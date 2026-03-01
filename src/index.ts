@@ -964,16 +964,8 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
       }
 
       // Hard guarantee for /responses streaming clients:
-      // always return SSE, even when upstream returns JSON Response object.
-      console.log("[DEBUG-SSE]", {
-        shouldReturnChatCompletions,
-        clientRequestedStream,
-        upstreamOk: upstream.ok,
-        parsedObject: parsed?.object,
-        contentType,
-        isStream,
-        textLen: text?.length,
-      });
+      // always return SSE, even when upstream returns JSON Response object or
+      // SSE text without a proper content-type header.
       if (
         !shouldReturnChatCompletions &&
         clientRequestedStream &&
@@ -1005,6 +997,37 @@ async function proxyWithRotation(req: express.Request, res: express.Response) {
             ...inspectAssistantPayload(sanitized),
           });
           return;
+        }
+
+        // Upstream returned SSE text without content-type header — parse and re-emit as proper SSE.
+        if (!parsed && text.includes("data:")) {
+          const respObj = parseResponsesSSEToResponseObject(text);
+          if (respObj && typeof respObj === "object") {
+            res.status(200);
+            res.set("Content-Type", "text/event-stream");
+            res.set("Cache-Control", "no-cache");
+            res.set("Connection", "keep-alive");
+            res.write(responseObjectToSSE(respObj));
+            res.end();
+
+            await appendTrace({
+              at: Date.now(),
+              route: req.path,
+              accountId: selected.id,
+              accountEmail: selected.email,
+              model: requestModel,
+              status: upstream.status,
+              stream: true,
+              latencyMs: Date.now() - startedAt,
+              usage: respObj?.usage,
+              requestBody,
+              upstreamError,
+              upstreamContentType: contentType,
+              upstreamEmptyBody,
+              ...inspectAssistantPayload(respObj),
+            });
+            return;
+          }
         }
       }
 
