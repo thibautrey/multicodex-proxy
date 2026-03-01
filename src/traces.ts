@@ -358,8 +358,11 @@ export function createTraceManager(config: TraceManagerConfig) {
 
   let traceWriteQueue: Promise<void> = Promise.resolve();
   let historyWriteQueue: Promise<void> = Promise.resolve();
+  const traceCache: TraceEntry[] = [];
+  const statsCache: TraceEntry[] = [];
+  let cacheInit: Promise<void> | null = null;
 
-  async function readTraceWindow(): Promise<TraceEntry[]> {
+  async function readTraceFileFromDisk(): Promise<TraceEntry[]> {
     try {
       const raw = await fs.readFile(filePath, "utf8");
       const lines = raw.split("\n").filter(Boolean);
@@ -370,10 +373,41 @@ export function createTraceManager(config: TraceManagerConfig) {
           if (normalized) parsed.push(normalized);
         } catch {}
       }
-      return parsed.slice(-retentionMax);
+      return parsed;
     } catch {
       return [];
     }
+  }
+
+  async function readStatsHistoryFileFromDisk(): Promise<TraceEntry[]> {
+    try {
+      const raw = await fs.readFile(historyFilePath, "utf8");
+      const lines = raw.split("\n").filter(Boolean);
+      const parsed: TraceEntry[] = [];
+      for (const line of lines) {
+        try {
+          const normalized = normalizeTrace(JSON.parse(line));
+          if (normalized) parsed.push(normalized);
+        } catch {}
+      }
+      return parsed;
+    } catch {
+      return [];
+    }
+  }
+
+  async function ensureCacheReady() {
+    if (cacheInit) {
+      await cacheInit;
+      return;
+    }
+    cacheInit = (async () => {
+      const traces = await readTraceFileFromDisk();
+      traceCache.splice(0, traceCache.length, ...traces.slice(-retentionMax));
+      const stats = await readStatsHistoryFileFromDisk();
+      statsCache.splice(0, statsCache.length, ...stats);
+    })();
+    await cacheInit;
   }
 
   async function writeTraceWindow(entries: TraceEntry[]): Promise<void> {
@@ -398,7 +432,16 @@ export function createTraceManager(config: TraceManagerConfig) {
     return rest;
   }
 
+  function toNormalizedHistoryEntry(entry: TraceEntry): TraceEntry | null {
+    return normalizeTrace(toStatsHistoryEntry(entry));
+  }
+
   async function appendStatsHistory(entry: TraceEntry): Promise<void> {
+    await ensureCacheReady();
+    const normalized = toNormalizedHistoryEntry(entry);
+    if (normalized) {
+      statsCache.push(normalized);
+    }
     const line = `${JSON.stringify(toStatsHistoryEntry(entry))}\n`;
     const run = historyWriteQueue.then(async () => {
       await fs.appendFile(historyFilePath, line, "utf8");
@@ -407,26 +450,19 @@ export function createTraceManager(config: TraceManagerConfig) {
     await run;
   }
 
+  async function readTraceWindow(): Promise<TraceEntry[]> {
+    await ensureCacheReady();
+    return traceCache.slice();
+  }
+
   async function readStatsHistory(): Promise<TraceEntry[]> {
-    try {
-      const raw = await fs.readFile(historyFilePath, "utf8");
-      const lines = raw.split("\n").filter(Boolean);
-      const parsed: TraceEntry[] = [];
-      for (const line of lines) {
-        try {
-          const normalized = normalizeTrace(JSON.parse(line));
-          if (normalized) parsed.push(normalized);
-        } catch {}
-      }
-      return parsed;
-    } catch {
-      return [];
-    }
+    await ensureCacheReady();
+    return statsCache.slice();
   }
 
   async function readStatsHistoryRange(sinceMs?: number, untilMs?: number): Promise<TraceEntry[]> {
-    const all = await readStatsHistory();
-    return all.filter((t) => {
+    await ensureCacheReady();
+    return statsCache.filter((t) => {
       if (typeof sinceMs === "number" && Number.isFinite(sinceMs) && t.at < sinceMs) return false;
       if (typeof untilMs === "number" && Number.isFinite(untilMs) && t.at > untilMs) return false;
       return true;
@@ -434,24 +470,24 @@ export function createTraceManager(config: TraceManagerConfig) {
   }
 
   async function seedStatsHistoryIfMissing() {
+    await ensureCacheReady();
     try {
       const existing = await fs.readFile(historyFilePath, "utf8");
       if (existing.trim()) return;
     } catch {}
-    const traces = await readTraceWindow();
-    if (!traces.length) return;
-    const content = traces.map((entry) => JSON.stringify(toStatsHistoryEntry(entry))).join("\n");
+    if (!traceCache.length) return;
+    const content = traceCache.map((entry) => JSON.stringify(toStatsHistoryEntry(entry))).join("\n");
     await fs.writeFile(historyFilePath, `${content}\n`, "utf8");
+    const historyEntries = traceCache
+      .map(toNormalizedHistoryEntry)
+      .filter((entry): entry is TraceEntry => Boolean(entry));
+    statsCache.splice(0, statsCache.length, ...historyEntries);
   }
 
   async function compactTraceStorageIfNeeded() {
-    const traces = await readTraceWindow();
+    await ensureCacheReady();
     try {
-      const raw = await fs.readFile(filePath, "utf8");
-      const lineCount = raw.split("\n").filter(Boolean).length;
-      if (lineCount !== traces.length || traces.length > retentionMax) {
-        await writeTraceWindow(traces.slice(-retentionMax));
-      }
+      await writeTraceWindow(traceCache.slice(-retentionMax));
     } catch {}
   }
 
@@ -468,17 +504,20 @@ export function createTraceManager(config: TraceManagerConfig) {
     };
 
     const run = traceWriteQueue.then(async () => {
-      const current = await readTraceWindow();
-      const next = [...current, finalEntry].slice(-retentionMax);
-      await writeTraceWindow(next);
+      await ensureCacheReady();
+      traceCache.push(finalEntry);
+      if (traceCache.length > retentionMax) {
+        traceCache.splice(0, traceCache.length - retentionMax);
+      }
+      await writeTraceWindow(traceCache);
     });
     traceWriteQueue = run.catch(() => undefined);
     await Promise.all([run, appendStatsHistory(finalEntry)]);
   }
 
   async function readTracesLegacy(limit = 200): Promise<TraceEntry[]> {
-    const traces = await readTraceWindow();
-    const sliced = traces.slice(-Math.max(1, Math.min(limit, legacyLimitMax)));
+    await ensureCacheReady();
+    const sliced = traceCache.slice(-Math.max(1, Math.min(limit, legacyLimitMax)));
     return sliced;
   }
 
