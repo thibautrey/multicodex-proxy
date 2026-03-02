@@ -7,7 +7,15 @@ import {
   EMPTY_TRACE_STATS,
   TRACE_PAGE_SIZE,
 } from "./lib/ui";
-import type { Account, Tab, Trace, TracePagination, TraceRangePreset, TraceStats } from "./types";
+import type {
+  Account,
+  ExposedModel,
+  Tab,
+  Trace,
+  TracePagination,
+  TraceRangePreset,
+  TraceStats,
+} from "./types";
 import { AccountsTab } from "./components/tabs/AccountsTab";
 import { DocsTab } from "./components/tabs/DocsTab";
 import { OverviewTab } from "./components/tabs/OverviewTab";
@@ -24,7 +32,7 @@ export default function App() {
   const [traces, setTraces] = useState<Trace[]>([]);
   const [traceStats, setTraceStats] = useState<TraceStats>(EMPTY_TRACE_STATS);
   const [tracePagination, setTracePagination] = useState<TracePagination>(EMPTY_TRACE_PAGINATION);
-  const [models, setModels] = useState<string[]>([]);
+  const [models, setModels] = useState<ExposedModel[]>([]);
   const [adminToken, setAdminToken] = useState(localStorage.getItem("adminToken") ?? tokenDefault);
   const [storageInfo, setStorageInfo] = useState<any>(null);
   const [chatPrompt, setChatPrompt] = useState("Give me a one-line hello");
@@ -110,7 +118,12 @@ export default function App() {
     ]);
     setAccounts((acc.accounts ?? []) as Account[]);
     setStorageInfo(cfg.storage ?? null);
-    setModels((mdl.data ?? []).map((x: any) => x.id));
+    setModels((mdl.data ?? []) as ExposedModel[]);
+  };
+
+  const refreshModels = async () => {
+    const mdl = await fetch("/v1/models").then((r) => r.json());
+    setModels((mdl.data ?? []) as ExposedModel[]);
   };
 
   const getRangeBounds = (range: TraceRangePreset): { sinceMs?: number; untilMs?: number } => {
@@ -193,6 +206,13 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [tab, tracePagination.page, traceRange]);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void refreshModels().catch((e: any) => setError(e?.message ?? String(e)));
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const patch = async (id: string, body: any) => {
     await api(`/admin/accounts/${id}`, { method: "PATCH", body: JSON.stringify(body) });
     await loadBase();
@@ -225,7 +245,7 @@ export default function App() {
     const r = await fetch("/v1/chat/completions", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model: models[0] || "gpt-5.3-codex", messages: [{ role: "user", content: chatPrompt }] }),
+      body: JSON.stringify({ model: models[0]?.id || "gpt-5.3-codex", messages: [{ role: "user", content: chatPrompt }] }),
     });
     const j = await r.json();
     setChatOut((j?.choices?.[0]?.message?.content as string) || JSON.stringify(j, null, 2));

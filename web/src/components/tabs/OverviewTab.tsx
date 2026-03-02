@@ -1,18 +1,25 @@
-import React from "react";
+import React, { useMemo, useState } from "react";
 import { Metric } from "../Metric";
 import { ProgressStat } from "../ProgressStat";
 import { formatTokenCount, usd } from "../../lib/ui";
-import type { TraceStats } from "../../types";
+import type { ExposedModel, TraceStats } from "../../types";
 
 type Props = {
   stats: { total: number; enabled: number; blocked: number };
   usageStats: { primaryAvg: number; secondaryAvg: number; primaryCount: number; secondaryCount: number };
   traceStats: TraceStats;
   storageInfo: any;
-  models: string[];
+  models: ExposedModel[];
 };
 
 export function OverviewTab({ stats, usageStats, traceStats, storageInfo, models }: Props) {
+  const [providerTab, setProviderTab] = useState<"all" | "openai" | "mistral">("all");
+
+  const filteredModels = useMemo(() => {
+    if (providerTab === "all") return models;
+    return models.filter((m) => (m.metadata?.provider ?? "openai") === providerTab);
+  }, [models, providerTab]);
+
   return (
     <>
       <section className="grid cards3">
@@ -46,8 +53,19 @@ export function OverviewTab({ stats, usageStats, traceStats, storageInfo, models
           )}
         </section>
         <section className="panel">
-          <h2>Models exposed</h2>
-          <div className="chips">{models.map((m) => <span key={m} className="chip mono">{m}</span>)}</div>
+          <div className="inline wrap row-between">
+            <h2>Models exposed</h2>
+            <div className="inline wrap">
+              <button className={providerTab === "all" ? "tab active" : "tab"} onClick={() => setProviderTab("all")}>All</button>
+              <button className={providerTab === "openai" ? "tab active" : "tab"} onClick={() => setProviderTab("openai")}>OpenAI</button>
+              <button className={providerTab === "mistral" ? "tab active" : "tab"} onClick={() => setProviderTab("mistral")}>Mistral</button>
+            </div>
+          </div>
+          <div className="chips">
+            {filteredModels.map((m) => (
+              <span key={m.id} className="chip mono">{m.id}</span>
+            ))}
+          </div>
         </section>
       </section>
     </>
