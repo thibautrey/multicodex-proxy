@@ -233,6 +233,11 @@ export default function App() {
     await loadBase();
   };
 
+  const createAccount = async (body: any) => {
+    await api("/admin/accounts", { method: "POST", body: JSON.stringify(body) });
+    await loadBase();
+  };
+
   const runChatTest = async () => {
     setChatOut("Running...");
     const r = await fetch("/v1/chat/completions", {
@@ -303,6 +308,7 @@ export default function App() {
             del={del}
             unblock={unblock}
             refreshUsage={refreshUsage}
+            createAccount={createAccount}
           />
         )}
 
