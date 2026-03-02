@@ -17,9 +17,10 @@ import {
 import { estimateCostUsd } from "../../model-pricing";
 import { CHART_COLORS, fmt, formatTokenCount, maskEmail, maskId, pct, routeLabel, usd } from "../../lib/ui";
 import { Metric } from "../Metric";
-import type { Trace, TracePagination, TraceRangePreset, TraceStats } from "../../types";
+import type { Account, Trace, TracePagination, TraceRangePreset, TraceStats } from "../../types";
 
 type Props = {
+  accounts: Account[];
   traceStats: TraceStats;
   tokensTimeseries: Array<any>;
   modelChartData: Array<any>;
@@ -36,6 +37,7 @@ type Props = {
 
 export function TracingTab(props: Props) {
   const {
+    accounts,
     traceStats,
     tokensTimeseries,
     modelChartData,
@@ -49,6 +51,19 @@ export function TracingTab(props: Props) {
     setExpandedTraceId,
     sanitized,
   } = props;
+  const accountProviderById = React.useMemo(
+    () => new Map(accounts.map((account) => [account.id, account.provider])),
+    [accounts],
+  );
+
+  const providerFavicon = (provider?: string) =>
+    provider === "mistral"
+      ? "https://mistral.ai/favicon.ico"
+      : "https://openai.com/favicon.ico";
+
+  const providerLabel = (provider?: string) =>
+    provider === "mistral" ? "Mistral" : "OpenAI";
+
   const formatTokenChartValue = (value: number | string | undefined) => formatTokenCount(Number(value ?? 0));
 
   const formatTooltipValue = (value: any) => formatTokenChartValue(value?.[0] ?? value ?? 0);
@@ -229,13 +244,32 @@ export function TracingTab(props: Props) {
               {traces.map((t) => {
                 const isExpanded = expandedTraceId === t.id;
                 const rowCost = typeof t.costUsd === "number" ? t.costUsd : (estimateCostUsd(t.model, t.tokensInput ?? 0, t.tokensOutput ?? 0) ?? 0);
+                const provider = t.accountId ? accountProviderById.get(t.accountId) : undefined;
+                const accountLabel = sanitized
+                  ? maskEmail(t.accountEmail) || maskId(t.accountId)
+                  : t.accountEmail ?? t.accountId ?? "-";
                 return (
                   <React.Fragment key={t.id}>
                     <tr onClick={() => setExpandedTraceId(isExpanded ? null : t.id)} className="trace-row">
                       <td>{fmt(t.at)}</td>
                       <td className="mono">{routeLabel(t.route)}</td>
                       <td className="mono">{t.model ?? "-"}</td>
-                      <td className="mono">{sanitized ? maskEmail(t.accountEmail) || maskId(t.accountId) : t.accountEmail ?? t.accountId ?? "-"}</td>
+                      <td>
+                        <span className="inline wrap">
+                          {provider && (
+                            <span className="provider-badge">
+                              <img
+                                className="provider-icon"
+                                src={providerFavicon(provider)}
+                                alt={`${providerLabel(provider)} icon`}
+                                loading="lazy"
+                              />
+                              {providerLabel(provider)}
+                            </span>
+                          )}
+                          <span className="mono">{accountLabel}</span>
+                        </span>
+                      </td>
                       <td>{t.status}</td>
                       <td>{t.latencyMs}ms</td>
                       <td>{typeof (t.tokensTotal ?? t.usage?.total_tokens) === "number" ? formatTokenCount(t.tokensTotal ?? t.usage?.total_tokens) : "-"}</td>

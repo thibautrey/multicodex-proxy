@@ -349,6 +349,7 @@ export default function App() {
 
         {tab === "tracing" && (
           <TracingTab
+            accounts={accounts}
             traceStats={traceStats}
             tokensTimeseries={tokensTimeseries}
             modelChartData={modelChartData}
