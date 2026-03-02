@@ -169,53 +169,58 @@ async function discoverModels(
       (a) => a.enabled && a.accessToken && normalizeProvider(a) === "openai",
     );
     if (openaiAccount) {
-      const headers: Record<string, string> = {
-        authorization: `Bearer ${openaiAccount.accessToken}`,
-        accept: "application/json",
-      };
-      if (openaiAccount.chatgptAccountId) {
-        headers["ChatGPT-Account-Id"] = openaiAccount.chatgptAccountId;
-      }
-      const url = `${openaiBaseUrl}/backend-api/codex/models?client_version=${encodeURIComponent(
-        MODELS_CLIENT_VERSION,
-      )}`;
-      const r = await fetch(url, { headers });
-      if (r.ok) {
-        const json: any = await r.json();
-        const upstream = Array.isArray(json?.models) ? json.models : [];
-        for (const entry of upstream) {
-          const slug =
-            typeof entry?.slug === "string" && entry.slug.trim()
-              ? entry.slug.trim()
-              : "";
-          if (!slug) continue;
-          byId.set(slug, modelObject(slug, "openai", entry));
+      try {
+        const headers: Record<string, string> = {
+          authorization: `Bearer ${openaiAccount.accessToken}`,
+          accept: "application/json",
+        };
+        if (openaiAccount.chatgptAccountId) {
+          headers["ChatGPT-Account-Id"] = openaiAccount.chatgptAccountId;
         }
-      }
+        const url = `${openaiBaseUrl}/backend-api/codex/models?client_version=${encodeURIComponent(
+          MODELS_CLIENT_VERSION,
+        )}`;
+        const r = await fetch(url, { headers });
+        if (r.ok) {
+          const json: any = await r.json();
+          const upstream = Array.isArray(json?.models) ? json.models : [];
+          for (const entry of upstream) {
+            const slug =
+              typeof entry?.slug === "string" && entry.slug.trim()
+                ? entry.slug.trim()
+                : "";
+            if (!slug) continue;
+            byId.set(slug, modelObject(slug, "openai", entry));
+          }
+        }
+      } catch {}
     }
 
     const mistralAccount = accounts.find(
       (a) => a.enabled && a.accessToken && normalizeProvider(a) === "mistral",
     );
     if (mistralAccount) {
-      const headers: Record<string, string> = {
-        authorization: `Bearer ${mistralAccount.accessToken}`,
-        accept: "application/json",
-      };
-      const r = await fetch(`${mistralBaseUrl}/v1/models`, { headers });
-      if (r.ok) {
-        const json: any = await r.json();
-        const upstream = Array.isArray(json?.data) ? json.data : [];
-        for (const entry of upstream) {
-          const id =
-            typeof entry?.id === "string" && entry.id.trim()
-              ? entry.id.trim()
-              : "";
-          if (!id) continue;
-          byId.set(id, modelObject(id, "mistral", entry));
+      try {
+        const headers: Record<string, string> = {
+          authorization: `Bearer ${mistralAccount.accessToken}`,
+          accept: "application/json",
+        };
+        const r = await fetch(`${mistralBaseUrl}/v1/models`, { headers });
+        if (r.ok) {
+          const json: any = await r.json();
+          const upstream = Array.isArray(json?.data) ? json.data : [];
+          for (const entry of upstream) {
+            const id =
+              typeof entry?.id === "string" && entry.id.trim()
+                ? entry.id.trim()
+                : "";
+            if (!id) continue;
+            byId.set(id, modelObject(id, "mistral", entry));
+          }
         }
-      }
+      } catch {}
     }
+
     for (const id of PROXY_MODELS) {
       if (!byId.has(id)) byId.set(id, modelObject(id, "openai"));
     }
