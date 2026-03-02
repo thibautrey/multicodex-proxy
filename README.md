@@ -1,12 +1,12 @@
-# MultiCodex Proxy
+# MultiVibe
 
 <p align="center">
-  <strong>OpenAI-compatible multi-account Codex proxy</strong><br/>
+  <strong>OpenAI-compatible multi-provider router</strong><br/>
   <sub>Quota-aware routing • OAuth onboarding • Persistent storage • Request tracing • Automatic model discovery</sub>
 </p>
 
 <p align="center">
-  <a href="https://github.com/thibautrey/multicodex-proxy/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/thibautrey/multicodex-proxy?style=for-the-badge"/></a>
+<a href="https://github.com/thibautrey/multicodex-proxy/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/thibautrey/multicodex-proxy?style=for-the-badge"/></a>
   <a href="https://github.com/thibautrey/multicodex-proxy/network/members"><img alt="GitHub forks" src="https://img.shields.io/github/forks/thibautrey/multicodex-proxy?style=for-the-badge"/></a>
   <a href="https://github.com/thibautrey/multicodex-proxy/issues"><img alt="GitHub issues" src="https://img.shields.io/github/issues/thibautrey/multicodex-proxy?style=for-the-badge"/></a>
 </p>
@@ -15,7 +15,7 @@
 
 ## ✨ What it does
 
-MultiCodex Proxy sits between your clients and OpenAI/Codex endpoints and gives you:
+MultiVibe acts as an OpenAI-compatible gateway that lets you route requests across multiple provider accounts while keeping a single `/v1` API surface:
 
 - **OpenAI-compatible API**
   - `GET /v1/models`
@@ -54,7 +54,7 @@ MultiCodex Proxy sits between your clients and OpenAI/Codex endpoints and gives 
 
 ## 🧠 Routing strategy
 
-When a request arrives, the proxy chooses an account with this strategy:
+When a request arrives, MultiVibe chooses an account with this strategy:
 
 1. Prefer accounts untouched on both windows (5h + weekly)
 2. Otherwise prefer account with nearest weekly reset
@@ -124,7 +124,7 @@ Example model object returned:
   "id": "gpt-5.3-codex",
   "object": "model",
   "created": 1730000000,
-  "owned_by": "multicodex-proxy",
+  "owned_by": "multivibe",
   "metadata": {
     "context_window": null,
     "max_output_tokens": null,

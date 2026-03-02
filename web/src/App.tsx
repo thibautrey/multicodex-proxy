@@ -258,8 +258,8 @@ export default function App() {
       <div className="shell">
         <header className="topbar panel">
           <div>
-            <h1>MultiCodex Proxy</h1>
-            <p className="muted">Quota-aware multi-account proxy with OAuth and request tracing.</p>
+            <h1>Multivibe</h1>
+            <p className="muted">Quota-aware, multi-provider router with OAuth onboarding and tracing.</p>
           </div>
           <div className="inline wrap">
             <input value={adminToken} onChange={(e) => setAdminToken(e.target.value)} onBlur={() => localStorage.setItem("adminToken", adminToken)} placeholder="Admin token" />

@@ -125,7 +125,7 @@ function modelObject(
     id,
     object: "model",
     created: Math.floor(Date.now() / 1000),
-    owned_by: "multicodex-proxy",
+    owned_by: "multivibe",
     metadata: {
       context_window: contextWindow,
       max_output_tokens: maxOutputTokens,

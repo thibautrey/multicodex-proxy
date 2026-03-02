@@ -1,8 +1,8 @@
 version: "3.9"
 services:
-  multicodex-proxy:
+  multivibe:
     build: .
-    container_name: multicodex-proxy
+    container_name: multivibe
     ports:
       - "4010:4010"
     environment:

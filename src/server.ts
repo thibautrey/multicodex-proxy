@@ -95,7 +95,7 @@ app.get("*", (req, res, next) => {
 });
 
 app.listen(process.env.PORT ?? 4010, () => {
-  console.log(`multicodex-proxy listening on :${process.env.PORT ?? 4010}`);
+  console.log(`multivibe listening on :${process.env.PORT ?? 4010}`);
   console.log(
     `store=${STORE_PATH} oauth=${OAUTH_STATE_PATH} trace=${TRACE_FILE_PATH} traceStats=${TRACE_STATS_HISTORY_PATH} redirect=${oauthConfig.redirectUri} upstream=${CHATGPT_BASE_URL}${UPSTREAM_PATH}`,
   );
