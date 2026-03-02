@@ -11,6 +11,7 @@ export function DocsTab({ totalTraceCostFromRows }: { totalTraceCostFromRows: nu
           <li className="mono">GET /v1/models/:id</li>
           <li className="mono">POST /v1/chat/completions</li>
           <li className="mono">POST /v1/responses</li>
+          <li className="mono">POST /v1/responses/compact</li>
           <li className="mono">GET /admin/accounts</li>
           <li className="mono">GET /admin/model-aliases</li>
           <li className="mono">POST /admin/model-aliases</li>

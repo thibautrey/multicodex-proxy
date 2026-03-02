@@ -22,6 +22,7 @@ MultiVibe acts as an OpenAI-compatible gateway that lets you route requests acro
   - `GET /v1/models/:id`
   - `POST /v1/chat/completions`
   - `POST /v1/responses`
+  - `POST /v1/responses/compact`
 - **Multi-account routing** with quota-aware failover
 - **Model aliases** (for example `small`) with ordered fallback across providers/models
 - **OAuth onboarding** from dashboard (manual redirect paste flow)
@@ -221,11 +222,13 @@ Model alias admin endpoints:
 | `ADMIN_TOKEN` | `change-me` | Admin endpoints auth token |
 | `CHATGPT_BASE_URL` | `https://chatgpt.com` | Upstream base URL |
 | `UPSTREAM_PATH` | `/backend-api/codex/responses` | Upstream request path |
+| `UPSTREAM_COMPACT_PATH` | `/backend-api/codex/responses/compact` | Upstream path for `/v1/responses/compact` |
 | `OAUTH_CLIENT_ID` | `app_EMoamEEZ73f0CkXaXp7hrann` | OpenAI OAuth client id |
 | `OAUTH_AUTHORIZATION_URL` | `https://auth.openai.com/oauth/authorize` | OAuth authorize endpoint |
 | `OAUTH_TOKEN_URL` | `https://auth.openai.com/oauth/token` | OAuth token endpoint |
 | `OAUTH_SCOPE` | `openid profile email offline_access` | OAuth scope |
 | `OAUTH_REDIRECT_URI` | `http://localhost:1455/auth/callback` | Redirect URI |
+| `MISTRAL_COMPACT_UPSTREAM_PATH` | `/v1/responses/compact` | Mistral upstream path for compact responses |
 
 ---
 

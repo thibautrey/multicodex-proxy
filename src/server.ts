@@ -54,6 +54,7 @@ const proxyRouter = createProxyRouter({
   openaiBaseUrl: CHATGPT_BASE_URL,
   mistralBaseUrl: MISTRAL_BASE_URL,
   mistralUpstreamPath: MISTRAL_UPSTREAM_PATH,
+  mistralCompactUpstreamPath: MISTRAL_COMPACT_UPSTREAM_PATH,
   oauthConfig,
 });
 

@@ -9,6 +9,7 @@ import {
   TOKEN_REFRESH_MARGIN_MS,
   UPSTREAM_BASE_DELAY_MS,
   UPSTREAM_PATH,
+  UPSTREAM_COMPACT_PATH,
 } from "../../config.js";
 import {
   chatCompletionObjectToSSE,
@@ -54,6 +55,7 @@ type ProxyRoutesOptions = {
   openaiBaseUrl: string;
   mistralBaseUrl: string;
   mistralUpstreamPath: string;
+  mistralCompactUpstreamPath: string;
   oauthConfig: OAuthConfig;
 };
 
@@ -414,14 +416,15 @@ async function fetchCodexWithRetry(
 }
 
 export function createProxyRouter(options: ProxyRoutesOptions) {
-  const {
-    store,
-    traceManager,
-    openaiBaseUrl,
-    mistralBaseUrl,
-    mistralUpstreamPath,
-    oauthConfig,
-  } = options;
+    const {
+      store,
+      traceManager,
+      openaiBaseUrl,
+      mistralBaseUrl,
+      mistralUpstreamPath,
+      mistralCompactUpstreamPath,
+      oauthConfig,
+    } = options;
   const { appendTrace } = traceManager;
   const router = express.Router();
 
@@ -435,6 +438,9 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       (req.originalUrl || "").includes("chat/completions");
     const isChatCompletionsPayload = Array.isArray(req.body?.messages);
     const isChatCompletions = isChatCompletionsPath && isChatCompletionsPayload;
+    const isResponsesCompactPath =
+      (req.path || "").includes("responses/compact") ||
+      (req.originalUrl || "").includes("responses/compact");
     const clientRequestedStream = Boolean(req.body?.stream);
     const sessionId = getSessionId(req);
 
@@ -522,7 +528,13 @@ let accounts = store.getCachedAccounts();
         const upstreamBaseUrl =
           candidate.provider === "mistral" ? mistralBaseUrl : openaiBaseUrl;
         const upstreamPath =
-          candidate.provider === "mistral" ? mistralUpstreamPath : UPSTREAM_PATH;
+          candidate.provider === "mistral"
+            ? isResponsesCompactPath
+              ? mistralCompactUpstreamPath
+              : mistralUpstreamPath
+            : isResponsesCompactPath
+              ? UPSTREAM_COMPACT_PATH
+              : UPSTREAM_PATH;
         const upstream = await fetchCodexWithRetry(
           `${upstreamBaseUrl}${upstreamPath}`,
           {
