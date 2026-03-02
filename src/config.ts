@@ -17,8 +17,12 @@ export const MISTRAL_BASE_URL =
   process.env.MISTRAL_BASE_URL ?? "https://api.mistral.ai";
 export const UPSTREAM_PATH =
   process.env.UPSTREAM_PATH ?? "/backend-api/codex/responses";
+export const UPSTREAM_COMPACT_PATH =
+  process.env.UPSTREAM_COMPACT_PATH ?? "/backend-api/codex/responses/compact";
 export const MISTRAL_UPSTREAM_PATH =
   process.env.MISTRAL_UPSTREAM_PATH ?? "/v1/responses";
+export const MISTRAL_COMPACT_UPSTREAM_PATH =
+  process.env.MISTRAL_COMPACT_UPSTREAM_PATH ?? "/v1/responses/compact";
 export const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
 export const MAX_ACCOUNT_RETRY_ATTEMPTS = Math.max(
   1,
