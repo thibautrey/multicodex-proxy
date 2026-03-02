@@ -502,6 +502,10 @@ let accounts = store.getCachedAccounts();
         : normalizeResponsesPayload(req.body, sessionId);
       if (isResponsesCompactPath && payloadToUpstream && typeof payloadToUpstream === "object") {
         delete payloadToUpstream.store;
+        delete payloadToUpstream.stream;
+      }
+      if (isResponsesCompactPath && payloadToUpstream && typeof payloadToUpstream === "object") {
+        delete payloadToUpstream.store;
       }
       if (candidate.resolvedModel) payloadToUpstream.model = candidate.resolvedModel;
       const requestBody = TRACE_INCLUDE_BODY ? req.body : undefined;
