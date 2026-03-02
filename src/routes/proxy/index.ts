@@ -1116,6 +1116,7 @@ let accounts = store.getCachedAccounts();
 
   router.post("/chat/completions", proxyWithRotation);
   router.post("/responses", proxyWithRotation);
+  router.post("/responses/compact", proxyWithRotation);
 
   router.get("/models", async (_req, res) => {
     const models = await discoverModels(store, openaiBaseUrl, mistralBaseUrl);
