@@ -5,15 +5,6 @@ import type { Account, TraceStats } from "../../types";
 
 type Props = {
   traceStats: TraceStats;
-  email: string;
-  setEmail: (v: string) => void;
-  startOAuth: () => Promise<void>;
-  expectedRedirect: string;
-  flowId: string;
-  setFlowId: (v: string) => void;
-  redirectInput: string;
-  setRedirectInput: (v: string) => void;
-  completeOAuth: () => Promise<void>;
   accounts: Account[];
   sanitized: boolean;
   patch: (id: string, body: any) => Promise<void>;
@@ -26,15 +17,6 @@ type Props = {
 export function AccountsTab(props: Props) {
   const {
     traceStats,
-    email,
-    setEmail,
-    startOAuth,
-    expectedRedirect,
-    flowId,
-    setFlowId,
-    redirectInput,
-    setRedirectInput,
-    completeOAuth,
     accounts,
     sanitized,
     patch,
@@ -103,20 +85,6 @@ export function AccountsTab(props: Props) {
         <Metric title="Requests (selected range)" value={`${traceStats.totals.requests}`} />
         <Metric title="Estimated cost (selected range)" value={usd(traceStats.totals.costUsd)} />
         <Metric title="Top model by volume" value={traceStats.models[0]?.model ?? "-"} />
-      </section>
-
-      <section className="panel">
-        <h2>OAuth onboarding</h2>
-        <div className="inline wrap">
-          <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="account@email.com" />
-          <button className="btn" onClick={() => void startOAuth()}>Start OAuth</button>
-        </div>
-        <p className="muted">Expected redirect: <span className="mono">{expectedRedirect}</span></p>
-        <div className="inline wrap">
-          <input value={flowId} onChange={(e) => setFlowId(e.target.value)} placeholder="flowId" />
-          <input value={redirectInput} onChange={(e) => setRedirectInput(e.target.value)} placeholder="Paste full redirect URL/code" />
-          <button className="btn" onClick={() => void completeOAuth()}>Complete OAuth</button>
-        </div>
       </section>
 
       <section className="panel">

@@ -25,10 +25,6 @@ export default function App() {
   const [traceStats, setTraceStats] = useState<TraceStats>(EMPTY_TRACE_STATS);
   const [tracePagination, setTracePagination] = useState<TracePagination>(EMPTY_TRACE_PAGINATION);
   const [models, setModels] = useState<string[]>([]);
-  const [email, setEmail] = useState("");
-  const [flowId, setFlowId] = useState("");
-  const [redirectInput, setRedirectInput] = useState("");
-  const [expectedRedirect, setExpectedRedirect] = useState("http://localhost:1455/auth/callback");
   const [adminToken, setAdminToken] = useState(localStorage.getItem("adminToken") ?? tokenDefault);
   const [storageInfo, setStorageInfo] = useState<any>(null);
   const [chatPrompt, setChatPrompt] = useState("Give me a one-line hello");
@@ -113,7 +109,6 @@ export default function App() {
       fetch("/v1/models").then((r) => r.json()),
     ]);
     setAccounts((acc.accounts ?? []) as Account[]);
-    setExpectedRedirect(cfg.oauthRedirectUri ?? expectedRedirect);
     setStorageInfo(cfg.storage ?? null);
     setModels((mdl.data ?? []).map((x: any) => x.id));
   };
@@ -198,19 +193,6 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [tab, tracePagination.page, traceRange]);
 
-  const startOAuth = async () => {
-    const d = await api("/admin/oauth/start", { method: "POST", body: JSON.stringify({ email }) });
-    setFlowId(d.flowId as string);
-    setExpectedRedirect((d.expectedRedirectUri as string) ?? expectedRedirect);
-    window.open(d.authorizeUrl as string, "_blank", "noopener,noreferrer");
-  };
-
-  const completeOAuth = async () => {
-    await api("/admin/oauth/complete", { method: "POST", body: JSON.stringify({ flowId, input: redirectInput }) });
-    setRedirectInput("");
-    await loadBase();
-  };
-
   const patch = async (id: string, body: any) => {
     await api(`/admin/accounts/${id}`, { method: "PATCH", body: JSON.stringify(body) });
     await loadBase();
@@ -293,15 +275,6 @@ export default function App() {
         {tab === "accounts" && (
           <AccountsTab
             traceStats={traceStats}
-            email={email}
-            setEmail={setEmail}
-            startOAuth={startOAuth}
-            expectedRedirect={expectedRedirect}
-            flowId={flowId}
-            setFlowId={setFlowId}
-            redirectInput={redirectInput}
-            setRedirectInput={setRedirectInput}
-            completeOAuth={completeOAuth}
             accounts={accounts}
             sanitized={sanitized}
             patch={patch}
