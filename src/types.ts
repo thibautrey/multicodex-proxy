@@ -40,8 +40,16 @@ export type Account = {
   state?: AccountState;
 };
 
+export type ModelAlias = {
+  id: string;
+  targets: string[];
+  enabled: boolean;
+  description?: string;
+};
+
 export type StoreFile = {
   accounts: Account[];
+  modelAliases?: ModelAlias[];
 };
 
 export type OAuthFlowState = {

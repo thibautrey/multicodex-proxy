@@ -23,6 +23,7 @@ MultiVibe acts as an OpenAI-compatible gateway that lets you route requests acro
   - `POST /v1/chat/completions`
   - `POST /v1/responses`
 - **Multi-account routing** with quota-aware failover
+- **Model aliases** (for example `small`) with ordered fallback across providers/models
 - **OAuth onboarding** from dashboard (manual redirect paste flow)
 - **Persistent account storage** across container restarts
 - **Request tracing v2** (retention capped at 1000, server pagination, tokens/model/error/latency stats, optional full payload)
@@ -60,6 +61,8 @@ When a request arrives, MultiVibe chooses an account with this strategy:
 2. Otherwise prefer account with nearest weekly reset
 3. Fallback by priority
 4. On `429`/quota-like errors, block account and retry on next
+
+When the requested model is an alias, MultiVibe resolves it to ordered target models and automatically falls back across target models/providers as quotas are hit.
 
 ---
 
@@ -146,6 +149,20 @@ curl -X POST http://localhost:4010/v1/chat/completions \
   }'
 ```
 
+### Create model alias
+
+```bash
+curl -X POST http://localhost:4010/admin/model-aliases \
+  -H "x-admin-token: change-me" \
+  -H "content-type: application/json" \
+  -d '{
+    "id": "small",
+    "targets": ["gpt-5.1-codex-mini", "devstral-small-latest"],
+    "enabled": true,
+    "description": "Small coding model pool"
+  }'
+```
+
 ### Read traces
 
 ```bash
@@ -179,6 +196,12 @@ Optional filters:
 - `route=/v1/chat/completions`
 - `sinceMs=<epoch_ms>`
 - `untilMs=<epoch_ms>`
+
+Model alias admin endpoints:
+- `GET /admin/model-aliases`
+- `POST /admin/model-aliases`
+- `PATCH /admin/model-aliases/:id`
+- `DELETE /admin/model-aliases/:id`
 
 ---
 

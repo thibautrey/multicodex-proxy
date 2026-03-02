@@ -340,6 +340,17 @@ button.danger {
   font-size: 13px;
 }
 
+.alias-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 12px;
+}
+
+.alias-grid label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+
 .table-wrap { overflow-x: auto; }
 
 table {
@@ -440,7 +451,8 @@ details summary {
   .cards3,
   .cards2,
   .cards4,
-  .cards5 {
+  .cards5,
+  .alias-grid {
     grid-template-columns: 1fr;
   }
 

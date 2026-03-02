@@ -1,7 +1,7 @@
 import express from "express";
 import { randomUUID } from "node:crypto";
 import { AccountStore, OAuthStateStore } from "../../store.js";
-import type { Account } from "../../types.js";
+import type { Account, ModelAlias } from "../../types.js";
 import { normalizeProvider, refreshUsageIfNeeded } from "../../quota.js";
 import {
   accountFromOAuth,
@@ -50,6 +50,25 @@ function redact(account: Account) {
   };
 }
 
+function sanitizeAliasId(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function normalizeAliasTargets(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return Array.from(
+    new Set(
+      value
+        .map((x) => (typeof x === "string" ? x.trim() : ""))
+        .filter((x) => x.length > 0),
+    ),
+  );
+}
+
 export function createAdminRouter(options: AdminRoutesOptions) {
   const {
     store,
@@ -94,6 +113,64 @@ export function createAdminRouter(options: AdminRoutesOptions) {
   router.get("/accounts", async (_req, res) =>
     res.json({ accounts: (await store.listAccounts()).map(redact) }),
   );
+
+  router.get("/model-aliases", async (_req, res) =>
+    res.json({ modelAliases: await store.listModelAliases() }),
+  );
+
+  router.post("/model-aliases", async (req, res) => {
+    const body = req.body ?? {};
+    const id = sanitizeAliasId(body.id);
+    if (!id) return res.status(400).json({ error: "id required" });
+
+    const targets = normalizeAliasTargets(body.targets);
+    if (!targets.length)
+      return res.status(400).json({ error: "at least one target is required" });
+
+    const alias: ModelAlias = {
+      id,
+      targets,
+      enabled: body.enabled ?? true,
+      description:
+        typeof body.description === "string" && body.description.trim()
+          ? body.description.trim()
+          : undefined,
+    };
+    await store.upsertModelAlias(alias);
+    res.json({ ok: true, modelAlias: alias });
+  });
+
+  router.patch("/model-aliases/:id", async (req, res) => {
+    const body = req.body ?? {};
+    const patch: Partial<ModelAlias> = {};
+
+    if (typeof body.enabled !== "undefined") patch.enabled = Boolean(body.enabled);
+    if (typeof body.description !== "undefined") {
+      patch.description =
+        typeof body.description === "string" && body.description.trim()
+          ? body.description.trim()
+          : undefined;
+    }
+    if (typeof body.targets !== "undefined") {
+      const targets = normalizeAliasTargets(body.targets);
+      if (!targets.length) {
+        return res
+          .status(400)
+          .json({ error: "at least one target is required" });
+      }
+      patch.targets = targets;
+    }
+
+    const updated = await store.patchModelAlias(req.params.id, patch);
+    if (!updated) return res.status(404).json({ error: "not found" });
+    res.json({ ok: true, modelAlias: updated });
+  });
+
+  router.delete("/model-aliases/:id", async (req, res) => {
+    const ok = await store.deleteModelAlias(req.params.id);
+    if (!ok) return res.status(404).json({ error: "not found" });
+    res.json({ ok: true });
+  });
 
   router.get("/traces", async (req, res) => {
     const hasPaginationQuery =

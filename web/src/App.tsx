@@ -10,6 +10,7 @@ import {
 import type {
   Account,
   ExposedModel,
+  ModelAlias,
   Tab,
   Trace,
   TracePagination,
@@ -21,6 +22,7 @@ import { DocsTab } from "./components/tabs/DocsTab";
 import { OverviewTab } from "./components/tabs/OverviewTab";
 import { PlaygroundTab } from "./components/tabs/PlaygroundTab";
 import { TracingTab } from "./components/tabs/TracingTab";
+import { AliasesTab } from "./components/tabs/AliasesTab";
 
 const q = new URLSearchParams(window.location.search);
 const initialTab = (q.get("tab") as Tab) || "overview";
@@ -33,6 +35,7 @@ export default function App() {
   const [traceStats, setTraceStats] = useState<TraceStats>(EMPTY_TRACE_STATS);
   const [tracePagination, setTracePagination] = useState<TracePagination>(EMPTY_TRACE_PAGINATION);
   const [models, setModels] = useState<ExposedModel[]>([]);
+  const [aliases, setAliases] = useState<ModelAlias[]>([]);
   const [adminToken, setAdminToken] = useState(localStorage.getItem("adminToken") ?? tokenDefault);
   const [storageInfo, setStorageInfo] = useState<any>(null);
   const [chatPrompt, setChatPrompt] = useState("Give me a one-line hello");
@@ -111,14 +114,16 @@ export default function App() {
   }, []);
 
   const loadBase = async () => {
-    const [acc, cfg, mdl] = await Promise.all([
+    const [acc, cfg, mdl, aliasRes] = await Promise.all([
       api("/admin/accounts"),
       api("/admin/config"),
       fetch("/v1/models").then((r) => r.json()),
+      api("/admin/model-aliases"),
     ]);
     setAccounts((acc.accounts ?? []) as Account[]);
     setStorageInfo(cfg.storage ?? null);
     setModels((mdl.data ?? []) as ExposedModel[]);
+    setAliases((aliasRes.modelAliases ?? []) as ModelAlias[]);
   };
 
   const refreshModels = async () => {
@@ -240,6 +245,34 @@ export default function App() {
     await loadBase();
   };
 
+  const saveAlias = async (body: {
+    id: string;
+    targets: string[];
+    enabled?: boolean;
+    description?: string;
+  }) => {
+    await api("/admin/model-aliases", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    await loadBase();
+  };
+
+  const patchAlias = async (id: string, body: Partial<ModelAlias>) => {
+    await api(`/admin/model-aliases/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+    await loadBase();
+  };
+
+  const deleteAlias = async (id: string) => {
+    if (confirm("Delete model alias?")) {
+      await api(`/admin/model-aliases/${id}`, { method: "DELETE" });
+      await loadBase();
+    }
+  };
+
   const runChatTest = async () => {
     setChatOut("Running...");
     const r = await fetch("/v1/chat/completions", {
@@ -275,7 +308,7 @@ export default function App() {
         </header>
 
         <nav className="tabs panel">
-          {(["overview", "accounts", "tracing", "playground", "docs"] as Tab[]).map((t) => (
+          {(["overview", "accounts", "aliases", "tracing", "playground", "docs"] as Tab[]).map((t) => (
             <button key={t} className={tab === t ? "tab active" : "tab"} onClick={() => setTab(t)}>
               {t}
             </button>
@@ -302,6 +335,15 @@ export default function App() {
             unblock={unblock}
             refreshUsage={refreshUsage}
             createAccount={createAccount}
+          />
+        )}
+
+        {tab === "aliases" && (
+          <AliasesTab
+            aliases={aliases}
+            saveAlias={saveAlias}
+            patchAlias={patchAlias}
+            deleteAlias={deleteAlias}
           />
         )}
 

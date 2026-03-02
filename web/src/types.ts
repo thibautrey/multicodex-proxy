@@ -63,12 +63,27 @@ export type TracePagination = {
 
 export type TraceRangePreset = "24h" | "7d" | "30d" | "all";
 
-export type Tab = "overview" | "accounts" | "tracing" | "playground" | "docs";
+export type Tab =
+  | "overview"
+  | "accounts"
+  | "aliases"
+  | "tracing"
+  | "playground"
+  | "docs";
 
 export type ExposedModel = {
   id: string;
   owned_by?: string;
   metadata?: {
     provider?: "openai" | "mistral";
+    is_alias?: boolean;
+    alias_targets?: string[];
   };
+};
+
+export type ModelAlias = {
+  id: string;
+  targets: string[];
+  enabled: boolean;
+  description?: string;
 };
