@@ -12,6 +12,10 @@ export function DocsTab({ totalTraceCostFromRows }: { totalTraceCostFromRows: nu
           <li className="mono">POST /v1/chat/completions</li>
           <li className="mono">POST /v1/responses</li>
           <li className="mono">GET /admin/accounts</li>
+          <li className="mono">GET /admin/model-aliases</li>
+          <li className="mono">POST /admin/model-aliases</li>
+          <li className="mono">PATCH /admin/model-aliases/:id</li>
+          <li className="mono">DELETE /admin/model-aliases/:id</li>
           <li className="mono">GET /admin/traces?page=1&amp;pageSize=100</li>
           <li className="mono">GET /admin/traces?limit=50 (legacy compatibility)</li>
           <li className="mono">GET /admin/stats/traces?sinceMs=&amp;untilMs=</li>

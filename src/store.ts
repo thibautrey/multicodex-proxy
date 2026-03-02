@@ -1,10 +1,16 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import type { Account, OAuthFlowState, OAuthStateFile, StoreFile } from "./types.js";
+import type {
+  Account,
+  ModelAlias,
+  OAuthFlowState,
+  OAuthStateFile,
+  StoreFile,
+} from "./types.js";
 import { ACCOUNT_FLUSH_INTERVAL_MS } from "./config.js";
 
-const DEFAULT_FILE: StoreFile = { accounts: [] };
+const DEFAULT_FILE: StoreFile = { accounts: [], modelAliases: [] };
 const DEFAULT_OAUTH_FILE: OAuthStateFile = { states: [] };
 
 async function ensureFile(filePath: string, seed: object) {
@@ -24,6 +30,7 @@ async function writeJsonAtomic(filePath: string, data: unknown): Promise<void> {
 
 export class AccountStore {
   private inMemoryAccounts: Account[] = [];
+  private inMemoryModelAliases: ModelAlias[] = [];
   private dirty = false;
   private flushTimer: NodeJS.Timeout | null = null;
 
@@ -37,7 +44,10 @@ export class AccountStore {
   private async reloadFromDisk() {
     const raw = await fs.readFile(this.filePath, "utf8");
     const data = JSON.parse(raw) as StoreFile;
-    this.inMemoryAccounts = data.accounts;
+    this.inMemoryAccounts = Array.isArray(data.accounts) ? data.accounts : [];
+    this.inMemoryModelAliases = Array.isArray(data.modelAliases)
+      ? data.modelAliases
+      : [];
     this.dirty = false;
   }
 
@@ -51,7 +61,10 @@ export class AccountStore {
 
   async flushIfDirty() {
     if (!this.dirty) return;
-    await writeJsonAtomic(this.filePath, { accounts: this.inMemoryAccounts });
+    await writeJsonAtomic(this.filePath, {
+      accounts: this.inMemoryAccounts,
+      modelAliases: this.inMemoryModelAliases,
+    });
     this.dirty = false;
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
@@ -61,6 +74,10 @@ export class AccountStore {
 
   getCachedAccounts(): Account[] {
     return [...this.inMemoryAccounts];
+  }
+
+  getCachedModelAliases(): ModelAlias[] {
+    return this.inMemoryModelAliases.map((a) => ({ ...a, targets: [...a.targets] }));
   }
 
   markAccountModified(accountId: string, account: Account) {
@@ -110,6 +127,56 @@ export class AccountStore {
 
   async listAccounts(): Promise<Account[]> {
     return this.getCachedAccounts();
+  }
+
+  private markModelAliasModified(aliasId: string, alias: ModelAlias) {
+    const idx = this.inMemoryModelAliases.findIndex((a) => a.id === aliasId);
+    if (idx === -1) {
+      this.inMemoryModelAliases.push(alias);
+    } else {
+      this.inMemoryModelAliases[idx] = alias;
+    }
+    this.dirty = true;
+    this.scheduleFlush();
+  }
+
+  async listModelAliases(): Promise<ModelAlias[]> {
+    return this.getCachedModelAliases();
+  }
+
+  async upsertModelAlias(alias: ModelAlias): Promise<ModelAlias> {
+    this.markModelAliasModified(alias.id, alias);
+    return alias;
+  }
+
+  async patchModelAlias(
+    id: string,
+    patch: Partial<ModelAlias>,
+  ): Promise<ModelAlias | null> {
+    const idx = this.inMemoryModelAliases.findIndex((a) => a.id === id);
+    if (idx === -1) return null;
+    const existing = this.inMemoryModelAliases[idx];
+    const updated: ModelAlias = {
+      ...existing,
+      ...patch,
+      id: existing.id,
+      targets: Array.isArray(patch.targets)
+        ? [...patch.targets]
+        : [...existing.targets],
+    };
+    this.markModelAliasModified(id, updated);
+    return updated;
+  }
+
+  async deleteModelAlias(id: string): Promise<boolean> {
+    const before = this.inMemoryModelAliases.length;
+    this.inMemoryModelAliases = this.inMemoryModelAliases.filter(
+      (a) => a.id !== id,
+    );
+    if (this.inMemoryModelAliases.length === before) return false;
+    this.dirty = true;
+    this.scheduleFlush();
+    return true;
   }
 }
 

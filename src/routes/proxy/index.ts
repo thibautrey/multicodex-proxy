@@ -45,7 +45,7 @@ import { AccountStore } from "../../store.js";
 import type { OAuthConfig } from "../../oauth.js";
 import { TraceManager } from "../../traces.js";
 import { ensureValidToken } from "../../account-utils.js";
-import type { ProviderId } from "../../types.js";
+import type { ModelAlias, ProviderId } from "../../types.js";
 import express from "express";
 
 type ProxyRoutesOptions = {
@@ -74,6 +74,8 @@ type ExposedModel = {
     supports_reasoning: boolean;
     supports_tools: boolean;
     supported_tool_types: string[];
+    is_alias?: boolean;
+    alias_targets?: string[];
   };
 };
 
@@ -141,13 +143,50 @@ function modelObject(
   };
 }
 
-function inferProviderFromModel(model?: string): ProviderId {
-  const id = (model ?? "").toLowerCase().trim();
-  if (!id) return "openai";
-  if (id.startsWith("gpt-") || id.includes("codex") || id.includes("o1") || id.includes("o3")) {
+function normalizeModelLookupKey(model?: string): string {
+  const raw = (model ?? "").trim().toLowerCase();
+  if (!raw) return "";
+  if (!raw.includes("/")) return raw;
+  const tail = raw.split("/").pop()?.trim();
+  return tail || raw;
+}
+
+function inferProviderFromModel(
+  model: string | undefined,
+  discoveredModels: ExposedModel[],
+): ProviderId {
+  const key = normalizeModelLookupKey(model);
+  if (!key) return "openai";
+
+  const discovered = discoveredModels.find(
+    (m) => normalizeModelLookupKey(m.id) === key,
+  );
+  if (discovered) return discovered.metadata.provider;
+
+  if (
+    key.startsWith("gpt-") ||
+    key.startsWith("o1") ||
+    key.startsWith("o3") ||
+    key.startsWith("o4") ||
+    key.startsWith("text-embedding-") ||
+    key.startsWith("whisper-") ||
+    key.includes("codex")
+  ) {
     return "openai";
   }
-  return "mistral";
+
+  if (
+    key.startsWith("mistral") ||
+    key.startsWith("codestral") ||
+    key.startsWith("ministral") ||
+    key.startsWith("pixtral") ||
+    key.startsWith("open-mistral") ||
+    key.startsWith("open-mixtral")
+  ) {
+    return "mistral";
+  }
+
+  return "openai";
 }
 
 async function discoverModels(
@@ -224,6 +263,22 @@ async function discoverModels(
     for (const id of PROXY_MODELS) {
       if (!byId.has(id)) byId.set(id, modelObject(id, "openai"));
     }
+
+    const aliases = store
+      .getCachedModelAliases()
+      .filter((a) => a.enabled && a.targets.length > 0);
+    for (const alias of aliases) {
+      const firstTarget = alias.targets[0];
+      const provider = inferProviderFromModel(firstTarget, Array.from(byId.values()));
+      byId.set(alias.id, {
+        ...modelObject(alias.id, provider),
+        metadata: {
+          ...modelObject(alias.id, provider).metadata,
+          is_alias: true,
+          alias_targets: [...alias.targets],
+        },
+      });
+    }
     if (!byId.size) throw new Error("no models discovered");
 
     const merged = Array.from(byId.values());
@@ -238,6 +293,49 @@ async function discoverModels(
     modelsCache.models = fallback;
     return fallback;
   }
+}
+
+type RoutingCandidate = {
+  requestedModel: string | undefined;
+  resolvedModel: string | undefined;
+  provider: ProviderId;
+};
+
+function buildRoutingCandidates(
+  requestModel: string | undefined,
+  discoveredModels: ExposedModel[],
+  aliases: ModelAlias[],
+): RoutingCandidate[] {
+  const key = normalizeModelLookupKey(requestModel);
+  const alias = aliases.find((a) => a.enabled && normalizeModelLookupKey(a.id) === key);
+  const targets =
+    alias && alias.targets.length
+      ? alias.targets
+      : requestModel
+        ? [requestModel]
+        : [];
+
+  const out: RoutingCandidate[] = [];
+  const seen = new Set<string>();
+  for (const target of targets) {
+    const targetKey = normalizeModelLookupKey(target);
+    if (!targetKey || seen.has(targetKey)) continue;
+    seen.add(targetKey);
+    out.push({
+      requestedModel: requestModel,
+      resolvedModel: target,
+      provider: inferProviderFromModel(target, discoveredModels),
+    });
+  }
+
+  if (out.length) return out;
+  return [
+    {
+      requestedModel: requestModel,
+      resolvedModel: requestModel,
+      provider: inferProviderFromModel(requestModel, discoveredModels),
+    },
+  ];
 }
 
 type SSEFrame = { frame: string; rest: string } | null;
@@ -355,28 +453,37 @@ let accounts = store.getCachedAccounts();
     );
     for (const account of accounts) store.markAccountModified(account.id, account);
 
-    const requestProvider = inferProviderFromModel(
-      typeof req.body?.model === "string" ? req.body.model : undefined,
+    const requestModel =
+      typeof req.body?.model === "string" && req.body.model.trim()
+        ? req.body.model.trim()
+        : undefined;
+    const discoveredModels = await discoverModels(store, openaiBaseUrl, mistralBaseUrl);
+    const modelAliases = store.getCachedModelAliases();
+    const routingCandidates = buildRoutingCandidates(
+      requestModel,
+      discoveredModels,
+      modelAliases,
     );
-    const providerAccounts = accounts.filter(
-      (a) => normalizeProvider(a) === requestProvider,
-    );
-    if (!providerAccounts.length) {
-      return res
-        .status(503)
-        .json({ error: `no ${requestProvider} accounts configured` });
-    }
-
     const tried = new Set<string>();
-    const maxAttempts = Math.min(
-      providerAccounts.length,
-      MAX_ACCOUNT_RETRY_ATTEMPTS,
-    );
-    for (let i = 0; i < maxAttempts; i++) {
-      const selected = chooseAccountForProvider(
-        providerAccounts.filter((a) => !tried.has(a.id)),
-        requestProvider,
+    const maxAttempts = Math.min(accounts.length, MAX_ACCOUNT_RETRY_ATTEMPTS);
+    let providerTried = false;
+
+    for (const candidate of routingCandidates) {
+      const providerAccounts = accounts.filter(
+        (a) => normalizeProvider(a) === candidate.provider,
       );
+      if (!providerAccounts.length) continue;
+      providerTried = true;
+
+      const attemptsForProvider = Math.min(
+        providerAccounts.length,
+        maxAttempts,
+      );
+      for (let i = 0; i < attemptsForProvider; i++) {
+        const selected = chooseAccountForProvider(
+          providerAccounts.filter((a) => !tried.has(a.id)),
+          candidate.provider,
+        );
       if (!selected) break;
 
       tried.add(selected.id);
@@ -384,17 +491,17 @@ let accounts = store.getCachedAccounts();
       await store.upsertAccount(selected);
 
       const shouldReturnChatCompletions = isChatCompletionsPath;
-      const payloadToUpstream = isChatCompletions
+      let payloadToUpstream = isChatCompletions
         ? chatCompletionsToResponsesPayload(req.body, sessionId)
         : normalizeResponsesPayload(req.body, sessionId);
+      if (candidate.resolvedModel) payloadToUpstream.model = candidate.resolvedModel;
       const requestBody = TRACE_INCLUDE_BODY ? req.body : undefined;
-      const requestModel =
-        typeof req.body?.model === "string" && req.body.model.trim()
-          ? req.body.model.trim()
-          : typeof payloadToUpstream?.model === "string" &&
-              payloadToUpstream.model.trim()
-            ? payloadToUpstream.model.trim()
-            : undefined;
+      const tracedModel =
+        requestModel ??
+        (typeof payloadToUpstream?.model === "string" &&
+        payloadToUpstream.model.trim()
+          ? payloadToUpstream.model.trim()
+          : undefined);
 
       const headers: Record<string, string> = {
         "content-type": "application/json",
@@ -403,19 +510,19 @@ let accounts = store.getCachedAccounts();
         originator: "pi",
         "User-Agent": PI_USER_AGENT,
       };
-      if (requestProvider === "openai") {
+      if (candidate.provider === "openai") {
         headers["OpenAI-Beta"] = "responses=experimental";
       }
-      if (requestProvider === "openai" && selected.chatgptAccountId) {
+      if (candidate.provider === "openai" && selected.chatgptAccountId) {
         headers["chatgpt-account-id"] = selected.chatgptAccountId;
       }
       if (sessionId) headers.session_id = sessionId;
 
       try {
         const upstreamBaseUrl =
-          requestProvider === "mistral" ? mistralBaseUrl : openaiBaseUrl;
+          candidate.provider === "mistral" ? mistralBaseUrl : openaiBaseUrl;
         const upstreamPath =
-          requestProvider === "mistral" ? mistralUpstreamPath : UPSTREAM_PATH;
+          candidate.provider === "mistral" ? mistralUpstreamPath : UPSTREAM_PATH;
         const upstream = await fetchCodexWithRetry(
           `${upstreamBaseUrl}${upstreamPath}`,
           {
@@ -505,7 +612,7 @@ let accounts = store.getCachedAccounts();
               route: req.path,
               accountId: selected.id,
               accountEmail: selected.email,
-              model: requestModel,
+              model: tracedModel,
               status: upstream.status,
               stream: true,
               latencyMs: Date.now() - startedAt,
@@ -532,7 +639,7 @@ let accounts = store.getCachedAccounts();
               route: req.path,
               accountId: selected.id,
               accountEmail: selected.email,
-              model: requestModel,
+              model: tracedModel,
               status: upstream.status,
               stream: true,
               latencyMs: Date.now() - startedAt,
@@ -555,7 +662,7 @@ let accounts = store.getCachedAccounts();
               route: req.path,
               accountId: selected.id,
               accountEmail: selected.email,
-              model: requestModel,
+              model: tracedModel,
               status: upstream.status,
               stream: false,
               latencyMs: Date.now() - startedAt,
@@ -638,7 +745,7 @@ let accounts = store.getCachedAccounts();
             route: req.path,
             accountId: selected.id,
             accountEmail: selected.email,
-            model: requestModel,
+            model: tracedModel,
             status: upstream.status,
             stream: true,
             latencyMs: Date.now() - startedAt,
@@ -679,7 +786,7 @@ let accounts = store.getCachedAccounts();
               route: req.path,
               accountId: selected.id,
               accountEmail: selected.email,
-              model: requestModel,
+              model: tracedModel,
               status: upstream.status,
               stream: true,
               latencyMs: Date.now() - startedAt,
@@ -709,7 +816,7 @@ let accounts = store.getCachedAccounts();
               route: req.path,
               accountId: selected.id,
               accountEmail: selected.email,
-              model: requestModel,
+              model: tracedModel,
               status: upstream.status,
               stream: true,
               latencyMs: Date.now() - startedAt,
@@ -780,7 +887,7 @@ let accounts = store.getCachedAccounts();
               route: req.path,
               accountId: selected.id,
               accountEmail: selected.email,
-              model: requestModel,
+              model: tracedModel,
               status: upstream.status,
               stream: true,
               latencyMs: Date.now() - startedAt,
@@ -814,7 +921,7 @@ let accounts = store.getCachedAccounts();
               route: req.path,
               accountId: selected.id,
               accountEmail: selected.email,
-              model: requestModel,
+              model: tracedModel,
               status: upstream.status,
               stream: true,
               latencyMs: Date.now() - startedAt,
@@ -864,7 +971,7 @@ let accounts = store.getCachedAccounts();
               route: req.path,
               accountId: selected.id,
               accountEmail: selected.email,
-              model: requestModel,
+              model: tracedModel,
               status: upstream.status,
               stream: true,
               latencyMs: Date.now() - startedAt,
@@ -894,7 +1001,7 @@ let accounts = store.getCachedAccounts();
               route: req.path,
               accountId: selected.id,
               accountEmail: selected.email,
-              model: requestModel,
+              model: tracedModel,
               status: upstream.status,
               stream: false,
               latencyMs: Date.now() - startedAt,
@@ -915,7 +1022,7 @@ let accounts = store.getCachedAccounts();
             route: req.path,
             accountId: selected.id,
             accountEmail: selected.email,
-            model: requestModel,
+            model: tracedModel,
             status: upstream.status,
             stream: false,
             latencyMs: Date.now() - startedAt,
@@ -940,7 +1047,7 @@ let accounts = store.getCachedAccounts();
           route: req.path,
           accountId: selected.id,
           accountEmail: selected.email,
-          model: requestModel,
+          model: tracedModel,
           status: upstream.status,
           stream: false,
           latencyMs: Date.now() - startedAt,
@@ -974,7 +1081,7 @@ let accounts = store.getCachedAccounts();
           route: req.path,
           accountId: selected.id,
           accountEmail: selected.email,
-          model: requestModel,
+          model: tracedModel,
           status: 599,
           stream: false,
           latencyMs: Date.now() - startedAt,
@@ -983,7 +1090,10 @@ let accounts = store.getCachedAccounts();
         });
       }
     }
-
+    }
+    if (!providerTried) {
+      return res.status(503).json({ error: "no provider accounts configured for requested model" });
+    }
     res.status(429).json({ error: "all accounts exhausted or unavailable" });
   }
 
