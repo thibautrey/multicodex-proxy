@@ -500,6 +500,9 @@ let accounts = store.getCachedAccounts();
       let payloadToUpstream = isChatCompletions
         ? chatCompletionsToResponsesPayload(req.body, sessionId)
         : normalizeResponsesPayload(req.body, sessionId);
+      if (isResponsesCompactPath && payloadToUpstream && typeof payloadToUpstream === "object") {
+        delete payloadToUpstream.store;
+      }
       if (candidate.resolvedModel) payloadToUpstream.model = candidate.resolvedModel;
       const requestBody = TRACE_INCLUDE_BODY ? req.body : undefined;
       const tracedModel =
