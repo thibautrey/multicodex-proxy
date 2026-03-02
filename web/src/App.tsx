@@ -16,11 +16,10 @@ import { TracingTab } from "./components/tabs/TracingTab";
 
 const q = new URLSearchParams(window.location.search);
 const initialTab = (q.get("tab") as Tab) || "overview";
-const initialSanitized = q.get("sanitized") === "1" || q.get("safe") === "1";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>(initialTab);
-  const [sanitized, setSanitized] = useState(initialSanitized);
+  const [locationSearch, setLocationSearch] = useState(window.location.search);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [traces, setTraces] = useState<Trace[]>([]);
   const [traceStats, setTraceStats] = useState<TraceStats>(EMPTY_TRACE_STATS);
@@ -39,6 +38,10 @@ export default function App() {
   const [traceRange, setTraceRange] = useState<TraceRangePreset>("7d");
   const tracePageRef = useRef(tracePagination.page);
   const traceRangeRef = useRef(traceRange);
+  const sanitized = useMemo(() => {
+    const params = new URLSearchParams(locationSearch);
+    return params.get("sanitized") === "1" || params.get("safe") === "1";
+  }, [locationSearch]);
 
   const stats = useMemo(
     () => ({
@@ -93,20 +96,14 @@ export default function App() {
   useEffect(() => {
     const u = new URL(window.location.href);
     u.searchParams.set("tab", tab);
-    if (sanitized) u.searchParams.set("sanitized", "1");
-    else u.searchParams.delete("sanitized");
     window.history.replaceState({}, "", u.toString());
-  }, [tab, sanitized]);
+    setLocationSearch(u.search);
+  }, [tab]);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "s") {
-        e.preventDefault();
-        setSanitized((v) => !v);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    const onPopstate = () => setLocationSearch(window.location.search);
+    window.addEventListener("popstate", onPopstate);
+    return () => window.removeEventListener("popstate", onPopstate);
   }, []);
 
   const loadBase = async () => {
@@ -276,9 +273,6 @@ export default function App() {
               {t}
             </button>
           ))}
-          <button className={sanitized ? "tab active" : "tab"} onClick={() => setSanitized((v) => !v)}>
-            {sanitized ? "sanitized on" : "sanitized off"}
-          </button>
         </nav>
 
         {tab === "overview" && (

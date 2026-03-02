@@ -20,7 +20,7 @@ export function DocsTab({ totalTraceCostFromRows }: { totalTraceCostFromRows: nu
           <li className="mono">POST /admin/oauth/complete</li>
         </ul>
         <p className="muted">Admin endpoints require <span className="mono">x-admin-token</span>.</p>
-        <p className="muted">Sanitized mode: use URL flag <span className="mono">?sanitized=1</span> or shortcut <span className="mono">Ctrl/Cmd + Shift + S</span>.</p>
+        <p className="muted">Sanitized mode: use URL flag <span className="mono">?sanitized=1</span>.</p>
       </section>
       <section className="panel">
         <h2>Pricing snapshot</h2>
