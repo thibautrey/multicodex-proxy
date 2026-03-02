@@ -10,6 +10,8 @@ import { oauthConfig } from "./oauth-config.js";
 import {
   ADMIN_TOKEN,
   CHATGPT_BASE_URL,
+  MISTRAL_BASE_URL,
+  MISTRAL_UPSTREAM_PATH,
   STORE_PATH,
   TRACE_FILE_PATH,
   TRACE_STATS_HISTORY_PATH,
@@ -36,7 +38,8 @@ const adminRouter = createAdminRouter({
   oauthStore,
   traceManager,
   oauthConfig,
-  chatgptBaseUrl: CHATGPT_BASE_URL,
+  openaiBaseUrl: CHATGPT_BASE_URL,
+  mistralBaseUrl: MISTRAL_BASE_URL,
   storagePaths: {
     accountsPath: STORE_PATH,
     oauthStatePath: OAUTH_STATE_PATH,
@@ -48,7 +51,9 @@ const adminRouter = createAdminRouter({
 const proxyRouter = createProxyRouter({
   store,
   traceManager,
-  chatgptBaseUrl: CHATGPT_BASE_URL,
+  openaiBaseUrl: CHATGPT_BASE_URL,
+  mistralBaseUrl: MISTRAL_BASE_URL,
+  mistralUpstreamPath: MISTRAL_UPSTREAM_PATH,
   oauthConfig,
 });
 
@@ -97,6 +102,6 @@ app.get("*", (req, res, next) => {
 app.listen(process.env.PORT ?? 4010, () => {
   console.log(`multivibe listening on :${process.env.PORT ?? 4010}`);
   console.log(
-    `store=${STORE_PATH} oauth=${OAUTH_STATE_PATH} trace=${TRACE_FILE_PATH} traceStats=${TRACE_STATS_HISTORY_PATH} redirect=${oauthConfig.redirectUri} upstream=${CHATGPT_BASE_URL}${UPSTREAM_PATH}`,
+    `store=${STORE_PATH} oauth=${OAUTH_STATE_PATH} trace=${TRACE_FILE_PATH} traceStats=${TRACE_STATS_HISTORY_PATH} redirect=${oauthConfig.redirectUri} openaiUpstream=${CHATGPT_BASE_URL}${UPSTREAM_PATH} mistralUpstream=${MISTRAL_BASE_URL}${MISTRAL_UPSTREAM_PATH}`,
   );
 });

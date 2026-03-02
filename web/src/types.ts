@@ -1,4 +1,11 @@
-export type Account = { id: string; email?: string; enabled: boolean; usage?: any; state?: any };
+export type Account = {
+  id: string;
+  provider?: "openai" | "mistral";
+  email?: string;
+  enabled: boolean;
+  usage?: any;
+  state?: any;
+};
 
 export type Trace = {
   id: string;

@@ -1,12 +1,13 @@
 import { OAuthConfig } from "./oauth.js";
 import { mergeTokenIntoAccount, refreshAccessToken } from "./oauth.js";
-import { rememberError } from "./quota.js";
+import { normalizeProvider, rememberError } from "./quota.js";
 import type { Account } from "./types.js";
 
 export async function ensureValidToken(
   account: Account,
   oauthConfig: OAuthConfig,
 ): Promise<Account> {
+  if (normalizeProvider(account) !== "openai") return account;
   if (!account.expiresAt || Date.now() < account.expiresAt - 5 * 60_000)
     return account;
   if (!account.refreshToken) return account;

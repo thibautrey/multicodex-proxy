@@ -1,6 +1,4 @@
 import {
-  ACCOUNT_FLUSH_INTERVAL_MS,
-  CHATGPT_BASE_URL,
   MAX_ACCOUNT_RETRY_ATTEMPTS,
   MAX_UPSTREAM_RETRIES,
   MODELS_CACHE_MS,
@@ -28,9 +26,10 @@ import {
   normalizeResponsesPayload,
 } from "../../responses/payloads.js";
 import {
-  chooseAccount,
+  chooseAccountForProvider,
   isQuotaErrorText,
   markQuotaHit,
+  normalizeProvider,
   refreshUsageIfNeeded,
   rememberError,
 } from "../../quota.js";
@@ -46,12 +45,15 @@ import { AccountStore } from "../../store.js";
 import type { OAuthConfig } from "../../oauth.js";
 import { TraceManager } from "../../traces.js";
 import { ensureValidToken } from "../../account-utils.js";
+import type { ProviderId } from "../../types.js";
 import express from "express";
 
 type ProxyRoutesOptions = {
   store: AccountStore;
   traceManager: TraceManager;
-  chatgptBaseUrl: string;
+  openaiBaseUrl: string;
+  mistralBaseUrl: string;
+  mistralUpstreamPath: string;
   oauthConfig: OAuthConfig;
 };
 
@@ -66,6 +68,7 @@ type ExposedModel = {
   created: number;
   owned_by: string;
   metadata: {
+    provider: ProviderId;
     context_window: number | null;
     max_output_tokens: number | null;
     supports_reasoning: boolean;
@@ -96,6 +99,7 @@ function firstKnownNumber(
 
 function modelObject(
   id: string,
+  provider: ProviderId,
   upstream?: Record<string, unknown>,
 ): ExposedModel {
   const upstreamObject = upstream ?? {};
@@ -125,8 +129,9 @@ function modelObject(
     id,
     object: "model",
     created: Math.floor(Date.now() / 1000),
-    owned_by: "multivibe",
+    owned_by: provider,
     metadata: {
+      provider,
       context_window: contextWindow,
       max_output_tokens: maxOutputTokens,
       supports_reasoning: supportsReasoning,
@@ -136,9 +141,19 @@ function modelObject(
   };
 }
 
+function inferProviderFromModel(model?: string): ProviderId {
+  const id = (model ?? "").toLowerCase().trim();
+  if (!id) return "openai";
+  if (id.startsWith("gpt-") || id.includes("codex") || id.includes("o1") || id.includes("o3")) {
+    return "openai";
+  }
+  return "mistral";
+}
+
 async function discoverModels(
   store: AccountStore,
-  chatgptBaseUrl: string,
+  openaiBaseUrl: string,
+  mistralBaseUrl: string,
 ): Promise<ExposedModel[]> {
   if (
     Date.now() - modelsCache.at < MODELS_CACHE_MS &&
@@ -148,36 +163,63 @@ async function discoverModels(
 
   try {
     const accounts = await store.listAccounts();
-    const usable = accounts.find((a) => a.enabled && a.accessToken);
-    if (!usable) throw new Error("no usable account");
-
-    const headers: Record<string, string> = {
-      authorization: `Bearer ${usable.accessToken}`,
-      accept: "application/json",
-    };
-    if (usable.chatgptAccountId)
-      headers["ChatGPT-Account-Id"] = usable.chatgptAccountId;
-
-    const url = `${chatgptBaseUrl}/backend-api/codex/models?client_version=${encodeURIComponent(
-      MODELS_CLIENT_VERSION,
-    )}`;
-    const r = await fetch(url, { headers });
-    if (!r.ok) throw new Error(`models upstream ${r.status}`);
-    const json: any = await r.json();
-    const upstream = Array.isArray(json?.models) ? json.models : [];
     const byId = new Map<string, ExposedModel>();
 
-    for (const entry of upstream) {
-      const slug =
-        typeof entry?.slug === "string" && entry.slug.trim()
-          ? entry.slug.trim()
-          : "";
-      if (!slug) continue;
-      byId.set(slug, modelObject(slug, entry));
+    const openaiAccount = accounts.find(
+      (a) => a.enabled && a.accessToken && normalizeProvider(a) === "openai",
+    );
+    if (openaiAccount) {
+      const headers: Record<string, string> = {
+        authorization: `Bearer ${openaiAccount.accessToken}`,
+        accept: "application/json",
+      };
+      if (openaiAccount.chatgptAccountId) {
+        headers["ChatGPT-Account-Id"] = openaiAccount.chatgptAccountId;
+      }
+      const url = `${openaiBaseUrl}/backend-api/codex/models?client_version=${encodeURIComponent(
+        MODELS_CLIENT_VERSION,
+      )}`;
+      const r = await fetch(url, { headers });
+      if (r.ok) {
+        const json: any = await r.json();
+        const upstream = Array.isArray(json?.models) ? json.models : [];
+        for (const entry of upstream) {
+          const slug =
+            typeof entry?.slug === "string" && entry.slug.trim()
+              ? entry.slug.trim()
+              : "";
+          if (!slug) continue;
+          byId.set(slug, modelObject(slug, "openai", entry));
+        }
+      }
+    }
+
+    const mistralAccount = accounts.find(
+      (a) => a.enabled && a.accessToken && normalizeProvider(a) === "mistral",
+    );
+    if (mistralAccount) {
+      const headers: Record<string, string> = {
+        authorization: `Bearer ${mistralAccount.accessToken}`,
+        accept: "application/json",
+      };
+      const r = await fetch(`${mistralBaseUrl}/v1/models`, { headers });
+      if (r.ok) {
+        const json: any = await r.json();
+        const upstream = Array.isArray(json?.data) ? json.data : [];
+        for (const entry of upstream) {
+          const id =
+            typeof entry?.id === "string" && entry.id.trim()
+              ? entry.id.trim()
+              : "";
+          if (!id) continue;
+          byId.set(id, modelObject(id, "mistral", entry));
+        }
+      }
     }
     for (const id of PROXY_MODELS) {
-      if (!byId.has(id)) byId.set(id, modelObject(id));
+      if (!byId.has(id)) byId.set(id, modelObject(id, "openai"));
     }
+    if (!byId.size) throw new Error("no models discovered");
 
     const merged = Array.from(byId.values());
     modelsCache.at = Date.now();
@@ -185,7 +227,7 @@ async function discoverModels(
     return merged;
   } catch {
     const fallback = Array.from(new Set(PROXY_MODELS)).map((id) =>
-      modelObject(id),
+      modelObject(id, "openai"),
     );
     modelsCache.at = Date.now();
     modelsCache.models = fallback;
@@ -269,7 +311,14 @@ async function fetchCodexWithRetry(
 }
 
 export function createProxyRouter(options: ProxyRoutesOptions) {
-  const { store, traceManager, chatgptBaseUrl, oauthConfig } = options;
+  const {
+    store,
+    traceManager,
+    openaiBaseUrl,
+    mistralBaseUrl,
+    mistralUpstreamPath,
+    oauthConfig,
+  } = options;
   const { appendTrace } = traceManager;
   const router = express.Router();
 
@@ -293,16 +342,36 @@ let accounts = store.getCachedAccounts();
     accounts = await Promise.all(
       accounts.map(async (account) => {
         const valid = await ensureValidToken(account, oauthConfig);
-        await refreshUsageIfNeeded(valid, chatgptBaseUrl);
+        const usageBaseUrl =
+          normalizeProvider(valid) === "mistral" ? mistralBaseUrl : openaiBaseUrl;
+        await refreshUsageIfNeeded(valid, usageBaseUrl);
         return valid;
       }),
     );
     for (const account of accounts) store.markAccountModified(account.id, account);
 
+    const requestProvider = inferProviderFromModel(
+      typeof req.body?.model === "string" ? req.body.model : undefined,
+    );
+    const providerAccounts = accounts.filter(
+      (a) => normalizeProvider(a) === requestProvider,
+    );
+    if (!providerAccounts.length) {
+      return res
+        .status(503)
+        .json({ error: `no ${requestProvider} accounts configured` });
+    }
+
     const tried = new Set<string>();
-    const maxAttempts = Math.min(accounts.length, MAX_ACCOUNT_RETRY_ATTEMPTS);
+    const maxAttempts = Math.min(
+      providerAccounts.length,
+      MAX_ACCOUNT_RETRY_ATTEMPTS,
+    );
     for (let i = 0; i < maxAttempts; i++) {
-      const selected = chooseAccount(accounts.filter((a) => !tried.has(a.id)));
+      const selected = chooseAccountForProvider(
+        providerAccounts.filter((a) => !tried.has(a.id)),
+        requestProvider,
+      );
       if (!selected) break;
 
       tried.add(selected.id);
@@ -326,17 +395,24 @@ let accounts = store.getCachedAccounts();
         "content-type": "application/json",
         authorization: `Bearer ${selected.accessToken}`,
         accept: "text/event-stream",
-        "OpenAI-Beta": "responses=experimental",
         originator: "pi",
         "User-Agent": PI_USER_AGENT,
       };
-      if (selected.chatgptAccountId)
+      if (requestProvider === "openai") {
+        headers["OpenAI-Beta"] = "responses=experimental";
+      }
+      if (requestProvider === "openai" && selected.chatgptAccountId) {
         headers["chatgpt-account-id"] = selected.chatgptAccountId;
+      }
       if (sessionId) headers.session_id = sessionId;
 
       try {
+        const upstreamBaseUrl =
+          requestProvider === "mistral" ? mistralBaseUrl : openaiBaseUrl;
+        const upstreamPath =
+          requestProvider === "mistral" ? mistralUpstreamPath : UPSTREAM_PATH;
         const upstream = await fetchCodexWithRetry(
-          `${chatgptBaseUrl}${UPSTREAM_PATH}`,
+          `${upstreamBaseUrl}${upstreamPath}`,
           {
             method: "POST",
             headers,
@@ -915,13 +991,13 @@ let accounts = store.getCachedAccounts();
   router.post("/responses", proxyWithRotation);
 
   router.get("/models", async (_req, res) => {
-    const models = await discoverModels(store, chatgptBaseUrl);
+    const models = await discoverModels(store, openaiBaseUrl, mistralBaseUrl);
     res.json({ object: "list", data: models });
   });
 
   router.get("/models/:id", async (req, res) => {
     const id = req.params.id;
-    const models = await discoverModels(store, chatgptBaseUrl);
+    const models = await discoverModels(store, openaiBaseUrl, mistralBaseUrl);
     const model = models.find((m) => m.id === id);
     if (!model)
       return res.status(404).json({

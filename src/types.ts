@@ -1,3 +1,5 @@
+export type ProviderId = "openai" | "mistral";
+
 export type UsageWindow = {
   usedPercent?: number;
   resetAt?: number; // epoch ms
@@ -26,6 +28,7 @@ export type AccountState = {
 
 export type Account = {
   id: string;
+  provider?: ProviderId;
   email?: string;
   accessToken: string;
   refreshToken?: string;

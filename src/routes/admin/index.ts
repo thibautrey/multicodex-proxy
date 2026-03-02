@@ -2,7 +2,7 @@ import express from "express";
 import { randomUUID } from "node:crypto";
 import { AccountStore, OAuthStateStore } from "../../store.js";
 import type { Account } from "../../types.js";
-import { refreshUsageIfNeeded } from "../../quota.js";
+import { normalizeProvider, refreshUsageIfNeeded } from "../../quota.js";
 import {
   accountFromOAuth,
   buildAuthorizationUrl,
@@ -26,7 +26,8 @@ export type AdminRoutesOptions = {
   oauthStore: OAuthStateStore;
   traceManager: TraceManager;
   oauthConfig: OAuthConfig;
-  chatgptBaseUrl: string;
+  openaiBaseUrl: string;
+  mistralBaseUrl: string;
   storagePaths: StoragePaths;
 };
 
@@ -55,7 +56,8 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     oauthStore,
     traceManager,
     oauthConfig,
-    chatgptBaseUrl,
+    openaiBaseUrl,
+    mistralBaseUrl,
     storagePaths,
   } = options;
 
@@ -170,7 +172,12 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     const accountMeta = new Map(
       accounts.map((a) => [
         a.id,
-        { id: a.id, email: a.email, enabled: a.enabled },
+        {
+          id: a.id,
+          provider: a.provider ?? "openai",
+          email: a.email,
+          enabled: a.enabled,
+        },
       ]),
     );
 
@@ -179,6 +186,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
         accountId,
         account: accountMeta.get(accountId) ?? {
           id: accountId,
+          provider: undefined,
           email: undefined,
           enabled: undefined,
         },
@@ -229,6 +237,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       return res.status(400).json({ error: "accessToken required" });
     const account: Account = {
       id: body.id ?? randomUUID(),
+      provider: body.provider === "mistral" ? "mistral" : "openai",
       email: body.email,
       accessToken: body.accessToken,
       refreshToken: body.refreshToken,
@@ -275,7 +284,9 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     );
     if (!account) return res.status(404).json({ error: "not found" });
     account = await ensureValidToken(account, oauthConfig);
-    await refreshUsageIfNeeded(account, chatgptBaseUrl, true);
+    const usageBaseUrl =
+      normalizeProvider(account) === "mistral" ? mistralBaseUrl : openaiBaseUrl;
+    await refreshUsageIfNeeded(account, usageBaseUrl, true);
     await store.upsertAccount(account);
     res.json({ ok: true, account: redact(account) });
   });
@@ -284,7 +295,11 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     const refreshed = await Promise.all(
       (await store.listAccounts()).map(async (account) => {
         const valid = await ensureValidToken(account, oauthConfig);
-        await refreshUsageIfNeeded(valid, chatgptBaseUrl, true);
+        const usageBaseUrl =
+          normalizeProvider(valid) === "mistral"
+            ? mistralBaseUrl
+            : openaiBaseUrl;
+        await refreshUsageIfNeeded(valid, usageBaseUrl, true);
         return valid;
       }),
     );
@@ -336,7 +351,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
         flow.codeVerifier,
       );
       let account = accountFromOAuth(flow, tokenData);
-      account = await refreshUsageIfNeeded(account, chatgptBaseUrl, true);
+      account = await refreshUsageIfNeeded(account, openaiBaseUrl, true);
       await store.upsertAccount(account);
       await oauthStore.update(flow.id, {
         status: "success",

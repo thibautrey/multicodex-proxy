@@ -42,6 +42,16 @@ export function AccountsTab(props: Props) {
     refreshUsage,
   } = props;
 
+  const providerFavicon = (provider?: string) => {
+    return provider === "mistral"
+      ? "https://mistral.ai/favicon.ico"
+      : "https://openai.com/favicon.ico";
+  };
+
+  const providerLabel = (provider?: string) => {
+    return provider === "mistral" ? "Mistral" : "OpenAI";
+  };
+
   return (
     <>
       <section className="grid cards3">
@@ -70,6 +80,7 @@ export function AccountsTab(props: Props) {
           <table>
             <thead>
               <tr>
+                <th>Vendor</th>
                 <th>Email</th>
                 <th>ID</th>
                 <th>5h</th>
@@ -82,6 +93,17 @@ export function AccountsTab(props: Props) {
             <tbody>
               {accounts.map((a) => (
                 <tr key={a.id}>
+                  <td>
+                    <span className="provider-badge">
+                      <img
+                        className="provider-icon"
+                        src={providerFavicon(a.provider)}
+                        alt={`${providerLabel(a.provider)} icon`}
+                        loading="lazy"
+                      />
+                      {providerLabel(a.provider)}
+                    </span>
+                  </td>
                   <td>{sanitized ? maskEmail(a.email) : a.email ?? "-"}</td>
                   <td className="mono">{sanitized ? maskId(a.id) : a.id}</td>
                   <td>{typeof a.usage?.primary?.usedPercent === "number" ? `${Math.round(a.usage.primary.usedPercent)}%` : "?"}<small>{fmt(a.usage?.primary?.resetAt)}</small></td>

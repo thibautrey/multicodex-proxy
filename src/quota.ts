@@ -1,4 +1,4 @@
-import type { Account, UsageSnapshot } from "./types.js";
+import type { Account, ProviderId, UsageSnapshot } from "./types.js";
 
 export const USAGE_CACHE_TTL_MS = Number(process.env.USAGE_CACHE_TTL_MS ?? 300_000);
 const USAGE_TIMEOUT_MS = Number(process.env.USAGE_TIMEOUT_MS ?? 10_000);
@@ -11,6 +11,10 @@ type RouteCache = {
 };
 
 const routeCache: RouteCache = { bucket: -1, accountId: undefined };
+
+export function normalizeProvider(account?: Account): ProviderId {
+  return account?.provider === "mistral" ? "mistral" : "openai";
+}
 
 function nowBucket(now: number, windowMs: number) {
   return Math.floor(now / windowMs);
@@ -41,6 +45,10 @@ function parseUsage(data: any): UsageSnapshot {
         }
       : undefined;
   return { primary: toWindow(primary), secondary: toWindow(secondary), fetchedAt: Date.now() };
+}
+
+function parseOpenAIUsage(data: any): UsageSnapshot {
+  return parseUsage(data);
 }
 
 export function rememberError(account: Account, message: string) {
@@ -120,8 +128,23 @@ export function chooseAccount(accounts: Account[]): Account | null {
   return winner;
 }
 
+export function chooseAccountForProvider(
+  accounts: Account[],
+  provider: ProviderId,
+): Account | null {
+  return chooseAccount(accounts.filter((a) => normalizeProvider(a) === provider));
+}
+
 export async function refreshUsageIfNeeded(account: Account, chatgptBaseUrl: string, force = false): Promise<Account> {
   if (!force && account.usage && Date.now() - account.usage.fetchedAt < USAGE_CACHE_TTL_MS) return account;
+  const provider = normalizeProvider(account);
+  if (provider === "mistral") {
+    account.usage = {
+      ...account.usage,
+      fetchedAt: Date.now(),
+    };
+    return account;
+  }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), USAGE_TIMEOUT_MS);
@@ -130,12 +153,14 @@ export async function refreshUsageIfNeeded(account: Account, chatgptBaseUrl: str
       Authorization: `Bearer ${account.accessToken}`,
       Accept: "application/json",
     };
-    if (account.chatgptAccountId) headers["ChatGPT-Account-Id"] = account.chatgptAccountId;
-
-    const res = await fetch(`${chatgptBaseUrl}/backend-api/wham/usage`, { headers, signal: controller.signal });
+    const usageUrl = `${chatgptBaseUrl}/backend-api/wham/usage`;
+    if (provider === "openai" && account.chatgptAccountId) {
+      headers["ChatGPT-Account-Id"] = account.chatgptAccountId;
+    }
+    const res = await fetch(usageUrl, { headers, signal: controller.signal });
     if (!res.ok) throw new Error(`usage probe failed ${res.status}`);
     const json = await res.json();
-    account.usage = parseUsage(json);
+    account.usage = parseOpenAIUsage(json);
     account.state = { ...account.state, lastError: undefined };
     return account;
   } catch (err: any) {
