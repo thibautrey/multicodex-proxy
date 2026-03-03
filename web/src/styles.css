@@ -238,9 +238,12 @@ button.danger {
 .metric-title { font-size: 13px; }
 
 .metric .value {
-  font-size: 36px;
+  font-size: clamp(18px, 2.4vw, 36px);
   font-weight: 700;
   letter-spacing: -0.03em;
+  line-height: 1.05;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .progress-stat {
