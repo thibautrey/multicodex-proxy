@@ -41,6 +41,7 @@ export type TraceTotals = {
 export type TraceModelStats = {
   model: string;
   count: number;
+  okCount: number;
   tokensInput: number;
   tokensOutput: number;
   tokensTotal: number;
@@ -269,6 +270,7 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
       modelMap.set(key, {
         model: key,
         count: 1,
+        okCount: trace.isError ? 0 : 1,
         tokensInput: trace.tokensInput ?? 0,
         tokensOutput: trace.tokensOutput ?? 0,
         tokensTotal: trace.tokensTotal ?? 0,
@@ -276,6 +278,7 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
       });
     } else {
       existing.count += 1;
+      if (!trace.isError) existing.okCount += 1;
       existing.tokensInput += trace.tokensInput ?? 0;
       existing.tokensOutput += trace.tokensOutput ?? 0;
       existing.tokensTotal += trace.tokensTotal ?? 0;

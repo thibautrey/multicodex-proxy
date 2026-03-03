@@ -75,13 +75,21 @@ export default function App() {
     };
   }, [accounts]);
 
+  const filteredTraceStats = useMemo(() => {
+    if (!traceStats.models.length) return traceStats;
+    if (!models.length) return { ...traceStats, models: [] };
+    const allowed = new Set(models);
+    const filteredModels = traceStats.models.filter((m) => allowed.has(m.model) && m.okCount > 0);
+    return { ...traceStats, models: filteredModels };
+  }, [models, traceStats]);
+
   const modelChartData = useMemo(
-    () => traceStats.models.slice(0, 8).map((m) => ({ ...m, label: m.model })),
-    [traceStats.models],
+    () => filteredTraceStats.models.slice(0, 8).map((m) => ({ ...m, label: m.model })),
+    [filteredTraceStats.models],
   );
   const modelCostChartData = useMemo(
-    () => [...traceStats.models].sort((a, b) => b.costUsd - a.costUsd).slice(0, 8).map((m) => ({ ...m, label: m.model })),
-    [traceStats.models],
+    () => [...filteredTraceStats.models].sort((a, b) => b.costUsd - a.costUsd).slice(0, 8).map((m) => ({ ...m, label: m.model })),
+    [filteredTraceStats.models],
   );
 
   const tokensTimeseries = useMemo(
@@ -319,7 +327,7 @@ export default function App() {
           <OverviewTab
             stats={stats}
             usageStats={usageStats}
-            traceStats={traceStats}
+            traceStats={filteredTraceStats}
             storageInfo={storageInfo}
             models={models}
           />
@@ -327,7 +335,7 @@ export default function App() {
 
         {tab === "accounts" && (
           <AccountsTab
-            traceStats={traceStats}
+            traceStats={filteredTraceStats}
             accounts={accounts}
             sanitized={sanitized}
             patch={patch}
@@ -350,7 +358,7 @@ export default function App() {
         {tab === "tracing" && (
           <TracingTab
             accounts={accounts}
-            traceStats={traceStats}
+            traceStats={filteredTraceStats}
             tokensTimeseries={tokensTimeseries}
             modelChartData={modelChartData}
             modelCostChartData={modelCostChartData}

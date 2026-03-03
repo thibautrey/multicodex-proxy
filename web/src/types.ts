@@ -38,7 +38,15 @@ export type TraceStats = {
     costUsd: number;
     latencyAvgMs: number;
   };
-  models: Array<{ model: string; count: number; tokensInput: number; tokensOutput: number; tokensTotal: number; costUsd: number }>;
+  models: Array<{
+    model: string;
+    count: number;
+    okCount: number;
+    tokensInput: number;
+    tokensOutput: number;
+    tokensTotal: number;
+    costUsd: number;
+  }>;
   timeseries: Array<{
     at: number;
     requests: number;
