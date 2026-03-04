@@ -43,6 +43,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [expandedTraceId, setExpandedTraceId] = useState<string | null>(null);
   const [traceRange, setTraceRange] = useState<TraceRangePreset>("7d");
+  const [traceExportInProgress, setTraceExportInProgress] = useState(false);
   const tracePageRef = useRef(tracePagination.page);
   const traceRangeRef = useRef(traceRange);
   const sanitized = useMemo(() => {
@@ -78,7 +79,7 @@ export default function App() {
   const filteredTraceStats = useMemo(() => {
     if (!traceStats.models.length) return traceStats;
     if (!models.length) return { ...traceStats, models: [] };
-    const allowed = new Set(models);
+    const allowed = new Set(models.map((m) => m.id));
     const filteredModels = traceStats.models.filter((m) => allowed.has(m.model) && m.okCount > 0);
     return { ...traceStats, models: filteredModels };
   }, [models, traceStats]);
@@ -301,6 +302,44 @@ export default function App() {
     }
   };
 
+  const exportTracesZip = async () => {
+    const { sinceMs, untilMs } = getRangeBounds(traceRange);
+    const params = new URLSearchParams();
+    if (typeof sinceMs === "number") params.set("sinceMs", String(sinceMs));
+    if (typeof untilMs === "number") params.set("untilMs", String(untilMs));
+    const query = params.toString();
+    const path = `/admin/traces/export.zip${query ? `?${query}` : ""}`;
+
+    setTraceExportInProgress(true);
+    try {
+      setError("");
+      const res = await fetch(path, {
+        headers: {
+          "x-admin-token": localStorage.getItem("adminToken") ?? tokenDefault,
+        },
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || `HTTP ${res.status}`);
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const contentDisposition = res.headers.get("content-disposition") ?? "";
+      const match = contentDisposition.match(/filename="([^"]+)"/);
+      link.href = url;
+      link.download = match?.[1] ?? "traces-export.zip";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setError(e?.message ?? String(e));
+    } finally {
+      setTraceExportInProgress(false);
+    }
+  };
+
   return (
     <div className="page">
       <div className="shell">
@@ -370,6 +409,8 @@ export default function App() {
             expandedTraceId={expandedTraceId}
             setExpandedTraceId={setExpandedTraceId}
             sanitized={sanitized}
+            exportTracesZip={exportTracesZip}
+            exportInProgress={traceExportInProgress}
           />
         )}
 

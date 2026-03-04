@@ -33,6 +33,8 @@ type Props = {
   expandedTraceId: string | null;
   setExpandedTraceId: (id: string | null) => void;
   sanitized: boolean;
+  exportTracesZip: () => Promise<void>;
+  exportInProgress: boolean;
 };
 
 export function TracingTab(props: Props) {
@@ -50,6 +52,8 @@ export function TracingTab(props: Props) {
     expandedTraceId,
     setExpandedTraceId,
     sanitized,
+    exportTracesZip,
+    exportInProgress,
   } = props;
   const accountProviderById = React.useMemo(
     () => new Map(accounts.map((account) => [account.id, account.provider])),
@@ -223,6 +227,9 @@ export function TracingTab(props: Props) {
             <button className="btn ghost" onClick={() => void gotoTracePage(tracePagination.page - 1)} disabled={!tracePagination.hasPrev}>Previous</button>
             <span className="mono">Page {tracePagination.page} / {tracePagination.totalPages} ({tracePagination.total} traces)</span>
             <button className="btn ghost" onClick={() => void gotoTracePage(tracePagination.page + 1)} disabled={!tracePagination.hasNext}>Next</button>
+            <button className="btn secondary" onClick={() => void exportTracesZip()} disabled={exportInProgress}>
+              {exportInProgress ? "Exporting..." : "Export all (.zip)"}
+            </button>
           </div>
         </div>
         <div className="table-wrap">
