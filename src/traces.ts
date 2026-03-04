@@ -1,6 +1,6 @@
+import { estimateCostUsd } from "./model-pricing.js";
 import fs from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { estimateCostUsd } from "./model-pricing.js";
 
 export type TraceEntry = {
   id: string;
@@ -95,7 +95,7 @@ export type TraceManagerConfig = {
   legacyLimitMax?: number;
 };
 
-const DEFAULT_RETENTION_MAX = 1000;
+const DEFAULT_RETENTION_MAX = 10000;
 const DEFAULT_PAGE_SIZE_MAX = 100;
 const DEFAULT_LEGACY_LIMIT_MAX = 2000;
 
@@ -108,10 +108,22 @@ function safeNumber(value: unknown): number | undefined {
   return undefined;
 }
 
-function normalizeTokenFields(usage: any, fallback?: { input?: number; output?: number; total?: number }) {
-  const input = safeNumber(usage?.input_tokens) ?? safeNumber(usage?.prompt_tokens) ?? fallback?.input;
-  const output = safeNumber(usage?.output_tokens) ?? safeNumber(usage?.completion_tokens) ?? fallback?.output;
-  const total = safeNumber(usage?.total_tokens) ?? fallback?.total ?? ((input ?? 0) + (output ?? 0));
+function normalizeTokenFields(
+  usage: any,
+  fallback?: { input?: number; output?: number; total?: number },
+) {
+  const input =
+    safeNumber(usage?.input_tokens) ??
+    safeNumber(usage?.prompt_tokens) ??
+    fallback?.input;
+  const output =
+    safeNumber(usage?.output_tokens) ??
+    safeNumber(usage?.completion_tokens) ??
+    fallback?.output;
+  const total =
+    safeNumber(usage?.total_tokens) ??
+    fallback?.total ??
+    (input ?? 0) + (output ?? 0);
   return {
     tokensInput: input,
     tokensOutput: output,
@@ -125,23 +137,43 @@ function normalizeTrace(raw: any): TraceEntry | null {
   const route = typeof raw.route === "string" ? raw.route : "";
   const status = safeNumber(raw.status);
   const latencyMs = safeNumber(raw.latencyMs);
-  if (!at || !route || typeof status === "undefined" || typeof latencyMs === "undefined") return null;
+  if (
+    !at ||
+    !route ||
+    typeof status === "undefined" ||
+    typeof latencyMs === "undefined"
+  )
+    return null;
 
-  const fallbackModel = typeof raw.requestBody?.model === "string" ? raw.requestBody.model : undefined;
-  const model = typeof raw.model === "string" && raw.model.trim() ? raw.model.trim() : fallbackModel;
+  const fallbackModel =
+    typeof raw.requestBody?.model === "string"
+      ? raw.requestBody.model
+      : undefined;
+  const model =
+    typeof raw.model === "string" && raw.model.trim()
+      ? raw.model.trim()
+      : fallbackModel;
   const normalizedTokens = normalizeTokenFields(raw.usage, {
     input: safeNumber(raw.tokensInput),
     output: safeNumber(raw.tokensOutput),
     total: safeNumber(raw.tokensTotal),
   });
-  const costUsd = estimateCostUsd(model, normalizedTokens.tokensInput ?? 0, normalizedTokens.tokensOutput ?? 0);
+  const costUsd = estimateCostUsd(
+    model,
+    normalizedTokens.tokensInput ?? 0,
+    normalizedTokens.tokensOutput ?? 0,
+  );
 
   return {
-    id: typeof raw.id === "string" && raw.id ? raw.id : `${at}-${route}-${status}`,
+    id:
+      typeof raw.id === "string" && raw.id
+        ? raw.id
+        : `${at}-${route}-${status}`,
     at,
     route,
     accountId: typeof raw.accountId === "string" ? raw.accountId : undefined,
-    accountEmail: typeof raw.accountEmail === "string" ? raw.accountEmail : undefined,
+    accountEmail:
+      typeof raw.accountEmail === "string" ? raw.accountEmail : undefined,
     model,
     status,
     isError: typeof raw.isError === "boolean" ? raw.isError : status >= 400,
@@ -154,25 +186,46 @@ function normalizeTrace(raw: any): TraceEntry | null {
     usage: raw.usage,
     requestBody: raw.requestBody,
     error: typeof raw.error === "string" ? raw.error : undefined,
-    upstreamError: typeof raw.upstreamError === "string" ? raw.upstreamError : undefined,
-    upstreamContentType: typeof raw.upstreamContentType === "string" ? raw.upstreamContentType : undefined,
-    upstreamEmptyBody: typeof raw.upstreamEmptyBody === "boolean" ? raw.upstreamEmptyBody : undefined,
-    assistantEmptyOutput: typeof raw.assistantEmptyOutput === "boolean" ? raw.assistantEmptyOutput : undefined,
-    assistantFinishReason: typeof raw.assistantFinishReason === "string" ? raw.assistantFinishReason : undefined,
+    upstreamError:
+      typeof raw.upstreamError === "string" ? raw.upstreamError : undefined,
+    upstreamContentType:
+      typeof raw.upstreamContentType === "string"
+        ? raw.upstreamContentType
+        : undefined,
+    upstreamEmptyBody:
+      typeof raw.upstreamEmptyBody === "boolean"
+        ? raw.upstreamEmptyBody
+        : undefined,
+    assistantEmptyOutput:
+      typeof raw.assistantEmptyOutput === "boolean"
+        ? raw.assistantEmptyOutput
+        : undefined,
+    assistantFinishReason:
+      typeof raw.assistantFinishReason === "string"
+        ? raw.assistantFinishReason
+        : undefined,
   };
 }
 
 function percentile(values: number[], p: number): number {
   if (!values.length) return 0;
   const sorted = [...values].sort((a, b) => a - b);
-  const idx = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
+  const idx = Math.min(
+    sorted.length - 1,
+    Math.max(0, Math.ceil((p / 100) * sorted.length) - 1),
+  );
   return sorted[idx];
 }
 
 function usageToTokens(usage: any): UsageTokenTotals {
-  const promptTokens = safeNumber(usage?.prompt_tokens) ?? safeNumber(usage?.input_tokens) ?? 0;
-  const completionTokens = safeNumber(usage?.completion_tokens) ?? safeNumber(usage?.output_tokens) ?? 0;
-  const totalTokens = safeNumber(usage?.total_tokens) ?? (promptTokens + completionTokens);
+  const promptTokens =
+    safeNumber(usage?.prompt_tokens) ?? safeNumber(usage?.input_tokens) ?? 0;
+  const completionTokens =
+    safeNumber(usage?.completion_tokens) ??
+    safeNumber(usage?.output_tokens) ??
+    0;
+  const totalTokens =
+    safeNumber(usage?.total_tokens) ?? promptTokens + completionTokens;
   return { promptTokens, completionTokens, totalTokens };
 }
 
@@ -212,15 +265,27 @@ function addTraceToAggregate(agg: UsageAggregate, trace: TraceEntry) {
   }
 
   if (typeof trace.at === "number") {
-    agg.firstAt = typeof agg.firstAt === "number" ? Math.min(agg.firstAt, trace.at) : trace.at;
-    agg.lastAt = typeof agg.lastAt === "number" ? Math.max(agg.lastAt, trace.at) : trace.at;
+    agg.firstAt =
+      typeof agg.firstAt === "number"
+        ? Math.min(agg.firstAt, trace.at)
+        : trace.at;
+    agg.lastAt =
+      typeof agg.lastAt === "number"
+        ? Math.max(agg.lastAt, trace.at)
+        : trace.at;
   }
 }
 
 function finalizeAggregate(agg: UsageAggregate) {
-  const avgLatencyMs = agg.requests ? Math.round((agg.latencyMsTotal / agg.requests) * 100) / 100 : 0;
-  const successRate = agg.requests ? Math.round((agg.ok / agg.requests) * 10000) / 100 : 0;
-  const streamingRate = agg.requests ? Math.round((agg.stream / agg.requests) * 10000) / 100 : 0;
+  const avgLatencyMs = agg.requests
+    ? Math.round((agg.latencyMsTotal / agg.requests) * 100) / 100
+    : 0;
+  const successRate = agg.requests
+    ? Math.round((agg.ok / agg.requests) * 10000) / 100
+    : 0;
+  const streamingRate = agg.requests
+    ? Math.round((agg.stream / agg.requests) * 10000) / 100
+    : 0;
 
   return {
     requests: agg.requests,
@@ -247,25 +312,39 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
   const requests = traces.length;
   const errors = traces.filter((t) => t.isError).length;
   const tokensInput = traces.reduce((sum, t) => sum + (t.tokensInput ?? 0), 0);
-  const tokensOutput = traces.reduce((sum, t) => sum + (t.tokensOutput ?? 0), 0);
+  const tokensOutput = traces.reduce(
+    (sum, t) => sum + (t.tokensOutput ?? 0),
+    0,
+  );
   const tokensTotal = traces.reduce(
-    (sum, t) => sum + (t.tokensTotal ?? ((t.tokensInput ?? 0) + (t.tokensOutput ?? 0))),
-    0
+    (sum, t) =>
+      sum + (t.tokensTotal ?? (t.tokensInput ?? 0) + (t.tokensOutput ?? 0)),
+    0,
   );
   const costUsd = traces.reduce((sum, t) => {
     if (typeof t.costUsd === "number") return sum + t.costUsd;
-    return sum + (estimateCostUsd(t.model, t.tokensInput ?? 0, t.tokensOutput ?? 0) ?? 0);
+    return (
+      sum +
+      (estimateCostUsd(t.model, t.tokensInput ?? 0, t.tokensOutput ?? 0) ?? 0)
+    );
   }, 0);
-  const latencyAvgMs = requests ? traces.reduce((sum, t) => sum + t.latencyMs, 0) / requests : 0;
+  const latencyAvgMs = requests
+    ? traces.reduce((sum, t) => sum + t.latencyMs, 0) / requests
+    : 0;
   const errorRate = requests ? errors / requests : 0;
 
   const modelMap = new Map<string, TraceModelStats>();
   for (const trace of traces) {
     const key = trace.model || "unknown";
     const existing = modelMap.get(key);
-    const traceCost = typeof trace.costUsd === "number"
-      ? trace.costUsd
-      : (estimateCostUsd(trace.model, trace.tokensInput ?? 0, trace.tokensOutput ?? 0) ?? 0);
+    const traceCost =
+      typeof trace.costUsd === "number"
+        ? trace.costUsd
+        : (estimateCostUsd(
+            trace.model,
+            trace.tokensInput ?? 0,
+            trace.tokensOutput ?? 0,
+          ) ?? 0);
     if (!existing) {
       modelMap.set(key, {
         model: key,
@@ -285,17 +364,22 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
       existing.costUsd += traceCost;
     }
   }
-  const models = Array.from(modelMap.values()).sort((a, b) => b.count - a.count);
+  const models = Array.from(modelMap.values()).sort(
+    (a, b) => b.count - a.count,
+  );
 
-  const bucketMap = new Map<number, {
-    requests: number;
-    errors: number;
-    tokensInput: number;
-    tokensOutput: number;
-    tokensTotal: number;
-    costUsd: number;
-    latencies: number[];
-  }>();
+  const bucketMap = new Map<
+    number,
+    {
+      requests: number;
+      errors: number;
+      tokensInput: number;
+      tokensOutput: number;
+      tokensTotal: number;
+      costUsd: number;
+      latencies: number[];
+    }
+  >();
   for (const trace of traces) {
     const bucketAt = Math.floor(trace.at / 3_600_000) * 3_600_000;
     const bucket = bucketMap.get(bucketAt) ?? {
@@ -312,9 +396,14 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
     bucket.tokensInput += trace.tokensInput ?? 0;
     bucket.tokensOutput += trace.tokensOutput ?? 0;
     bucket.tokensTotal += trace.tokensTotal ?? 0;
-    bucket.costUsd += typeof trace.costUsd === "number"
-      ? trace.costUsd
-      : (estimateCostUsd(trace.model, trace.tokensInput ?? 0, trace.tokensOutput ?? 0) ?? 0);
+    bucket.costUsd +=
+      typeof trace.costUsd === "number"
+        ? trace.costUsd
+        : (estimateCostUsd(
+            trace.model,
+            trace.tokensInput ?? 0,
+            trace.tokensOutput ?? 0,
+          ) ?? 0);
     bucket.latencies.push(trace.latencyMs);
     bucketMap.set(bucketAt, bucket);
   }
@@ -463,11 +552,24 @@ export function createTraceManager(config: TraceManagerConfig) {
     return statsCache.slice();
   }
 
-  async function readStatsHistoryRange(sinceMs?: number, untilMs?: number): Promise<TraceEntry[]> {
+  async function readStatsHistoryRange(
+    sinceMs?: number,
+    untilMs?: number,
+  ): Promise<TraceEntry[]> {
     await ensureCacheReady();
     return statsCache.filter((t) => {
-      if (typeof sinceMs === "number" && Number.isFinite(sinceMs) && t.at < sinceMs) return false;
-      if (typeof untilMs === "number" && Number.isFinite(untilMs) && t.at > untilMs) return false;
+      if (
+        typeof sinceMs === "number" &&
+        Number.isFinite(sinceMs) &&
+        t.at < sinceMs
+      )
+        return false;
+      if (
+        typeof untilMs === "number" &&
+        Number.isFinite(untilMs) &&
+        t.at > untilMs
+      )
+        return false;
       return true;
     });
   }
@@ -479,7 +581,9 @@ export function createTraceManager(config: TraceManagerConfig) {
       if (existing.trim()) return;
     } catch {}
     if (!traceCache.length) return;
-    const content = traceCache.map((entry) => JSON.stringify(toStatsHistoryEntry(entry))).join("\n");
+    const content = traceCache
+      .map((entry) => JSON.stringify(toStatsHistoryEntry(entry)))
+      .join("\n");
     await fs.writeFile(historyFilePath, `${content}\n`, "utf8");
     const historyEntries = traceCache
       .map(toNormalizedHistoryEntry)
@@ -494,7 +598,12 @@ export function createTraceManager(config: TraceManagerConfig) {
     } catch {}
   }
 
-  async function appendTrace(entry: Omit<TraceEntry, "id" | "isError" | "tokensInput" | "tokensOutput" | "tokensTotal">) {
+  async function appendTrace(
+    entry: Omit<
+      TraceEntry,
+      "id" | "isError" | "tokensInput" | "tokensOutput" | "tokensTotal"
+    >,
+  ) {
     const normalizedTokens = normalizeTokenFields(entry.usage);
     const finalEntry: TraceEntry = {
       ...entry,
@@ -503,7 +612,11 @@ export function createTraceManager(config: TraceManagerConfig) {
       tokensInput: normalizedTokens.tokensInput,
       tokensOutput: normalizedTokens.tokensOutput,
       tokensTotal: normalizedTokens.tokensTotal,
-      costUsd: estimateCostUsd(entry.model, normalizedTokens.tokensInput ?? 0, normalizedTokens.tokensOutput ?? 0),
+      costUsd: estimateCostUsd(
+        entry.model,
+        normalizedTokens.tokensInput ?? 0,
+        normalizedTokens.tokensOutput ?? 0,
+      ),
     };
 
     const run = traceWriteQueue.then(async () => {
@@ -520,7 +633,9 @@ export function createTraceManager(config: TraceManagerConfig) {
 
   async function readTracesLegacy(limit = 200): Promise<TraceEntry[]> {
     await ensureCacheReady();
-    const sliced = traceCache.slice(-Math.max(1, Math.min(limit, legacyLimitMax)));
+    const sliced = traceCache.slice(
+      -Math.max(1, Math.min(limit, legacyLimitMax)),
+    );
     return sliced;
   }
 
