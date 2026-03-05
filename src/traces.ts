@@ -456,16 +456,47 @@ export function createTraceManager(config: TraceManagerConfig) {
 
   async function readTraceFileFromDisk(): Promise<TraceEntry[]> {
     try {
-      const raw = await fs.readFile(filePath, "utf8");
-      const lines = raw.split("\n").filter(Boolean);
+      const fileHandle = await fs.open(filePath, 'r');
       const parsed: TraceEntry[] = [];
-      for (const line of lines) {
-        try {
-          const normalized = normalizeTrace(JSON.parse(line));
-          if (normalized) parsed.push(normalized);
-        } catch {}
+      let position = 0;
+      let buffer = Buffer.alloc(65536); // 64KB buffer
+      let remaining = '';
+      
+      try {
+        while (true) {
+          const { bytesRead } = await fileHandle.read(buffer, 0, buffer.length, position);
+          if (bytesRead === 0) break;
+          
+          position += bytesRead;
+          const chunk = remaining + buffer.toString('utf8', 0, bytesRead);
+          const lines = chunk.split('\n');
+          remaining = lines.pop() || '';
+          
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const normalized = normalizeTrace(JSON.parse(line));
+              if (normalized) parsed.push(normalized);
+            } catch {}
+          }
+          
+          // Limit memory usage by stopping if we have enough entries
+          if (parsed.length >= retentionMax) break;
+        }
+        
+        // Process any remaining data
+        if (remaining.trim()) {
+          try {
+            const normalized = normalizeTrace(JSON.parse(remaining));
+            if (normalized) parsed.push(normalized);
+          } catch {}
+        }
+        
+      } finally {
+        await fileHandle.close();
       }
-      return parsed;
+      
+      return parsed.slice(-retentionMax); // Ensure we don't exceed retention
     } catch {
       return [];
     }
@@ -473,15 +504,43 @@ export function createTraceManager(config: TraceManagerConfig) {
 
   async function readStatsHistoryFileFromDisk(): Promise<TraceEntry[]> {
     try {
-      const raw = await fs.readFile(historyFilePath, "utf8");
-      const lines = raw.split("\n").filter(Boolean);
+      const fileHandle = await fs.open(historyFilePath, 'r');
       const parsed: TraceEntry[] = [];
-      for (const line of lines) {
-        try {
-          const normalized = normalizeTrace(JSON.parse(line));
-          if (normalized) parsed.push(normalized);
-        } catch {}
+      let position = 0;
+      let buffer = Buffer.alloc(65536); // 64KB buffer
+      let remaining = '';
+      
+      try {
+        while (true) {
+          const { bytesRead } = await fileHandle.read(buffer, 0, buffer.length, position);
+          if (bytesRead === 0) break;
+          
+          position += bytesRead;
+          const chunk = remaining + buffer.toString('utf8', 0, bytesRead);
+          const lines = chunk.split('\n');
+          remaining = lines.pop() || '';
+          
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const normalized = normalizeTrace(JSON.parse(line));
+              if (normalized) parsed.push(normalized);
+            } catch {}
+          }
+        }
+        
+        // Process any remaining data
+        if (remaining.trim()) {
+          try {
+            const normalized = normalizeTrace(JSON.parse(remaining));
+            if (normalized) parsed.push(normalized);
+          } catch {}
+        }
+        
+      } finally {
+        await fileHandle.close();
       }
+      
       return parsed;
     } catch {
       return [];
@@ -504,8 +563,29 @@ export function createTraceManager(config: TraceManagerConfig) {
 
   async function writeTraceWindow(entries: TraceEntry[]): Promise<void> {
     const tmp = `${filePath}.tmp-${randomUUID()}`;
-    const content = entries.map((entry) => JSON.stringify(entry)).join("\n");
-    await fs.writeFile(tmp, content ? `${content}\n` : "", "utf8");
+    const BATCH_SIZE = 1000;
+    const MAX_ENTRY_SIZE = 1024 * 1024; // 1MB per entry max
+    const fileHandle = await fs.open(tmp, 'w');
+    try {
+      for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+        const batch = entries.slice(i, i + BATCH_SIZE);
+        const batchLines = [];
+        for (const entry of batch) {
+          const json = JSON.stringify(entry);
+          if (json.length > MAX_ENTRY_SIZE) {
+            console.warn(`Skipping oversized trace entry (${json.length} bytes)`);
+            continue;
+          }
+          batchLines.push(json);
+        }
+        if (batchLines.length > 0) {
+          const batchContent = batchLines.join('\n') + '\n';
+          await fileHandle.writeFile(batchContent);
+        }
+      }
+    } finally {
+      await fileHandle.close();
+    }
     await fs.rename(tmp, filePath);
   }
 
@@ -581,13 +661,38 @@ export function createTraceManager(config: TraceManagerConfig) {
       if (existing.trim()) return;
     } catch {}
     if (!traceCache.length) return;
-    const content = traceCache
-      .map((entry) => JSON.stringify(toStatsHistoryEntry(entry)))
-      .join("\n");
-    await fs.writeFile(historyFilePath, `${content}\n`, "utf8");
-    const historyEntries = traceCache
-      .map(toNormalizedHistoryEntry)
-      .filter((entry): entry is TraceEntry => Boolean(entry));
+    
+    const BATCH_SIZE = 1000;
+    const MAX_ENTRY_SIZE = 1024 * 1024; // 1MB per entry max
+    const fileHandle = await fs.open(historyFilePath, 'w');
+    const historyEntries: TraceEntry[] = [];
+    
+    try {
+      for (let i = 0; i < traceCache.length; i += BATCH_SIZE) {
+        const batch = traceCache.slice(i, i + BATCH_SIZE);
+        const batchLines = [];
+        for (const entry of batch) {
+          const statsEntry = toStatsHistoryEntry(entry);
+          const json = JSON.stringify(statsEntry);
+          if (json.length > MAX_ENTRY_SIZE) {
+            console.warn(`Skipping oversized history entry (${json.length} bytes)`);
+            continue;
+          }
+          batchLines.push(json);
+          const normalized = toNormalizedHistoryEntry(entry);
+          if (normalized) {
+            historyEntries.push(normalized);
+          }
+        }
+        if (batchLines.length > 0) {
+          const batchContent = batchLines.join('\n') + '\n';
+          await fileHandle.writeFile(batchContent);
+        }
+      }
+    } finally {
+      await fileHandle.close();
+    }
+    
     statsCache.splice(0, statsCache.length, ...historyEntries);
   }
 
