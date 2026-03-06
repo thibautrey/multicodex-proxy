@@ -42,6 +42,8 @@ export default function App() {
   const [chatOut, setChatOut] = useState("");
   const [error, setError] = useState("");
   const [expandedTraceId, setExpandedTraceId] = useState<string | null>(null);
+  const [expandedTrace, setExpandedTrace] = useState<Trace | null>(null);
+  const [expandedTraceLoading, setExpandedTraceLoading] = useState(false);
   const [traceRange, setTraceRange] = useState<TraceRangePreset>("7d");
   const [traceExportInProgress, setTraceExportInProgress] = useState(false);
   const tracePageRef = useRef(tracePagination.page);
@@ -165,6 +167,7 @@ export default function App() {
     setTraceStats((statsRes.stats ?? tr.stats ?? EMPTY_TRACE_STATS) as TraceStats);
     setTracePagination((tr.pagination ?? { ...EMPTY_TRACE_PAGINATION, page: safePage }) as TracePagination);
     setExpandedTraceId(null);
+    setExpandedTrace(null);
   };
 
   useEffect(() => {
@@ -302,6 +305,29 @@ export default function App() {
     }
   };
 
+  const toggleExpandedTrace = async (id: string) => {
+    if (expandedTraceId === id) {
+      setExpandedTraceId(null);
+      setExpandedTrace(null);
+      setExpandedTraceLoading(false);
+      return;
+    }
+
+    setExpandedTraceId(id);
+    setExpandedTrace(null);
+    setExpandedTraceLoading(true);
+    try {
+      setError("");
+      const res = await api(`/admin/traces/${encodeURIComponent(id)}`);
+      setExpandedTrace((res.trace ?? null) as Trace | null);
+    } catch (e: any) {
+      setExpandedTraceId(null);
+      setError(e?.message ?? String(e));
+    } finally {
+      setExpandedTraceLoading(false);
+    }
+  };
+
   const exportTracesZip = async () => {
     const { sinceMs, untilMs } = getRangeBounds(traceRange);
     const params = new URLSearchParams();
@@ -407,7 +433,9 @@ export default function App() {
             setTraceRange={setTraceRange}
             traces={traces}
             expandedTraceId={expandedTraceId}
-            setExpandedTraceId={setExpandedTraceId}
+            expandedTrace={expandedTrace}
+            expandedTraceLoading={expandedTraceLoading}
+            toggleExpandedTrace={toggleExpandedTrace}
             sanitized={sanitized}
             exportTracesZip={exportTracesZip}
             exportInProgress={traceExportInProgress}

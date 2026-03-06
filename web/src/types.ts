@@ -25,6 +25,7 @@ export type Trace = {
   usage?: any;
   error?: string;
   requestBody?: any;
+  hasRequestBody?: boolean;
 };
 
 export type TraceStats = {

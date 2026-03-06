@@ -27,6 +27,10 @@ export type TraceEntry = {
   assistantFinishReason?: string;
 };
 
+export type TraceListEntry = Omit<TraceEntry, "requestBody"> & {
+  hasRequestBody: boolean;
+};
+
 export type TraceTotals = {
   requests: number;
   errors: number;
@@ -627,6 +631,24 @@ export function createTraceManager(config: TraceManagerConfig) {
     return traceCache.slice();
   }
 
+  async function readTraceById(id: string): Promise<TraceEntry | null> {
+    await ensureCacheReady();
+    return traceCache.find((trace) => trace.id === id) ?? null;
+  }
+
+  function toTraceListEntry(entry: TraceEntry): TraceListEntry {
+    const { requestBody: _requestBody, ...rest } = entry;
+    return {
+      ...rest,
+      hasRequestBody: typeof entry.requestBody !== "undefined",
+    };
+  }
+
+  async function readTraceListWindow(): Promise<TraceListEntry[]> {
+    await ensureCacheReady();
+    return traceCache.map(toTraceListEntry);
+  }
+
   async function readStatsHistory(): Promise<TraceEntry[]> {
     await ensureCacheReady();
     return statsCache.slice();
@@ -746,6 +768,8 @@ export function createTraceManager(config: TraceManagerConfig) {
 
   return {
     readTraceWindow,
+    readTraceById,
+    readTraceListWindow,
     writeTraceWindow,
     readStatsHistory,
     readStatsHistoryRange,

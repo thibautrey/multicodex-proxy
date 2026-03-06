@@ -199,6 +199,8 @@ export function createAdminRouter(options: AdminRoutesOptions) {
 
   const {
     readTraceWindow,
+    readTraceById,
+    readTraceListWindow,
     readTracesLegacy,
     readStatsHistory,
     readStatsHistoryRange,
@@ -311,7 +313,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     const { sinceMs, untilMs } = parseTraceWindowBounds(
       req.query as Record<string, unknown>,
     );
-    const traces = await readTraceWindow();
+    const traces = await readTraceListWindow();
     const filtered = filterTracesByWindow(traces, sinceMs, untilMs);
     const sorted = [...filtered].sort((a, b) => b.at - a.at);
     const total = sorted.length;
@@ -332,6 +334,12 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       },
       stats,
     });
+  });
+
+  router.get("/traces/:id", async (req, res) => {
+    const trace = await readTraceById(req.params.id);
+    if (!trace) return res.status(404).json({ error: "not found" });
+    res.json({ trace });
   });
 
   router.get("/traces/export.zip", async (req, res) => {

@@ -31,7 +31,9 @@ type Props = {
   setTraceRange: (range: TraceRangePreset) => void;
   traces: Trace[];
   expandedTraceId: string | null;
-  setExpandedTraceId: (id: string | null) => void;
+  expandedTrace: Trace | null;
+  expandedTraceLoading: boolean;
+  toggleExpandedTrace: (id: string) => Promise<void>;
   sanitized: boolean;
   exportTracesZip: () => Promise<void>;
   exportInProgress: boolean;
@@ -50,7 +52,9 @@ export function TracingTab(props: Props) {
     setTraceRange,
     traces,
     expandedTraceId,
-    setExpandedTraceId,
+    expandedTrace,
+    expandedTraceLoading,
+    toggleExpandedTrace,
     sanitized,
     exportTracesZip,
     exportInProgress,
@@ -257,7 +261,7 @@ export function TracingTab(props: Props) {
                   : t.accountEmail ?? t.accountId ?? "-";
                 return (
                   <React.Fragment key={t.id}>
-                    <tr onClick={() => setExpandedTraceId(isExpanded ? null : t.id)} className="trace-row">
+                    <tr onClick={() => void toggleExpandedTrace(t.id)} className="trace-row">
                       <td>{fmt(t.at)}</td>
                       <td className="mono">{routeLabel(t.route)}</td>
                       <td className="mono">{t.model ?? "-"}</td>
@@ -287,14 +291,21 @@ export function TracingTab(props: Props) {
                       <tr>
                         <td colSpan={9}>
                           <div className="expanded-trace">
-                            <details open>
-                              <summary>Request Body</summary>
-                              <pre className="mono pre">{JSON.stringify(t.requestBody, null, 2)}</pre>
-                            </details>
-                            <details>
-                              <summary>Full Trace Object</summary>
-                              <pre className="mono pre">{JSON.stringify(t, null, 2)}</pre>
-                            </details>
+                            {expandedTraceLoading && <div className="muted">Loading trace details...</div>}
+                            {!expandedTraceLoading && expandedTrace && expandedTrace.id === t.id && (
+                              <>
+                                {expandedTrace.hasRequestBody && (
+                                  <details open>
+                                    <summary>Request Body</summary>
+                                    <pre className="mono pre">{JSON.stringify(expandedTrace.requestBody, null, 2)}</pre>
+                                  </details>
+                                )}
+                                <details>
+                                  <summary>Full Trace Object</summary>
+                                  <pre className="mono pre">{JSON.stringify(expandedTrace, null, 2)}</pre>
+                                </details>
+                              </>
+                            )}
                           </div>
                         </td>
                       </tr>
