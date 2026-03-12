@@ -503,6 +503,7 @@ let accounts = store.getCachedAccounts();
       if (isResponsesCompactPath && payloadToUpstream && typeof payloadToUpstream === "object") {
         delete payloadToUpstream.store;
         delete payloadToUpstream.stream;
+        delete payloadToUpstream.include;
       }
       if (isResponsesCompactPath && payloadToUpstream && typeof payloadToUpstream === "object") {
         delete payloadToUpstream.store;
