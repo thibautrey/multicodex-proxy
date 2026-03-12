@@ -12,6 +12,18 @@ type Props = {
   unblock: (id: string) => Promise<void>;
   refreshUsage: (id: string) => Promise<void>;
   createAccount: (body: any) => Promise<void>;
+  startOAuth: (email: string) => Promise<any>;
+};
+
+type EditAccountState = {
+  id: string;
+  provider: "openai" | "mistral";
+  email: string;
+  accessToken: string;
+  refreshToken: string;
+  chatgptAccountId: string;
+  priority: string;
+  enabled: boolean;
 };
 
 export function AccountsTab(props: Props) {
@@ -24,6 +36,7 @@ export function AccountsTab(props: Props) {
     unblock,
     refreshUsage,
     createAccount,
+    startOAuth,
   } = props;
   const [showAddAccount, setShowAddAccount] = useState(false);
   const [provider, setProvider] = useState<"openai" | "mistral">("openai");
@@ -34,6 +47,9 @@ export function AccountsTab(props: Props) {
   const [manualPriority, setManualPriority] = useState("0");
   const [manualEnabled, setManualEnabled] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [editingAccount, setEditingAccount] = useState<EditAccountState | null>(null);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [oauthBusyId, setOauthBusyId] = useState<string | null>(null);
 
   const closeModal = () => {
     setShowAddAccount(false);
@@ -45,6 +61,11 @@ export function AccountsTab(props: Props) {
     setManualPriority("0");
     setManualEnabled(true);
     setIsSubmitting(false);
+  };
+
+  const closeEditModal = () => {
+    setEditingAccount(null);
+    setIsSavingEdit(false);
   };
 
   const submitManualAccount = async () => {
@@ -66,6 +87,57 @@ export function AccountsTab(props: Props) {
       closeModal();
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const openEditModal = (account: Account) => {
+    setEditingAccount({
+      id: account.id,
+      provider: account.provider === "mistral" ? "mistral" : "openai",
+      email: account.email ?? "",
+      accessToken: account.accessToken ?? "",
+      refreshToken: account.refreshToken ?? "",
+      chatgptAccountId: account.chatgptAccountId ?? "",
+      priority: String(account.priority ?? 0),
+      enabled: account.enabled,
+    });
+  };
+
+  const saveEditedAccount = async () => {
+    if (!editingAccount || !editingAccount.accessToken.trim()) return;
+    setIsSavingEdit(true);
+    try {
+      await patch(editingAccount.id, {
+        email: editingAccount.email.trim() || undefined,
+        accessToken: editingAccount.accessToken.trim(),
+        refreshToken: editingAccount.refreshToken.trim() || undefined,
+        chatgptAccountId:
+          editingAccount.provider === "openai" && editingAccount.chatgptAccountId.trim()
+            ? editingAccount.chatgptAccountId.trim()
+            : undefined,
+        priority: Number(editingAccount.priority) || 0,
+        enabled: editingAccount.enabled,
+      });
+      closeEditModal();
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
+  const reauthAccount = async (account: Account) => {
+    if ((account.provider ?? "openai") !== "openai") return;
+    if (!account.email?.trim()) {
+      window.alert("This OpenAI account has no email, so reauth cannot be started.");
+      return;
+    }
+    setOauthBusyId(account.id);
+    try {
+      const result = await startOAuth(account.email.trim());
+      const authorizeUrl = result?.authorizeUrl as string | undefined;
+      if (!authorizeUrl) throw new Error("Missing authorizeUrl from OAuth start response");
+      window.open(authorizeUrl, "_blank", "noopener,noreferrer");
+    } finally {
+      setOauthBusyId(null);
     }
   };
 
@@ -129,6 +201,16 @@ export function AccountsTab(props: Props) {
                   <td>{fmt(a.state?.blockedUntil)}</td>
                   <td className="mono">{a.state?.lastError?.slice(0, 80) ?? "-"}</td>
                   <td className="inline wrap">
+                    <button className="btn ghost" onClick={() => openEditModal(a)}>Change key</button>
+                    {a.provider !== "mistral" && (
+                      <button
+                        className="btn ghost"
+                        disabled={oauthBusyId === a.id}
+                        onClick={() => void reauthAccount(a)}
+                      >
+                        {oauthBusyId === a.id ? "Opening..." : "Reauth"}
+                      </button>
+                    )}
                     <button className="btn ghost" onClick={() => void patch(a.id, { enabled: !a.enabled })}>{a.enabled ? "Disable" : "Enable"}</button>
                     <button className="btn ghost" onClick={() => void unblock(a.id)}>Unblock</button>
                     <button className="btn ghost" onClick={() => void refreshUsage(a.id)}>Refresh</button>
@@ -223,6 +305,107 @@ export function AccountsTab(props: Props) {
                 {isSubmitting ? "Creating..." : "Create account"}
               </button>
               <button className="btn ghost" onClick={closeModal}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editingAccount && (
+        <div className="modal-backdrop" onClick={closeEditModal}>
+          <div className="modal panel" onClick={(e) => e.stopPropagation()}>
+            <div className="inline wrap row-between">
+              <h2>Update account</h2>
+              <button className="btn ghost" onClick={closeEditModal}>
+                Close
+              </button>
+            </div>
+            <div className="grid modal-grid">
+              <label>
+                Email (optional)
+                <input
+                  value={editingAccount.email}
+                  onChange={(e) =>
+                    setEditingAccount((current) =>
+                      current ? { ...current, email: e.target.value } : current,
+                    )
+                  }
+                  placeholder="account@email.com"
+                />
+              </label>
+              <label>
+                Access token
+                <input
+                  value={editingAccount.accessToken}
+                  onChange={(e) =>
+                    setEditingAccount((current) =>
+                      current ? { ...current, accessToken: e.target.value } : current,
+                    )
+                  }
+                  placeholder="Required"
+                />
+              </label>
+              <label>
+                Refresh token (optional)
+                <input
+                  value={editingAccount.refreshToken}
+                  onChange={(e) =>
+                    setEditingAccount((current) =>
+                      current ? { ...current, refreshToken: e.target.value } : current,
+                    )
+                  }
+                  placeholder="Optional"
+                />
+              </label>
+              {editingAccount.provider === "openai" && (
+                <label>
+                  ChatGPT account id (optional)
+                  <input
+                    value={editingAccount.chatgptAccountId}
+                    onChange={(e) =>
+                      setEditingAccount((current) =>
+                        current ? { ...current, chatgptAccountId: e.target.value } : current,
+                      )
+                    }
+                    placeholder="Optional"
+                  />
+                </label>
+              )}
+              <label>
+                Priority
+                <input
+                  value={editingAccount.priority}
+                  onChange={(e) =>
+                    setEditingAccount((current) =>
+                      current ? { ...current, priority: e.target.value } : current,
+                    )
+                  }
+                  placeholder="0"
+                />
+              </label>
+              <label className="inline">
+                <input
+                  type="checkbox"
+                  checked={editingAccount.enabled}
+                  onChange={(e) =>
+                    setEditingAccount((current) =>
+                      current ? { ...current, enabled: e.target.checked } : current,
+                    )
+                  }
+                />
+                Enabled
+              </label>
+            </div>
+            <div className="inline wrap">
+              <button
+                className="btn"
+                disabled={isSavingEdit || !editingAccount.accessToken.trim()}
+                onClick={() => void saveEditedAccount()}
+              >
+                {isSavingEdit ? "Saving..." : "Save changes"}
+              </button>
+              <button className="btn ghost" onClick={closeEditModal}>
                 Cancel
               </button>
             </div>

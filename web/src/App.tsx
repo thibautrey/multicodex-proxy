@@ -257,6 +257,13 @@ export default function App() {
     await loadBase();
   };
 
+  const startOAuth = async (email: string) => {
+    return api("/admin/oauth/start", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
+  };
+
   const saveAlias = async (body: {
     id: string;
     targets: string[];
@@ -408,6 +415,7 @@ export default function App() {
             unblock={unblock}
             refreshUsage={refreshUsage}
             createAccount={createAccount}
+            startOAuth={startOAuth}
           />
         )}
 
