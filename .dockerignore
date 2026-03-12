@@ -1,0 +1,14 @@
+node_modules
+web/node_modules
+dist
+web-dist
+.git
+.gitignore
+.env
+.env.*
+data
+web/*.tsbuildinfo
+*.log
+Dockerfile*
+docker-compose*.yml
+docker-compose*.yaml
