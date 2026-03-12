@@ -3,6 +3,10 @@ export type Account = {
   provider?: "openai" | "mistral";
   email?: string;
   enabled: boolean;
+  accessToken?: string;
+  refreshToken?: string;
+  chatgptAccountId?: string;
+  priority?: number;
   usage?: any;
   state?: any;
 };

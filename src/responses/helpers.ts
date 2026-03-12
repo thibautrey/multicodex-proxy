@@ -128,7 +128,12 @@ export function applyCodexParityDefaults(payload: any, sessionId?: string) {
   const modelId = typeof payload?.model === "string" ? payload.model : "";
   payload.store = false;
   payload.stream = true;
-  payload.tool_choice = payload.tool_choice ?? "auto";
+  const hasTools = Array.isArray(payload?.tools) && payload.tools.length > 0;
+  if (typeof payload.tool_choice === "undefined") {
+    if (hasTools) payload.tool_choice = "auto";
+  } else if (!hasTools && payload.tool_choice === "auto") {
+    delete payload.tool_choice;
+  }
   payload.parallel_tool_calls = payload.parallel_tool_calls ?? true;
   payload.text =
     typeof payload.text === "object" && payload.text !== null
