@@ -99,11 +99,13 @@ docker compose up -d --build
 Because this is often deployed remotely (Unraid/VPS), onboarding uses a manual redirect paste flow:
 
 1. Open dashboard
-2. Enter account email
+2. For OpenAI accounts, enter the account email
 3. Click **Start OAuth**
 4. Complete login in browser
-5. Copy the full redirect URL shown by browser
-6. Paste it in dashboard and click **Complete OAuth**
+5. Copy the full redirect URL shown after the callback completes
+6. Paste that URL in the dashboard and click **Complete OAuth**
+
+Mistral accounts still use manual token entry in the dashboard.
 
 Default expected redirect URI:
 

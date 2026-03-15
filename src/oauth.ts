@@ -26,12 +26,16 @@ export function base64url(input: Buffer | string) {
     .replace(/=+$/g, "");
 }
 
-export function createOAuthState(email: string): OAuthFlowState {
+export function createOAuthState(
+  email: string,
+  targetAccountId?: string,
+): OAuthFlowState {
   return {
     id: randomUUID(),
     email,
     codeVerifier: base64url(randomBytes(32)),
     createdAt: Date.now(),
+    targetAccountId,
     status: "pending",
   };
 }

@@ -57,6 +57,7 @@ export type OAuthFlowState = {
   email: string;
   codeVerifier: string;
   createdAt: number;
+  targetAccountId?: string;
   status: "pending" | "success" | "error";
   error?: string;
   completedAt?: number;
