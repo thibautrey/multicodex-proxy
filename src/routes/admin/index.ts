@@ -8,6 +8,7 @@ import {
   buildAuthorizationUrl,
   createOAuthState,
   exchangeCodeForToken,
+  mergeTokenIntoAccount,
   parseAuthorizationInput,
   type OAuthConfig,
 } from "../../oauth.js";
@@ -560,8 +561,16 @@ export function createAdminRouter(options: AdminRoutesOptions) {
 
   router.post("/oauth/start", async (req, res) => {
     const email = String(req.body?.email ?? "").trim();
+    const targetAccountId = String(req.body?.accountId ?? "").trim() || undefined;
     if (!email) return res.status(400).json({ error: "email required" });
-    const flow = createOAuthState(email);
+    if (targetAccountId) {
+      const account = (await store.listAccounts()).find((a) => a.id === targetAccountId);
+      if (!account) return res.status(404).json({ error: "account not found" });
+      if ((account.provider ?? "openai") !== "openai") {
+        return res.status(400).json({ error: "oauth reauth is only supported for OpenAI accounts" });
+      }
+    }
+    const flow = createOAuthState(email, targetAccountId);
     await oauthStore.create(flow);
     const authorizeUrl = buildAuthorizationUrl(oauthConfig, flow);
     res.json({
@@ -601,7 +610,16 @@ export function createAdminRouter(options: AdminRoutesOptions) {
         parsed.code,
         flow.codeVerifier,
       );
-      let account = accountFromOAuth(flow, tokenData);
+      let account: Account;
+      if (flow.targetAccountId) {
+        const existing = (await store.listAccounts()).find((a) => a.id === flow.targetAccountId);
+        if (!existing) {
+          throw new Error("target account not found for reauth");
+        }
+        account = mergeTokenIntoAccount(existing, tokenData);
+      } else {
+        account = accountFromOAuth(flow, tokenData);
+      }
       account = await refreshUsageIfNeeded(account, openaiBaseUrl, true);
       await store.upsertAccount(account);
       await oauthStore.update(flow.id, {

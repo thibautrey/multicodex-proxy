@@ -12,7 +12,9 @@ type Props = {
   unblock: (id: string) => Promise<void>;
   refreshUsage: (id: string) => Promise<void>;
   createAccount: (body: any) => Promise<void>;
-  startOAuth: (email: string) => Promise<any>;
+  startOAuth: (email: string, accountId?: string) => Promise<any>;
+  completeOAuth: (flowId: string, input: string) => Promise<any>;
+  oauthRedirectUri: string;
 };
 
 type EditAccountState = {
@@ -26,6 +28,19 @@ type EditAccountState = {
   enabled: boolean;
 };
 
+type OAuthDialogState = {
+  flowId: string;
+  email: string;
+  authorizeUrl: string;
+  expectedRedirectUri: string;
+  callbackInput: string;
+  isSubmitting: boolean;
+  mode: "create" | "reauth";
+  accountId?: string;
+  pendingPriority?: number;
+  pendingEnabled?: boolean;
+};
+
 export function AccountsTab(props: Props) {
   const {
     traceStats,
@@ -37,6 +52,8 @@ export function AccountsTab(props: Props) {
     refreshUsage,
     createAccount,
     startOAuth,
+    completeOAuth,
+    oauthRedirectUri,
   } = props;
   const [showAddAccount, setShowAddAccount] = useState(false);
   const [provider, setProvider] = useState<"openai" | "mistral">("openai");
@@ -50,6 +67,7 @@ export function AccountsTab(props: Props) {
   const [editingAccount, setEditingAccount] = useState<EditAccountState | null>(null);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [oauthBusyId, setOauthBusyId] = useState<string | null>(null);
+  const [oauthDialog, setOauthDialog] = useState<OAuthDialogState | null>(null);
 
   const closeModal = () => {
     setShowAddAccount(false);
@@ -68,7 +86,41 @@ export function AccountsTab(props: Props) {
     setIsSavingEdit(false);
   };
 
+  const closeOauthDialog = () => {
+    setOauthDialog(null);
+  };
+
   const submitManualAccount = async () => {
+    if (provider === "openai") {
+      if (!manualEmail.trim()) return;
+      setIsSubmitting(true);
+      try {
+        const result = await startOAuth(manualEmail.trim());
+        const authorizeUrl = result?.authorizeUrl as string | undefined;
+        const flowId = result?.flowId as string | undefined;
+        const expectedRedirectUri =
+          (result?.expectedRedirectUri as string | undefined) || oauthRedirectUri;
+        if (!authorizeUrl || !flowId) {
+          throw new Error("Missing OAuth flow details from start response");
+        }
+        setOauthDialog({
+          flowId,
+          email: manualEmail.trim(),
+          authorizeUrl,
+          expectedRedirectUri,
+          callbackInput: "",
+          isSubmitting: false,
+          mode: "create",
+          pendingPriority: Number(manualPriority) || 0,
+          pendingEnabled: manualEnabled,
+        });
+        window.open(authorizeUrl, "_blank", "noopener,noreferrer");
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
+    }
+
     if (!manualAccessToken.trim()) return;
     setIsSubmitting(true);
     try {
@@ -77,10 +129,6 @@ export function AccountsTab(props: Props) {
         email: manualEmail.trim() || undefined,
         accessToken: manualAccessToken.trim(),
         refreshToken: manualRefreshToken.trim() || undefined,
-        chatgptAccountId:
-          provider === "openai" && manualChatgptAccountId.trim()
-            ? manualChatgptAccountId.trim()
-            : undefined,
         priority: Number(manualPriority) || 0,
         enabled: manualEnabled,
       });
@@ -104,23 +152,79 @@ export function AccountsTab(props: Props) {
   };
 
   const saveEditedAccount = async () => {
-    if (!editingAccount || !editingAccount.accessToken.trim()) return;
+    if (!editingAccount) return;
+    if (editingAccount.provider === "openai") {
+      if (!editingAccount.email.trim()) return;
+      setIsSavingEdit(true);
+      try {
+        const result = await startOAuth(editingAccount.email.trim(), editingAccount.id);
+        const authorizeUrl = result?.authorizeUrl as string | undefined;
+        const flowId = result?.flowId as string | undefined;
+        const expectedRedirectUri =
+          (result?.expectedRedirectUri as string | undefined) || oauthRedirectUri;
+        if (!authorizeUrl || !flowId) {
+          throw new Error("Missing OAuth flow details from start response");
+        }
+        closeEditModal();
+        setOauthDialog({
+          flowId,
+          email: editingAccount.email.trim(),
+          authorizeUrl,
+          expectedRedirectUri,
+          callbackInput: "",
+          isSubmitting: false,
+          mode: "reauth",
+          accountId: editingAccount.id,
+        });
+        window.open(authorizeUrl, "_blank", "noopener,noreferrer");
+      } finally {
+        setIsSavingEdit(false);
+      }
+      return;
+    }
+
+    if (!editingAccount.accessToken.trim()) return;
     setIsSavingEdit(true);
     try {
       await patch(editingAccount.id, {
         email: editingAccount.email.trim() || undefined,
         accessToken: editingAccount.accessToken.trim(),
         refreshToken: editingAccount.refreshToken.trim() || undefined,
-        chatgptAccountId:
-          editingAccount.provider === "openai" && editingAccount.chatgptAccountId.trim()
-            ? editingAccount.chatgptAccountId.trim()
-            : undefined,
         priority: Number(editingAccount.priority) || 0,
         enabled: editingAccount.enabled,
       });
       closeEditModal();
     } finally {
       setIsSavingEdit(false);
+    }
+  };
+
+  const submitOauthCallback = async () => {
+    if (!oauthDialog?.callbackInput.trim()) return;
+    setIsSavingEdit(true);
+    try {
+      setOauthDialog((current) =>
+        current ? { ...current, isSubmitting: true } : current,
+      );
+      const result = await completeOAuth(oauthDialog.flowId, oauthDialog.callbackInput.trim());
+      const accountId = String(result?.account?.id ?? oauthDialog.accountId ?? "").trim();
+      if (
+        oauthDialog.mode === "create" &&
+        accountId &&
+        (oauthDialog.pendingPriority !== 0 || oauthDialog.pendingEnabled === false)
+      ) {
+        await patch(accountId, {
+          priority: oauthDialog.pendingPriority ?? 0,
+          enabled: oauthDialog.pendingEnabled ?? true,
+        });
+      }
+      closeOauthDialog();
+      closeModal();
+    } finally {
+      setIsSavingEdit(false);
+      setOauthDialog((current) =>
+        current ? { ...current, isSubmitting: false } : current,
+      );
     }
   };
 
@@ -132,9 +236,24 @@ export function AccountsTab(props: Props) {
     }
     setOauthBusyId(account.id);
     try {
-      const result = await startOAuth(account.email.trim());
+      const result = await startOAuth(account.email.trim(), account.id);
       const authorizeUrl = result?.authorizeUrl as string | undefined;
-      if (!authorizeUrl) throw new Error("Missing authorizeUrl from OAuth start response");
+      const flowId = result?.flowId as string | undefined;
+      const expectedRedirectUri =
+        (result?.expectedRedirectUri as string | undefined) || oauthRedirectUri;
+      if (!authorizeUrl || !flowId) {
+        throw new Error("Missing OAuth flow details from OAuth start response");
+      }
+      setOauthDialog({
+        flowId,
+        email: account.email.trim(),
+        authorizeUrl,
+        expectedRedirectUri,
+        callbackInput: "",
+        isSubmitting: false,
+        mode: "reauth",
+        accountId: account.id,
+      });
       window.open(authorizeUrl, "_blank", "noopener,noreferrer");
     } finally {
       setOauthBusyId(null);
@@ -253,31 +372,31 @@ export function AccountsTab(props: Props) {
                   placeholder="account@email.com"
                 />
               </label>
-              <label>
-                Access token
-                <input
-                  value={manualAccessToken}
-                  onChange={(e) => setManualAccessToken(e.target.value)}
-                  placeholder="Required"
-                />
-              </label>
-              <label>
-                Refresh token (optional)
-                <input
-                  value={manualRefreshToken}
-                  onChange={(e) => setManualRefreshToken(e.target.value)}
-                  placeholder="Optional"
-                />
-              </label>
-              {provider === "openai" && (
-                <label>
-                  ChatGPT account id (optional)
-                  <input
-                    value={manualChatgptAccountId}
-                    onChange={(e) => setManualChatgptAccountId(e.target.value)}
-                    placeholder="Optional"
-                  />
-                </label>
+              {provider === "mistral" ? (
+                <>
+                  <label>
+                    Access token
+                    <input
+                      value={manualAccessToken}
+                      onChange={(e) => setManualAccessToken(e.target.value)}
+                      placeholder="Required"
+                    />
+                  </label>
+                  <label>
+                    Refresh token (optional)
+                    <input
+                      value={manualRefreshToken}
+                      onChange={(e) => setManualRefreshToken(e.target.value)}
+                      placeholder="Optional"
+                    />
+                  </label>
+                </>
+              ) : (
+                <div className="muted">
+                  OpenAI onboarding uses OAuth. Start the flow, complete the browser callback,
+                  then paste the full callback URL here instead of entering access or refresh
+                  tokens manually.
+                </div>
               )}
               <label>
                 Priority
@@ -299,10 +418,21 @@ export function AccountsTab(props: Props) {
             <div className="inline wrap">
               <button
                 className="btn"
-                disabled={isSubmitting || !manualAccessToken.trim()}
+                disabled={
+                  isSubmitting ||
+                  (provider === "openai"
+                    ? !manualEmail.trim()
+                    : !manualAccessToken.trim())
+                }
                 onClick={() => void submitManualAccount()}
               >
-                {isSubmitting ? "Creating..." : "Create account"}
+                {isSubmitting
+                  ? provider === "openai"
+                    ? "Starting OAuth..."
+                    : "Creating..."
+                  : provider === "openai"
+                    ? "Start OAuth"
+                    : "Create account"}
               </button>
               <button className="btn ghost" onClick={closeModal}>
                 Cancel
@@ -334,43 +464,38 @@ export function AccountsTab(props: Props) {
                   placeholder="account@email.com"
                 />
               </label>
-              <label>
-                Access token
-                <input
-                  value={editingAccount.accessToken}
-                  onChange={(e) =>
-                    setEditingAccount((current) =>
-                      current ? { ...current, accessToken: e.target.value } : current,
-                    )
-                  }
-                  placeholder="Required"
-                />
-              </label>
-              <label>
-                Refresh token (optional)
-                <input
-                  value={editingAccount.refreshToken}
-                  onChange={(e) =>
-                    setEditingAccount((current) =>
-                      current ? { ...current, refreshToken: e.target.value } : current,
-                    )
-                  }
-                  placeholder="Optional"
-                />
-              </label>
-              {editingAccount.provider === "openai" && (
-                <label>
-                  ChatGPT account id (optional)
-                  <input
-                    value={editingAccount.chatgptAccountId}
-                    onChange={(e) =>
-                      setEditingAccount((current) =>
-                        current ? { ...current, chatgptAccountId: e.target.value } : current,
-                      )
-                    }
-                    placeholder="Optional"
-                  />
-                </label>
+              {editingAccount.provider === "mistral" ? (
+                <>
+                  <label>
+                    Access token
+                    <input
+                      value={editingAccount.accessToken}
+                      onChange={(e) =>
+                        setEditingAccount((current) =>
+                          current ? { ...current, accessToken: e.target.value } : current,
+                        )
+                      }
+                      placeholder="Required"
+                    />
+                  </label>
+                  <label>
+                    Refresh token (optional)
+                    <input
+                      value={editingAccount.refreshToken}
+                      onChange={(e) =>
+                        setEditingAccount((current) =>
+                          current ? { ...current, refreshToken: e.target.value } : current,
+                        )
+                      }
+                      placeholder="Optional"
+                    />
+                  </label>
+                </>
+              ) : (
+                <div className="muted">
+                  OpenAI reauth uses OAuth. Save changes to open the login flow, then paste the
+                  full callback URL instead of editing tokens manually.
+                </div>
               )}
               <label>
                 Priority
@@ -400,12 +525,82 @@ export function AccountsTab(props: Props) {
             <div className="inline wrap">
               <button
                 className="btn"
-                disabled={isSavingEdit || !editingAccount.accessToken.trim()}
+                disabled={
+                  isSavingEdit ||
+                  (editingAccount.provider === "openai"
+                    ? !editingAccount.email.trim()
+                    : !editingAccount.accessToken.trim())
+                }
                 onClick={() => void saveEditedAccount()}
               >
-                {isSavingEdit ? "Saving..." : "Save changes"}
+                {isSavingEdit
+                  ? editingAccount.provider === "openai"
+                    ? "Starting OAuth..."
+                    : "Saving..."
+                  : editingAccount.provider === "openai"
+                    ? "Start reauth"
+                    : "Save changes"}
               </button>
               <button className="btn ghost" onClick={closeEditModal}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {oauthDialog && (
+        <div className="modal-backdrop" onClick={closeOauthDialog}>
+          <div className="modal panel" onClick={(e) => e.stopPropagation()}>
+            <div className="inline wrap row-between">
+              <h2>{oauthDialog.mode === "create" ? "Complete OpenAI OAuth" : "Complete OpenAI reauth"}</h2>
+              <button className="btn ghost" onClick={closeOauthDialog}>
+                Close
+              </button>
+            </div>
+            <div className="grid modal-grid">
+              <label>
+                Email
+                <input value={oauthDialog.email} disabled />
+              </label>
+              <label>
+                Redirect URI
+                <input value={oauthDialog.expectedRedirectUri} disabled />
+              </label>
+              <label>
+                Callback URL
+                <textarea
+                  value={oauthDialog.callbackInput}
+                  onChange={(e) =>
+                    setOauthDialog((current) =>
+                      current ? { ...current, callbackInput: e.target.value } : current,
+                    )
+                  }
+                  placeholder="Paste the full URL after the browser reaches the callback page"
+                  rows={5}
+                />
+              </label>
+            </div>
+            <div className="muted">
+              Complete the OpenAI login in the opened browser tab. When the browser reaches
+              the callback page, copy the full URL and paste it here. Do not paste access or
+              refresh tokens.
+            </div>
+            <div className="inline wrap">
+              <button
+                className="btn"
+                onClick={() => window.open(oauthDialog.authorizeUrl, "_blank", "noopener,noreferrer")}
+              >
+                Open login page
+              </button>
+              <button
+                className="btn"
+                disabled={oauthDialog.isSubmitting || !oauthDialog.callbackInput.trim()}
+                onClick={() => void submitOauthCallback()}
+              >
+                {oauthDialog.isSubmitting ? "Completing..." : "Complete OAuth"}
+              </button>
+              <button className="btn ghost" onClick={closeOauthDialog}>
                 Cancel
               </button>
             </div>

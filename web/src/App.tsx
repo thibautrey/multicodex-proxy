@@ -38,6 +38,7 @@ export default function App() {
   const [aliases, setAliases] = useState<ModelAlias[]>([]);
   const [adminToken, setAdminToken] = useState(localStorage.getItem("adminToken") ?? tokenDefault);
   const [storageInfo, setStorageInfo] = useState<any>(null);
+  const [oauthRedirectUri, setOauthRedirectUri] = useState("");
   const [chatPrompt, setChatPrompt] = useState("Give me a one-line hello");
   const [chatOut, setChatOut] = useState("");
   const [error, setError] = useState("");
@@ -133,6 +134,7 @@ export default function App() {
     ]);
     setAccounts((acc.accounts ?? []) as Account[]);
     setStorageInfo(cfg.storage ?? null);
+    setOauthRedirectUri(String(cfg.oauthRedirectUri ?? ""));
     setModels((mdl.data ?? []) as ExposedModel[]);
     setAliases((aliasRes.modelAliases ?? []) as ModelAlias[]);
   };
@@ -257,11 +259,20 @@ export default function App() {
     await loadBase();
   };
 
-  const startOAuth = async (email: string) => {
+  const startOAuth = async (email: string, accountId?: string) => {
     return api("/admin/oauth/start", {
       method: "POST",
-      body: JSON.stringify({ email }),
+      body: JSON.stringify({ email, accountId }),
     });
+  };
+
+  const completeOAuth = async (flowId: string, input: string) => {
+    const result = await api("/admin/oauth/complete", {
+      method: "POST",
+      body: JSON.stringify({ flowId, input }),
+    });
+    await loadBase();
+    return result;
   };
 
   const saveAlias = async (body: {
@@ -416,6 +427,8 @@ export default function App() {
             refreshUsage={refreshUsage}
             createAccount={createAccount}
             startOAuth={startOAuth}
+            completeOAuth={completeOAuth}
+            oauthRedirectUri={oauthRedirectUri}
           />
         )}
 
