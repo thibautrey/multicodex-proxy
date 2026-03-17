@@ -504,6 +504,8 @@ let accounts = store.getCachedAccounts();
         delete payloadToUpstream.store;
         delete payloadToUpstream.stream;
         delete payloadToUpstream.include;
+        delete payloadToUpstream.tool_choice;
+        delete payloadToUpstream.parallel_tool_calls;
       }
       if (isResponsesCompactPath && payloadToUpstream && typeof payloadToUpstream === "object") {
         delete payloadToUpstream.store;
