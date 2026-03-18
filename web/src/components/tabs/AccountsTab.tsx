@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Metric } from "../Metric";
 import { fmt, maskEmail, maskId, usd } from "../../lib/ui";
 import type { Account, TraceStats } from "../../types";
@@ -68,6 +68,35 @@ export function AccountsTab(props: Props) {
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [oauthBusyId, setOauthBusyId] = useState<string | null>(null);
   const [oauthDialog, setOauthDialog] = useState<OAuthDialogState | null>(null);
+
+  useEffect(() => {
+    if (!oauthDialog) return;
+
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data;
+      if (!data || typeof data !== "object") return;
+      if ((data as { type?: string }).type !== "multivibe-oauth-callback") return;
+      const callbackUrl = (data as { callbackUrl?: string }).callbackUrl;
+      if (typeof callbackUrl !== "string" || !callbackUrl.trim()) return;
+
+      try {
+        const received = new URL(callbackUrl);
+        const expected = new URL(oauthDialog.expectedRedirectUri);
+        if (received.origin !== expected.origin || received.pathname !== expected.pathname) {
+          return;
+        }
+      } catch {
+        return;
+      }
+
+      setOauthDialog((current) =>
+        current ? { ...current, callbackInput: callbackUrl.trim() } : current,
+      );
+    };
+
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [oauthDialog]);
 
   const closeModal = () => {
     setShowAddAccount(false);
@@ -583,8 +612,8 @@ export function AccountsTab(props: Props) {
             </div>
             <div className="muted">
               Complete the OpenAI login in the opened browser tab. When the browser reaches
-              the callback page, copy the full URL and paste it here. Do not paste access or
-              refresh tokens.
+              the callback page, the full URL should autofill here. If it does not, copy the
+              full URL and paste it here. Do not paste access or refresh tokens.
             </div>
             <div className="inline wrap">
               <button

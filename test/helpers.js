@@ -35,13 +35,33 @@ export async function startHttpServer(handler) {
   };
 }
 
+export async function getAvailablePort() {
+  const lease = await startHttpServer((_req, res) => {
+    res.statusCode = 204;
+    res.end();
+  });
+  const { port } = new URL(lease.url);
+  await lease.close();
+  return Number(port);
+}
+
 export async function startRuntime(options = {}) {
   const { createRuntime } = await import("../dist/runtime.js");
+  const callbackPort = await getAvailablePort();
   const runtime = await createRuntime({
     host: "127.0.0.1",
     port: 0,
     adminToken: "test-admin",
     installSignalHandlers: false,
+    oauthConfig:
+      options.oauthConfig ??
+      {
+        authorizationUrl: "https://auth.openai.com/oauth/authorize",
+        tokenUrl: "https://auth.openai.com/oauth/token",
+        clientId: "test-client",
+        scope: "openid profile email offline_access",
+        redirectUri: `http://127.0.0.1:${callbackPort}/auth/callback`,
+      },
     ...options,
   });
   await runtime.start();

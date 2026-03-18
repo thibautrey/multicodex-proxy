@@ -7,6 +7,7 @@ import { AccountStore, OAuthStateStore } from "./store.js";
 import { createTraceManager } from "./traces.js";
 import { createAdminRouter } from "./routes/admin/index.js";
 import { createProxyRouter } from "./routes/proxy/index.js";
+import { createOAuthCallbackServer } from "./oauth-callback-server.js";
 import { oauthConfig as defaultOAuthConfig } from "./oauth-config.js";
 import type { OAuthConfig } from "./oauth.js";
 import {
@@ -16,6 +17,7 @@ import {
   MISTRAL_BASE_URL,
   MISTRAL_COMPACT_UPSTREAM_PATH,
   MISTRAL_UPSTREAM_PATH,
+  OAUTH_CALLBACK_BIND_HOST,
   OAUTH_STATE_PATH,
   PORT,
   SERVER_HEADERS_TIMEOUT_MS,
@@ -42,6 +44,7 @@ type RuntimeOptions = {
   mistralUpstreamPath?: string;
   mistralCompactUpstreamPath?: string;
   oauthConfig?: OAuthConfig;
+  oauthCallbackBindHost?: string;
   installSignalHandlers?: boolean;
   encryptionKey?: string;
 };
@@ -70,6 +73,8 @@ export async function createRuntime(options: RuntimeOptions = {}) {
   const mistralCompactUpstreamPath =
     options.mistralCompactUpstreamPath ?? MISTRAL_COMPACT_UPSTREAM_PATH;
   const oauthConfig = options.oauthConfig ?? defaultOAuthConfig;
+  const oauthCallbackBindHost =
+    options.oauthCallbackBindHost ?? OAUTH_CALLBACK_BIND_HOST;
   const encryptionKey = options.encryptionKey ?? STORE_ENCRYPTION_KEY;
 
   if (!isLoopbackHost(host) && !adminToken) {
@@ -79,6 +84,7 @@ export async function createRuntime(options: RuntimeOptions = {}) {
   const app = express();
   app.disable("x-powered-by");
   app.use(express.json({ limit: "20mb" }));
+  const oauthCallbackServer = createOAuthCallbackServer(oauthConfig.redirectUri);
 
   const store = new AccountStore(storePath, encryptionKey || undefined);
   const oauthStore = new OAuthStateStore(
@@ -193,14 +199,41 @@ export async function createRuntime(options: RuntimeOptions = {}) {
   server.requestTimeout = SERVER_REQUEST_TIMEOUT_MS;
 
   async function start() {
-    await new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(port, host, () => {
-        server.off("error", reject);
-        resolve();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(port, host, () => {
+          server.off("error", reject);
+          resolve();
+        });
       });
-    });
-    ready = true;
+
+      if (oauthCallbackServer) {
+        const callbackUrl = new URL(oauthConfig.redirectUri);
+        await new Promise<void>((resolve, reject) => {
+          oauthCallbackServer.once("error", reject);
+          oauthCallbackServer.listen(
+            Number(callbackUrl.port),
+            oauthCallbackBindHost || callbackUrl.hostname,
+            () => {
+              oauthCallbackServer.off("error", reject);
+              resolve();
+            },
+          );
+        });
+      }
+
+      ready = true;
+    } catch (err) {
+      server.closeIdleConnections();
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      if (oauthCallbackServer) {
+        oauthCallbackServer.closeAllConnections?.();
+        await new Promise<void>((resolve) => oauthCallbackServer.close(() => resolve()));
+      }
+      throw err;
+    }
   }
 
   async function shutdown() {
@@ -218,6 +251,18 @@ export async function createRuntime(options: RuntimeOptions = {}) {
       });
       server.closeIdleConnections();
     });
+    if (oauthCallbackServer?.listening) {
+      await new Promise<void>((resolve) => {
+        const force = setTimeout(() => {
+          oauthCallbackServer.closeAllConnections?.();
+          resolve();
+        }, SHUTDOWN_GRACE_MS);
+        oauthCallbackServer.close(() => {
+          clearTimeout(force);
+          resolve();
+        });
+      });
+    }
     await store.flushIfDirty();
     await traceManager.compactTraceStorageIfNeeded();
   }
@@ -242,6 +287,7 @@ export async function createRuntime(options: RuntimeOptions = {}) {
     store,
     oauthStore,
     traceManager,
+    oauthCallbackServer,
     start,
     shutdown,
     state: () => ({ ready, shuttingDown }),
@@ -257,6 +303,7 @@ export async function createRuntime(options: RuntimeOptions = {}) {
       mistralUpstreamPath,
       mistralCompactUpstreamPath,
       oauthConfig,
+      oauthCallbackBindHost,
     },
   };
 }

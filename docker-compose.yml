@@ -4,6 +4,7 @@ services:
     container_name: multivibe
     ports:
       - "4010:4010"
+      - "1455:1455"
     environment:
       - PORT=4010
       - PUBLIC_BASE_URL=http://localhost:4010
@@ -22,6 +23,7 @@ services:
       - OAUTH_TOKEN_URL=https://auth.openai.com/oauth/token
       - OAUTH_SCOPE=openid profile email offline_access
       - OAUTH_REDIRECT_URI=http://localhost:1455/auth/callback
+      - OAUTH_CALLBACK_BIND_HOST=0.0.0.0
     volumes:
       - ./data:/data
     restart: unless-stopped

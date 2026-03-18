@@ -67,6 +67,8 @@ export const MODEL_DISCOVERY_TIMEOUT_MS = Number(
 export const OAUTH_REQUEST_TIMEOUT_MS = Number(
   process.env.OAUTH_REQUEST_TIMEOUT_MS ?? 15_000,
 );
+export const OAUTH_CALLBACK_BIND_HOST =
+  process.env.OAUTH_CALLBACK_BIND_HOST ?? "";
 export const MODEL_COMPATIBILITY_TTL_MS = Number(
   process.env.MODEL_COMPATIBILITY_TTL_MS ?? 6 * 60 * 60_000,
 );

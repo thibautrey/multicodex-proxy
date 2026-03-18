@@ -102,8 +102,9 @@ Because this is often deployed remotely (Unraid/VPS), onboarding uses a manual r
 2. For OpenAI accounts, enter the account email
 3. Click **Start OAuth**
 4. Complete login in browser
-5. Copy the full redirect URL shown after the callback completes
-6. Paste that URL in the dashboard and click **Complete OAuth**
+5. Wait for the local callback page to open on `localhost:1455`
+6. The dashboard should autofill the callback URL, or you can copy it from that page
+7. Click **Complete OAuth**
 
 Mistral accounts still use manual token entry in the dashboard.
 
@@ -230,6 +231,7 @@ Model alias admin endpoints:
 | `OAUTH_TOKEN_URL` | `https://auth.openai.com/oauth/token` | OAuth token endpoint |
 | `OAUTH_SCOPE` | `openid profile email offline_access` | OAuth scope |
 | `OAUTH_REDIRECT_URI` | `http://localhost:1455/auth/callback` | Redirect URI |
+| `OAUTH_CALLBACK_BIND_HOST` | `` | Override bind host for the local OAuth callback helper server (for example `0.0.0.0` in Docker) |
 | `MISTRAL_COMPACT_UPSTREAM_PATH` | `/v1/responses/compact` | Mistral upstream path for compact responses |
 
 ---
