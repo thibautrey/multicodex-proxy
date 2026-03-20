@@ -64,6 +64,19 @@ const modelsCache: { at: number; models: ExposedModel[] } = {
   models: [],
 };
 
+// Separate cache for fast O(1) model validation using Set
+const modelsValidationCache: {
+  at: number;
+  validModels: Set<string>;
+  validModelKeys: Set<string>;
+} = {
+  at: 0,
+  validModels: new Set(),
+  validModelKeys: new Set(),
+};
+
+const MODELS_VALIDATION_CACHE_MS = 60_000; // Refresh every 60 seconds
+
 type ExposedModel = {
   id: string;
   object: "model";
@@ -286,6 +299,7 @@ async function discoverModels(
     const merged = Array.from(byId.values());
     modelsCache.at = Date.now();
     modelsCache.models = merged;
+    updateValidationCache(merged);
     return merged;
   } catch {
     const fallback = Array.from(new Set(PROXY_MODELS)).map((id) =>
@@ -293,8 +307,56 @@ async function discoverModels(
     );
     modelsCache.at = Date.now();
     modelsCache.models = fallback;
+    updateValidationCache(fallback);
     return fallback;
   }
+}
+
+function updateValidationCache(models: ExposedModel[]): void {
+  const validModels = new Set<string>();
+  const validModelKeys = new Set<string>();
+
+  for (const model of models) {
+    validModels.add(model.id);
+    const key = normalizeModelLookupKey(model.id);
+    if (key) validModelKeys.add(key);
+  }
+
+  modelsValidationCache.at = Date.now();
+  modelsValidationCache.validModels = validModels;
+  modelsValidationCache.validModelKeys = validModelKeys;
+}
+
+function isModelAllowed(model: string | undefined): boolean {
+  if (!model) return true; // No model specified, let it pass
+  const key = normalizeModelLookupKey(model);
+  return modelsValidationCache.validModelKeys.has(key);
+}
+
+function startBackgroundModelRefresh(
+  store: AccountStore,
+  openaiBaseUrl: string,
+  mistralBaseUrl: string,
+): void {
+  // Refresh validation cache every 60 seconds asynchronously
+  setInterval(async () => {
+    try {
+      const models = await discoverModels(store, openaiBaseUrl, mistralBaseUrl);
+      console.log(`[model-cache] Background refresh: ${models.length} models available`);
+    } catch (err) {
+      console.error("[model-cache] Background refresh failed:", err);
+    }
+  }, MODELS_VALIDATION_CACHE_MS);
+
+  // Initial sync refresh after a short delay to populate cache on startup
+  setTimeout(async () => {
+    try {
+      const models = await discoverModels(store, openaiBaseUrl, mistralBaseUrl);
+      console.log(`[model-cache] Initial refresh: ${models.length} models available`);
+    } catch (err) {
+      console.error("[model-cache] Initial refresh failed:", err);
+    }
+  }, 1000);
 }
 
 type RoutingCandidate = {
@@ -428,6 +490,9 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
   const { recordTrace } = traceManager;
   const router = express.Router();
 
+  // Start background model cache refresh
+  startBackgroundModelRefresh(store, openaiBaseUrl, mistralBaseUrl);
+
   async function proxyWithRotation(
     req: express.Request,
     res: express.Response,
@@ -463,6 +528,18 @@ let accounts = store.getCachedAccounts();
       typeof req.body?.model === "string" && req.body.model.trim()
         ? req.body.model.trim()
         : undefined;
+
+    // Fast O(1) validation against cached model set
+    if (!isModelAllowed(requestModel)) {
+      return res.status(400).json({
+        error: {
+          message: `Model '${requestModel}' is not supported. Use /v1/models to list available models.`,
+          type: "invalid_request_error",
+          code: "model_not_found",
+        },
+      });
+    }
+
     const discoveredModels = await discoverModels(store, openaiBaseUrl, mistralBaseUrl);
     const modelAliases = store.getCachedModelAliases();
     const routingCandidates = buildRoutingCandidates(
