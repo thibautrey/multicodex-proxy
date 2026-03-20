@@ -15,6 +15,7 @@ export type Trace = {
   id: string;
   at: number;
   route: string;
+  sessionId?: string;
   accountId?: string;
   accountEmail?: string;
   model?: string;
@@ -30,6 +31,52 @@ export type Trace = {
   error?: string;
   requestBody?: any;
   hasRequestBody?: boolean;
+};
+
+export type UsageSummary = {
+  requests: number;
+  ok: number;
+  errors: number;
+  successRate: number;
+  stream: number;
+  streamingRate: number;
+  latencyMsTotal: number;
+  avgLatencyMs: number;
+  requestsWithUsage: number;
+  tokens: {
+    prompt: number;
+    completion: number;
+    total: number;
+  };
+  costUsd: number;
+  statusCounts: Record<string, number>;
+  firstAt?: number;
+  lastAt?: number;
+};
+
+export type TraceUsageStats = {
+  filters: {
+    accountId?: string;
+    route?: string;
+    sinceMs?: number;
+    untilMs?: number;
+  };
+  totals: UsageSummary;
+  byAccount: Array<
+    UsageSummary & {
+      accountId: string;
+      account: {
+        id: string;
+        provider?: "openai" | "mistral";
+        email?: string;
+        enabled?: boolean;
+      };
+    }
+  >;
+  byRoute: Array<UsageSummary & { route: string }>;
+  bySession: Array<UsageSummary & { sessionId: string }>;
+  tracesEvaluated: number;
+  tracesMatched: number;
 };
 
 export type TraceStats = {

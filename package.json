@@ -8,7 +8,8 @@
     "build:api": "tsc -p tsconfig.json",
     "build:web": "npm --prefix web run build",
     "build": "npm run build:web && npm run build:api",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "test": "node --test --test-force-exit test/*.test.js"
   },
   "dependencies": {
     "express": "^4.21.2"

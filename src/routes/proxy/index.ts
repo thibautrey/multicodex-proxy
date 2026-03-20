@@ -1,15 +1,16 @@
 import {
   MAX_ACCOUNT_RETRY_ATTEMPTS,
-  MAX_UPSTREAM_RETRIES,
+  MAX_GET_RETRIES,
   MODELS_CACHE_MS,
   MODELS_CLIENT_VERSION,
+  MODEL_DISCOVERY_TIMEOUT_MS,
   PI_USER_AGENT,
   PROXY_MODELS,
+  RETRY_BASE_DELAY_MS,
   TRACE_INCLUDE_BODY,
-  TOKEN_REFRESH_MARGIN_MS,
-  UPSTREAM_BASE_DELAY_MS,
   UPSTREAM_PATH,
   UPSTREAM_COMPACT_PATH,
+  UPSTREAM_REQUEST_TIMEOUT_MS,
 } from "../../config.js";
 import {
   chatCompletionObjectToSSE,
@@ -28,11 +29,17 @@ import {
 } from "../../responses/payloads.js";
 import {
   chooseAccountForProvider,
+  accountSupportsModel,
+  clearAuthFailureState,
   isQuotaErrorText,
+  markModelCompatibility,
+  markAuthFailure,
+  markModelUnsupported,
   markQuotaHit,
   normalizeProvider,
   refreshUsageIfNeeded,
   rememberError,
+  USAGE_CACHE_TTL_MS,
 } from "../../quota.js";
 import {
   ensureNonEmptyChatCompletion,
@@ -57,12 +64,18 @@ type ProxyRoutesOptions = {
   mistralUpstreamPath: string;
   mistralCompactUpstreamPath: string;
   oauthConfig: OAuthConfig;
+  upstreamRequestTimeoutMs?: number;
 };
 
 const modelsCache: { at: number; models: ExposedModel[] } = {
   at: 0,
   models: [],
 };
+
+export function resetDiscoveredModelsCacheForTest() {
+  modelsCache.at = 0;
+  modelsCache.models = [];
+}
 
 type ExposedModel = {
   id: string;
@@ -221,7 +234,7 @@ async function discoverModels(
         const url = `${openaiBaseUrl}/backend-api/codex/models?client_version=${encodeURIComponent(
           MODELS_CLIENT_VERSION,
         )}`;
-        const r = await fetch(url, { headers });
+        const r = await fetchCodexWithRetry(url, { headers });
         if (r.ok) {
           const json: any = await r.json();
           const upstream = Array.isArray(json?.models) ? json.models : [];
@@ -246,7 +259,9 @@ async function discoverModels(
           authorization: `Bearer ${mistralAccount.accessToken}`,
           accept: "application/json",
         };
-        const r = await fetch(`${mistralBaseUrl}/v1/models`, { headers });
+        const r = await fetchCodexWithRetry(`${mistralBaseUrl}/v1/models`, {
+          headers,
+        });
         if (r.ok) {
           const json: any = await r.json();
           const upstream = Array.isArray(json?.data) ? json.data : [];
@@ -361,8 +376,293 @@ function takeNextSSEFrame(buffer: string): SSEFrame {
   };
 }
 
+function frameSignalsResponseCompleted(frame: string): boolean {
+  return (
+    /(?:^|\r?\n)event:\s*response\.completed\b/.test(frame) ||
+    frame.includes('"response.completed"')
+  );
+}
+
+function frameSignalsOutputTextDone(frame: string): boolean {
+  return (
+    /(?:^|\r?\n)event:\s*response\.output_text\.done\b/.test(frame) ||
+    frame.includes('"response.output_text.done"')
+  );
+}
+
+function frameSignalsResponseTerminal(frame: string): boolean {
+  return (
+    frameSignalsResponseCompleted(frame) || frameSignalsOutputTextDone(frame)
+  );
+}
+
+function extractSSEDataPayload(frame: string): any | undefined {
+  try {
+    const dataLine = frame
+      .split(/\r?\n/)
+      .find((line) => line.trim().startsWith("data:"));
+    if (!dataLine) return undefined;
+    return JSON.parse(dataLine.slice(5).trim());
+  } catch {
+    return undefined;
+  }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function createRequestSignal(
+  timeoutMs: number,
+  upstreamAbort?: AbortSignal,
+): { signal: AbortSignal; clearTimeout: () => void } {
+  const controller = new AbortController();
+  let timer: NodeJS.Timeout | undefined = setTimeout(() => {
+    controller.abort(new Error(`request timed out after ${timeoutMs}ms`));
+  }, timeoutMs);
+  const clearTimeoutOnly = () => {
+    if (!timer) return;
+    clearTimeout(timer);
+    timer = undefined;
+  };
+  const onAbort = () => controller.abort(upstreamAbort?.reason);
+  if (upstreamAbort) {
+    if (upstreamAbort.aborted) {
+      controller.abort(upstreamAbort.reason);
+    } else {
+      upstreamAbort.addEventListener("abort", onAbort, { once: true });
+    }
+  }
+  controller.signal.addEventListener(
+    "abort",
+    () => {
+      clearTimeoutOnly();
+      if (upstreamAbort) upstreamAbort.removeEventListener("abort", onAbort);
+    },
+    { once: true },
+  );
+  return {
+    signal: controller.signal,
+    clearTimeout: clearTimeoutOnly,
+  };
+}
+
+async function readChunkWithInactivityTimeout(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  timeoutMs: number,
+  abortSignal?: AbortSignal,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timer: NodeJS.Timeout | undefined = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      void reader.cancel().catch(() => {});
+      reject(new Error(`response stream timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    const cleanup = () => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+      if (abortSignal) abortSignal.removeEventListener("abort", onAbort);
+    };
+
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      void reader.cancel().catch(() => {});
+      const reason = abortSignal?.reason;
+      reject(reason instanceof Error ? reason : new Error(String(reason ?? "aborted")));
+    };
+
+    if (abortSignal) {
+      if (abortSignal.aborted) {
+        onAbort();
+        return;
+      }
+      abortSignal.addEventListener("abort", onAbort, { once: true });
+    }
+
+    reader.read().then(
+      (result) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(result);
+      },
+      (error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      },
+    );
+  });
+}
+
+async function readResponseTextWithInactivityTimeout(
+  response: Response,
+  timeoutMs: number,
+  abortSignal?: AbortSignal,
+): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  return readReaderTextWithInactivityTimeout(
+    reader,
+    new TextDecoder(),
+    timeoutMs,
+    abortSignal,
+  );
+}
+
+async function readReaderTextWithInactivityTimeout(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  decoder: TextDecoder,
+  timeoutMs: number,
+  abortSignal?: AbortSignal,
+  initialText = "",
+): Promise<string> {
+  let text = initialText;
+
+  while (true) {
+    const { value, done } = await readChunkWithInactivityTimeout(
+      reader,
+      timeoutMs,
+      abortSignal,
+    );
+    if (done) break;
+    text += decoder.decode(value, { stream: true });
+  }
+
+  text += decoder.decode();
+  return text;
+}
+
+async function peekResponseTextStart(
+  response: Response,
+  timeoutMs: number,
+  abortSignal?: AbortSignal,
+): Promise<{
+  reader: ReadableStreamDefaultReader<Uint8Array> | null;
+  decoder: TextDecoder;
+  initialText: string;
+}> {
+  const decoder = new TextDecoder();
+  if (!response.body) {
+    return { reader: null, decoder, initialText: "" };
+  }
+  const reader = response.body.getReader();
+  const { value, done } = await readChunkWithInactivityTimeout(
+    reader,
+    timeoutMs,
+    abortSignal,
+  );
+  if (done) {
+    return {
+      reader,
+      decoder,
+      initialText: decoder.decode(),
+    };
+  }
+
+  return {
+    reader,
+    decoder,
+    initialText: decoder.decode(value, { stream: true }),
+  };
+}
+
+function looksLikeSSEPayload(text: string): boolean {
+  return /(?:^|\r?\n)(event:|data:)\s*/.test(text);
+}
+
+async function readResponsesSSETextUntilTerminalFromReader(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  decoder: TextDecoder,
+  timeoutMs: number,
+  abortSignal?: AbortSignal,
+  initialText = "",
+): Promise<string> {
+  let text = initialText;
+  let sseBuffer = initialText;
+  let completed = false;
+
+  while (true) {
+    const { value, done } = await readChunkWithInactivityTimeout(
+      reader,
+      timeoutMs,
+      abortSignal,
+    );
+    if (done) break;
+    sseBuffer += decoder.decode(value, { stream: true });
+
+    while (true) {
+      const next = takeNextSSEFrame(sseBuffer);
+      if (!next) break;
+      sseBuffer = next.rest;
+      text += `${next.frame}\n\n`;
+      if (frameSignalsResponseTerminal(next.frame)) {
+        completed = true;
+        break;
+      }
+    }
+
+    if (completed) break;
+  }
+
+  if (!completed) {
+    sseBuffer += decoder.decode();
+    while (true) {
+      const next = takeNextSSEFrame(sseBuffer);
+      if (!next) break;
+      sseBuffer = next.rest;
+      text += `${next.frame}\n\n`;
+      if (frameSignalsResponseTerminal(next.frame)) {
+        completed = true;
+        break;
+      }
+    }
+    if (!completed && sseBuffer.trim()) text += sseBuffer;
+  }
+
+  if (completed) void reader.cancel().catch(() => {});
+  return text;
+}
+
+async function readResponsesSSETextUntilTerminal(
+  response: Response,
+  timeoutMs: number,
+  abortSignal?: AbortSignal,
+): Promise<string> {
+  if (!response.body) return "";
+  return readResponsesSSETextUntilTerminalFromReader(
+    response.body.getReader(),
+    new TextDecoder(),
+    timeoutMs,
+    abortSignal,
+  );
+}
+
+function isAbortError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === "AbortError" || /timed out|aborted/i.test(error.message))
+  );
+}
+
+function isDownstreamClientDisconnect(
+  error: unknown,
+  abortSignal?: AbortSignal,
+): boolean {
+  return (
+    Boolean(abortSignal?.aborted) ||
+    (error instanceof Error &&
+      /downstream client disconnected/i.test(error.message))
+  );
 }
 
 function isRetryableUpstreamError(status: number, errorText: string): boolean {
@@ -379,34 +679,67 @@ function isRetryableUpstreamError(status: number, errorText: string): boolean {
   );
 }
 
+function isAuthFailure(status: number, errorText: string): boolean {
+  if (status === 401) return true;
+  return /token_expired|invalid[_ -]?token|refresh[_ -]?token|unauthorized|auth/i.test(
+    errorText,
+  );
+}
+
+function isModelUnsupported(status: number, errorText: string): boolean {
+  if (status !== 400 && status !== 404) return false;
+  return /model.+not supported|unsupported model|does not exist|not available|unknown model/i.test(
+    errorText,
+  );
+}
+
 async function fetchCodexWithRetry(
   url: string,
   init: RequestInit,
+  signal?: AbortSignal,
 ): Promise<Response> {
   let lastError: Error | undefined;
-  for (let attempt = 0; attempt <= MAX_UPSTREAM_RETRIES; attempt++) {
+  const maxAttempts = Math.max(0, MAX_GET_RETRIES);
+  for (let attempt = 0; attempt <= maxAttempts; attempt++) {
     try {
-      const response = await fetch(url, init);
+      const requestSignal = createRequestSignal(
+        MODEL_DISCOVERY_TIMEOUT_MS,
+        signal,
+      );
+      const response = await fetch(url, {
+        ...init,
+        signal: requestSignal.signal,
+      });
+      requestSignal.clearTimeout();
       if (response.ok) return response;
       const errorText = await response
         .clone()
         .text()
         .catch(() => "");
       if (
-        attempt < MAX_UPSTREAM_RETRIES &&
+        attempt < maxAttempts &&
         isRetryableUpstreamError(response.status, errorText)
       ) {
-        await sleep(UPSTREAM_BASE_DELAY_MS * 2 ** attempt);
+        await sleep(
+          Math.floor(
+            RETRY_BASE_DELAY_MS * 2 ** attempt * (0.5 + Math.random()),
+          ),
+        );
         continue;
       }
       return response;
     } catch (error: any) {
       lastError = error instanceof Error ? error : new Error(String(error));
       if (
-        attempt < MAX_UPSTREAM_RETRIES &&
-        !lastError.message.includes("usage limit")
+        attempt < maxAttempts &&
+        !lastError.message.includes("usage limit") &&
+        !isAbortError(lastError)
       ) {
-        await sleep(UPSTREAM_BASE_DELAY_MS * 2 ** attempt);
+        await sleep(
+          Math.floor(
+            RETRY_BASE_DELAY_MS * 2 ** attempt * (0.5 + Math.random()),
+          ),
+        );
         continue;
       }
       throw lastError;
@@ -424,9 +757,16 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       mistralUpstreamPath,
       mistralCompactUpstreamPath,
       oauthConfig,
+      upstreamRequestTimeoutMs = UPSTREAM_REQUEST_TIMEOUT_MS,
     } = options;
   const { appendTrace } = traceManager;
   const router = express.Router();
+
+  function refreshUsageInBackground(account: any, usageBaseUrl: string) {
+    void refreshUsageIfNeeded(account, usageBaseUrl)
+      .then((refreshed) => store.upsertAccount(refreshed))
+      .catch(() => undefined);
+  }
 
   async function proxyWithRotation(
     req: express.Request,
@@ -443,6 +783,16 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       (req.originalUrl || "").includes("responses/compact");
     const clientRequestedStream = Boolean(req.body?.stream);
     const sessionId = getSessionId(req);
+    const clientAbort = new AbortController();
+    const abortFromClient = () => {
+      if (!clientAbort.signal.aborted) {
+        clientAbort.abort(new Error("downstream client disconnected"));
+      }
+    };
+    req.on("aborted", abortFromClient);
+    res.on("close", () => {
+      if (!res.writableEnded) abortFromClient();
+    });
 
 let accounts = store.getCachedAccounts();
     if (!accounts.length)
@@ -453,7 +803,10 @@ let accounts = store.getCachedAccounts();
         const valid = await ensureValidToken(account, oauthConfig);
         const usageBaseUrl =
           normalizeProvider(valid) === "mistral" ? mistralBaseUrl : openaiBaseUrl;
-        await refreshUsageIfNeeded(valid, usageBaseUrl);
+        const usageFetchedAt = valid.usage?.fetchedAt ?? 0;
+        if (Date.now() - usageFetchedAt >= USAGE_CACHE_TTL_MS) {
+          refreshUsageInBackground(valid, usageBaseUrl);
+        }
         return valid;
       }),
     );
@@ -463,20 +816,24 @@ let accounts = store.getCachedAccounts();
       typeof req.body?.model === "string" && req.body.model.trim()
         ? req.body.model.trim()
         : undefined;
-    const discoveredModels = await discoverModels(store, openaiBaseUrl, mistralBaseUrl);
     const modelAliases = store.getCachedModelAliases();
     const routingCandidates = buildRoutingCandidates(
       requestModel,
-      discoveredModels,
+      modelsCache.models,
       modelAliases,
     );
     const tried = new Set<string>();
     const maxAttempts = Math.min(accounts.length, MAX_ACCOUNT_RETRY_ATTEMPTS);
     let providerTried = false;
+    let lastModelUnsupported:
+      | { status: number; text: string; contentType: string }
+      | undefined;
 
     for (const candidate of routingCandidates) {
       const providerAccounts = accounts.filter(
-        (a) => normalizeProvider(a) === candidate.provider,
+        (a) =>
+          normalizeProvider(a) === candidate.provider &&
+          accountSupportsModel(a, candidate.resolvedModel ?? requestModel),
       );
       if (!providerAccounts.length) continue;
       providerTried = true;
@@ -506,9 +863,6 @@ let accounts = store.getCachedAccounts();
         delete payloadToUpstream.include;
         delete payloadToUpstream.tool_choice;
         delete payloadToUpstream.parallel_tool_calls;
-      }
-      if (isResponsesCompactPath && payloadToUpstream && typeof payloadToUpstream === "object") {
-        delete payloadToUpstream.store;
       }
       if (candidate.resolvedModel) payloadToUpstream.model = candidate.resolvedModel;
       const requestBody = TRACE_INCLUDE_BODY ? req.body : undefined;
@@ -545,17 +899,50 @@ let accounts = store.getCachedAccounts();
             : isResponsesCompactPath
               ? UPSTREAM_COMPACT_PATH
               : UPSTREAM_PATH;
-        const upstream = await fetchCodexWithRetry(
-          `${upstreamBaseUrl}${upstreamPath}`,
-          {
-            method: "POST",
-            headers,
-            body: JSON.stringify(payloadToUpstream),
-          },
+        const requestSignal = createRequestSignal(
+          upstreamRequestTimeoutMs,
+          clientAbort.signal,
         );
+        const upstream = await fetch(`${upstreamBaseUrl}${upstreamPath}`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payloadToUpstream),
+          signal: requestSignal.signal,
+        });
+        requestSignal.clearTimeout();
 
         const contentType = upstream.headers.get("content-type") ?? "";
-        const isStream = contentType.includes("text/event-stream");
+        let isStream = contentType.includes("text/event-stream");
+        let prefetchedText = "";
+        let prefetchedReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+        let prefetchedDecoder: TextDecoder | null = null;
+
+        if (
+          upstream.ok &&
+          clientRequestedStream &&
+          !shouldReturnChatCompletions &&
+          !isStream &&
+          upstream.body
+        ) {
+          const peeked = await peekResponseTextStart(
+            upstream,
+            upstreamRequestTimeoutMs,
+            clientAbort.signal,
+          );
+          prefetchedText = peeked.initialText;
+          prefetchedReader = peeked.reader;
+          prefetchedDecoder = peeked.decoder;
+          if (looksLikeSSEPayload(prefetchedText)) isStream = true;
+        }
+        if (upstream.ok) {
+          clearAuthFailureState(selected);
+          markModelCompatibility(
+            selected,
+            candidate.resolvedModel ?? requestModel,
+            true,
+          );
+          await store.upsertAccount(selected);
+        }
 
         if (isStream) {
           if (shouldReturnChatCompletions && clientRequestedStream) {
@@ -574,7 +961,11 @@ let accounts = store.getCachedAccounts();
             let doneSent = false;
 
             while (true) {
-              const { value, done } = await reader.read();
+              const { value, done } = await readChunkWithInactivityTimeout(
+                reader,
+                upstreamRequestTimeoutMs,
+                clientAbort.signal,
+              );
               if (done) break;
 
               const chunk = decoder.decode(value, { stream: true });
@@ -632,6 +1023,7 @@ let accounts = store.getCachedAccounts();
             await appendTrace({
               at: Date.now(),
               route: req.path,
+              sessionId,
               accountId: selected.id,
               accountEmail: selected.email,
               model: tracedModel,
@@ -645,7 +1037,11 @@ let accounts = store.getCachedAccounts();
           }
 
           if (shouldReturnChatCompletions) {
-            const txt = await upstream.text();
+            const txt = await readResponsesSSETextUntilTerminal(
+              upstream,
+              upstreamRequestTimeoutMs,
+              clientAbort.signal,
+            );
             const parsedChat = parseResponsesSSEToChatCompletion(
               txt,
               req.body?.model ?? payloadToUpstream?.model ?? "unknown",
@@ -659,6 +1055,7 @@ let accounts = store.getCachedAccounts();
             await appendTrace({
               at: Date.now(),
               route: req.path,
+              sessionId,
               accountId: selected.id,
               accountEmail: selected.email,
               model: tracedModel,
@@ -675,13 +1072,18 @@ let accounts = store.getCachedAccounts();
           }
 
           if (!clientRequestedStream) {
-            const txt = await upstream.text();
+            const txt = await readResponsesSSETextUntilTerminal(
+              upstream,
+              upstreamRequestTimeoutMs,
+              clientAbort.signal,
+            );
             const respObj = parseResponsesSSEToResponseObject(txt);
             res.status(upstream.ok ? 200 : upstream.status).json(respObj);
             const upstreamError = !upstream.ok ? txt.slice(0, 500) : undefined;
             await appendTrace({
               at: Date.now(),
               route: req.path,
+              sessionId,
               accountId: selected.id,
               accountEmail: selected.email,
               model: tracedModel,
@@ -698,73 +1100,58 @@ let accounts = store.getCachedAccounts();
 
           res.status(upstream.status);
           setForwardHeaders(upstream, res);
-          if (!upstream.body) return res.end();
-          const reader = upstream.body.getReader();
-          const decoder = new TextDecoder();
+          res.flushHeaders();
+          const reader = prefetchedReader ?? upstream.body?.getReader() ?? null;
+          const decoder = prefetchedDecoder ?? new TextDecoder();
+          if (!reader) return res.end();
           let sseBuffer = "";
           let accumulatedUsage: any = null;
 
-          while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            sseBuffer += decoder.decode(value, { stream: true });
+          const consumeChunkText = (chunkText: string) => {
+            if (!chunkText) return;
+            res.write(chunkText);
+            sseBuffer += chunkText;
 
             while (true) {
               const next = takeNextSSEFrame(sseBuffer);
               if (!next) break;
               sseBuffer = next.rest;
 
-              if (next.frame.includes("response.completed")) {
-                try {
-                  const dataLine = next.frame
-                    .split(/\r?\n/)
-                    .find((line) => line.trim().startsWith("data:"));
-                  if (dataLine) {
-                    const payload = JSON.parse(dataLine.slice(5).trim());
-                    if (payload?.response?.usage) {
-                      accumulatedUsage = payload.response.usage;
-                    }
-                  }
-                } catch {}
-              }
-
-              const filtered = sanitizeResponsesSSEFrame(next.frame);
-              if (filtered !== null) res.write(`${filtered}\n\n`);
-            }
-          }
-
-          sseBuffer += decoder.decode();
-          while (true) {
-            const next = takeNextSSEFrame(sseBuffer);
-            if (!next) break;
-            sseBuffer = next.rest;
-
-            if (next.frame.includes("response.completed")) {
-              try {
-                const dataLine = next.frame
-                  .split(/\r?\n/)
-                  .find((line) => line.trim().startsWith("data:"));
-                if (dataLine) {
-                  const payload = JSON.parse(dataLine.slice(5).trim());
-                  if (payload?.response?.usage) {
-                    accumulatedUsage = payload.response.usage;
-                  }
+              const payload = extractSSEDataPayload(next.frame);
+              if (payload?.type === "response.completed") {
+                if (payload?.response?.usage) {
+                  accumulatedUsage = payload.response.usage;
                 }
-              } catch {}
+                continue;
+              }
+              if (
+                payload?.type === "response.output_text.done" &&
+                typeof payload?.text === "string"
+              ) {
+                continue;
+              }
             }
+          };
 
-            const filtered = sanitizeResponsesSSEFrame(next.frame);
-            if (filtered !== null) res.write(`${filtered}\n\n`);
+          consumeChunkText(prefetchedText);
+
+          while (true) {
+            const { value, done } = await readChunkWithInactivityTimeout(
+              reader,
+              upstreamRequestTimeoutMs,
+              clientAbort.signal,
+            );
+            if (done) break;
+            consumeChunkText(decoder.decode(value, { stream: true }));
           }
-          if (sseBuffer.trim()) {
-            const filtered = sanitizeResponsesSSEFrame(sseBuffer);
-            if (filtered !== null) res.write(`${filtered}\n\n`);
-          }
+
+          consumeChunkText(decoder.decode());
           res.end();
 
           await appendTrace({
             at: Date.now(),
             route: req.path,
+            sessionId,
             accountId: selected.id,
             accountEmail: selected.email,
             model: tracedModel,
@@ -779,7 +1166,11 @@ let accounts = store.getCachedAccounts();
 
         let bufferedText: string | undefined = undefined;
         if (shouldReturnChatCompletions && clientRequestedStream) {
-          let raw = await upstream.text();
+          let raw = await readResponseTextWithInactivityTimeout(
+            upstream,
+            upstreamRequestTimeoutMs,
+            clientAbort.signal,
+          );
           const upstreamEmptyBody = !raw;
           if (!raw)
             raw = JSON.stringify({
@@ -806,6 +1197,7 @@ let accounts = store.getCachedAccounts();
             await appendTrace({
               at: Date.now(),
               route: req.path,
+              sessionId,
               accountId: selected.id,
               accountEmail: selected.email,
               model: tracedModel,
@@ -827,7 +1219,7 @@ let accounts = store.getCachedAccounts();
               req.body?.model ?? payloadToUpstream?.model ?? "unknown",
             );
             res.status(200);
-            res.set("Content-Type", "text.event-stream");
+            res.set("Content-Type", "text/event-stream");
             res.set("Cache-Control", "no-cache");
             res.set("Connection", "keep-alive");
             res.write(chatCompletionObjectToSSE(converted));
@@ -836,6 +1228,7 @@ let accounts = store.getCachedAccounts();
             await appendTrace({
               at: Date.now(),
               route: req.path,
+              sessionId,
               accountId: selected.id,
               accountEmail: selected.email,
               model: tracedModel,
@@ -852,7 +1245,21 @@ let accounts = store.getCachedAccounts();
           }
         }
 
-        let text = bufferedText ?? (await upstream.text());
+        let text =
+          bufferedText ??
+          (prefetchedReader && prefetchedDecoder
+            ? await readReaderTextWithInactivityTimeout(
+                prefetchedReader,
+                prefetchedDecoder,
+                upstreamRequestTimeoutMs,
+                clientAbort.signal,
+                prefetchedText,
+              )
+            : await readResponseTextWithInactivityTimeout(
+                upstream,
+                upstreamRequestTimeoutMs,
+                clientAbort.signal,
+              ));
         const upstreamEmptyBody = !text;
         if (!text)
           text = JSON.stringify({
@@ -907,6 +1314,7 @@ let accounts = store.getCachedAccounts();
             await appendTrace({
               at: Date.now(),
               route: req.path,
+              sessionId,
               accountId: selected.id,
               accountEmail: selected.email,
               model: tracedModel,
@@ -941,6 +1349,7 @@ let accounts = store.getCachedAccounts();
             await appendTrace({
               at: Date.now(),
               route: req.path,
+              sessionId,
               accountId: selected.id,
               accountEmail: selected.email,
               model: tracedModel,
@@ -991,6 +1400,7 @@ let accounts = store.getCachedAccounts();
             await appendTrace({
               at: Date.now(),
               route: req.path,
+              sessionId,
               accountId: selected.id,
               accountEmail: selected.email,
               model: tracedModel,
@@ -1021,6 +1431,7 @@ let accounts = store.getCachedAccounts();
             await appendTrace({
               at: Date.now(),
               route: req.path,
+              sessionId,
               accountId: selected.id,
               accountEmail: selected.email,
               model: tracedModel,
@@ -1042,6 +1453,7 @@ let accounts = store.getCachedAccounts();
           await appendTrace({
             at: Date.now(),
             route: req.path,
+            sessionId,
             accountId: selected.id,
             accountEmail: selected.email,
             model: tracedModel,
@@ -1058,15 +1470,24 @@ let accounts = store.getCachedAccounts();
           return;
         }
 
-        res.status(upstream.status);
-        setForwardHeaders(upstream, res);
-        res.type(contentType || "application/json").send(text);
-
         const usage = extractUsageFromPayload(parsed);
+        const quotaFailure =
+          upstream.status === 429 || isQuotaErrorText(text);
+        const authFailure = isAuthFailure(upstream.status, text);
+        const modelUnsupported = isModelUnsupported(upstream.status, text);
+        const shouldRotateAccount =
+          !upstream.ok &&
+          (quotaFailure || authFailure || modelUnsupported);
+
+        if (!shouldRotateAccount) {
+          res.status(upstream.status);
+          res.type(contentType || "application/json").send(text);
+        }
 
         await appendTrace({
           at: Date.now(),
           route: req.path,
+          sessionId,
           accountId: selected.id,
           accountEmail: selected.email,
           model: tracedModel,
@@ -1082,8 +1503,28 @@ let accounts = store.getCachedAccounts();
         });
 
         if (upstream.ok) return;
-        if (upstream.status === 429 || isQuotaErrorText(text)) {
+        if (quotaFailure) {
           markQuotaHit(selected, `quota/rate-limit: ${upstream.status}`);
+          await store.upsertAccount(selected);
+          continue;
+        }
+        if (authFailure) {
+          markAuthFailure(selected, `auth failure: ${upstream.status}`);
+          await store.upsertAccount(selected);
+          continue;
+        }
+        if (modelUnsupported) {
+          const failedModel =
+            candidate.resolvedModel ?? requestModel ?? "unknown-model";
+          lastModelUnsupported = {
+            status: upstream.status,
+            text,
+            contentType,
+          };
+          markModelUnsupported(
+            selected,
+            `model unsupported for ${failedModel}: ${upstream.status}`,
+          );
           await store.upsertAccount(selected);
           continue;
         }
@@ -1096,25 +1537,66 @@ let accounts = store.getCachedAccounts();
         return;
       } catch (err: any) {
         const msg = err?.message ?? String(err);
-        rememberError(selected, msg);
-        await store.upsertAccount(selected);
+        const downstreamClientDisconnected = isDownstreamClientDisconnect(
+          err,
+          clientAbort.signal,
+        );
+        const status = downstreamClientDisconnected ? 499 : 599;
+        if (!downstreamClientDisconnected) {
+          rememberError(selected, msg);
+          await store.upsertAccount(selected);
+        }
         await appendTrace({
           at: Date.now(),
           route: req.path,
+          sessionId,
           accountId: selected.id,
           accountEmail: selected.email,
           model: tracedModel,
-          status: 599,
+          status,
           stream: false,
           latencyMs: Date.now() - startedAt,
           error: msg,
           requestBody,
+          isError: downstreamClientDisconnected ? false : undefined,
         });
+        if (downstreamClientDisconnected) return;
+        if (isAbortError(err)) {
+          if (clientRequestedStream) {
+            if (!res.writableEnded) {
+              if (shouldReturnChatCompletions) {
+                res.write("data: [DONE]\n\n");
+              }
+              res.end();
+            }
+            return;
+          }
+          if (res.headersSent) {
+            if (!res.writableEnded) {
+              if (shouldReturnChatCompletions && clientRequestedStream) {
+                res.write("data: [DONE]\n\n");
+              }
+              res.end();
+            }
+            return;
+          }
+          return res.status(504).json({ error: "upstream request timed out" });
+        }
+        if (res.headersSent && !res.writableEnded) {
+          res.end();
+          return;
+        }
       }
     }
     }
     if (!providerTried) {
       return res.status(503).json({ error: "no provider accounts configured for requested model" });
+    }
+    if (lastModelUnsupported) {
+      return res
+        .status(lastModelUnsupported.status)
+        .type(lastModelUnsupported.contentType || "application/json")
+        .send(lastModelUnsupported.text);
     }
     res.status(429).json({ error: "all accounts exhausted or unavailable" });
   }

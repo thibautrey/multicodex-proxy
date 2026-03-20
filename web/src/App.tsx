@@ -3,6 +3,7 @@ import "./styles.css";
 import { estimateCostUsd } from "./model-pricing";
 import { api, tokenDefault } from "./lib/api";
 import {
+  EMPTY_TRACE_USAGE_STATS,
   EMPTY_TRACE_PAGINATION,
   EMPTY_TRACE_STATS,
   TRACE_PAGE_SIZE,
@@ -16,6 +17,7 @@ import type {
   TracePagination,
   TraceRangePreset,
   TraceStats,
+  TraceUsageStats,
 } from "./types";
 import { AccountsTab } from "./components/tabs/AccountsTab";
 import { DocsTab } from "./components/tabs/DocsTab";
@@ -33,6 +35,7 @@ export default function App() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [traces, setTraces] = useState<Trace[]>([]);
   const [traceStats, setTraceStats] = useState<TraceStats>(EMPTY_TRACE_STATS);
+  const [traceUsageStats, setTraceUsageStats] = useState<TraceUsageStats>(EMPTY_TRACE_USAGE_STATS);
   const [tracePagination, setTracePagination] = useState<TracePagination>(EMPTY_TRACE_PAGINATION);
   const [models, setModels] = useState<ExposedModel[]>([]);
   const [aliases, setAliases] = useState<ModelAlias[]>([]);
@@ -161,12 +164,14 @@ export default function App() {
     if (typeof sinceMs === "number") params.set("sinceMs", String(sinceMs));
     if (typeof untilMs === "number") params.set("untilMs", String(untilMs));
 
-    const [tr, statsRes] = await Promise.all([
+    const [tr, statsRes, usageRes] = await Promise.all([
       api(`/admin/traces?${params.toString()}`),
       api(`/admin/stats/traces?${params.toString()}`),
+      api(`/admin/stats/usage?${params.toString()}`),
     ]);
     setTraces((tr.traces ?? []) as Trace[]);
     setTraceStats((statsRes.stats ?? tr.stats ?? EMPTY_TRACE_STATS) as TraceStats);
+    setTraceUsageStats((usageRes ?? EMPTY_TRACE_USAGE_STATS) as TraceUsageStats);
     setTracePagination((tr.pagination ?? { ...EMPTY_TRACE_PAGINATION, page: safePage }) as TracePagination);
     setExpandedTraceId(null);
     setExpandedTrace(null);
@@ -445,6 +450,7 @@ export default function App() {
           <TracingTab
             accounts={accounts}
             traceStats={filteredTraceStats}
+            traceUsageStats={traceUsageStats}
             tokensTimeseries={tokensTimeseries}
             modelChartData={modelChartData}
             modelCostChartData={modelCostChartData}

@@ -2,7 +2,11 @@ import express from "express";
 import { randomUUID } from "node:crypto";
 import { AccountStore, OAuthStateStore } from "../../store.js";
 import type { Account, ModelAlias } from "../../types.js";
-import { normalizeProvider, refreshUsageIfNeeded } from "../../quota.js";
+import {
+  clearAuthFailureState,
+  normalizeProvider,
+  refreshUsageIfNeeded,
+} from "../../quota.js";
 import {
   accountFromOAuth,
   buildAuthorizationUrl,
@@ -57,6 +61,102 @@ function sanitizeAliasId(value: unknown): string {
     .toLowerCase()
     .replace(/[^a-z0-9._-]+/g, "-")
     .replace(/^-+|-+$/g, "");
+}
+
+const ACCOUNT_MUTABLE_KEYS = new Set([
+  "id",
+  "provider",
+  "email",
+  "accessToken",
+  "refreshToken",
+  "expiresAt",
+  "chatgptAccountId",
+  "enabled",
+  "priority",
+]);
+
+function rejectUnknownKeys(
+  body: Record<string, unknown>,
+  allowed: Set<string>,
+): string | undefined {
+  const unknown = Object.keys(body).filter((key) => !allowed.has(key));
+  if (!unknown.length) return undefined;
+  return `unknown fields: ${unknown.join(", ")}`;
+}
+
+function parseAccountPatch(
+  body: Record<string, unknown>,
+  allowId: boolean,
+): { patch?: Partial<Account>; error?: string } {
+  const error = rejectUnknownKeys(body, ACCOUNT_MUTABLE_KEYS);
+  if (error) return { error };
+
+  const patch: Partial<Account> = {};
+  if (allowId && typeof body.id !== "undefined") {
+    if (typeof body.id !== "string" || !body.id.trim()) {
+      return { error: "id must be a non-empty string" };
+    }
+    patch.id = body.id.trim();
+  }
+  if (typeof body.provider !== "undefined") {
+    if (body.provider !== "openai" && body.provider !== "mistral") {
+      return { error: "provider must be openai or mistral" };
+    }
+    patch.provider = body.provider;
+  }
+  if (typeof body.email !== "undefined") {
+    if (typeof body.email !== "string") return { error: "email must be a string" };
+    patch.email = body.email.trim() || undefined;
+  }
+  if (typeof body.accessToken !== "undefined") {
+    if (typeof body.accessToken !== "string" || !body.accessToken.trim()) {
+      return { error: "accessToken must be a non-empty string" };
+    }
+    patch.accessToken = body.accessToken.trim();
+  }
+  if (typeof body.refreshToken !== "undefined") {
+    if (body.refreshToken !== null && typeof body.refreshToken !== "string") {
+      return { error: "refreshToken must be a string" };
+    }
+    patch.refreshToken =
+      typeof body.refreshToken === "string" && body.refreshToken.trim()
+        ? body.refreshToken.trim()
+        : undefined;
+  }
+  if (typeof body.expiresAt !== "undefined") {
+    if (
+      body.expiresAt !== null &&
+      (!Number.isFinite(Number(body.expiresAt)) || Number(body.expiresAt) < 0)
+    ) {
+      return { error: "expiresAt must be a positive number" };
+    }
+    patch.expiresAt =
+      body.expiresAt === null ? undefined : Number(body.expiresAt);
+  }
+  if (typeof body.chatgptAccountId !== "undefined") {
+    if (
+      body.chatgptAccountId !== null &&
+      typeof body.chatgptAccountId !== "string"
+    ) {
+      return { error: "chatgptAccountId must be a string" };
+    }
+    patch.chatgptAccountId =
+      typeof body.chatgptAccountId === "string" &&
+      body.chatgptAccountId.trim()
+        ? body.chatgptAccountId.trim()
+        : undefined;
+  }
+  if (typeof body.enabled !== "undefined") {
+    if (typeof body.enabled !== "boolean") return { error: "enabled must be a boolean" };
+    patch.enabled = body.enabled;
+  }
+  if (typeof body.priority !== "undefined") {
+    if (!Number.isFinite(Number(body.priority))) {
+      return { error: "priority must be a finite number" };
+    }
+    patch.priority = Number(body.priority);
+  }
+  return { patch };
 }
 
 function normalizeAliasTargets(value: unknown): string[] {
@@ -406,6 +506,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     const globalAgg = createUsageAggregate();
     const byAccount = new Map<string, ReturnType<typeof createUsageAggregate>>();
     const byRoute = new Map<string, ReturnType<typeof createUsageAggregate>>();
+    const bySession = new Map<string, ReturnType<typeof createUsageAggregate>>();
 
     for (const trace of filtered) {
       addTraceToAggregate(globalAgg, trace);
@@ -418,6 +519,16 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       const routeKey = trace.route ?? "unknown";
       if (!byRoute.has(routeKey)) byRoute.set(routeKey, createUsageAggregate());
       addTraceToAggregate(byRoute.get(routeKey)!, trace);
+
+      const sessionKey =
+        typeof trace.sessionId === "string" && trace.sessionId.trim()
+          ? trace.sessionId.trim()
+          : "";
+      if (sessionKey) {
+        if (!bySession.has(sessionKey))
+          bySession.set(sessionKey, createUsageAggregate());
+        addTraceToAggregate(bySession.get(sessionKey)!, trace);
+      }
     }
 
     const accounts = await store.listAccounts();
@@ -450,6 +561,10 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       .map(([route, agg]) => ({ route, ...finalizeAggregate(agg) }))
       .sort((a, b) => b.requests - a.requests);
 
+    const bySessionOut = Array.from(bySession.entries())
+      .map(([sessionId, agg]) => ({ sessionId, ...finalizeAggregate(agg) }))
+      .sort((a, b) => b.requests - a.requests);
+
     res.json({
       ok: true,
       filters: {
@@ -461,6 +576,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       totals: finalizeAggregate(globalAgg),
       byAccount: byAccountOut,
       byRoute: byRouteOut,
+      bySession: bySessionOut,
       tracesEvaluated: traces.length,
       tracesMatched: filtered.length,
     });
@@ -484,28 +600,34 @@ export function createAdminRouter(options: AdminRoutesOptions) {
   });
 
   router.post("/accounts", async (req, res) => {
-    const body = req.body ?? {};
-    if (!body.accessToken)
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const parsed = parseAccountPatch(body, true);
+    if (parsed.error) return res.status(400).json({ error: parsed.error });
+    if (!parsed.patch?.accessToken) {
       return res.status(400).json({ error: "accessToken required" });
+    }
     const account: Account = {
-      id: body.id ?? randomUUID(),
-      provider: body.provider === "mistral" ? "mistral" : "openai",
-      email: body.email,
-      accessToken: body.accessToken,
-      refreshToken: body.refreshToken,
-      expiresAt: body.expiresAt,
-      chatgptAccountId: body.chatgptAccountId,
-      enabled: body.enabled ?? true,
-      priority: body.priority ?? 0,
-      usage: body.usage,
-      state: body.state,
+      id: parsed.patch.id ?? randomUUID(),
+      provider: parsed.patch.provider ?? "openai",
+      email: parsed.patch.email,
+      accessToken: parsed.patch.accessToken,
+      refreshToken: parsed.patch.refreshToken,
+      expiresAt: parsed.patch.expiresAt,
+      chatgptAccountId: parsed.patch.chatgptAccountId,
+      enabled: parsed.patch.enabled ?? true,
+      priority: parsed.patch.priority ?? 0,
+      usage: undefined,
+      state: {},
     };
     await store.upsertAccount(account);
     res.json({ ok: true, account: redact(account) });
   });
 
   router.patch("/accounts/:id", async (req, res) => {
-    const updated = await store.patchAccount(req.params.id, req.body ?? {});
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const parsed = parseAccountPatch(body, false);
+    if (parsed.error) return res.status(400).json({ error: parsed.error });
+    const updated = await store.patchAccount(req.params.id, parsed.patch ?? {});
     if (!updated) return res.status(404).json({ error: "not found" });
     res.json({ ok: true, account: redact(updated) });
   });
@@ -620,6 +742,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       } else {
         account = accountFromOAuth(flow, tokenData);
       }
+      clearAuthFailureState(account);
       account = await refreshUsageIfNeeded(account, openaiBaseUrl, true);
       await store.upsertAccount(account);
       await oauthStore.update(flow.id, {

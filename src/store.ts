@@ -9,23 +9,49 @@ import type {
   StoreFile,
 } from "./types.js";
 import { ACCOUNT_FLUSH_INTERVAL_MS } from "./config.js";
+import { decryptJson, encryptJson, looksEncryptedJson } from "./crypto.js";
 
 const DEFAULT_FILE: StoreFile = { accounts: [], modelAliases: [] };
 const DEFAULT_OAUTH_FILE: OAuthStateFile = { states: [] };
 
-async function ensureFile(filePath: string, seed: object) {
+async function ensureFile(
+  filePath: string,
+  seed: object,
+  encryptionKey?: string,
+) {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   try {
     await fs.access(filePath);
   } catch {
-    await writeJsonAtomic(filePath, seed);
+    await writeJsonAtomic(filePath, seed, encryptionKey);
   }
 }
 
-async function writeJsonAtomic(filePath: string, data: unknown): Promise<void> {
+async function writeJsonAtomic(
+  filePath: string,
+  data: unknown,
+  encryptionKey?: string,
+): Promise<void> {
   const tmp = `${filePath}.tmp-${randomUUID()}`;
-  await fs.writeFile(tmp, JSON.stringify(data, null, 2));
+  const payload = encryptionKey
+    ? encryptJson(data, encryptionKey)
+    : JSON.stringify(data, null, 2);
+  await fs.writeFile(tmp, payload, { mode: 0o600 });
   await fs.rename(tmp, filePath);
+}
+
+async function readJsonFile<T>(
+  filePath: string,
+  encryptionKey?: string,
+): Promise<T> {
+  const raw = await fs.readFile(filePath, "utf8");
+  if (looksEncryptedJson(raw)) {
+    if (!encryptionKey) {
+      throw new Error(`encrypted file requires STORE_ENCRYPTION_KEY: ${filePath}`);
+    }
+    return decryptJson<T>(raw, encryptionKey);
+  }
+  return JSON.parse(raw) as T;
 }
 
 export class AccountStore {
@@ -33,22 +59,39 @@ export class AccountStore {
   private inMemoryModelAliases: ModelAlias[] = [];
   private dirty = false;
   private flushTimer: NodeJS.Timeout | null = null;
+  private lastLoadedMtimeMs = 0;
 
-  constructor(private filePath: string) {}
+  constructor(
+    private filePath: string,
+    private encryptionKey?: string,
+  ) {}
 
   async init() {
-    await ensureFile(this.filePath, DEFAULT_FILE);
+    await ensureFile(this.filePath, DEFAULT_FILE, this.encryptionKey);
     await this.reloadFromDisk();
   }
 
   private async reloadFromDisk() {
-    const raw = await fs.readFile(this.filePath, "utf8");
-    const data = JSON.parse(raw) as StoreFile;
+    const data = await readJsonFile<StoreFile>(this.filePath, this.encryptionKey);
     this.inMemoryAccounts = Array.isArray(data.accounts) ? data.accounts : [];
     this.inMemoryModelAliases = Array.isArray(data.modelAliases)
       ? data.modelAliases
       : [];
     this.dirty = false;
+    const stat = await fs.stat(this.filePath);
+    this.lastLoadedMtimeMs = stat.mtimeMs;
+  }
+
+  private async reloadFromDiskIfChanged() {
+    if (this.dirty) return;
+    try {
+      const stat = await fs.stat(this.filePath);
+      if (stat.mtimeMs > this.lastLoadedMtimeMs) {
+        await this.reloadFromDisk();
+      }
+    } catch {
+      // best-effort external reload
+    }
   }
 
   private scheduleFlush() {
@@ -64,8 +107,12 @@ export class AccountStore {
     await writeJsonAtomic(this.filePath, {
       accounts: this.inMemoryAccounts,
       modelAliases: this.inMemoryModelAliases,
-    });
+    }, this.encryptionKey);
     this.dirty = false;
+    try {
+      const stat = await fs.stat(this.filePath);
+      this.lastLoadedMtimeMs = stat.mtimeMs;
+    } catch {}
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
@@ -126,6 +173,7 @@ export class AccountStore {
   }
 
   async listAccounts(): Promise<Account[]> {
+    await this.reloadFromDiskIfChanged();
     return this.getCachedAccounts();
   }
 
@@ -141,6 +189,7 @@ export class AccountStore {
   }
 
   async listModelAliases(): Promise<ModelAlias[]> {
+    await this.reloadFromDiskIfChanged();
     return this.getCachedModelAliases();
   }
 
@@ -181,19 +230,21 @@ export class AccountStore {
 }
 
 export class OAuthStateStore {
-  constructor(private filePath: string) {}
+  constructor(
+    private filePath: string,
+    private encryptionKey?: string,
+  ) {}
 
   async init() {
-    await ensureFile(this.filePath, DEFAULT_OAUTH_FILE);
+    await ensureFile(this.filePath, DEFAULT_OAUTH_FILE, this.encryptionKey);
   }
 
   private async read(): Promise<OAuthStateFile> {
-    const raw = await fs.readFile(this.filePath, "utf8");
-    return JSON.parse(raw) as OAuthStateFile;
+    return readJsonFile<OAuthStateFile>(this.filePath, this.encryptionKey);
   }
 
   private async write(data: OAuthStateFile): Promise<void> {
-    await writeJsonAtomic(this.filePath, data);
+    await writeJsonAtomic(this.filePath, data, this.encryptionKey);
   }
 
   async create(state: OAuthFlowState) {

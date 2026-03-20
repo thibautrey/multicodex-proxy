@@ -24,6 +24,16 @@ export type AccountState = {
   recentErrors?: AccountError[];
   needsTokenRefresh?: boolean;
   lastUsageRefreshAt?: number;
+  refreshBlockedUntil?: number;
+  refreshFailureCount?: number;
+  modelAvailability?: Record<
+    string,
+    {
+      supported: boolean;
+      checkedAt: number;
+      reason?: string;
+    }
+  >;
 };
 
 export type Account = {

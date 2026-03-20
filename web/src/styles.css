@@ -199,6 +199,12 @@ button.danger {
   color: #fff;
 }
 
+.btn.small,
+button.small {
+  padding: 6px 9px;
+  font-size: 12px;
+}
+
 .tabs {
   display: flex;
   gap: 8px;
@@ -391,6 +397,44 @@ small { display: block; color: var(--muted); }
   margin-bottom: 12px;
 }
 
+.tracing-layout-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.tracing-layout {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+.tracing-card.full-span {
+  grid-column: 1 / -1;
+}
+
+.tracing-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.tracing-card-head h2 {
+  margin-bottom: 0;
+}
+
+.tracing-card-toolbar {
+  justify-content: flex-end;
+}
+
+.trace-summary {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
 .chart-wrap {
   width: 100%;
   min-height: 260px;
@@ -459,6 +503,14 @@ details summary {
     grid-template-columns: 1fr;
   }
 
+  .tracing-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .tracing-card.full-span {
+    grid-column: auto;
+  }
+
   .topbar {
     align-items: flex-start;
     flex-direction: column;
@@ -466,5 +518,11 @@ details summary {
 
   .modal-grid {
     grid-template-columns: 1fr;
+  }
+
+  .tracing-layout-actions,
+  .tracing-card-head {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }

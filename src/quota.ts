@@ -1,16 +1,21 @@
 import type { Account, ProviderId, UsageSnapshot } from "./types.js";
+import { MODEL_COMPATIBILITY_TTL_MS } from "./config.js";
 
 export const USAGE_CACHE_TTL_MS = Number(process.env.USAGE_CACHE_TTL_MS ?? 300_000);
 const USAGE_TIMEOUT_MS = Number(process.env.USAGE_TIMEOUT_MS ?? 10_000);
 const BLOCK_FALLBACK_MS = Number(process.env.BLOCK_FALLBACK_MS ?? 30 * 60_000);
-const DEFAULT_ROUTING_WINDOW_MS = Number(process.env.ROUTING_WINDOW_MS ?? 5 * 60 * 1000);
+const DEFAULT_ROUTING_WINDOW_MS = Number(process.env.ROUTING_WINDOW_MS ?? 0);
+const AUTH_FALLBACK_MS = Number(process.env.AUTH_FALLBACK_MS ?? 60 * 60_000);
 
 type RouteCache = {
-  bucket: number;
   accountId?: string;
+  bucketByWindowMs: Map<number, number>;
 };
 
-const routeCache: RouteCache = { bucket: -1, accountId: undefined };
+const routeCache: RouteCache = {
+  accountId: undefined,
+  bucketByWindowMs: new Map(),
+};
 
 export function normalizeProvider(account?: Account): ProviderId {
   return account?.provider === "mistral" ? "mistral" : "openai";
@@ -56,6 +61,43 @@ export function rememberError(account: Account, message: string) {
   account.state = { ...account.state, lastError: message, recentErrors: next };
 }
 
+function isAuthFailureReason(reason: unknown): reason is string {
+  return typeof reason === "string" && /^auth failure:/i.test(reason);
+}
+
+function isAuthRelatedErrorMessage(message: unknown): message is string {
+  return (
+    typeof message === "string" &&
+    /^(auth failure:|refresh token failed:|usage probe failed 401\b)/i.test(
+      message,
+    )
+  );
+}
+
+export function clearAuthFailureState(account: Account) {
+  const current = account.state;
+  if (!current) return;
+
+  const blockedByAuth = isAuthFailureReason(current.blockedReason);
+  const recentErrors = (current.recentErrors ?? []).filter(
+    (entry) => !isAuthRelatedErrorMessage(entry?.message),
+  );
+  const lastError = isAuthRelatedErrorMessage(current.lastError)
+    ? undefined
+    : current.lastError;
+
+  account.state = {
+    ...current,
+    blockedUntil: blockedByAuth ? undefined : current.blockedUntil,
+    blockedReason: blockedByAuth ? undefined : current.blockedReason,
+    needsTokenRefresh: false,
+    refreshFailureCount: 0,
+    refreshBlockedUntil: undefined,
+    lastError,
+    recentErrors: recentErrors.length ? recentErrors : undefined,
+  };
+}
+
 export function usageUntouched(usage?: UsageSnapshot): boolean {
   return usage?.primary?.usedPercent === 0 && usage?.secondary?.usedPercent === 0;
 }
@@ -79,9 +121,49 @@ export function accountUsable(a: Account): boolean {
   return !(typeof until === "number" && Date.now() < until);
 }
 
+function normalizeModelKey(model?: string): string {
+  const raw = (model ?? "").trim().toLowerCase();
+  if (!raw) return "";
+  if (!raw.includes("/")) return raw;
+  return raw.split("/").pop() ?? raw;
+}
+
+export function accountSupportsModel(account: Account, model?: string): boolean {
+  const key = normalizeModelKey(model);
+  if (!key) return true;
+  const record = account.state?.modelAvailability?.[key];
+  if (!record) return true;
+  if (Date.now() - record.checkedAt > MODEL_COMPATIBILITY_TTL_MS) return true;
+  return record.supported;
+}
+
+export function markModelCompatibility(
+  account: Account,
+  model: string | undefined,
+  supported: boolean,
+  reason?: string,
+) {
+  const key = normalizeModelKey(model);
+  if (!key) return;
+  account.state = {
+    ...account.state,
+    modelAvailability: {
+      ...(account.state?.modelAvailability ?? {}),
+      [key]: {
+        supported,
+        checkedAt: Date.now(),
+        reason,
+      },
+    },
+  };
+}
+
 export function chooseAccount(accounts: Account[]): Account | null {
   const now = Date.now();
-  const windowMs = Number.isFinite(DEFAULT_ROUTING_WINDOW_MS) && DEFAULT_ROUTING_WINDOW_MS > 0 ? DEFAULT_ROUTING_WINDOW_MS : 5 * 60 * 1000;
+  const windowMs =
+    Number.isFinite(DEFAULT_ROUTING_WINDOW_MS) && DEFAULT_ROUTING_WINDOW_MS > 0
+      ? DEFAULT_ROUTING_WINDOW_MS
+      : 0;
 
   const available = accounts.filter((a) => {
     if (!a.enabled) return false;
@@ -90,11 +172,13 @@ export function chooseAccount(accounts: Account[]): Account | null {
   });
   if (!available.length) return null;
 
-  const bucket = nowBucket(now, windowMs);
-
-  if (routeCache.bucket === bucket && routeCache.accountId) {
-    const sticky = available.find((a) => a.id === routeCache.accountId);
-    if (sticky) return sticky;
+  if (windowMs > 0) {
+    const bucket = nowBucket(now, windowMs);
+    const stickyBucket = routeCache.bucketByWindowMs.get(windowMs);
+    if (stickyBucket === bucket && routeCache.accountId) {
+      const sticky = available.find((a) => a.id === routeCache.accountId);
+      if (sticky) return sticky;
+    }
   }
 
   const untouched = available.filter((a) => {
@@ -106,6 +190,14 @@ export function chooseAccount(accounts: Account[]): Account | null {
   const pool = untouched.length ? untouched : available;
 
   const sorted = [...pool].sort((a, b) => {
+    const ap = a.priority ?? Number.MAX_SAFE_INTEGER;
+    const bp = b.priority ?? Number.MAX_SAFE_INTEGER;
+    if (ap !== bp) return ap - bp;
+
+    const al = a.state?.lastSelectedAt ?? 0;
+    const bl = b.state?.lastSelectedAt ?? 0;
+    if (al !== bl) return al - bl;
+
     const sa = scoreAccount(a);
     const sb = scoreAccount(b);
     if (sa !== sb) return sa - sb;
@@ -114,16 +206,14 @@ export function chooseAccount(accounts: Account[]): Account | null {
     const br = b.usage?.secondary?.resetAt ?? Number.MAX_SAFE_INTEGER;
     if (ar !== br) return ar - br;
 
-    const ap = a.priority ?? Number.MAX_SAFE_INTEGER;
-    const bp = b.priority ?? Number.MAX_SAFE_INTEGER;
-    if (ap !== bp) return ap - bp;
-
     return a.id.localeCompare(b.id);
   });
 
   const winner = sorted[0] ?? null;
-  routeCache.bucket = bucket;
   routeCache.accountId = winner?.id;
+  if (windowMs > 0 && winner) {
+    routeCache.bucketByWindowMs.set(windowMs, nowBucket(now, windowMs));
+  }
 
   return winner;
 }
@@ -161,6 +251,7 @@ export async function refreshUsageIfNeeded(account: Account, chatgptBaseUrl: str
     if (!res.ok) throw new Error(`usage probe failed ${res.status}`);
     const json = await res.json();
     account.usage = parseOpenAIUsage(json);
+    clearAuthFailureState(account);
     account.state = { ...account.state, lastError: undefined };
     return account;
   } catch (err: any) {
@@ -178,5 +269,21 @@ export function markQuotaHit(account: Account, message: string) {
     blockedUntil: until,
     blockedReason: message,
   };
+  rememberError(account, message);
+}
+
+export function markAuthFailure(account: Account, message: string) {
+  account.state = {
+    ...account.state,
+    blockedUntil: Date.now() + AUTH_FALLBACK_MS,
+    blockedReason: message,
+    needsTokenRefresh: true,
+  };
+  rememberError(account, message);
+}
+
+export function markModelUnsupported(account: Account, message: string) {
+  const modelMatch = message.match(/for ([^:]+):/);
+  markModelCompatibility(account, modelMatch?.[1], false, message);
   rememberError(account, message);
 }

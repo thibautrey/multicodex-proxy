@@ -4,3 +4,4 @@ dist
 web-dist
 .env
 web/*.tsbuildinfo
+data

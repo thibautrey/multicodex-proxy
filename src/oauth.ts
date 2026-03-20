@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Account, OAuthFlowState } from "./types.js";
+import { OAUTH_REQUEST_TIMEOUT_MS } from "./config.js";
 
 export type OAuthConfig = {
   authorizationUrl: string;
@@ -89,10 +90,12 @@ export function parseAuthorizationInput(input: string): { code?: string; state?:
 }
 
 async function postForm(url: string, body: URLSearchParams): Promise<TokenResponse> {
+  const signal = AbortSignal.timeout(OAUTH_REQUEST_TIMEOUT_MS);
   const res = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body,
+    signal,
   });
 
   const text = await res.text();

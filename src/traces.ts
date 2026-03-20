@@ -1,11 +1,13 @@
 import { estimateCostUsd } from "./model-pricing.js";
 import fs from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { TRACE_COMPACTION_INTERVAL } from "./config.js";
 
 export type TraceEntry = {
   id: string;
   at: number;
   route: string;
+  sessionId?: string;
   accountId?: string;
   accountEmail?: string;
   model?: string;
@@ -86,6 +88,7 @@ export type UsageAggregate = {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  costUsd: number;
   statusCounts: Record<string, number>;
   firstAt?: number;
   lastAt?: number;
@@ -175,6 +178,10 @@ function normalizeTrace(raw: any): TraceEntry | null {
         : `${at}-${route}-${status}`,
     at,
     route,
+    sessionId:
+      typeof raw.sessionId === "string" && raw.sessionId.trim()
+        ? raw.sessionId.trim()
+        : undefined,
     accountId: typeof raw.accountId === "string" ? raw.accountId : undefined,
     accountEmail:
       typeof raw.accountEmail === "string" ? raw.accountEmail : undefined,
@@ -244,6 +251,7 @@ function createUsageAggregate(): UsageAggregate {
     promptTokens: 0,
     completionTokens: 0,
     totalTokens: 0,
+    costUsd: 0,
     statusCounts: {},
   };
 }
@@ -252,6 +260,14 @@ function addTraceToAggregate(agg: UsageAggregate, trace: TraceEntry) {
   const status = Number(trace.status);
   const statusKey = Number.isFinite(status) ? String(status) : "unknown";
   const tokens = usageToTokens(trace.usage);
+  const costUsd =
+    typeof trace.costUsd === "number"
+      ? trace.costUsd
+      : estimateCostUsd(
+          trace.model,
+          trace.tokensInput ?? 0,
+          trace.tokensOutput ?? 0,
+        ) ?? 0;
 
   agg.requests += 1;
   if (status >= 200 && status < 400) agg.ok += 1;
@@ -267,6 +283,7 @@ function addTraceToAggregate(agg: UsageAggregate, trace: TraceEntry) {
     agg.completionTokens += tokens.completionTokens;
     agg.totalTokens += tokens.totalTokens;
   }
+  agg.costUsd += costUsd;
 
   if (typeof trace.at === "number") {
     agg.firstAt =
@@ -306,6 +323,7 @@ function finalizeAggregate(agg: UsageAggregate) {
       completion: agg.completionTokens,
       total: agg.totalTokens,
     },
+    costUsd: Math.round(agg.costUsd * 1_000_000) / 1_000_000,
     statusCounts: agg.statusCounts,
     firstAt: agg.firstAt,
     lastAt: agg.lastAt,
@@ -457,6 +475,8 @@ export function createTraceManager(config: TraceManagerConfig) {
   const traceCache: TraceEntry[] = [];
   const statsCache: TraceEntry[] = [];
   let cacheInit: Promise<void> | null = null;
+  let appendSinceCompaction = 0;
+  let compactionQueued = false;
 
   async function readTraceFileFromDisk(): Promise<TraceEntry[]> {
     try {
@@ -483,9 +503,6 @@ export function createTraceManager(config: TraceManagerConfig) {
               if (normalized) parsed.push(normalized);
             } catch {}
           }
-          
-          // Limit memory usage by stopping if we have enough entries
-          if (parsed.length >= retentionMax) break;
         }
         
         // Process any remaining data
@@ -591,6 +608,12 @@ export function createTraceManager(config: TraceManagerConfig) {
       await fileHandle.close();
     }
     await fs.rename(tmp, filePath);
+  }
+
+  async function appendTraceLine(entry: TraceEntry): Promise<void> {
+    const json = JSON.stringify(entry);
+    if (json.length > 1024 * 1024) return;
+    await fs.appendFile(filePath, `${json}\n`, "utf8");
   }
 
   function toStatsHistoryEntry(entry: TraceEntry): TraceEntry {
@@ -725,17 +748,33 @@ export function createTraceManager(config: TraceManagerConfig) {
     } catch {}
   }
 
+  function queueCompactionIfNeeded() {
+    if (compactionQueued) return;
+    if (traceCache.length <= retentionMax && appendSinceCompaction < TRACE_COMPACTION_INTERVAL) {
+      return;
+    }
+    compactionQueued = true;
+    traceWriteQueue = traceWriteQueue.then(async () => {
+      try {
+        await writeTraceWindow(traceCache.slice(-retentionMax));
+        appendSinceCompaction = 0;
+      } finally {
+        compactionQueued = false;
+      }
+    });
+  }
+
   async function appendTrace(
     entry: Omit<
       TraceEntry,
-      "id" | "isError" | "tokensInput" | "tokensOutput" | "tokensTotal"
-    >,
+      "id" | "tokensInput" | "tokensOutput" | "tokensTotal" | "isError"
+    > & { isError?: boolean },
   ) {
     const normalizedTokens = normalizeTokenFields(entry.usage);
     const finalEntry: TraceEntry = {
       ...entry,
       id: randomUUID(),
-      isError: entry.status >= 400,
+      isError: entry.isError ?? entry.status >= 400,
       tokensInput: normalizedTokens.tokensInput,
       tokensOutput: normalizedTokens.tokensOutput,
       tokensTotal: normalizedTokens.tokensTotal,
@@ -752,7 +791,9 @@ export function createTraceManager(config: TraceManagerConfig) {
       if (traceCache.length > retentionMax) {
         traceCache.splice(0, traceCache.length - retentionMax);
       }
-      await writeTraceWindow(traceCache);
+      appendSinceCompaction += 1;
+      await appendTraceLine(finalEntry);
+      queueCompactionIfNeeded();
     });
     traceWriteQueue = run.catch(() => undefined);
     await Promise.all([run, appendStatsHistory(finalEntry)]);

@@ -1,6 +1,6 @@
-import type { TracePagination, TraceStats } from "../types";
+import type { TracePagination, TraceStats, TraceUsageStats, UsageSummary } from "../types";
 
-export const TRACE_PAGE_SIZE = 100;
+export const TRACE_PAGE_SIZE = 50;
 export const CHART_COLORS = ["#1f7a8c", "#2da4b8", "#4c956c", "#f4a259", "#e76f51", "#8a5a44", "#355070", "#43aa8b"];
 
 export const EMPTY_TRACE_STATS: TraceStats = {
@@ -25,6 +25,35 @@ export const EMPTY_TRACE_PAGINATION: TracePagination = {
   totalPages: 1,
   hasPrev: false,
   hasNext: false,
+};
+
+const EMPTY_USAGE_SUMMARY: UsageSummary = {
+  requests: 0,
+  ok: 0,
+  errors: 0,
+  successRate: 0,
+  stream: 0,
+  streamingRate: 0,
+  latencyMsTotal: 0,
+  avgLatencyMs: 0,
+  requestsWithUsage: 0,
+  tokens: {
+    prompt: 0,
+    completion: 0,
+    total: 0,
+  },
+  costUsd: 0,
+  statusCounts: {},
+};
+
+export const EMPTY_TRACE_USAGE_STATS: TraceUsageStats = {
+  filters: {},
+  totals: EMPTY_USAGE_SUMMARY,
+  byAccount: [],
+  byRoute: [],
+  bySession: [],
+  tracesEvaluated: 0,
+  tracesMatched: 0,
 };
 
 export const fmt = (ts?: number) => (!ts ? "-" : new Date(ts).toLocaleString());
@@ -65,4 +94,10 @@ export function maskEmail(v?: string) {
 export function maskId(v?: string) {
   if (!v) return "acc-xxxx";
   return "*";
+}
+
+export function formatSessionTail(v?: string) {
+  const value = String(v ?? "").trim();
+  if (!value) return "-";
+  return value.length <= 8 ? value : `...${value.slice(-8)}`;
 }

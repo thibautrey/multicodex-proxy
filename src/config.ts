@@ -1,5 +1,6 @@
 import os from "node:os";
 
+export const HOST = process.env.HOST ?? "127.0.0.1";
 export const PORT = Number(process.env.PORT ?? 4010);
 export const STORE_PATH = process.env.STORE_PATH ?? "/data/accounts.json";
 export const OAUTH_STATE_PATH =
@@ -24,17 +25,19 @@ export const MISTRAL_UPSTREAM_PATH =
 export const MISTRAL_COMPACT_UPSTREAM_PATH =
   process.env.MISTRAL_COMPACT_UPSTREAM_PATH ?? "/v1/responses/compact";
 export const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
+export const STORE_ENCRYPTION_KEY =
+  process.env.STORE_ENCRYPTION_KEY ?? "";
 export const MAX_ACCOUNT_RETRY_ATTEMPTS = Math.max(
   1,
   Number(process.env.MAX_ACCOUNT_RETRY_ATTEMPTS ?? 5),
 );
-export const MAX_UPSTREAM_RETRIES = Math.max(
+export const MAX_GET_RETRIES = Math.max(
   0,
-  Number(process.env.MAX_UPSTREAM_RETRIES ?? 3),
+  Number(process.env.MAX_GET_RETRIES ?? 2),
 );
-export const UPSTREAM_BASE_DELAY_MS = Math.max(
+export const RETRY_BASE_DELAY_MS = Math.max(
   100,
-  Number(process.env.UPSTREAM_BASE_DELAY_MS ?? 1000),
+  Number(process.env.RETRY_BASE_DELAY_MS ?? 250),
 );
 export const PI_USER_AGENT = `pi (${os.platform()} ${os.release()}; ${os.arch()})`;
 
@@ -51,6 +54,39 @@ export const MODELS_CACHE_MS = Number(
 
 export const TOKEN_REFRESH_MARGIN_MS = Number(
   process.env.TOKEN_REFRESH_MARGIN_MS ?? 60_000,
+);
+export const TOKEN_REFRESH_COOLDOWN_MS = Number(
+  process.env.TOKEN_REFRESH_COOLDOWN_MS ?? 5 * 60_000,
+);
+export const UPSTREAM_REQUEST_TIMEOUT_MS = Number(
+  process.env.UPSTREAM_REQUEST_TIMEOUT_MS ?? 60_000,
+);
+export const MODEL_DISCOVERY_TIMEOUT_MS = Number(
+  process.env.MODEL_DISCOVERY_TIMEOUT_MS ?? 8_000,
+);
+export const OAUTH_REQUEST_TIMEOUT_MS = Number(
+  process.env.OAUTH_REQUEST_TIMEOUT_MS ?? 15_000,
+);
+export const OAUTH_CALLBACK_BIND_HOST =
+  process.env.OAUTH_CALLBACK_BIND_HOST ?? "";
+export const MODEL_COMPATIBILITY_TTL_MS = Number(
+  process.env.MODEL_COMPATIBILITY_TTL_MS ?? 6 * 60 * 60_000,
+);
+export const SERVER_HEADERS_TIMEOUT_MS = Number(
+  process.env.SERVER_HEADERS_TIMEOUT_MS ?? 30_000,
+);
+export const SERVER_KEEP_ALIVE_TIMEOUT_MS = Number(
+  process.env.SERVER_KEEP_ALIVE_TIMEOUT_MS ?? 5_000,
+);
+export const SERVER_REQUEST_TIMEOUT_MS = Number(
+  process.env.SERVER_REQUEST_TIMEOUT_MS ?? 90_000,
+);
+export const SHUTDOWN_GRACE_MS = Number(
+  process.env.SHUTDOWN_GRACE_MS ?? 10_000,
+);
+export const TRACE_COMPACTION_INTERVAL = Math.max(
+  1,
+  Number(process.env.TRACE_COMPACTION_INTERVAL ?? 100),
 );
 
 export const ACCOUNT_FLUSH_INTERVAL_MS = Number(
