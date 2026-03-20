@@ -1,6 +1,7 @@
 import { estimateCostUsd } from "./model-pricing.js";
 import fs from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 
 export type TraceEntry = {
   id: string;
@@ -99,9 +100,22 @@ export type TraceManagerConfig = {
   legacyLimitMax?: number;
 };
 
+type TraceBucketAggregate = {
+  at: number;
+  requests: number;
+  errors: number;
+  tokensInput: number;
+  tokensOutput: number;
+  tokensTotal: number;
+  costUsd: number;
+  latencies: number[];
+  models: Map<string, TraceModelStats>;
+};
+
 const DEFAULT_RETENTION_MAX = 10000;
 const DEFAULT_PAGE_SIZE_MAX = 100;
 const DEFAULT_LEGACY_LIMIT_MAX = 2000;
+const HOUR_MS = 3_600_000;
 
 function safeNumber(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -441,6 +455,63 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
   };
 }
 
+function createEmptyBucket(at: number): TraceBucketAggregate {
+  return {
+    at,
+    requests: 0,
+    errors: 0,
+    tokensInput: 0,
+    tokensOutput: 0,
+    tokensTotal: 0,
+    costUsd: 0,
+    latencies: [],
+    models: new Map(),
+  };
+}
+
+function addTraceToBucket(bucket: TraceBucketAggregate, trace: TraceEntry) {
+  const model = trace.model || "unknown";
+  const traceCost =
+    typeof trace.costUsd === "number"
+      ? trace.costUsd
+      : (estimateCostUsd(
+          trace.model,
+          trace.tokensInput ?? 0,
+          trace.tokensOutput ?? 0,
+        ) ?? 0);
+  const traceTokensTotal =
+    trace.tokensTotal ?? (trace.tokensInput ?? 0) + (trace.tokensOutput ?? 0);
+
+  bucket.requests += 1;
+  if (trace.isError) bucket.errors += 1;
+  bucket.tokensInput += trace.tokensInput ?? 0;
+  bucket.tokensOutput += trace.tokensOutput ?? 0;
+  bucket.tokensTotal += traceTokensTotal;
+  bucket.costUsd += traceCost;
+  bucket.latencies.push(trace.latencyMs);
+
+  const existing = bucket.models.get(model);
+  if (existing) {
+    existing.count += 1;
+    if (!trace.isError) existing.okCount += 1;
+    existing.tokensInput += trace.tokensInput ?? 0;
+    existing.tokensOutput += trace.tokensOutput ?? 0;
+    existing.tokensTotal += traceTokensTotal;
+    existing.costUsd += traceCost;
+    return;
+  }
+
+  bucket.models.set(model, {
+    model,
+    count: 1,
+    okCount: trace.isError ? 0 : 1,
+    tokensInput: trace.tokensInput ?? 0,
+    tokensOutput: trace.tokensOutput ?? 0,
+    tokensTotal: traceTokensTotal,
+    costUsd: traceCost,
+  });
+}
+
 export type TraceManager = ReturnType<typeof createTraceManager>;
 
 export function createTraceManager(config: TraceManagerConfig) {
@@ -455,100 +526,63 @@ export function createTraceManager(config: TraceManagerConfig) {
   let traceWriteQueue: Promise<void> = Promise.resolve();
   let historyWriteQueue: Promise<void> = Promise.resolve();
   const traceCache: TraceEntry[] = [];
-  const statsCache: TraceEntry[] = [];
+  const statsBuckets = new Map<number, TraceBucketAggregate>();
+  let totalStored = 0;
   let cacheInit: Promise<void> | null = null;
+
+  async function ensureParentDir(file: string) {
+    await fs.mkdir(path.dirname(file), { recursive: true });
+  }
 
   async function readTraceFileFromDisk(): Promise<TraceEntry[]> {
     try {
-      const fileHandle = await fs.open(filePath, 'r');
+      const raw = await fs.readFile(filePath, "utf8");
       const parsed: TraceEntry[] = [];
-      let position = 0;
-      let buffer = Buffer.alloc(65536); // 64KB buffer
-      let remaining = '';
-      
-      try {
-        while (true) {
-          const { bytesRead } = await fileHandle.read(buffer, 0, buffer.length, position);
-          if (bytesRead === 0) break;
-          
-          position += bytesRead;
-          const chunk = remaining + buffer.toString('utf8', 0, bytesRead);
-          const lines = chunk.split('\n');
-          remaining = lines.pop() || '';
-          
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            try {
-              const normalized = normalizeTrace(JSON.parse(line));
-              if (normalized) parsed.push(normalized);
-            } catch {}
-          }
-          
-          // Limit memory usage by stopping if we have enough entries
-          if (parsed.length >= retentionMax) break;
-        }
-        
-        // Process any remaining data
-        if (remaining.trim()) {
-          try {
-            const normalized = normalizeTrace(JSON.parse(remaining));
-            if (normalized) parsed.push(normalized);
-          } catch {}
-        }
-        
-      } finally {
-        await fileHandle.close();
+      for (const line of raw.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const normalized = normalizeTrace(JSON.parse(line));
+          if (normalized) parsed.push(normalized);
+        } catch {}
       }
-      
-      return parsed.slice(-retentionMax); // Ensure we don't exceed retention
+      return parsed.slice(-retentionMax);
     } catch {
       return [];
     }
   }
 
-  async function readStatsHistoryFileFromDisk(): Promise<TraceEntry[]> {
+  async function scanStatsHistory<T>(
+    onTrace: (trace: TraceEntry) => void,
+    shouldCollect?: (trace: TraceEntry) => boolean,
+  ): Promise<T extends true ? TraceEntry[] : void>;
+  async function scanStatsHistory(
+    onTrace: (trace: TraceEntry) => void,
+    shouldCollect?: (trace: TraceEntry) => boolean,
+  ): Promise<TraceEntry[] | void> {
     try {
-      const fileHandle = await fs.open(historyFilePath, 'r');
-      const parsed: TraceEntry[] = [];
-      let position = 0;
-      let buffer = Buffer.alloc(65536); // 64KB buffer
-      let remaining = '';
-      
-      try {
-        while (true) {
-          const { bytesRead } = await fileHandle.read(buffer, 0, buffer.length, position);
-          if (bytesRead === 0) break;
-          
-          position += bytesRead;
-          const chunk = remaining + buffer.toString('utf8', 0, bytesRead);
-          const lines = chunk.split('\n');
-          remaining = lines.pop() || '';
-          
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            try {
-              const normalized = normalizeTrace(JSON.parse(line));
-              if (normalized) parsed.push(normalized);
-            } catch {}
-          }
-        }
-        
-        // Process any remaining data
-        if (remaining.trim()) {
-          try {
-            const normalized = normalizeTrace(JSON.parse(remaining));
-            if (normalized) parsed.push(normalized);
-          } catch {}
-        }
-        
-      } finally {
-        await fileHandle.close();
+      const raw = await fs.readFile(historyFilePath, "utf8");
+      const collected: TraceEntry[] = [];
+      for (const line of raw.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          const normalized = normalizeTrace(JSON.parse(line));
+          if (!normalized) continue;
+          onTrace(normalized);
+          if (shouldCollect?.(normalized)) collected.push(normalized);
+        } catch {}
       }
-      
-      return parsed;
+      return shouldCollect ? collected : undefined;
     } catch {
-      return [];
+      return shouldCollect ? [] : undefined;
     }
+  }
+
+  function ingestStatsTrace(trace: TraceEntry) {
+    totalStored += 1;
+    const bucketAt = Math.floor(trace.at / HOUR_MS) * HOUR_MS;
+    const bucket = statsBuckets.get(bucketAt) ?? createEmptyBucket(bucketAt);
+    addTraceToBucket(bucket, trace);
+    statsBuckets.set(bucketAt, bucket);
   }
 
   async function ensureCacheReady() {
@@ -557,10 +591,10 @@ export function createTraceManager(config: TraceManagerConfig) {
       return;
     }
     cacheInit = (async () => {
+      await Promise.all([ensureParentDir(filePath), ensureParentDir(historyFilePath)]);
       const traces = await readTraceFileFromDisk();
       traceCache.splice(0, traceCache.length, ...traces.slice(-retentionMax));
-      const stats = await readStatsHistoryFileFromDisk();
-      statsCache.splice(0, statsCache.length, ...stats);
+      await scanStatsHistory(ingestStatsTrace);
     })();
     await cacheInit;
   }
@@ -615,11 +649,10 @@ export function createTraceManager(config: TraceManagerConfig) {
   async function appendStatsHistory(entry: TraceEntry): Promise<void> {
     await ensureCacheReady();
     const normalized = toNormalizedHistoryEntry(entry);
-    if (normalized) {
-      statsCache.push(normalized);
-    }
+    if (normalized) ingestStatsTrace(normalized);
     const line = `${JSON.stringify(toStatsHistoryEntry(entry))}\n`;
     const run = historyWriteQueue.then(async () => {
+      await ensureParentDir(historyFilePath);
       await fs.appendFile(historyFilePath, line, "utf8");
     });
     historyWriteQueue = run.catch(() => undefined);
@@ -651,7 +684,8 @@ export function createTraceManager(config: TraceManagerConfig) {
 
   async function readStatsHistory(): Promise<TraceEntry[]> {
     await ensureCacheReady();
-    return statsCache.slice();
+    const traces = await scanStatsHistory<true>(() => undefined, () => true);
+    return traces ?? [];
   }
 
   async function readStatsHistoryRange(
@@ -659,21 +693,27 @@ export function createTraceManager(config: TraceManagerConfig) {
     untilMs?: number,
   ): Promise<TraceEntry[]> {
     await ensureCacheReady();
-    return statsCache.filter((t) => {
-      if (
-        typeof sinceMs === "number" &&
-        Number.isFinite(sinceMs) &&
-        t.at < sinceMs
-      )
-        return false;
-      if (
-        typeof untilMs === "number" &&
-        Number.isFinite(untilMs) &&
-        t.at > untilMs
-      )
-        return false;
-      return true;
-    });
+    const traces = await scanStatsHistory<true>(
+      () => undefined,
+      (t) => {
+        if (
+          typeof sinceMs === "number" &&
+          Number.isFinite(sinceMs) &&
+          t.at < sinceMs
+        ) {
+          return false;
+        }
+        if (
+          typeof untilMs === "number" &&
+          Number.isFinite(untilMs) &&
+          t.at > untilMs
+        ) {
+          return false;
+        }
+        return true;
+      },
+    );
+    return traces ?? [];
   }
 
   async function seedStatsHistoryIfMissing() {
@@ -714,15 +754,103 @@ export function createTraceManager(config: TraceManagerConfig) {
     } finally {
       await fileHandle.close();
     }
-    
-    statsCache.splice(0, statsCache.length, ...historyEntries);
+    totalStored = 0;
+    statsBuckets.clear();
+    for (const entry of historyEntries) ingestStatsTrace(entry);
   }
 
   async function compactTraceStorageIfNeeded() {
     await ensureCacheReady();
-    try {
-      await writeTraceWindow(traceCache.slice(-retentionMax));
-    } catch {}
+  }
+
+  async function getTraceStats(
+    sinceMs?: number,
+    untilMs?: number,
+  ): Promise<{ totalStored: number; matched: number; stats: TraceStats }> {
+    await ensureCacheReady();
+    const selectedBuckets = Array.from(statsBuckets.values())
+      .filter((bucket) => {
+        if (
+          typeof sinceMs === "number" &&
+          Number.isFinite(sinceMs) &&
+          bucket.at + HOUR_MS <= sinceMs
+        ) {
+          return false;
+        }
+        if (
+          typeof untilMs === "number" &&
+          Number.isFinite(untilMs) &&
+          bucket.at > untilMs
+        ) {
+          return false;
+        }
+        return true;
+      })
+      .sort((a, b) => a.at - b.at);
+
+    const modelMap = new Map<string, TraceModelStats>();
+    let requests = 0;
+    let errors = 0;
+    let tokensInput = 0;
+    let tokensOutput = 0;
+    let tokensTotal = 0;
+    let costUsd = 0;
+    let latencyWeightedTotal = 0;
+
+    const timeseries = selectedBuckets.map((bucket) => {
+      requests += bucket.requests;
+      errors += bucket.errors;
+      tokensInput += bucket.tokensInput;
+      tokensOutput += bucket.tokensOutput;
+      tokensTotal += bucket.tokensTotal;
+      costUsd += bucket.costUsd;
+      latencyWeightedTotal += bucket.latencies.reduce((sum, value) => sum + value, 0);
+
+      for (const model of bucket.models.values()) {
+        const existing = modelMap.get(model.model);
+        if (existing) {
+          existing.count += model.count;
+          existing.okCount += model.okCount;
+          existing.tokensInput += model.tokensInput;
+          existing.tokensOutput += model.tokensOutput;
+          existing.tokensTotal += model.tokensTotal;
+          existing.costUsd += model.costUsd;
+        } else {
+          modelMap.set(model.model, { ...model });
+        }
+      }
+
+      return {
+        at: bucket.at,
+        requests: bucket.requests,
+        errors: bucket.errors,
+        tokensInput: bucket.tokensInput,
+        tokensOutput: bucket.tokensOutput,
+        tokensTotal: bucket.tokensTotal,
+        costUsd: bucket.costUsd,
+        latencyP50Ms: percentile(bucket.latencies, 50),
+        latencyP95Ms: percentile(bucket.latencies, 95),
+      };
+    });
+
+    return {
+      totalStored,
+      matched: requests,
+      stats: {
+        totals: {
+          requests,
+          errors,
+          errorRate: requests ? errors / requests : 0,
+          tokensInput,
+          tokensOutput,
+          tokensTotal,
+          costUsd,
+          latencyAvgMs: requests ? latencyWeightedTotal / requests : 0,
+        },
+        models: Array.from(modelMap.values()).sort((a, b) => b.count - a.count),
+        timeseries,
+      },
+    };
   }
 
   async function appendTrace(
@@ -746,16 +874,29 @@ export function createTraceManager(config: TraceManagerConfig) {
       ),
     };
 
+    const line = `${JSON.stringify(finalEntry)}\n`;
     const run = traceWriteQueue.then(async () => {
       await ensureCacheReady();
       traceCache.push(finalEntry);
       if (traceCache.length > retentionMax) {
         traceCache.splice(0, traceCache.length - retentionMax);
       }
-      await writeTraceWindow(traceCache);
+      await ensureParentDir(filePath);
+      await fs.appendFile(filePath, line, "utf8");
     });
     traceWriteQueue = run.catch(() => undefined);
     await Promise.all([run, appendStatsHistory(finalEntry)]);
+  }
+
+  function recordTrace(
+    entry: Omit<
+      TraceEntry,
+      "id" | "isError" | "tokensInput" | "tokensOutput" | "tokensTotal"
+    >,
+  ) {
+    void appendTrace(entry).catch((err) => {
+      console.error("trace append failed", err);
+    });
   }
 
   async function readTracesLegacy(limit = 200): Promise<TraceEntry[]> {
@@ -775,7 +916,9 @@ export function createTraceManager(config: TraceManagerConfig) {
     readStatsHistoryRange,
     seedStatsHistoryIfMissing,
     compactTraceStorageIfNeeded,
+    getTraceStats,
     appendTrace,
+    recordTrace,
     readTracesLegacy,
     buildTraceStats,
     createUsageAggregate,

@@ -425,7 +425,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       mistralCompactUpstreamPath,
       oauthConfig,
     } = options;
-  const { appendTrace } = traceManager;
+  const { recordTrace } = traceManager;
   const router = express.Router();
 
   async function proxyWithRotation(
@@ -629,7 +629,7 @@ let accounts = store.getCachedAccounts();
             if (!doneSent) res.write("data: [DONE]\n\n");
             res.end();
 
-            await appendTrace({
+            recordTrace({
               at: Date.now(),
               route: req.path,
               accountId: selected.id,
@@ -656,7 +656,7 @@ let accounts = store.getCachedAccounts();
               .json(normalized.chat);
 
             const upstreamError = !upstream.ok ? txt.slice(0, 500) : undefined;
-            await appendTrace({
+            recordTrace({
               at: Date.now(),
               route: req.path,
               accountId: selected.id,
@@ -679,7 +679,7 @@ let accounts = store.getCachedAccounts();
             const respObj = parseResponsesSSEToResponseObject(txt);
             res.status(upstream.ok ? 200 : upstream.status).json(respObj);
             const upstreamError = !upstream.ok ? txt.slice(0, 500) : undefined;
-            await appendTrace({
+            recordTrace({
               at: Date.now(),
               route: req.path,
               accountId: selected.id,
@@ -762,7 +762,7 @@ let accounts = store.getCachedAccounts();
           }
           res.end();
 
-          await appendTrace({
+          recordTrace({
             at: Date.now(),
             route: req.path,
             accountId: selected.id,
@@ -803,7 +803,7 @@ let accounts = store.getCachedAccounts();
             res.write(chatCompletionObjectToSSE(normalized.chat));
             res.end();
 
-            await appendTrace({
+            recordTrace({
               at: Date.now(),
               route: req.path,
               accountId: selected.id,
@@ -833,7 +833,7 @@ let accounts = store.getCachedAccounts();
             res.write(chatCompletionObjectToSSE(converted));
             res.end();
 
-            await appendTrace({
+            recordTrace({
               at: Date.now(),
               route: req.path,
               accountId: selected.id,
@@ -904,7 +904,7 @@ let accounts = store.getCachedAccounts();
             res.write(chatCompletionObjectToSSE(chatResp));
             res.end();
 
-            await appendTrace({
+            recordTrace({
               at: Date.now(),
               route: req.path,
               accountId: selected.id,
@@ -938,7 +938,7 @@ let accounts = store.getCachedAccounts();
             res.write(responseObjectToSSE(sanitized));
             res.end();
 
-            await appendTrace({
+            recordTrace({
               at: Date.now(),
               route: req.path,
               accountId: selected.id,
@@ -988,7 +988,7 @@ let accounts = store.getCachedAccounts();
 
             res.end();
 
-            await appendTrace({
+            recordTrace({
               at: Date.now(),
               route: req.path,
               accountId: selected.id,
@@ -1018,7 +1018,7 @@ let accounts = store.getCachedAccounts();
             res
               .status(upstream.ok ? 200 : upstream.status)
               .json(normalized.chat);
-            await appendTrace({
+            recordTrace({
               at: Date.now(),
               route: req.path,
               accountId: selected.id,
@@ -1039,7 +1039,7 @@ let accounts = store.getCachedAccounts();
 
           const respObj = parseResponsesSSEToResponseObject(text);
           res.status(upstream.ok ? 200 : upstream.status).json(respObj);
-          await appendTrace({
+          recordTrace({
             at: Date.now(),
             route: req.path,
             accountId: selected.id,
@@ -1064,7 +1064,7 @@ let accounts = store.getCachedAccounts();
 
         const usage = extractUsageFromPayload(parsed);
 
-        await appendTrace({
+        recordTrace({
           at: Date.now(),
           route: req.path,
           accountId: selected.id,
@@ -1098,7 +1098,7 @@ let accounts = store.getCachedAccounts();
         const msg = err?.message ?? String(err);
         rememberError(selected, msg);
         await store.upsertAccount(selected);
-        await appendTrace({
+        recordTrace({
           at: Date.now(),
           route: req.path,
           accountId: selected.id,

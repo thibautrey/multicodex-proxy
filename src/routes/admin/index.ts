@@ -205,6 +205,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     readTracesLegacy,
     readStatsHistory,
     readStatsHistoryRange,
+    getTraceStats,
     buildTraceStats,
     createUsageAggregate,
     addTraceToAggregate,
@@ -469,16 +470,16 @@ export function createAdminRouter(options: AdminRoutesOptions) {
   router.get("/stats/traces", async (req, res) => {
     const sinceMs = parseQueryNumber(req.query.sinceMs);
     const untilMs = parseQueryNumber(req.query.untilMs);
-    const traces = await readStatsHistoryRange(sinceMs, untilMs);
-    const sorted = [...traces].sort((a, b) => b.at - a.at);
-    const stats = buildTraceStats(sorted);
-    const totalStored = (await readStatsHistory()).length;
+    const { totalStored, matched, stats } = await getTraceStats(
+      sinceMs,
+      untilMs,
+    );
 
     res.json({
       ok: true,
       filters: { sinceMs, untilMs },
       totalStored,
-      matched: sorted.length,
+      matched,
       stats,
     });
   });
