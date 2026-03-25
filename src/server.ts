@@ -19,9 +19,10 @@ import {
   UPSTREAM_PATH,
   OAUTH_STATE_PATH,
 } from "./config.js";
+import { createBodyParserMiddleware } from "./middleware/decompression.js";
 
 const app = express();
-app.use(express.json({ limit: "20mb" }));
+app.use(createBodyParserMiddleware());
 
 const dataDir = path.dirname(STORE_PATH);
 await cleanupOrphanedTmpFiles(dataDir);
