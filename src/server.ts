@@ -2,7 +2,7 @@ import express from "express";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { AccountStore, OAuthStateStore } from "./store.js";
+import { AccountStore, OAuthStateStore, cleanupOrphanedTmpFiles } from "./store.js";
 import { createTraceManager } from "./traces.js";
 import { createAdminRouter } from "./routes/admin/index.js";
 import { createProxyRouter } from "./routes/proxy/index.js";
@@ -22,6 +22,9 @@ import {
 
 const app = express();
 app.use(express.json({ limit: "20mb" }));
+
+const dataDir = path.dirname(STORE_PATH);
+await cleanupOrphanedTmpFiles(dataDir);
 
 const store = new AccountStore(STORE_PATH);
 const oauthStore = new OAuthStateStore(OAUTH_STATE_PATH);

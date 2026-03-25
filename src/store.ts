@@ -28,6 +28,16 @@ async function writeJsonAtomic(filePath: string, data: unknown): Promise<void> {
   await fs.rename(tmp, filePath);
 }
 
+export async function cleanupOrphanedTmpFiles(dataDir: string): Promise<void> {
+  await fs.mkdir(dataDir, { recursive: true });
+  const entries = await fs.readdir(dataDir);
+  await Promise.all(
+    entries
+      .filter((f) => f.endsWith(".tmp-"))
+      .map((f) => fs.unlink(path.join(dataDir, f)))
+  );
+}
+
 export class AccountStore {
   private inMemoryAccounts: Account[] = [];
   private inMemoryModelAliases: ModelAlias[] = [];
