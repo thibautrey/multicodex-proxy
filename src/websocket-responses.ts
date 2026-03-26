@@ -273,7 +273,8 @@ async function forwardFrame(
       : "";
   if (turnState) headers.set("x-codex-turn-state", turnState);
 
-  const upstreamRequest = { ...frame, stream: true };
+  const { type: _frameType, ...requestBody } = frame;
+  const upstreamRequest = { ...requestBody, stream: true };
   const requestedModel =
     typeof frame.model === "string" && frame.model.trim()
       ? frame.model.trim()
