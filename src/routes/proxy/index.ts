@@ -490,6 +490,33 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
   const { recordTrace } = traceManager;
   const router = express.Router();
 
+  function rejectNonPost(routeLabel: string): express.RequestHandler {
+    return (req, res, next) => {
+      if (req.method === "POST") return next();
+
+      res.setHeader("Allow", routeLabel === "/v1/responses" ? "POST, GET" : "POST");
+      const upgradeHeader = String(req.header("upgrade") ?? "").toLowerCase();
+      const attemptedWebsocket = upgradeHeader === "websocket";
+      const protocolHint = attemptedWebsocket
+        ? routeLabel === "/v1/responses"
+          ? "WebSocket upgrades are handled before Express routing."
+          : "This endpoint does not support WebSocket upgrades."
+        : "This endpoint accepts HTTP POST only.";
+      const usageHint =
+        routeLabel === "/v1/responses"
+          ? "Use POST /v1/responses over http(s):// with JSON, or connect via ws(s):// and send JSON frames with type='response.create'."
+          : `Use POST ${routeLabel} over http(s):// with JSON.`;
+
+      return res.status(405).json({
+        error: {
+          message: `${protocolHint} ${usageHint} For HTTP streaming, keep HTTP and set stream=true to receive text/event-stream.`,
+          type: "invalid_request_error",
+          code: "method_not_allowed",
+        },
+      });
+    };
+  }
+
   // Start background model cache refresh
   startBackgroundModelRefresh(store, openaiBaseUrl, mistralBaseUrl);
 
@@ -1201,8 +1228,11 @@ let accounts = store.getCachedAccounts();
       if (k.toLowerCase() !== "content-length") to.setHeader(k, v);
   }
 
+  router.all("/chat/completions", rejectNonPost("/v1/chat/completions"));
   router.post("/chat/completions", proxyWithRotation);
+  router.all("/responses", rejectNonPost("/v1/responses"));
   router.post("/responses", proxyWithRotation);
+  router.all("/responses/compact", rejectNonPost("/v1/responses/compact"));
   router.post("/responses/compact", proxyWithRotation);
 
   router.get("/models", async (_req, res) => {

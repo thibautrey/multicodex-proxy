@@ -6,6 +6,7 @@ import { AccountStore, OAuthStateStore, cleanupOrphanedTmpFiles } from "./store.
 import { createTraceManager } from "./traces.js";
 import { createAdminRouter } from "./routes/admin/index.js";
 import { createProxyRouter } from "./routes/proxy/index.js";
+import { installResponsesWebsocketProxy } from "./websocket-responses.js";
 import { oauthConfig } from "./oauth-config.js";
 import {
   ADMIN_TOKEN,
@@ -18,8 +19,10 @@ import {
   TRACE_STATS_HISTORY_PATH,
   UPSTREAM_PATH,
   OAUTH_STATE_PATH,
+  PORT,
 } from "./config.js";
 import { createBodyParserMiddleware } from "./middleware/decompression.js";
+import http from "node:http";
 
 const app = express();
 app.use(createBodyParserMiddleware());
@@ -105,8 +108,15 @@ app.get("*", (req, res, next) => {
   });
 });
 
-app.listen(process.env.PORT ?? 4010, () => {
-  console.log(`multivibe listening on :${process.env.PORT ?? 4010}`);
+const server = http.createServer(app);
+
+installResponsesWebsocketProxy({
+  server,
+  port: PORT,
+});
+
+server.listen(PORT, () => {
+  console.log(`multivibe listening on :${PORT}`);
   console.log(
     `store=${STORE_PATH} oauth=${OAUTH_STATE_PATH} trace=${TRACE_FILE_PATH} traceStats=${TRACE_STATS_HISTORY_PATH} redirect=${oauthConfig.redirectUri} openaiUpstream=${CHATGPT_BASE_URL}${UPSTREAM_PATH} mistralUpstream=${MISTRAL_BASE_URL}${MISTRAL_UPSTREAM_PATH}`,
   );

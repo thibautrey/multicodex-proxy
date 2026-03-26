@@ -23,6 +23,11 @@ MultiVibe acts as an OpenAI-compatible gateway that lets you route requests acro
   - `POST /v1/chat/completions`
   - `POST /v1/responses`
   - `POST /v1/responses/compact`
+- **Streaming over SSE or WebSocket**
+  - HTTP streaming uses plain `POST` with `stream: true`
+  - HTTP response stream is `text/event-stream`
+  - `/v1/responses` also accepts `ws://` / `wss://` and Codex-style JSON `response.create` frames
+  - `/v1/chat/completions` and `/v1/responses/compact` remain HTTP-only
 - **Multi-account routing** with quota-aware failover
 - **Model aliases** (for example `small`) with ordered fallback across providers/models
 - **OAuth onboarding** from dashboard (manual redirect paste flow)
@@ -150,6 +155,41 @@ curl -X POST http://localhost:4010/v1/chat/completions \
     "model": "gpt-5.3-codex",
     "messages": [{"role":"user","content":"hello"}]
   }'
+```
+
+### Streaming responses
+
+```bash
+curl -N -X POST http://localhost:4010/v1/responses \
+  -H "content-type: application/json" \
+  -d '{
+    "model": "gpt-5.3-codex",
+    "input": "hello",
+    "stream": true
+  }'
+```
+
+### WebSocket responses
+
+```js
+const ws = new WebSocket("ws://localhost:4010/v1/responses", {
+  headers: {
+    Authorization: "Bearer YOUR_TOKEN"
+  }
+});
+
+ws.onmessage = (event) => {
+  console.log(JSON.parse(event.data));
+};
+
+ws.onopen = () => {
+  ws.send(JSON.stringify({
+    type: "response.create",
+    model: "gpt-5.3-codex",
+    input: [{ role: "user", content: [{ type: "input_text", text: "hello" }] }],
+    stream: true
+  }));
+};
 ```
 
 ### Create model alias
