@@ -7,6 +7,16 @@ type InstallResponsesWebsocketProxyOptions = {
   port: number;
 };
 
+type FunctionCallRecord = {
+  call_id: string;
+  name: string;
+  arguments: string;
+};
+
+type ConversationState = {
+  functionCalls: Map<string, FunctionCallRecord>;
+};
+
 type ResponseCreateFrame = {
   type: "response.create";
   generate?: boolean;
@@ -226,6 +236,7 @@ async function forwardFrame(
   req: http.IncomingMessage,
   port: number,
   frame: ResponseCreateFrame,
+  conversationState: ConversationState,
 ) {
   if (frame.generate === false) {
     const warmup = makeWarmupResponse(frame);
@@ -233,6 +244,53 @@ async function forwardFrame(
     sendJson(ws, warmup.completed);
     return;
   }
+
+  const { type: _frameType, previous_response_id: _previousResponseId, ...frameBody } = frame;
+
+  const input = Array.isArray(frameBody.input) ? frameBody.input : [];
+  const existingCallIds = new Set<string>();
+  const hasFunctionCalls = input.some((item: any) => item?.type === "function_call");
+  const hasFunctionCallOutputs = input.some(
+    (item: any) => item?.type === "function_call_output",
+  );
+
+  if (hasFunctionCalls) {
+    for (const item of input) {
+      if (item?.type === "function_call" && item?.call_id) {
+        existingCallIds.add(item.call_id);
+        conversationState.functionCalls.set(item.call_id, {
+          call_id: item.call_id,
+          name: item.name ?? "unknown",
+          arguments: typeof item.arguments === "string" ? item.arguments : JSON.stringify(item.arguments ?? {}),
+        });
+      }
+    }
+  }
+
+  if (hasFunctionCallOutputs && !hasFunctionCalls) {
+    const enrichedInput: any[] = [];
+    for (const item of input) {
+      if (item?.type === "function_call_output" && item?.call_id && !existingCallIds.has(item.call_id)) {
+        const matchedCall = conversationState.functionCalls.get(item.call_id);
+        if (matchedCall) {
+          enrichedInput.push({
+            type: "function_call",
+            call_id: matchedCall.call_id,
+            name: matchedCall.name,
+            arguments: matchedCall.arguments,
+          });
+        }
+      }
+      enrichedInput.push(item);
+    }
+    frameBody.input = enrichedInput;
+  }
+
+  const upstreamRequest = { ...frameBody, stream: true };
+  const requestedModel =
+    typeof frame.model === "string" && frame.model.trim()
+      ? frame.model.trim()
+      : "unknown";
 
   const headers = new Headers();
   const authHeader =
@@ -272,13 +330,6 @@ async function forwardFrame(
       ? req.headers["x-codex-turn-state"]
       : "";
   if (turnState) headers.set("x-codex-turn-state", turnState);
-
-  const { type: _frameType, previous_response_id: _previousResponseId, ...requestBody } = frame;
-  const upstreamRequest = { ...requestBody, stream: true };
-  const requestedModel =
-    typeof frame.model === "string" && frame.model.trim()
-      ? frame.model.trim()
-      : "unknown";
 
   let response: Response;
   try {
@@ -337,6 +388,9 @@ export function installResponsesWebsocketProxy({
 
   wss.on("connection", (ws, req) => {
     let inFlight = false;
+    const conversationState: ConversationState = {
+      functionCalls: new Map(),
+    };
 
     ws.on("message", async (message, isBinary) => {
       if (isBinary) {
@@ -366,7 +420,7 @@ export function installResponsesWebsocketProxy({
 
       inFlight = true;
       try {
-        await forwardFrame(ws, req, port, frame);
+        await forwardFrame(ws, req, port, frame, conversationState);
       } finally {
         inFlight = false;
       }
