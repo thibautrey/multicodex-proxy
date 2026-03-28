@@ -150,8 +150,8 @@ export async function refreshUsageIfNeeded(account: Account, chatgptBaseUrl: str
   const timeout = setTimeout(() => controller.abort(), USAGE_TIMEOUT_MS);
   try {
     const headers: Record<string, string> = {
-      Authorization: `Bearer ${account.accessToken}`,
-      Accept: "application/json",
+      authorization: `Bearer ${account.accessToken}`,
+      accept: "application/json",
     };
     const usageUrl = `${chatgptBaseUrl}/backend-api/wham/usage`;
     if (provider === "openai" && account.chatgptAccountId) {

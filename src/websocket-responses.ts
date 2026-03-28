@@ -147,6 +147,13 @@ function sseFrameToJson(frame: string): unknown | null {
   }
 }
 
+function isValidAuthorizationHeader(value: string): boolean {
+  const BearerPattern = /^Bearer\s+/i;
+  if (!BearerPattern.test(value)) return false;
+  const token = value.replace(BearerPattern, "");
+  return token.length > 0 && /^[A-Za-z0-9_.-]+$/.test(token);
+}
+
 function takeNextSSEFrame(buffer: string): { frame: string; rest: string } | null {
   const normalized = buffer.replace(/\r\n/g, "\n");
   const idx = normalized.indexOf("\n\n");
@@ -295,7 +302,13 @@ async function forwardFrame(
   const headers = new Headers();
   const authHeader =
     typeof req.headers.authorization === "string" ? req.headers.authorization : "";
-  if (authHeader) headers.set("authorization", authHeader);
+  if (authHeader) {
+    if (!isValidAuthorizationHeader(authHeader)) {
+      sendError(ws, "Authorization header is badly formatted", 400, "invalid_request_error");
+      return;
+    }
+    headers.set("authorization", authHeader);
+  }
   headers.set("content-type", "application/json");
   headers.set("accept", "text/event-stream");
 
