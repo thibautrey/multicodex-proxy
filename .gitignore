@@ -4,3 +4,5 @@ dist
 web-dist
 .env
 web/*.tsbuildinfo
+data/accounts.json
+data/oauth-state.json

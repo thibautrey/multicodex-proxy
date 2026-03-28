@@ -33,6 +33,48 @@ type ErrorFrame = {
   };
 };
 
+function rememberFunctionCall(
+  conversationState: ConversationState,
+  item: any,
+) {
+  if (item?.type !== "function_call" || !item?.call_id) return;
+  conversationState.functionCalls.set(item.call_id, {
+    call_id: item.call_id,
+    name: item.name ?? "unknown",
+    arguments:
+      typeof item.arguments === "string"
+        ? item.arguments
+        : JSON.stringify(item.arguments ?? {}),
+  });
+}
+
+function rememberFunctionCallsFromResponse(
+  conversationState: ConversationState,
+  response: any,
+) {
+  const output = Array.isArray(response?.output) ? response.output : [];
+  for (const item of output) rememberFunctionCall(conversationState, item);
+}
+
+function rememberFunctionCallsFromEvent(
+  conversationState: ConversationState,
+  event: any,
+) {
+  if (!event || typeof event !== "object") return;
+
+  if (
+    event.type === "response.output_item.added" ||
+    event.type === "response.output_item.done"
+  ) {
+    rememberFunctionCall(conversationState, event.item);
+    return;
+  }
+
+  if (event.type === "response.completed") {
+    rememberFunctionCallsFromResponse(conversationState, event.response);
+  }
+}
+
 function sendJson(ws: WebSocket, payload: unknown) {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify(payload));
@@ -164,7 +206,11 @@ function takeNextSSEFrame(buffer: string): { frame: string; rest: string } | nul
   };
 }
 
-async function relaySseAsWebsocket(ws: WebSocket, response: Response) {
+async function relaySseAsWebsocket(
+  ws: WebSocket,
+  response: Response,
+  conversationState: ConversationState,
+) {
   if (!response.body) return;
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -180,7 +226,10 @@ async function relaySseAsWebsocket(ws: WebSocket, response: Response) {
       if (!next) break;
       buffer = next.rest;
       const payload = sseFrameToJson(next.frame);
-      if (payload) sendJson(ws, payload);
+      if (payload) {
+        rememberFunctionCallsFromEvent(conversationState, payload);
+        sendJson(ws, payload);
+      }
     }
   }
 
@@ -190,11 +239,17 @@ async function relaySseAsWebsocket(ws: WebSocket, response: Response) {
     if (!next) break;
     buffer = next.rest;
     const payload = sseFrameToJson(next.frame);
-    if (payload) sendJson(ws, payload);
+    if (payload) {
+      rememberFunctionCallsFromEvent(conversationState, payload);
+      sendJson(ws, payload);
+    }
   }
   if (buffer.trim()) {
     const payload = sseFrameToJson(buffer);
-    if (payload) sendJson(ws, payload);
+    if (payload) {
+      rememberFunctionCallsFromEvent(conversationState, payload);
+      sendJson(ws, payload);
+    }
   }
 }
 
@@ -252,7 +307,7 @@ async function forwardFrame(
     return;
   }
 
-  const { type: _frameType, previous_response_id: _previousResponseId, ...frameBody } = frame;
+  const { type: _frameType, ...frameBody } = frame;
 
   const input = Array.isArray(frameBody.input) ? frameBody.input : [];
   const existingCallIds = new Set<string>();
@@ -265,11 +320,7 @@ async function forwardFrame(
     for (const item of input) {
       if (item?.type === "function_call" && item?.call_id) {
         existingCallIds.add(item.call_id);
-        conversationState.functionCalls.set(item.call_id, {
-          call_id: item.call_id,
-          name: item.name ?? "unknown",
-          arguments: typeof item.arguments === "string" ? item.arguments : JSON.stringify(item.arguments ?? {}),
-        });
+        rememberFunctionCall(conversationState, item);
       }
     }
   }
@@ -374,7 +425,7 @@ async function forwardFrame(
   }
 
   if (contentType.includes("text/event-stream")) {
-    await relaySseAsWebsocket(ws, response);
+    await relaySseAsWebsocket(ws, response, conversationState);
     return;
   }
 
