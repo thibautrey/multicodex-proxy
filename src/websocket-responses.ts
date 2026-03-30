@@ -307,7 +307,7 @@ async function forwardFrame(
     return;
   }
 
-  const { type: _frameType, ...frameBody } = frame;
+  const { type: _frameType, previous_response_id: _previousResponseId, ...frameBody } = frame;
 
   const input = Array.isArray(frameBody.input) ? frameBody.input : [];
   const existingCallIds = new Set<string>();
