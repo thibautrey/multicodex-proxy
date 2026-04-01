@@ -10,6 +10,9 @@ import {
   UPSTREAM_BASE_DELAY_MS,
   UPSTREAM_PATH,
   UPSTREAM_COMPACT_PATH,
+  ZAI_BASE_URL,
+  ZAI_UPSTREAM_PATH,
+  ZAI_COMPACT_UPSTREAM_PATH,
 } from "../../config.js";
 import {
   chatCompletionObjectToSSE,
@@ -33,6 +36,9 @@ import {
   normalizeProvider,
   refreshUsageIfNeeded,
   rememberError,
+  parseZaiErrorCode,
+  shouldBlockAccountForZaiError,
+  getZaiBlockDuration,
 } from "../../quota.js";
 import {
   ensureNonEmptyChatCompletion,
@@ -56,6 +62,9 @@ type ProxyRoutesOptions = {
   mistralBaseUrl: string;
   mistralUpstreamPath: string;
   mistralCompactUpstreamPath: string;
+  zaiBaseUrl: string;
+  zaiUpstreamPath: string;
+  zaiCompactUpstreamPath: string;
   oauthConfig: OAuthConfig;
 };
 
@@ -201,6 +210,15 @@ function inferProviderFromModel(
     return "mistral";
   }
 
+  // z.ai / GLM models
+  if (
+    key.startsWith("glm-") ||
+    key.startsWith("chatglm") ||
+    key.startsWith("codegeex")
+  ) {
+    return "zai";
+  }
+
   return "openai";
 }
 
@@ -208,6 +226,7 @@ async function discoverModels(
   store: AccountStore,
   openaiBaseUrl: string,
   mistralBaseUrl: string,
+  zaiBaseUrl: string,
 ): Promise<ExposedModel[]> {
   if (
     Date.now() - modelsCache.at < MODELS_CACHE_MS &&
@@ -275,6 +294,31 @@ async function discoverModels(
       } catch {}
     }
 
+    const zaiAccount = accounts.find(
+      (a) => a.enabled && a.accessToken && normalizeProvider(a) === "zai",
+    );
+    if (zaiAccount) {
+      try {
+        const headers: Record<string, string> = {
+          authorization: `Bearer ${zaiAccount.accessToken}`,
+          accept: "application/json",
+        };
+        const r = await fetch(`${zaiBaseUrl}/v1/models`, { headers });
+        if (r.ok) {
+          const json: any = await r.json();
+          const upstream = Array.isArray(json?.data) ? json.data : [];
+          for (const entry of upstream) {
+            const id =
+              typeof entry?.id === "string" && entry.id.trim()
+                ? entry.id.trim()
+                : "";
+            if (!id) continue;
+            byId.set(id, modelObject(id, "zai", entry));
+          }
+        }
+      } catch {}
+    }
+
     for (const id of PROXY_MODELS) {
       if (!byId.has(id)) byId.set(id, modelObject(id, "openai"));
     }
@@ -337,11 +381,12 @@ function startBackgroundModelRefresh(
   store: AccountStore,
   openaiBaseUrl: string,
   mistralBaseUrl: string,
+  zaiBaseUrl: string,
 ): void {
   // Refresh validation cache every 60 seconds asynchronously
   setInterval(async () => {
     try {
-      const models = await discoverModels(store, openaiBaseUrl, mistralBaseUrl);
+      const models = await discoverModels(store, openaiBaseUrl, mistralBaseUrl, zaiBaseUrl);
       console.log(`[model-cache] Background refresh: ${models.length} models available`);
     } catch (err) {
       console.error("[model-cache] Background refresh failed:", err);
@@ -351,7 +396,7 @@ function startBackgroundModelRefresh(
   // Initial sync refresh after a short delay to populate cache on startup
   setTimeout(async () => {
     try {
-      const models = await discoverModels(store, openaiBaseUrl, mistralBaseUrl);
+      const models = await discoverModels(store, openaiBaseUrl, mistralBaseUrl, zaiBaseUrl);
       console.log(`[model-cache] Initial refresh: ${models.length} models available`);
     } catch (err) {
       console.error("[model-cache] Initial refresh failed:", err);
@@ -485,6 +530,9 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       mistralBaseUrl,
       mistralUpstreamPath,
       mistralCompactUpstreamPath,
+      zaiBaseUrl,
+      zaiUpstreamPath,
+      zaiCompactUpstreamPath,
       oauthConfig,
     } = options;
   const { recordTrace } = traceManager;
@@ -518,7 +566,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
   }
 
   // Start background model cache refresh
-  startBackgroundModelRefresh(store, openaiBaseUrl, mistralBaseUrl);
+  startBackgroundModelRefresh(store, openaiBaseUrl, mistralBaseUrl, zaiBaseUrl);
 
   async function proxyWithRotation(
     req: express.Request,
@@ -543,8 +591,10 @@ let accounts = store.getCachedAccounts();
     accounts = await Promise.all(
       accounts.map(async (account) => {
         const valid = await ensureValidToken(account, oauthConfig);
-        const usageBaseUrl =
-          normalizeProvider(valid) === "mistral" ? mistralBaseUrl : openaiBaseUrl;
+        const provider = normalizeProvider(valid);
+        let usageBaseUrl = openaiBaseUrl;
+        if (provider === "mistral") usageBaseUrl = mistralBaseUrl;
+        else if (provider === "zai") usageBaseUrl = zaiBaseUrl;
         await refreshUsageIfNeeded(valid, usageBaseUrl);
         return valid;
       }),
@@ -567,7 +617,7 @@ let accounts = store.getCachedAccounts();
       });
     }
 
-    const discoveredModels = await discoverModels(store, openaiBaseUrl, mistralBaseUrl);
+    const discoveredModels = await discoverModels(store, openaiBaseUrl, mistralBaseUrl, zaiBaseUrl);
     const modelAliases = store.getCachedModelAliases();
     const routingCandidates = buildRoutingCandidates(
       requestModel,
@@ -639,16 +689,16 @@ let accounts = store.getCachedAccounts();
       if (sessionId) headers.session_id = sessionId;
 
       try {
-        const upstreamBaseUrl =
-          candidate.provider === "mistral" ? mistralBaseUrl : openaiBaseUrl;
-        const upstreamPath =
-          candidate.provider === "mistral"
-            ? isResponsesCompactPath
-              ? mistralCompactUpstreamPath
-              : mistralUpstreamPath
-            : isResponsesCompactPath
-              ? UPSTREAM_COMPACT_PATH
-              : UPSTREAM_PATH;
+        let upstreamBaseUrl = openaiBaseUrl;
+        let upstreamPath = isResponsesCompactPath ? UPSTREAM_COMPACT_PATH : UPSTREAM_PATH;
+
+        if (candidate.provider === "mistral") {
+          upstreamBaseUrl = mistralBaseUrl;
+          upstreamPath = isResponsesCompactPath ? mistralCompactUpstreamPath : mistralUpstreamPath;
+        } else if (candidate.provider === "zai") {
+          upstreamBaseUrl = zaiBaseUrl;
+          upstreamPath = isResponsesCompactPath ? zaiCompactUpstreamPath : zaiUpstreamPath;
+        }
         const upstream = await fetchCodexWithRetry(
           `${upstreamBaseUrl}${upstreamPath}`,
           {
@@ -1186,6 +1236,22 @@ let accounts = store.getCachedAccounts();
         });
 
         if (upstream.ok) return;
+
+        // Handle z.ai specific business error codes
+        const zaiErrorCode = candidate.provider === "zai" ? parseZaiErrorCode(text) : null;
+        if (zaiErrorCode && shouldBlockAccountForZaiError(zaiErrorCode)) {
+          const blockDuration = getZaiBlockDuration(zaiErrorCode);
+          const until = Date.now() + blockDuration;
+          selected.state = {
+            ...selected.state,
+            blockedUntil: until,
+            blockedReason: `z.ai error ${zaiErrorCode}`,
+          };
+          rememberError(selected, `z.ai error ${zaiErrorCode}: ${text.slice(0, 200)}`);
+          await store.upsertAccount(selected);
+          continue;
+        }
+
         if (upstream.status === 429 || isQuotaErrorText(text)) {
           markQuotaHit(selected, `quota/rate-limit: ${upstream.status}`);
           await store.upsertAccount(selected);
@@ -1236,13 +1302,13 @@ let accounts = store.getCachedAccounts();
   router.post("/responses/compact", proxyWithRotation);
 
   router.get("/models", async (_req, res) => {
-    const models = await discoverModels(store, openaiBaseUrl, mistralBaseUrl);
+    const models = await discoverModels(store, openaiBaseUrl, mistralBaseUrl, zaiBaseUrl);
     res.json({ object: "list", data: models });
   });
 
   router.get("/models/:id", async (req, res) => {
     const id = req.params.id;
-    const models = await discoverModels(store, openaiBaseUrl, mistralBaseUrl);
+    const models = await discoverModels(store, openaiBaseUrl, mistralBaseUrl, zaiBaseUrl);
     const model = models.find((m) => m.id === id);
     if (!model)
       return res.status(404).json({

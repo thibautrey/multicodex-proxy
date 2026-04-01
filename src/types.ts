@@ -1,4 +1,4 @@
-export type ProviderId = "openai" | "mistral";
+export type ProviderId = "openai" | "mistral" | "zai";
 
 export type UsageWindow = {
   usedPercent?: number;

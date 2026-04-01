@@ -13,7 +13,9 @@ type RouteCache = {
 const routeCache: RouteCache = { bucket: -1, accountId: undefined };
 
 export function normalizeProvider(account?: Account): ProviderId {
-  return account?.provider === "mistral" ? "mistral" : "openai";
+  if (account?.provider === "mistral") return "mistral";
+  if (account?.provider === "zai") return "zai";
+  return "openai";
 }
 
 function nowBucket(now: number, windowMs: number) {
@@ -70,7 +72,21 @@ export function nextResetAt(usage?: UsageSnapshot): number | undefined {
 }
 
 export function isQuotaErrorText(s: string): boolean {
-  return /\b429\b|quota|usage limit|rate.?limit|too many requests|limit reached|capacity/i.test(s);
+  // Generic quota/rate limit patterns
+  if (/\b429\b|quota|usage limit|rate.?limit|too many requests|limit reached|capacity/i.test(s)) {
+    return true;
+  }
+  // z.ai specific business error codes
+  // 1304: Daily call limit, 1305: Rate limit, 1308: Usage limit, 1309: Plan expired
+  // 1310: Weekly/Monthly limit, 1312: High traffic, 1313: Fair Use Policy
+  if (/"code":\s*"?(130[4-9]|131[0-3])"?/i.test(s)) {
+    return true;
+  }
+  // z.ai error messages
+  if (/daily call limit|usage limit reached|limit exhausted|fair use policy|high (concurrency|frequency|traffic)/i.test(s)) {
+    return true;
+  }
+  return false;
 }
 
 export function accountUsable(a: Account): boolean {
@@ -138,7 +154,8 @@ export function chooseAccountForProvider(
 export async function refreshUsageIfNeeded(account: Account, chatgptBaseUrl: string, force = false): Promise<Account> {
   if (!force && account.usage && Date.now() - account.usage.fetchedAt < USAGE_CACHE_TTL_MS) return account;
   const provider = normalizeProvider(account);
-  if (provider === "mistral") {
+  // Mistral and z.ai don't have usage endpoints - use internal tracking
+  if (provider === "mistral" || provider === "zai") {
     account.usage = {
       ...account.usage,
       fetchedAt: Date.now(),
@@ -179,4 +196,52 @@ export function markQuotaHit(account: Account, message: string) {
     blockedReason: message,
   };
   rememberError(account, message);
+}
+
+// z.ai business error code categories for smarter handling
+const ZAI_AUTH_ERRORS = new Set([1000, 1001, 1002, 1003, 1004]);
+const ZAI_ACCOUNT_ERRORS = new Set([1110, 1111, 1112, 1113, 1120, 1121]);
+const ZAI_QUOTA_ERRORS = new Set([1304, 1305, 1308, 1309, 1310, 1312, 1313]);
+const ZAI_RATE_LIMIT_ERRORS = new Set([1302, 1303, 1305]);
+
+export function parseZaiErrorCode(errorText: string): number | null {
+  const match = errorText.match(/"code":\s*"?(\d{4})"?/i);
+  if (match) {
+    return parseInt(match[1], 10);
+  }
+  return null;
+}
+
+export function isZaiAuthError(errorCode: number): boolean {
+  return ZAI_AUTH_ERRORS.has(errorCode);
+}
+
+export function isZaiAccountError(errorCode: number): boolean {
+  return ZAI_ACCOUNT_ERRORS.has(errorCode);
+}
+
+export function isZaiQuotaError(errorCode: number): boolean {
+  return ZAI_QUOTA_ERRORS.has(errorCode);
+}
+
+export function isZaiRateLimitError(errorCode: number): boolean {
+  return ZAI_RATE_LIMIT_ERRORS.has(errorCode);
+}
+
+export function shouldBlockAccountForZaiError(errorCode: number): boolean {
+  // Block account for auth errors, account errors, and quota errors
+  return isZaiAuthError(errorCode) || isZaiAccountError(errorCode) || isZaiQuotaError(errorCode);
+}
+
+export function getZaiBlockDuration(errorCode: number): number {
+  // For rate limits, block for shorter period (1-5 minutes)
+  if (isZaiRateLimitError(errorCode)) {
+    return 60_000; // 1 minute
+  }
+  // For quota limits, block until next reset or longer period
+  if (isZaiQuotaError(errorCode)) {
+    return BLOCK_FALLBACK_MS; // 30 minutes default
+  }
+  // For auth/account errors, block for longer
+  return 5 * 60_000; // 5 minutes
 }

@@ -14,6 +14,9 @@ import {
   MISTRAL_BASE_URL,
   MISTRAL_UPSTREAM_PATH,
   MISTRAL_COMPACT_UPSTREAM_PATH,
+  ZAI_BASE_URL,
+  ZAI_UPSTREAM_PATH,
+  ZAI_COMPACT_UPSTREAM_PATH,
   STORE_PATH,
   TRACE_FILE_PATH,
   TRACE_STATS_HISTORY_PATH,
@@ -48,6 +51,7 @@ const adminRouter = createAdminRouter({
   oauthConfig,
   openaiBaseUrl: CHATGPT_BASE_URL,
   mistralBaseUrl: MISTRAL_BASE_URL,
+  zaiBaseUrl: ZAI_BASE_URL,
   storagePaths: {
     accountsPath: STORE_PATH,
     oauthStatePath: OAUTH_STATE_PATH,
@@ -63,6 +67,9 @@ const proxyRouter = createProxyRouter({
   mistralBaseUrl: MISTRAL_BASE_URL,
   mistralUpstreamPath: MISTRAL_UPSTREAM_PATH,
   mistralCompactUpstreamPath: MISTRAL_COMPACT_UPSTREAM_PATH,
+  zaiBaseUrl: ZAI_BASE_URL,
+  zaiUpstreamPath: ZAI_UPSTREAM_PATH,
+  zaiCompactUpstreamPath: ZAI_COMPACT_UPSTREAM_PATH,
   oauthConfig,
 });
 
@@ -118,6 +125,6 @@ installResponsesWebsocketProxy({
 server.listen(PORT, () => {
   console.log(`multivibe listening on :${PORT}`);
   console.log(
-    `store=${STORE_PATH} oauth=${OAUTH_STATE_PATH} trace=${TRACE_FILE_PATH} traceStats=${TRACE_STATS_HISTORY_PATH} redirect=${oauthConfig.redirectUri} openaiUpstream=${CHATGPT_BASE_URL}${UPSTREAM_PATH} mistralUpstream=${MISTRAL_BASE_URL}${MISTRAL_UPSTREAM_PATH}`,
+    `store=${STORE_PATH} oauth=${OAUTH_STATE_PATH} trace=${TRACE_FILE_PATH} traceStats=${TRACE_STATS_HISTORY_PATH} redirect=${oauthConfig.redirectUri} openaiUpstream=${CHATGPT_BASE_URL}${UPSTREAM_PATH} mistralUpstream=${MISTRAL_BASE_URL}${MISTRAL_UPSTREAM_PATH} zaiUpstream=${ZAI_BASE_URL}${ZAI_UPSTREAM_PATH}`,
   );
 });

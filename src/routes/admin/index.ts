@@ -29,6 +29,7 @@ export type AdminRoutesOptions = {
   oauthConfig: OAuthConfig;
   openaiBaseUrl: string;
   mistralBaseUrl: string;
+  zaiBaseUrl: string;
   storagePaths: StoragePaths;
 };
 
@@ -195,6 +196,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     oauthConfig,
     openaiBaseUrl,
     mistralBaseUrl,
+    zaiBaseUrl,
     storagePaths,
   } = options;
 
@@ -537,8 +539,10 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     );
     if (!account) return res.status(404).json({ error: "not found" });
     account = await ensureValidToken(account, oauthConfig);
-    const usageBaseUrl =
-      normalizeProvider(account) === "mistral" ? mistralBaseUrl : openaiBaseUrl;
+    const provider = normalizeProvider(account);
+    let usageBaseUrl = openaiBaseUrl;
+    if (provider === "mistral") usageBaseUrl = mistralBaseUrl;
+    else if (provider === "zai") usageBaseUrl = zaiBaseUrl;
     await refreshUsageIfNeeded(account, usageBaseUrl, true);
     await store.upsertAccount(account);
     res.json({ ok: true, account: redact(account) });
@@ -548,10 +552,10 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     const refreshed = await Promise.all(
       (await store.listAccounts()).map(async (account) => {
         const valid = await ensureValidToken(account, oauthConfig);
-        const usageBaseUrl =
-          normalizeProvider(valid) === "mistral"
-            ? mistralBaseUrl
-            : openaiBaseUrl;
+        const provider = normalizeProvider(valid);
+        let usageBaseUrl = openaiBaseUrl;
+        if (provider === "mistral") usageBaseUrl = mistralBaseUrl;
+        else if (provider === "zai") usageBaseUrl = zaiBaseUrl;
         await refreshUsageIfNeeded(valid, usageBaseUrl, true);
         return valid;
       }),
