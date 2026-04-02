@@ -43,18 +43,23 @@ MultiVibe acts as an OpenAI-compatible gateway that lets you route requests acro
 > Screenshots below are taken in **sanitized mode** (`?sanitized=1`).
 
 ### Overview
+
 ![Overview](./assets/screen-overview.jpg)
 
 ### Accounts
+
 ![Accounts](./assets/screen-accounts.jpg)
 
 ### Tracing
+
 ![Tracing](./assets/screen-tracing.jpg)
 
 ### Playground
+
 ![Playground](./assets/screen-playground.jpg)
 
 ### API docs tab
+
 ![Docs](./assets/screen-docs.jpg)
 
 ---
@@ -94,8 +99,8 @@ Stats history is append-only and keeps lightweight request metadata for long-ter
 docker compose up -d --build
 ```
 
-- Dashboard: `http://localhost:4010`
-- Health: `http://localhost:4010/health`
+- Dashboard: `http://localhost:1455`
+- Health: `http://localhost:1455/health`
 
 ---
 
@@ -125,7 +130,7 @@ http://localhost:1455/auth/callback
 ### List models
 
 ```bash
-curl http://localhost:4010/v1/models
+curl http://localhost:1455/v1/models
 ```
 
 Example model object returned:
@@ -149,7 +154,7 @@ Example model object returned:
 ### Chat completion
 
 ```bash
-curl -X POST http://localhost:4010/v1/chat/completions \
+curl -X POST http://localhost:1455/v1/chat/completions \
   -H "content-type: application/json" \
   -d '{
     "model": "gpt-5.3-codex",
@@ -160,7 +165,7 @@ curl -X POST http://localhost:4010/v1/chat/completions \
 ### Streaming responses
 
 ```bash
-curl -N -X POST http://localhost:4010/v1/responses \
+curl -N -X POST http://localhost:1455/v1/responses \
   -H "content-type: application/json" \
   -d '{
     "model": "gpt-5.3-codex",
@@ -172,10 +177,10 @@ curl -N -X POST http://localhost:4010/v1/responses \
 ### WebSocket responses
 
 ```js
-const ws = new WebSocket("ws://localhost:4010/v1/responses", {
+const ws = new WebSocket("ws://localhost:1455/v1/responses", {
   headers: {
-    Authorization: "Bearer YOUR_TOKEN"
-  }
+    Authorization: "Bearer YOUR_TOKEN",
+  },
 });
 
 ws.onmessage = (event) => {
@@ -183,19 +188,23 @@ ws.onmessage = (event) => {
 };
 
 ws.onopen = () => {
-  ws.send(JSON.stringify({
-    type: "response.create",
-    model: "gpt-5.3-codex",
-    input: [{ role: "user", content: [{ type: "input_text", text: "hello" }] }],
-    stream: true
-  }));
+  ws.send(
+    JSON.stringify({
+      type: "response.create",
+      model: "gpt-5.3-codex",
+      input: [
+        { role: "user", content: [{ type: "input_text", text: "hello" }] },
+      ],
+      stream: true,
+    }),
+  );
 };
 ```
 
 ### Create model alias
 
 ```bash
-curl -X POST http://localhost:4010/admin/model-aliases \
+curl -X POST http://localhost:1455/admin/model-aliases \
   -H "x-admin-token: change-me" \
   -H "content-type: application/json" \
   -d '{
@@ -211,36 +220,38 @@ curl -X POST http://localhost:4010/admin/model-aliases \
 ```bash
 # Paginated API (recommended)
 curl -H "x-admin-token: change-me" \
-  "http://localhost:4010/admin/traces?page=1&pageSize=100"
+  "http://localhost:1455/admin/traces?page=1&pageSize=100"
 ```
 
 ```bash
 # Legacy compatibility mode
 curl -H "x-admin-token: change-me" \
-  "http://localhost:4010/admin/traces?limit=50"
+  "http://localhost:1455/admin/traces?limit=50"
 ```
 
 ### Usage stats
 
 ```bash
 curl -H "x-admin-token: change-me" \
-  "http://localhost:4010/admin/stats/usage?sinceMs=1735689600000&untilMs=1738291200000"
+  "http://localhost:1455/admin/stats/usage?sinceMs=1735689600000&untilMs=1738291200000"
 ```
 
 ### Trace stats (historical)
 
 ```bash
 curl -H "x-admin-token: change-me" \
-  "http://localhost:4010/admin/stats/traces?sinceMs=1735689600000&untilMs=1738291200000"
+  "http://localhost:1455/admin/stats/traces?sinceMs=1735689600000&untilMs=1738291200000"
 ```
 
 Optional filters:
+
 - `accountId=<id>`
 - `route=/v1/chat/completions`
 - `sinceMs=<epoch_ms>`
 - `untilMs=<epoch_ms>`
 
 Model alias admin endpoints:
+
 - `GET /admin/model-aliases`
 - `POST /admin/model-aliases`
 - `PATCH /admin/model-aliases/:id`
@@ -250,27 +261,27 @@ Model alias admin endpoints:
 
 ## ⚙️ Environment variables
 
-| Variable | Default | Description |
-|---|---|---|
-| `PORT` | `4010` | HTTP server port |
-| `STORE_PATH` | `/data/accounts.json` | Accounts store |
-| `OAUTH_STATE_PATH` | `/data/oauth-state.json` | OAuth flow state |
-| `TRACE_FILE_PATH` | `/data/requests-trace.jsonl` | Request trace file (retained to latest 1000 entries) |
-| `TRACE_STATS_HISTORY_PATH` | `/data/requests-stats-history.jsonl` | Lightweight request history for long-term stats |
-| `TRACE_INCLUDE_BODY` | `true` | Persist full request payloads; trace stats still work when disabled |
-| `PROXY_MODELS` | `gpt-5.3-codex,gpt-5.2-codex,gpt-5-codex` | Fallback comma-separated model list for `/v1/models` |
-| `MODELS_CLIENT_VERSION` | `1.0.0` | Version sent to `/backend-api/codex/models` for model discovery |
-| `MODELS_CACHE_MS` | `600000` | Model discovery cache duration (ms) |
-| `ADMIN_TOKEN` | `change-me` | Admin endpoints auth token |
-| `CHATGPT_BASE_URL` | `https://chatgpt.com` | Upstream base URL |
-| `UPSTREAM_PATH` | `/backend-api/codex/responses` | Upstream request path |
-| `UPSTREAM_COMPACT_PATH` | `/backend-api/codex/responses/compact` | Upstream path for `/v1/responses/compact` |
-| `OAUTH_CLIENT_ID` | `app_EMoamEEZ73f0CkXaXp7hrann` | OpenAI OAuth client id |
-| `OAUTH_AUTHORIZATION_URL` | `https://auth.openai.com/oauth/authorize` | OAuth authorize endpoint |
-| `OAUTH_TOKEN_URL` | `https://auth.openai.com/oauth/token` | OAuth token endpoint |
-| `OAUTH_SCOPE` | `openid profile email offline_access` | OAuth scope |
-| `OAUTH_REDIRECT_URI` | `http://localhost:1455/auth/callback` | Redirect URI |
-| `MISTRAL_COMPACT_UPSTREAM_PATH` | `/v1/responses/compact` | Mistral upstream path for compact responses |
+| Variable                        | Default                                   | Description                                                         |
+| ------------------------------- | ----------------------------------------- | ------------------------------------------------------------------- |
+| `PORT`                          | `1455`                                    | HTTP server port                                                    |
+| `STORE_PATH`                    | `/data/accounts.json`                     | Accounts store                                                      |
+| `OAUTH_STATE_PATH`              | `/data/oauth-state.json`                  | OAuth flow state                                                    |
+| `TRACE_FILE_PATH`               | `/data/requests-trace.jsonl`              | Request trace file (retained to latest 1000 entries)                |
+| `TRACE_STATS_HISTORY_PATH`      | `/data/requests-stats-history.jsonl`      | Lightweight request history for long-term stats                     |
+| `TRACE_INCLUDE_BODY`            | `true`                                    | Persist full request payloads; trace stats still work when disabled |
+| `PROXY_MODELS`                  | `gpt-5.3-codex,gpt-5.2-codex,gpt-5-codex` | Fallback comma-separated model list for `/v1/models`                |
+| `MODELS_CLIENT_VERSION`         | `1.0.0`                                   | Version sent to `/backend-api/codex/models` for model discovery     |
+| `MODELS_CACHE_MS`               | `600000`                                  | Model discovery cache duration (ms)                                 |
+| `ADMIN_TOKEN`                   | `change-me`                               | Admin endpoints auth token                                          |
+| `CHATGPT_BASE_URL`              | `https://chatgpt.com`                     | Upstream base URL                                                   |
+| `UPSTREAM_PATH`                 | `/backend-api/codex/responses`            | Upstream request path                                               |
+| `UPSTREAM_COMPACT_PATH`         | `/backend-api/codex/responses/compact`    | Upstream path for `/v1/responses/compact`                           |
+| `OAUTH_CLIENT_ID`               | `app_EMoamEEZ73f0CkXaXp7hrann`            | OpenAI OAuth client id                                              |
+| `OAUTH_AUTHORIZATION_URL`       | `https://auth.openai.com/oauth/authorize` | OAuth authorize endpoint                                            |
+| `OAUTH_TOKEN_URL`               | `https://auth.openai.com/oauth/token`     | OAuth token endpoint                                                |
+| `OAUTH_SCOPE`                   | `openid profile email offline_access`     | OAuth scope                                                         |
+| `OAUTH_REDIRECT_URI`            | `http://localhost:1455/auth/callback`     | Redirect URI                                                        |
+| `MISTRAL_COMPACT_UPSTREAM_PATH` | `/v1/responses/compact`                   | Mistral upstream path for compact responses                         |
 
 ---
 
@@ -298,6 +309,7 @@ npm run start
 PRs and issues are welcome.
 
 If you open a PR:
+
 - keep it focused
 - include before/after behavior
 - include screenshots for UI changes

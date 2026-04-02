@@ -19,5 +19,5 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/web-dist ./web-dist
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
-EXPOSE 4010
+EXPOSE 1455
 CMD ["node", "dist/server.js"]

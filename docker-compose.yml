@@ -3,10 +3,10 @@ services:
     build: .
     container_name: multivibe
     ports:
-      - "4010:4010"
+      - "1455:1455"
     environment:
-      - PORT=4010
-      - PUBLIC_BASE_URL=http://localhost:4010
+      - PORT=1455
+      - PUBLIC_BASE_URL=http://localhost:1455
       - STORE_PATH=/data/accounts.json
       - OAUTH_STATE_PATH=/data/oauth-state.json
       - TRACE_FILE_PATH=/data/requests-trace.jsonl
