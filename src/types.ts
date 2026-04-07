@@ -22,6 +22,7 @@ export type AccountState = {
   lastError?: string;
   lastSelectedAt?: number;
   recentErrors?: AccountError[];
+  recentEmptyResponses?: AccountError[];
   needsTokenRefresh?: boolean;
   lastUsageRefreshAt?: number;
 };
