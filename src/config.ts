@@ -61,3 +61,17 @@ export const TOKEN_REFRESH_MARGIN_MS = Number(
 export const ACCOUNT_FLUSH_INTERVAL_MS = Number(
   process.env.ACCOUNT_FLUSH_INTERVAL_MS ?? 5_000,
 );
+
+// Empty response retry configuration
+export const EMPTY_RESPONSE_BLOCK_THRESHOLD = Math.max(
+  1,
+  Number(process.env.EMPTY_RESPONSE_BLOCK_THRESHOLD ?? 3),
+);
+export const EMPTY_RESPONSE_BLOCK_DURATION_MS = Math.max(
+  5_000,
+  Number(process.env.EMPTY_RESPONSE_BLOCK_DURATION_MS ?? 30_000),
+);
+export const EMPTY_RESPONSE_WINDOW_MS = Math.max(
+  60_000,
+  Number(process.env.EMPTY_RESPONSE_WINDOW_MS ?? 5 * 60_000),
+);

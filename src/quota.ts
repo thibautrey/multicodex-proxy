@@ -1,4 +1,9 @@
 import type { Account, ProviderId, UsageSnapshot } from "./types.js";
+import {
+  EMPTY_RESPONSE_BLOCK_THRESHOLD,
+  EMPTY_RESPONSE_BLOCK_DURATION_MS,
+  EMPTY_RESPONSE_WINDOW_MS,
+} from "./config.js";
 
 export const USAGE_CACHE_TTL_MS = Number(process.env.USAGE_CACHE_TTL_MS ?? 300_000);
 const USAGE_TIMEOUT_MS = Number(process.env.USAGE_TIMEOUT_MS ?? 10_000);
@@ -56,6 +61,28 @@ function parseOpenAIUsage(data: any): UsageSnapshot {
 export function rememberError(account: Account, message: string) {
   const next = [{ at: Date.now(), message }, ...(account.state?.recentErrors ?? [])].slice(0, 10);
   account.state = { ...account.state, lastError: message, recentErrors: next };
+}
+
+export function markEmptyResponseError(account: Account, message: string = "empty assistant output") {
+  // Track consecutive empty responses to decide when to temporarily block the account
+  const recentEmpty = account.state?.recentEmptyResponses ?? [];
+  const next = [{ at: Date.now(), message }, ...recentEmpty].slice(0, 5);
+  const consecutive = next.filter(e => Date.now() - e.at < EMPTY_RESPONSE_WINDOW_MS).length;
+  
+  // Block account if threshold exceeded within window
+  const blockUntil = consecutive >= EMPTY_RESPONSE_BLOCK_THRESHOLD 
+    ? Date.now() + EMPTY_RESPONSE_BLOCK_DURATION_MS 
+    : undefined;
+  
+  account.state = { 
+    ...account.state, 
+    lastError: message, 
+    recentEmptyResponses: next,
+    blockedUntil: blockUntil ?? account.state?.blockedUntil,
+    blockedReason: blockUntil 
+      ? `empty responses (${consecutive} in ${Math.round(EMPTY_RESPONSE_WINDOW_MS / 60_000)}m)` 
+      : account.state?.blockedReason,
+  };
 }
 
 export function usageUntouched(usage?: UsageSnapshot): boolean {
