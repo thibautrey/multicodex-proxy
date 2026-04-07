@@ -33,6 +33,7 @@ import {
   chooseAccountForProvider,
   isQuotaErrorText,
   markQuotaHit,
+  markEmptyResponseError,
   normalizeProvider,
   refreshUsageIfNeeded,
   rememberError,
@@ -805,6 +806,14 @@ let accounts = store.getCachedAccounts();
               req.body?.model ?? payloadToUpstream?.model ?? "unknown",
             );
             const normalized = ensureNonEmptyChatCompletion(parsedChat);
+            
+            // If response was empty/patched and upstream returned OK, retry with another account
+            if (normalized.patched && upstream.ok) {
+              markEmptyResponseError(selected, "empty assistant output in SSE");
+              await store.upsertAccount(selected);
+              continue; // Try next account
+            }
+            
             res
               .status(upstream.ok ? 200 : upstream.status)
               .json(normalized.chat);
@@ -950,6 +959,14 @@ let accounts = store.getCachedAccounts();
             const normalized = ensureNonEmptyChatCompletion(
               sanitizeChatCompletionObject(parsed),
             );
+            
+            // If response was empty/patched, retry with another account
+            if (normalized.patched) {
+              markEmptyResponseError(selected, "empty assistant output in chat.completion");
+              await store.upsertAccount(selected);
+              continue; // Try next account
+            }
+            
             res.status(200);
             res.set("Content-Type", "text/event-stream");
             res.set("Cache-Control", "no-cache");
@@ -1034,9 +1051,16 @@ let accounts = store.getCachedAccounts();
           let chatResp: any = undefined;
 
           if (parsed?.object === "chat.completion") {
-            chatResp = ensureNonEmptyChatCompletion(
+            const normalized = ensureNonEmptyChatCompletion(
               sanitizeChatCompletionObject(parsed),
-            ).chat;
+            );
+            // If response was empty/patched, retry with another account
+            if (normalized.patched) {
+              markEmptyResponseError(selected, "empty assistant output in chat.completion");
+              await store.upsertAccount(selected);
+              continue; // Try next account
+            }
+            chatResp = normalized.chat;
           } else if (parsed?.object === "response") {
             chatResp = responseObjectToChatCompletion(
               parsed,
@@ -1050,7 +1074,16 @@ let accounts = store.getCachedAccounts();
           }
 
           if (chatResp) {
-            chatResp = ensureNonEmptyChatCompletion(chatResp).chat;
+            const normalized = ensureNonEmptyChatCompletion(chatResp);
+            
+            // If response was empty/patched, retry with another account
+            if (normalized.patched) {
+              markEmptyResponseError(selected, "empty assistant output in chat completion");
+              await store.upsertAccount(selected);
+              continue; // Try next account
+            }
+            
+            chatResp = normalized.chat;
             res.status(200);
             res.set("Content-Type", "text/event-stream");
             res.set("Cache-Control", "no-cache");
@@ -1169,6 +1202,14 @@ let accounts = store.getCachedAccounts();
               req.body?.model ?? payloadToUpstream?.model ?? "unknown",
             );
             const normalized = ensureNonEmptyChatCompletion(parsedChat);
+            
+            // If response was empty/patched and upstream returned OK, retry with another account
+            if (normalized.patched && upstream.ok) {
+              markEmptyResponseError(selected, "empty assistant output in response event");
+              await store.upsertAccount(selected);
+              continue; // Try next account
+            }
+            
             res
               .status(upstream.ok ? 200 : upstream.status)
               .json(normalized.chat);
