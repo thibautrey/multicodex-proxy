@@ -112,7 +112,7 @@ type TraceBucketAggregate = {
   models: Map<string, TraceModelStats>;
 };
 
-const DEFAULT_RETENTION_MAX = 10000;
+const DEFAULT_RETENTION_MAX = 1000;
 const DEFAULT_PAGE_SIZE_MAX = 100;
 const DEFAULT_LEGACY_LIMIT_MAX = 2000;
 const HOUR_MS = 3_600_000;
@@ -761,6 +761,14 @@ export function createTraceManager(config: TraceManagerConfig) {
 
   async function compactTraceStorageIfNeeded() {
     await ensureCacheReady();
+    // Triage: if cache exceeds retention limit, rewrite the trace file
+    // to only keep the last retentionMax entries. History file already
+    // contains metadata for all entries via appendStatsHistory().
+    if (traceCache.length > retentionMax) {
+      const trimmed = traceCache.slice(-retentionMax);
+      traceCache.splice(0, traceCache.length, ...trimmed);
+      await writeTraceWindow(traceCache);
+    }
   }
 
   async function getTraceStats(
@@ -875,17 +883,27 @@ export function createTraceManager(config: TraceManagerConfig) {
     };
 
     const line = `${JSON.stringify(finalEntry)}\n`;
-    const run = traceWriteQueue.then(async () => {
+    
+    // Fire trace file write asynchronously - don't block on this
+    traceWriteQueue = traceWriteQueue.then(async () => {
       await ensureCacheReady();
       traceCache.push(finalEntry);
+      // Triage: periodically compact the trace file to only keep last retentionMax entries
+      // History file retains metadata for all entries for stats purposes
+      const shouldCompact = traceCache.length > retentionMax * 1.5; // Compact at 150% of limit to avoid frequent rewrites
       if (traceCache.length > retentionMax) {
         traceCache.splice(0, traceCache.length - retentionMax);
       }
       await ensureParentDir(filePath);
       await fs.appendFile(filePath, line, "utf8");
-    });
-    traceWriteQueue = run.catch(() => undefined);
-    await Promise.all([run, appendStatsHistory(finalEntry)]);
+      // Compact trace file asynchronously to avoid blocking
+      if (shouldCompact) {
+        void compactTraceStorageIfNeeded();
+      }
+    }).catch(() => undefined);
+    
+    // Fire history write asynchronously - completely independent from trace write
+    void appendStatsHistory(finalEntry).catch(() => undefined);
   }
 
   function recordTrace(

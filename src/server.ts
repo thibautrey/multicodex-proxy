@@ -20,6 +20,7 @@ import {
   STORE_PATH,
   TRACE_FILE_PATH,
   TRACE_STATS_HISTORY_PATH,
+  TRACE_RETENTION_MAX,
   UPSTREAM_PATH,
   OAUTH_STATE_PATH,
   PORT,
@@ -42,6 +43,7 @@ await fs.mkdir(path.dirname(TRACE_FILE_PATH), { recursive: true });
 const traceManager = createTraceManager({
   filePath: TRACE_FILE_PATH,
   historyFilePath: TRACE_STATS_HISTORY_PATH,
+  retentionMax: TRACE_RETENTION_MAX,
 });
 
 const adminRouter = createAdminRouter({

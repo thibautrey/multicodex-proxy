@@ -10,6 +10,10 @@ export const TRACE_STATS_HISTORY_PATH =
   process.env.TRACE_STATS_HISTORY_PATH ?? "/data/requests-stats-history.jsonl";
 export const TRACE_INCLUDE_BODY =
   (process.env.TRACE_INCLUDE_BODY ?? "false") === "true"; // disabling the body trace by default keeps disk writes smaller
+export const TRACE_RETENTION_MAX = Math.max(
+  100,
+  Number(process.env.TRACE_RETENTION_MAX ?? 1000),
+); // Number of recent requests to keep with full text (metadata kept forever in history)
 export const CHATGPT_BASE_URL =
   process.env.CHATGPT_BASE_URL ?? "https://chatgpt.com";
 export const MISTRAL_BASE_URL =
