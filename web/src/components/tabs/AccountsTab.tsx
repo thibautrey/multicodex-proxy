@@ -92,6 +92,7 @@ export function AccountsTab(props: Props) {
       setOauthDialog((current) =>
         current ? { ...current, callbackInput: callbackUrl.trim() } : current,
       );
+      void submitOauthCallback(callbackUrl.trim());
     };
 
     window.addEventListener("message", onMessage);
@@ -108,6 +109,7 @@ export function AccountsTab(props: Props) {
     setManualPriority("0");
     setManualEnabled(true);
     setIsSubmitting(false);
+    sessionStorage.removeItem("multivibe-oauth-pending");
   };
 
   const closeEditModal = () => {
@@ -117,6 +119,7 @@ export function AccountsTab(props: Props) {
 
   const closeOauthDialog = () => {
     setOauthDialog(null);
+    sessionStorage.removeItem("multivibe-oauth-pending");
   };
 
   const submitManualAccount = async () => {
@@ -143,7 +146,14 @@ export function AccountsTab(props: Props) {
           pendingPriority: Number(manualPriority) || 0,
           pendingEnabled: manualEnabled,
         });
-        window.open(authorizeUrl, "_blank", "noopener,noreferrer");
+        sessionStorage.setItem("multivibe-oauth-pending", JSON.stringify({
+          flowId,
+          mode: "create",
+          pendingPriority: Number(manualPriority) || 0,
+          pendingEnabled: manualEnabled,
+          timestamp: Date.now(),
+        }));
+        window.open(authorizeUrl, "_blank", "noreferrer");
       } finally {
         setIsSubmitting(false);
       }
@@ -205,7 +215,13 @@ export function AccountsTab(props: Props) {
           mode: "reauth",
           accountId: editingAccount.id,
         });
-        window.open(authorizeUrl, "_blank", "noopener,noreferrer");
+        sessionStorage.setItem("multivibe-oauth-pending", JSON.stringify({
+          flowId,
+          mode: "reauth",
+          accountId: editingAccount.id,
+          timestamp: Date.now(),
+        }));
+        window.open(authorizeUrl, "_blank", "noreferrer");
       } finally {
         setIsSavingEdit(false);
       }
@@ -228,14 +244,15 @@ export function AccountsTab(props: Props) {
     }
   };
 
-  const submitOauthCallback = async () => {
-    if (!oauthDialog?.callbackInput.trim()) return;
+  const submitOauthCallback = async (overrideUrl?: string) => {
+    const input = overrideUrl?.trim() || oauthDialog?.callbackInput.trim();
+    if (!input || !oauthDialog) return;
     setIsSavingEdit(true);
     try {
       setOauthDialog((current) =>
         current ? { ...current, isSubmitting: true } : current,
       );
-      const result = await completeOAuth(oauthDialog.flowId, oauthDialog.callbackInput.trim());
+      const result = await completeOAuth(oauthDialog.flowId, input);
       const accountId = String(result?.account?.id ?? oauthDialog.accountId ?? "").trim();
       if (
         oauthDialog.mode === "create" &&
@@ -283,7 +300,13 @@ export function AccountsTab(props: Props) {
         mode: "reauth",
         accountId: account.id,
       });
-      window.open(authorizeUrl, "_blank", "noopener,noreferrer");
+      sessionStorage.setItem("multivibe-oauth-pending", JSON.stringify({
+        flowId,
+        mode: "reauth",
+        accountId: account.id,
+        timestamp: Date.now(),
+      }));
+      window.open(authorizeUrl, "_blank", "noreferrer");
     } finally {
       setOauthBusyId(null);
     }
