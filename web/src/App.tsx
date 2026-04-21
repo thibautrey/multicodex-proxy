@@ -193,6 +193,61 @@ export default function App() {
   };
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    const state = params.get("state");
+    if (!code || !state) return;
+
+    const complete = async () => {
+      try {
+        if (window.opener) {
+          window.opener.postMessage(
+            { type: "multivibe-oauth-callback", callbackUrl: window.location.href },
+            window.location.origin
+          );
+          window.close();
+          return;
+        }
+
+        const pendingRaw = sessionStorage.getItem("multivibe-oauth-pending");
+        const pending = pendingRaw ? JSON.parse(pendingRaw) : null;
+
+        const result = await api("/admin/oauth/complete", {
+          method: "POST",
+          body: JSON.stringify({ flowId: state, input: window.location.href }),
+        });
+        const accountId = String(result?.account?.id ?? "").trim();
+
+        if (pending?.mode === "create" && accountId && (pending.pendingPriority !== 0 || pending.pendingEnabled === false)) {
+          await api(`/admin/accounts/${accountId}`, {
+            method: "PATCH",
+            body: JSON.stringify({
+              priority: pending.pendingPriority ?? 0,
+              enabled: pending.pendingEnabled ?? true,
+            }),
+          });
+        }
+
+        const u = new URL(window.location.href);
+        u.searchParams.delete("code");
+        u.searchParams.delete("state");
+        window.history.replaceState({}, "", u.toString());
+        setLocationSearch(u.search);
+        sessionStorage.removeItem("multivibe-oauth-pending");
+        await loadBase();
+        setTab("accounts");
+      } catch (e: any) {
+        setError(e?.message ?? String(e));
+      }
+    };
+
+    void complete();
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("code") && params.get("state")) return;
+
     const load = async () => {
       try {
         setError("");

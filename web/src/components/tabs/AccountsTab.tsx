@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Metric } from "../Metric";
 import { fmt, maskEmail, maskId, usd } from "../../lib/ui";
 import type { Account, TraceStats } from "../../types";
@@ -69,6 +69,36 @@ export function AccountsTab(props: Props) {
   const [oauthBusyId, setOauthBusyId] = useState<string | null>(null);
   const [oauthDialog, setOauthDialog] = useState<OAuthDialogState | null>(null);
 
+  useEffect(() => {
+    if (!oauthDialog) return;
+
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data;
+      if (!data || typeof data !== "object") return;
+      if ((data as { type?: string }).type !== "multivibe-oauth-callback") return;
+      const callbackUrl = (data as { callbackUrl?: string }).callbackUrl;
+      if (typeof callbackUrl !== "string" || !callbackUrl.trim()) return;
+
+      try {
+        const received = new URL(callbackUrl);
+        const expected = new URL(oauthDialog.expectedRedirectUri);
+        if (received.origin !== expected.origin || received.pathname !== expected.pathname) {
+          return;
+        }
+      } catch {
+        return;
+      }
+
+      setOauthDialog((current) =>
+        current ? { ...current, callbackInput: callbackUrl.trim() } : current,
+      );
+      void submitOauthCallback(callbackUrl.trim());
+    };
+
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [oauthDialog]);
+
   const closeModal = () => {
     setShowAddAccount(false);
     setProvider("openai");
@@ -79,6 +109,7 @@ export function AccountsTab(props: Props) {
     setManualPriority("0");
     setManualEnabled(true);
     setIsSubmitting(false);
+    sessionStorage.removeItem("multivibe-oauth-pending");
   };
 
   const closeEditModal = () => {
@@ -88,6 +119,7 @@ export function AccountsTab(props: Props) {
 
   const closeOauthDialog = () => {
     setOauthDialog(null);
+    sessionStorage.removeItem("multivibe-oauth-pending");
   };
 
   const submitManualAccount = async () => {
@@ -114,7 +146,14 @@ export function AccountsTab(props: Props) {
           pendingPriority: Number(manualPriority) || 0,
           pendingEnabled: manualEnabled,
         });
-        window.open(authorizeUrl, "_blank", "noopener,noreferrer");
+        sessionStorage.setItem("multivibe-oauth-pending", JSON.stringify({
+          flowId,
+          mode: "create",
+          pendingPriority: Number(manualPriority) || 0,
+          pendingEnabled: manualEnabled,
+          timestamp: Date.now(),
+        }));
+        window.open(authorizeUrl, "_blank", "noreferrer");
       } finally {
         setIsSubmitting(false);
       }
@@ -176,7 +215,13 @@ export function AccountsTab(props: Props) {
           mode: "reauth",
           accountId: editingAccount.id,
         });
-        window.open(authorizeUrl, "_blank", "noopener,noreferrer");
+        sessionStorage.setItem("multivibe-oauth-pending", JSON.stringify({
+          flowId,
+          mode: "reauth",
+          accountId: editingAccount.id,
+          timestamp: Date.now(),
+        }));
+        window.open(authorizeUrl, "_blank", "noreferrer");
       } finally {
         setIsSavingEdit(false);
       }
@@ -199,14 +244,15 @@ export function AccountsTab(props: Props) {
     }
   };
 
-  const submitOauthCallback = async () => {
-    if (!oauthDialog?.callbackInput.trim()) return;
+  const submitOauthCallback = async (overrideUrl?: string) => {
+    const input = overrideUrl?.trim() || oauthDialog?.callbackInput.trim();
+    if (!input || !oauthDialog) return;
     setIsSavingEdit(true);
     try {
       setOauthDialog((current) =>
         current ? { ...current, isSubmitting: true } : current,
       );
-      const result = await completeOAuth(oauthDialog.flowId, oauthDialog.callbackInput.trim());
+      const result = await completeOAuth(oauthDialog.flowId, input);
       const accountId = String(result?.account?.id ?? oauthDialog.accountId ?? "").trim();
       if (
         oauthDialog.mode === "create" &&
@@ -254,7 +300,13 @@ export function AccountsTab(props: Props) {
         mode: "reauth",
         accountId: account.id,
       });
-      window.open(authorizeUrl, "_blank", "noopener,noreferrer");
+      sessionStorage.setItem("multivibe-oauth-pending", JSON.stringify({
+        flowId,
+        mode: "reauth",
+        accountId: account.id,
+        timestamp: Date.now(),
+      }));
+      window.open(authorizeUrl, "_blank", "noreferrer");
     } finally {
       setOauthBusyId(null);
     }
@@ -589,7 +641,7 @@ export function AccountsTab(props: Props) {
             <div className="inline wrap">
               <button
                 className="btn"
-                onClick={() => window.open(oauthDialog.authorizeUrl, "_blank", "noopener,noreferrer")}
+                onClick={() => window.open(oauthDialog.authorizeUrl, "_blank", "noreferrer")}
               >
                 Open login page
               </button>
