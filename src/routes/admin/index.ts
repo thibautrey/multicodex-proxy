@@ -90,6 +90,27 @@ function filterTracesByWindow<T extends { at: number }>(
   });
 }
 
+function isHiddenTraceRoute(route: string | undefined): boolean {
+  const normalized = String(route ?? "").trim();
+  if (!normalized) return false;
+
+  const routeWithoutMethod = normalized.replace(/^[A-Z]+\s+/, "");
+  const [pathOnly] = routeWithoutMethod.split("?");
+
+  return (
+    pathOnly === "/" ||
+    pathOnly === "/favicon.ico" ||
+    pathOnly.startsWith("/admin/") ||
+    pathOnly.startsWith("/assets/") ||
+    pathOnly === "/v1/models" ||
+    /^\/v1\/models\/[^/]+$/.test(pathOnly)
+  );
+}
+
+function filterVisibleTraces<T extends { route?: string }>(traces: T[]): T[] {
+  return traces.filter((trace) => !isHiddenTraceRoute(trace.route));
+}
+
 function formatZipDosTime(date: Date) {
   const year = Math.max(1980, date.getUTCFullYear());
   const month = date.getUTCMonth() + 1;
@@ -303,7 +324,9 @@ export function createAdminRouter(options: AdminRoutesOptions) {
 
     if (hasLegacyLimit && !hasPaginationQuery) {
       const limit = Number(req.query.limit ?? 100);
-      return res.json({ traces: await readTracesLegacy(limit) });
+      return res.json({
+        traces: filterVisibleTraces(await readTracesLegacy(limit)),
+      });
     }
 
     const page = Math.max(1, Number(req.query.page ?? 1) || 1);
@@ -317,7 +340,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     const { sinceMs, untilMs } = parseTraceWindowBounds(
       req.query as Record<string, unknown>,
     );
-    const traces = await readTraceListWindow();
+    const traces = filterVisibleTraces(await readTraceListWindow());
     const filtered = filterTracesByWindow(traces, sinceMs, untilMs);
     const sorted = [...filtered].sort((a, b) => b.at - a.at);
     const total = sorted.length;
@@ -342,7 +365,9 @@ export function createAdminRouter(options: AdminRoutesOptions) {
 
   router.get("/traces/:id", async (req, res) => {
     const trace = await readTraceById(req.params.id);
-    if (!trace) return res.status(404).json({ error: "not found" });
+    if (!trace || isHiddenTraceRoute(trace.route)) {
+      return res.status(404).json({ error: "not found" });
+    }
     res.json({ trace });
   });
 
@@ -350,9 +375,11 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     const { sinceMs, untilMs } = parseTraceWindowBounds(
       req.query as Record<string, unknown>,
     );
-    const traces = filterTracesByWindow(await readTraceWindow(), sinceMs, untilMs).sort(
-      (a, b) => a.at - b.at,
-    );
+    const traces = filterTracesByWindow(
+      filterVisibleTraces(await readTraceWindow()),
+      sinceMs,
+      untilMs,
+    ).sort((a, b) => a.at - b.at);
 
     const exportedAt = Date.now();
     const files: Array<{ name: string; data: Buffer }> = [
@@ -399,7 +426,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     const sinceMs = parseQueryNumber(req.query.sinceMs);
     const untilMs = parseQueryNumber(req.query.untilMs);
 
-    const traces = await readStatsHistoryRange(sinceMs, untilMs);
+    const traces = filterVisibleTraces(await readStatsHistoryRange(sinceMs, untilMs));
     const filtered = traces.filter((t) => {
       if (accountIdFilter && t.accountId !== accountIdFilter) return false;
       if (routeFilter && t.route !== routeFilter) return false;
@@ -472,16 +499,18 @@ export function createAdminRouter(options: AdminRoutesOptions) {
   router.get("/stats/traces", async (req, res) => {
     const sinceMs = parseQueryNumber(req.query.sinceMs);
     const untilMs = parseQueryNumber(req.query.untilMs);
-    const { totalStored, matched, stats } = await getTraceStats(
+    const traces = filterTracesByWindow(
+      filterVisibleTraces(await readStatsHistoryRange(sinceMs, untilMs)),
       sinceMs,
       untilMs,
     );
+    const stats = buildTraceStats(traces);
 
     res.json({
       ok: true,
       filters: { sinceMs, untilMs },
-      totalStored,
-      matched,
+      totalStored: traces.length,
+      matched: traces.length,
       stats,
     });
   });
