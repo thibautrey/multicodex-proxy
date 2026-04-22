@@ -580,6 +580,16 @@ function isRetryableUpstreamError(status: number, errorText: string): boolean {
   );
 }
 
+function parseRetryAfter(response: Response): number | undefined {
+  const raw = response.headers.get("retry-after");
+  if (!raw) return undefined;
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds)) return seconds * 1000;
+  const date = Date.parse(raw);
+  if (Number.isFinite(date)) return Math.max(0, date - Date.now());
+  return undefined;
+}
+
 async function fetchCodexWithRetry(
   url: string,
   init: RequestInit,
@@ -597,7 +607,11 @@ async function fetchCodexWithRetry(
         attempt < MAX_UPSTREAM_RETRIES &&
         isRetryableUpstreamError(response.status, errorText)
       ) {
-        await sleep(UPSTREAM_BASE_DELAY_MS * 2 ** attempt);
+        const retryAfter = parseRetryAfter(response);
+        const backoff = UPSTREAM_BASE_DELAY_MS * 2 ** attempt;
+        const jitter = Math.random() * 500;
+        const delay = Math.max(retryAfter ?? 0, backoff) + jitter;
+        await sleep(delay);
         continue;
       }
       return response;
@@ -607,7 +621,9 @@ async function fetchCodexWithRetry(
         attempt < MAX_UPSTREAM_RETRIES &&
         !lastError.message.includes("usage limit")
       ) {
-        await sleep(UPSTREAM_BASE_DELAY_MS * 2 ** attempt);
+        const backoff = UPSTREAM_BASE_DELAY_MS * 2 ** attempt;
+        const jitter = Math.random() * 500;
+        await sleep(backoff + jitter);
         continue;
       }
       throw lastError;
