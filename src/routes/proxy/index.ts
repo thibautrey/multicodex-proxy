@@ -1336,11 +1336,20 @@ let accounts = store.getCachedAccounts();
   }
 
   router.all("/chat/completions", rejectNonPost("/v1/chat/completions"));
-  router.post("/chat/completions", proxyWithRotation);
+  router.post("/chat/completions", (req, res, next) => {
+    res.locals._multivibeTraced = true;
+    proxyWithRotation(req, res).catch(next);
+  });
   router.all("/responses", rejectNonPost("/v1/responses"));
-  router.post("/responses", proxyWithRotation);
+  router.post("/responses", (req, res, next) => {
+    res.locals._multivibeTraced = true;
+    proxyWithRotation(req, res).catch(next);
+  });
   router.all("/responses/compact", rejectNonPost("/v1/responses/compact"));
-  router.post("/responses/compact", proxyWithRotation);
+  router.post("/responses/compact", (req, res, next) => {
+    res.locals._multivibeTraced = true;
+    proxyWithRotation(req, res).catch(next);
+  });
 
   router.get("/models", async (_req, res) => {
     const models = await discoverModels(store, openaiBaseUrl, mistralBaseUrl, zaiBaseUrl);
