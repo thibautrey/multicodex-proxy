@@ -62,8 +62,8 @@ body {
   color: var(--text);
   font-family: "Avenir Next", "Segoe UI", "Manrope", sans-serif;
   background:
-    radial-gradient(1200px 640px at 0% -8%, rgba(22, 115, 108, 0.11) 0%, transparent 58%),
-    radial-gradient(900px 520px at 100% 0%, rgba(220, 139, 63, 0.12) 0%, transparent 62%),
+    radial-gradient(1200px 640px at 0% -8%, rgba(22, 115, 108, 0.08) 0%, transparent 58%),
+    radial-gradient(900px 520px at 100% 0%, rgba(220, 139, 63, 0.08) 0%, transparent 62%),
     linear-gradient(180deg, var(--bg) 0%, var(--bg-strong) 100%);
 }
 
@@ -104,10 +104,10 @@ body,
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 24px;
+  border-radius: 18px;
   box-shadow: var(--shadow-soft);
-  backdrop-filter: blur(18px);
-  padding: 20px;
+  backdrop-filter: blur(12px);
+  padding: 16px;
 }
 
 .sidebar {
@@ -249,6 +249,25 @@ p {
 
 .row-between {
   justify-content: space-between;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 14px;
+}
+
+.topbar h1 {
+  font-size: 2.35rem;
+}
+
+.topbar-actions {
+  justify-content: flex-end;
+}
+
+.topbar-actions input {
+  width: min(320px, 100%);
 }
 
 .badge {
@@ -475,7 +494,7 @@ button:disabled {
 }
 
 .metric {
-  min-height: 156px;
+  min-height: 136px;
   display: grid;
   gap: 10px;
   align-content: space-between;
@@ -729,7 +748,7 @@ small {
   margin: 0;
   min-height: 120px;
   padding: 14px;
-  border-radius: 18px;
+  border-radius: 14px;
   border: 1px solid var(--line);
   background: var(--surface-muted);
   white-space: pre-wrap;
@@ -836,6 +855,11 @@ details summary {
 @media (max-width: 900px) {
   .page {
     padding: 14px;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .sidebar-summary,

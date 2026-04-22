@@ -59,26 +59,11 @@ export function AliasesTab({
 
   return (
     <>
-      <section className="section-header">
-        <div>
-          <div className="eyebrow">Routing abstraction</div>
-          <h2>Model aliases define your stable contract</h2>
-          <p className="muted">
-            Aliases matter because clients should not care which provider/model is currently
-            healthiest. The UI should make the fallback order easy to read and easy to trust.
-          </p>
+      <section className="panel">
+        <div className="section-split-header">
+          <h2>Create model alias</h2>
+          <span className="badge">{aliases.length} aliases</span>
         </div>
-      </section>
-
-      <section className="grid cards2">
-        <section className="panel">
-          <div className="section-split-header">
-            <div>
-              <div className="eyebrow">Create</div>
-              <h2>New model alias</h2>
-            </div>
-            <span className="badge">{aliases.length} existing</span>
-          </div>
           <div className="grid alias-grid">
             <label>
               Alias name
@@ -132,29 +117,11 @@ export function AliasesTab({
               {isSubmitting ? "Saving..." : "Create alias"}
             </button>
           </div>
-        </section>
-
-        <section className="panel">
-          <div className="section-split-header">
-            <div>
-              <div className="eyebrow">Guidance</div>
-              <h2>Alias design rules</h2>
-            </div>
-          </div>
-          <ul className="clean-list">
-            <li>Put the preferred model first and fallback targets after it.</li>
-            <li>Use aliases to stabilize client integrations while provider health changes underneath.</li>
-            <li>Descriptions should explain intent, not repeat the target list.</li>
-          </ul>
-        </section>
       </section>
 
       <section className="panel">
         <div className="section-split-header">
-          <div>
-            <div className="eyebrow">Inventory</div>
-            <h2>Aliases</h2>
-          </div>
+          <h2>Aliases</h2>
         </div>
         <div className="table-wrap">
           <table className="data-table">

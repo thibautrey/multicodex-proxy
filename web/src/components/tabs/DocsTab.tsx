@@ -4,24 +4,10 @@ import { usd } from "../../lib/ui";
 export function DocsTab({ totalTraceCostFromRows }: { totalTraceCostFromRows: number }) {
   return (
     <>
-      <section className="section-header">
-        <div>
-          <div className="eyebrow">Reference</div>
-          <h2>Supported routes and operator notes</h2>
-          <p className="muted">
-            This should work as a compact control-plane reference, not just a loose list of
-            endpoints.
-          </p>
-        </div>
-      </section>
-
       <section className="grid cards2">
         <section className="panel">
           <div className="section-split-header">
-            <div>
-              <div className="eyebrow">Public API</div>
-              <h2>OpenAI-compatible surface</h2>
-            </div>
+            <h2>API reference</h2>
             <span className="badge">Client-facing</span>
           </div>
           <ul className="clean-list endpoint-list">
@@ -35,10 +21,7 @@ export function DocsTab({ totalTraceCostFromRows }: { totalTraceCostFromRows: nu
 
         <section className="panel">
           <div className="section-split-header">
-            <div>
-              <div className="eyebrow">Admin API</div>
-              <h2>Operator endpoints</h2>
-            </div>
+            <h2>Admin endpoints</h2>
             <span className="badge badge-warn">Requires token</span>
           </div>
           <ul className="clean-list endpoint-list">
@@ -59,12 +42,7 @@ export function DocsTab({ totalTraceCostFromRows }: { totalTraceCostFromRows: nu
 
       <section className="grid cards2">
         <section className="panel">
-          <div className="section-split-header">
-            <div>
-              <div className="eyebrow">Behavior</div>
-              <h2>Operational notes</h2>
-            </div>
-          </div>
+          <h2>Notes</h2>
           <ul className="clean-list">
             <li>Admin endpoints require the <span className="mono">x-admin-token</span> header.</li>
             <li>Sanitized mode is enabled with the <span className="mono">?sanitized=1</span> URL flag.</li>
@@ -74,16 +52,9 @@ export function DocsTab({ totalTraceCostFromRows }: { totalTraceCostFromRows: nu
 
         <section className="panel">
           <div className="section-split-header">
-            <div>
-              <div className="eyebrow">Pricing</div>
-              <h2>Current trace page snapshot</h2>
-            </div>
+            <h2>Pricing snapshot</h2>
             <span className="badge">Derived metric</span>
           </div>
-          <p className="muted section-copy">
-            Costs are estimated from input and output tokens using model pricing. Use this
-            as a dashboard heuristic, not as a billing source of truth.
-          </p>
           <p className="mono docs-cost">{usd(totalTraceCostFromRows)}</p>
         </section>
       </section>
