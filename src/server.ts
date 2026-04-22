@@ -21,6 +21,7 @@ import {
   TRACE_FILE_PATH,
   TRACE_STATS_HISTORY_PATH,
   TRACE_RETENTION_MAX,
+  TRACE_INCLUDE_BODY,
   UPSTREAM_PATH,
   OAUTH_STATE_PATH,
   PORT,
@@ -44,6 +45,28 @@ const traceManager = createTraceManager({
   filePath: TRACE_FILE_PATH,
   historyFilePath: TRACE_STATS_HISTORY_PATH,
   retentionMax: TRACE_RETENTION_MAX,
+});
+
+// Catch-all request tracing — records every request even if it doesn't hit an official endpoint.
+// Routes that record their own detailed trace (e.g. /v1/chat/completions) set res.locals._multivibeTraced
+// so we don't double-count them.
+app.use((req, res, next) => {
+  const startedAt = Date.now();
+  const route = req.originalUrl || req.url;
+
+  res.on("finish", () => {
+    if (res.locals._multivibeTraced) return;
+    traceManager.recordTrace({
+      at: Date.now(),
+      route: `${req.method} ${route}`,
+      status: res.statusCode,
+      stream: false,
+      latencyMs: Date.now() - startedAt,
+      requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
+    });
+  });
+
+  next();
 });
 
 const adminRouter = createAdminRouter({
