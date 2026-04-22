@@ -56,6 +56,7 @@ app.use((req, res, next) => {
 
   res.on("finish", () => {
     if (res.locals._multivibeTraced) return;
+    if ((req.path || req.originalUrl || "").startsWith("/admin/stats/traces")) return;
     traceManager.recordTrace({
       at: Date.now(),
       route: `${req.method} ${route}`,
