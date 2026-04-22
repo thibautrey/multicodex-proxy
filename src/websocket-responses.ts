@@ -440,7 +440,7 @@ export function installResponsesWebsocketProxy({
 
   server.on("upgrade", (req, socket, head) => {
     const url = req.url ? new URL(req.url, `http://${req.headers.host ?? "localhost"}`) : null;
-    if (!url || url.pathname !== "/v1/responses") {
+    if (!url || (url.pathname !== "/v1/responses" && url.pathname !== "/responses")) {
       socket.destroy();
       return;
     }

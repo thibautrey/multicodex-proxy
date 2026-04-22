@@ -133,13 +133,19 @@ app.get("/health", (_req, res) =>
 
 app.use("/admin", adminGuard, adminRouter);
 app.use("/v1", proxyRouter);
+app.use("/", proxyRouter);
 
 app.use(express.static(webDist));
 app.get("*", (req, res, next) => {
   if (
     req.path.startsWith("/admin/") ||
     req.path.startsWith("/v1/") ||
-    req.path === "/health"
+    req.path === "/health" ||
+    req.path === "/chat/completions" ||
+    req.path === "/responses" ||
+    req.path === "/responses/compact" ||
+    req.path === "/models" ||
+    /^\/models\//.test(req.path)
   )
     return next();
   res.sendFile(path.join(webDist, "index.html"), (err) => {
