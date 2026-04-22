@@ -26,37 +26,13 @@ import { AliasesTab } from "./components/tabs/AliasesTab";
 
 const q = new URLSearchParams(window.location.search);
 const initialTab = (q.get("tab") as Tab) || "overview";
-const TAB_ITEMS: Array<{ id: Tab; label: string; description: string }> = [
-  {
-    id: "overview",
-    label: "Overview",
-    description: "Global health, capacity, model exposure, and persistence status.",
-  },
-  {
-    id: "accounts",
-    label: "Accounts",
-    description: "Onboard providers, monitor quotas, and manage account state.",
-  },
-  {
-    id: "aliases",
-    label: "Aliases",
-    description: "Define stable routing names backed by ordered fallback targets.",
-  },
-  {
-    id: "tracing",
-    label: "Tracing",
-    description: "Inspect request volume, cost, latency, failures, and full traces.",
-  },
-  {
-    id: "playground",
-    label: "Playground",
-    description: "Run quick live requests against the exposed OpenAI-compatible API.",
-  },
-  {
-    id: "docs",
-    label: "Docs",
-    description: "Review the supported routes, admin endpoints, and operator notes.",
-  },
+const TAB_ITEMS: Array<{ id: Tab; label: string }> = [
+  { id: "overview", label: "Overview" },
+  { id: "accounts", label: "Accounts" },
+  { id: "aliases", label: "Aliases" },
+  { id: "tracing", label: "Tracing" },
+  { id: "playground", label: "Playground" },
+  { id: "docs", label: "Docs" },
 ];
 
 export default function App() {
@@ -143,15 +119,6 @@ export default function App() {
       ),
     [traces],
   );
-  const currentTab = useMemo(
-    () => TAB_ITEMS.find((item) => item.id === tab) ?? TAB_ITEMS[0],
-    [tab],
-  );
-  const activeAccountCount = useMemo(
-    () => accounts.filter((account) => account.enabled).length,
-    [accounts],
-  );
-
   useEffect(() => {
     const u = new URL(window.location.href);
     u.searchParams.set("tab", tab);
@@ -481,160 +448,111 @@ export default function App() {
 
   return (
     <div className="page">
-      <div className="shell app-shell">
-        <aside className="panel sidebar">
-          <div className="brand-lockup">
-            <div className="eyebrow">Multi-provider gateway</div>
+      <div className="shell content-stack">
+        <header className="panel topbar">
+          <div>
             <h1>MultiVibe</h1>
-            <p className="muted">
-              One OpenAI-compatible `/v1` surface for quota-aware routing, aliases,
-              OAuth onboarding, and request tracing.
-            </p>
+            <p className="muted">Quota-aware, multi-provider router with OAuth onboarding and tracing.</p>
           </div>
-
-          <div className="sidebar-summary">
-            <div className="sidebar-summary-card">
-              <span className="sidebar-summary-label">Active accounts</span>
-              <strong>{activeAccountCount}</strong>
-            </div>
-            <div className="sidebar-summary-card">
-              <span className="sidebar-summary-label">Exposed models</span>
-              <strong>{models.length}</strong>
-            </div>
-            <div className="sidebar-summary-card">
-              <span className="sidebar-summary-label">Trace requests</span>
-              <strong>{traceStats.totals.requests}</strong>
-            </div>
-          </div>
-
-          <nav className="sidebar-nav" aria-label="Primary">
-            {TAB_ITEMS.map((item) => (
-              <button
-                key={item.id}
-                className={tab === item.id ? "nav-tab active" : "nav-tab"}
-                onClick={() => setTab(item.id)}
-              >
-                <span className="nav-tab-label">{item.label}</span>
-                <span className="nav-tab-description">{item.description}</span>
-              </button>
-            ))}
-          </nav>
-
-          <div className="sidebar-meta">
+          <div className="inline wrap topbar-actions">
             <span className={sanitized ? "badge badge-live" : "badge"}>
-              {sanitized ? "Sanitized mode on" : "Live values visible"}
+              {sanitized ? "Sanitized" : "Live"}
             </span>
-            <span className="badge">{stats.blocked} blocked</span>
+            <input
+              value={adminToken}
+              onChange={(e) => setAdminToken(e.target.value)}
+              onBlur={() => localStorage.setItem("adminToken", adminToken)}
+              placeholder="Admin token"
+            />
+            <button className="btn secondary" onClick={() => void refreshData()}>
+              Refresh data
+            </button>
           </div>
-        </aside>
+        </header>
 
-        <main className="workspace">
-          <header className="panel hero">
-            <div className="hero-copy">
-              <div className="eyebrow">{currentTab.label}</div>
-              <h2 className="hero-title">{currentTab.description}</h2>
-              <p className="muted hero-text">
-                Use this dashboard to balance provider capacity, keep aliases stable,
-                and trace request health from one control surface.
-              </p>
-              <div className="hero-badges">
-                <span className="badge">{stats.total} accounts</span>
-                <span className="badge">{models.length} models</span>
-                <span className="badge">{aliases.length} aliases</span>
-                <span className="badge">{filteredTraceStats.totals.requests} requests in range</span>
-              </div>
-            </div>
+        <nav className="tabs panel" aria-label="Primary">
+          {TAB_ITEMS.map((item) => (
+            <button
+              key={item.id}
+              className={tab === item.id ? "tab active" : "tab"}
+              onClick={() => setTab(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </nav>
 
-            <div className="hero-controls">
-              <label className="control-field">
-                <span className="control-label">Admin token</span>
-                <input
-                  value={adminToken}
-                  onChange={(e) => setAdminToken(e.target.value)}
-                  onBlur={() => localStorage.setItem("adminToken", adminToken)}
-                  placeholder="Admin token"
-                />
-              </label>
-              <button className="btn secondary" onClick={() => void refreshData()}>
-                Refresh data
-              </button>
-            </div>
-          </header>
+        {error && <div className="panel error">{error}</div>}
 
-          {error && <div className="panel error">{error}</div>}
+        {tab === "overview" && (
+          <OverviewTab
+            stats={stats}
+            usageStats={usageStats}
+            traceStats={filteredTraceStats}
+            storageInfo={storageInfo}
+            models={models}
+          />
+        )}
 
-          <div className="content-stack">
-            {tab === "overview" && (
-              <OverviewTab
-                stats={stats}
-                usageStats={usageStats}
-                traceStats={filteredTraceStats}
-                storageInfo={storageInfo}
-                models={models}
-              />
-            )}
+        {tab === "accounts" && (
+          <AccountsTab
+            traceStats={filteredTraceStats}
+            accounts={accounts}
+            sanitized={sanitized}
+            patch={patch}
+            del={del}
+            unblock={unblock}
+            refreshUsage={refreshUsage}
+            createAccount={createAccount}
+            startOAuth={startOAuth}
+            completeOAuth={completeOAuth}
+            oauthRedirectUri={oauthRedirectUri}
+          />
+        )}
 
-            {tab === "accounts" && (
-              <AccountsTab
-                traceStats={filteredTraceStats}
-                accounts={accounts}
-                sanitized={sanitized}
-                patch={patch}
-                del={del}
-                unblock={unblock}
-                refreshUsage={refreshUsage}
-                createAccount={createAccount}
-                startOAuth={startOAuth}
-                completeOAuth={completeOAuth}
-                oauthRedirectUri={oauthRedirectUri}
-              />
-            )}
+        {tab === "aliases" && (
+          <AliasesTab
+            aliases={aliases}
+            saveAlias={saveAlias}
+            patchAlias={patchAlias}
+            deleteAlias={deleteAlias}
+          />
+        )}
 
-            {tab === "aliases" && (
-              <AliasesTab
-                aliases={aliases}
-                saveAlias={saveAlias}
-                patchAlias={patchAlias}
-                deleteAlias={deleteAlias}
-              />
-            )}
+        {tab === "tracing" && (
+          <TracingTab
+            accounts={accounts}
+            traceStats={filteredTraceStats}
+            tokensTimeseries={tokensTimeseries}
+            modelChartData={modelChartData}
+            modelCostChartData={modelCostChartData}
+            tracePagination={tracePagination}
+            gotoTracePage={gotoTracePage}
+            traceRange={traceRange}
+            setTraceRange={setTraceRange}
+            traces={traces}
+            expandedTraceId={expandedTraceId}
+            expandedTrace={expandedTrace}
+            expandedTraceLoading={expandedTraceLoading}
+            toggleExpandedTrace={toggleExpandedTrace}
+            sanitized={sanitized}
+            exportTracesZip={exportTracesZip}
+            exportInProgress={traceExportInProgress}
+          />
+        )}
 
-            {tab === "tracing" && (
-              <TracingTab
-                accounts={accounts}
-                traceStats={filteredTraceStats}
-                tokensTimeseries={tokensTimeseries}
-                modelChartData={modelChartData}
-                modelCostChartData={modelCostChartData}
-                tracePagination={tracePagination}
-                gotoTracePage={gotoTracePage}
-                traceRange={traceRange}
-                setTraceRange={setTraceRange}
-                traces={traces}
-                expandedTraceId={expandedTraceId}
-                expandedTrace={expandedTrace}
-                expandedTraceLoading={expandedTraceLoading}
-                toggleExpandedTrace={toggleExpandedTrace}
-                sanitized={sanitized}
-                exportTracesZip={exportTracesZip}
-                exportInProgress={traceExportInProgress}
-              />
-            )}
+        {tab === "playground" && (
+          <PlaygroundTab
+            chatPrompt={chatPrompt}
+            setChatPrompt={setChatPrompt}
+            runChatTest={runChatTest}
+            chatOut={chatOut}
+          />
+        )}
 
-            {tab === "playground" && (
-              <PlaygroundTab
-                chatPrompt={chatPrompt}
-                setChatPrompt={setChatPrompt}
-                runChatTest={runChatTest}
-                chatOut={chatOut}
-              />
-            )}
-
-            {tab === "docs" && (
-              <DocsTab totalTraceCostFromRows={totalTraceCostFromRows} />
-            )}
-          </div>
-        </main>
+        {tab === "docs" && (
+          <DocsTab totalTraceCostFromRows={totalTraceCostFromRows} />
+        )}
       </div>
     </div>
   );

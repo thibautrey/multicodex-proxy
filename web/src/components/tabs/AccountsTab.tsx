@@ -344,18 +344,6 @@ export function AccountsTab(props: Props) {
 
   return (
     <>
-      <section className="section-header">
-        <div>
-          <div className="eyebrow">Provider operations</div>
-          <h2>Accounts are the real control plane</h2>
-          <p className="muted">
-            This is where routing reliability is won or lost. The UI needs to make quota
-            pressure, blocked state, and onboarding steps obvious enough that you do not
-            have to inspect raw JSON or remember the OAuth flow from memory.
-          </p>
-        </div>
-      </section>
-
       <section className="grid cards4">
         <Metric title="Accounts" value={`${accounts.length}`} detail="Total configured providers" />
         <Metric title="Enabled" value={`${enabledCount}`} detail="Available for routing" tone="success" />
@@ -363,63 +351,17 @@ export function AccountsTab(props: Props) {
         <Metric title="Top model" value={traceStats.models[0]?.model ?? "-"} detail="Highest volume in the selected range" />
       </section>
 
-      <section className="grid cards2">
-        <section className="panel">
-          <div className="section-split-header">
-            <div>
-              <div className="eyebrow">Onboarding</div>
-              <h2>Add provider capacity</h2>
-            </div>
+      <section className="panel">
+        <div className="section-split-header">
+          <h2>Accounts</h2>
+          <div className="inline wrap">
+            <span className="badge">{openAiCount} OpenAI</span>
+            <span className="badge">{mistralCount} Mistral</span>
             <button className="btn" onClick={() => setShowAddAccount(true)}>
               Add account
             </button>
           </div>
-          <p className="muted section-copy">
-            OpenAI uses a browser OAuth flow. Mistral uses direct token entry. Both paths end
-            up here, so the UI should make the distinction explicit before the user opens a modal.
-          </p>
-          <div className="info-grid">
-            <div className="info-tile">
-              <span className="info-label">OpenAI</span>
-              <strong>{openAiCount}</strong>
-              <p className="muted">OAuth-based onboarding and reauthentication.</p>
-            </div>
-            <div className="info-tile">
-              <span className="info-label">Mistral</span>
-              <strong>{mistralCount}</strong>
-              <p className="muted">Manual token entry with optional refresh token.</p>
-            </div>
-          </div>
-        </section>
-
-        <section className="panel">
-          <div className="section-split-header">
-            <div>
-              <div className="eyebrow">Operator notes</div>
-              <h2>What to watch for</h2>
-            </div>
-            <span className={sanitized ? "badge badge-live" : "badge"}>{sanitized ? "Sanitized mode" : "Live identities"}</span>
-          </div>
-          <ul className="clean-list">
-            <li>5h and weekly windows should remain readable without opening account details.</li>
-            <li>Blocked accounts should stand out before they quietly remove capacity.</li>
-            <li>Reauth should be one click for OpenAI accounts that already have an email attached.</li>
-          </ul>
-        </section>
-      </section>
-
-      <section className="panel">
-        <div className="section-split-header">
-          <div>
-            <div className="eyebrow">Live inventory</div>
-            <h2>Accounts</h2>
-          </div>
-          <span className="badge">{traceStats.totals.requests} requests in selected range</span>
         </div>
-        <p className="muted section-copy">
-          Each row should tell you who the account belongs to, how close it is to quota
-          limits, and whether routing can still trust it.
-        </p>
         <div className="table-wrap">
           <table className="data-table">
             <thead>

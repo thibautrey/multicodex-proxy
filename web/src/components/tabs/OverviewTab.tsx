@@ -22,17 +22,6 @@ export function OverviewTab({ stats, usageStats, traceStats, storageInfo, models
 
   return (
     <>
-      <section className="section-header">
-        <div>
-          <div className="eyebrow">Health snapshot</div>
-          <h2>Routing posture at a glance</h2>
-          <p className="muted">
-            The overview should answer three things quickly: how much capacity is online,
-            whether request traffic is healthy, and which models are actually exposed.
-          </p>
-        </div>
-      </section>
-
       <section className="grid cards4">
         <Metric title="Accounts" value={`${stats.total}`} detail="Configured provider accounts" />
         <Metric title="Enabled" value={`${stats.enabled}`} detail="Ready to receive traffic" tone="success" />
@@ -55,36 +44,22 @@ export function OverviewTab({ stats, usageStats, traceStats, storageInfo, models
       <section className="grid cards2">
         <section className="panel">
           <div className="section-split-header">
-            <div>
-              <div className="eyebrow">Capacity</div>
-              <h2>Aggregated usage</h2>
-            </div>
-            <span className="badge">{usageStats.primaryCount + usageStats.secondaryCount} windows tracked</span>
+            <h2>Aggregated usage</h2>
+            <span className="badge">{usageStats.primaryCount + usageStats.secondaryCount} windows</span>
           </div>
-          <p className="muted section-copy">
-            These averages tell you whether the router still has room before quota-driven
-            failover becomes the normal path.
-          </p>
           <ProgressStat label="5h average" value={usageStats.primaryAvg} count={usageStats.primaryCount} />
           <ProgressStat label="Weekly average" value={usageStats.secondaryAvg} count={usageStats.secondaryCount} />
         </section>
 
         <section className="panel">
           <div className="section-split-header">
-            <div>
-              <div className="eyebrow">Storage</div>
-              <h2>Persistence footprint</h2>
-            </div>
+            <h2>Persistence</h2>
             {storageInfo && (
               <span className={storageInfo.persistenceLikelyEnabled ? "badge badge-live" : "badge badge-warn"}>
-                {storageInfo.persistenceLikelyEnabled ? "Persistence detected" : "Mount not guaranteed"}
+                {storageInfo.persistenceLikelyEnabled ? "Detected" : "Not guaranteed"}
               </span>
             )}
           </div>
-          <p className="muted section-copy">
-            Accounts, OAuth state, and traces are file-backed. If this section looks wrong,
-            your dashboard may be healthy while your restart story is not.
-          </p>
           {storageInfo && (
             <ul className="clean-list">
               <li className="mono">accounts: {storageInfo.accountsPath}</li>
@@ -96,27 +71,20 @@ export function OverviewTab({ stats, usageStats, traceStats, storageInfo, models
       </section>
 
       <section className="panel">
-          <div className="section-split-header">
-            <div>
-              <div className="eyebrow">Inventory</div>
-              <h2>Models exposed</h2>
-            </div>
-            <div className="inline wrap">
-              <button className={providerTab === "all" ? "tab active" : "tab"} onClick={() => setProviderTab("all")}>All</button>
-              <button className={providerTab === "openai" ? "tab active" : "tab"} onClick={() => setProviderTab("openai")}>OpenAI</button>
-              <button className={providerTab === "mistral" ? "tab active" : "tab"} onClick={() => setProviderTab("mistral")}>Mistral</button>
-            </div>
+        <div className="section-split-header">
+          <h2>Models exposed</h2>
+          <div className="inline wrap">
+            <button className={providerTab === "all" ? "tab active" : "tab"} onClick={() => setProviderTab("all")}>All</button>
+            <button className={providerTab === "openai" ? "tab active" : "tab"} onClick={() => setProviderTab("openai")}>OpenAI</button>
+            <button className={providerTab === "mistral" ? "tab active" : "tab"} onClick={() => setProviderTab("mistral")}>Mistral</button>
           </div>
-          <p className="muted section-copy">
-            The router only looks as good as the inventory it can advertise. Check this list
-            when aliases appear healthy but clients still cannot resolve a target model.
-          </p>
-          <div className="chips">
-            {filteredModels.map((m) => (
-              <span key={m.id} className="chip mono">{m.id}</span>
-            ))}
-            {!filteredModels.length && <span className="muted">No models exposed for this provider.</span>}
-          </div>
+        </div>
+        <div className="chips">
+          {filteredModels.map((m) => (
+            <span key={m.id} className="chip mono">{m.id}</span>
+          ))}
+          {!filteredModels.length && <span className="muted">No models exposed.</span>}
+        </div>
       </section>
     </>
   );
