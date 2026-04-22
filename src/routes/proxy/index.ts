@@ -1351,9 +1351,14 @@ let accounts = store.getCachedAccounts();
     proxyWithRotation(req, res).catch(next);
   });
 
+  function toOpenAiModelShape(model: ExposedModel) {
+    const { metadata: _, ...rest } = model;
+    return rest;
+  }
+
   router.get("/models", async (_req, res) => {
     const models = await discoverModels(store, openaiBaseUrl, mistralBaseUrl, zaiBaseUrl);
-    res.json({ object: "list", data: models });
+    res.json({ object: "list", data: models.map(toOpenAiModelShape) });
   });
 
   router.get("/models/:id", async (req, res) => {
@@ -1367,7 +1372,7 @@ let accounts = store.getCachedAccounts();
           type: "invalid_request_error",
         },
       });
-    res.json(model);
+    res.json(toOpenAiModelShape(model));
   });
 
   return router;
