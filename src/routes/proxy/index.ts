@@ -94,6 +94,8 @@ type ExposedModel = {
   owned_by: string;
   metadata: {
     provider: ProviderId;
+    provider_candidates?: ProviderId[];
+    account_ids?: string[];
     context_window: number | null;
     max_output_tokens: number | null;
     supports_reasoning: boolean;
@@ -168,6 +170,54 @@ function modelObject(
   };
 }
 
+function trimTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, "");
+}
+
+function accountBaseUrl(
+  account: { provider?: ProviderId; baseUrl?: string | undefined },
+  openaiBaseUrl: string,
+  mistralBaseUrl: string,
+  zaiBaseUrl: string,
+): string {
+  const provider = normalizeProvider(account);
+  if (provider === "openai-compatible") {
+    return trimTrailingSlash(String(account.baseUrl ?? ""));
+  }
+  if (provider === "mistral") return mistralBaseUrl;
+  if (provider === "zai") return zaiBaseUrl;
+  return openaiBaseUrl;
+}
+
+function mergeModelAvailability(
+  current: ExposedModel | undefined,
+  nextModel: ExposedModel,
+  provider: ProviderId,
+  accountId: string,
+): ExposedModel {
+  const providers = Array.from(
+    new Set([
+      ...(current?.metadata.provider_candidates ?? [current?.metadata.provider].filter(
+        (value): value is ProviderId => Boolean(value),
+      )),
+      provider,
+    ]),
+  );
+  const accountIds = Array.from(
+    new Set([...(current?.metadata.account_ids ?? []), accountId]),
+  );
+
+  return {
+    ...(current ?? nextModel),
+    metadata: {
+      ...(current?.metadata ?? nextModel.metadata),
+      provider: current?.metadata.provider ?? nextModel.metadata.provider,
+      provider_candidates: providers,
+      account_ids: accountIds,
+    },
+  };
+}
+
 function normalizeModelLookupKey(model?: string): string {
   const raw = (model ?? "").trim().toLowerCase();
   if (!raw) return "";
@@ -186,7 +236,12 @@ function inferProviderFromModel(
   const discovered = discoveredModels.find(
     (m) => normalizeModelLookupKey(m.id) === key,
   );
-  if (discovered) return discovered.metadata.provider;
+  if (discovered) {
+    const candidates = discovered.metadata.provider_candidates ?? [
+      discovered.metadata.provider,
+    ];
+    return candidates[0] ?? discovered.metadata.provider;
+  }
 
   if (
     key.startsWith("gpt-") ||
@@ -223,6 +278,50 @@ function inferProviderFromModel(
   return "openai";
 }
 
+function providersForModel(
+  model: string | undefined,
+  discoveredModels: ExposedModel[],
+): ProviderId[] {
+  const key = normalizeModelLookupKey(model);
+  if (!key) return ["openai"];
+
+  const discovered = discoveredModels.find(
+    (entry) => normalizeModelLookupKey(entry.id) === key,
+  );
+  if (discovered) {
+    const candidates = discovered.metadata.provider_candidates ?? [
+      discovered.metadata.provider,
+    ];
+    return Array.from(
+      new Set(
+        candidates.filter(
+          (value): value is ProviderId => typeof value === "string" && value.length > 0,
+        ),
+      ),
+    );
+  }
+
+  return [inferProviderFromModel(model, discoveredModels)];
+}
+
+function accountSupportsModel(
+  accountId: string,
+  model: string | undefined,
+  discoveredModels: ExposedModel[],
+): boolean {
+  const key = normalizeModelLookupKey(model);
+  if (!key) return true;
+
+  const discovered = discoveredModels.find(
+    (entry) => normalizeModelLookupKey(entry.id) === key,
+  );
+  if (!discovered) return true;
+
+  const accountIds = discovered.metadata.account_ids;
+  if (!accountIds?.length) return true;
+  return accountIds.includes(accountId);
+}
+
 async function discoverModels(
   store: AccountStore,
   openaiBaseUrl: string,
@@ -238,25 +337,35 @@ async function discoverModels(
   try {
     const accounts = await store.listAccounts();
     const byId = new Map<string, ExposedModel>();
+    const activeAccounts = accounts.filter((a) => a.enabled && a.accessToken);
 
-    const openaiAccount = accounts.find(
-      (a) => a.enabled && a.accessToken && normalizeProvider(a) === "openai",
-    );
-    if (openaiAccount) {
+    for (const account of activeAccounts) {
+      const provider = normalizeProvider(account);
       try {
         const headers: Record<string, string> = {
-          authorization: `Bearer ${openaiAccount.accessToken}`,
+          authorization: `Bearer ${account.accessToken}`,
           accept: "application/json",
         };
-        if (openaiAccount.chatgptAccountId) {
-          headers["ChatGPT-Account-Id"] = openaiAccount.chatgptAccountId;
+        let url = "";
+
+        if (provider === "openai") {
+          if (account.chatgptAccountId) {
+            headers["ChatGPT-Account-Id"] = account.chatgptAccountId;
+          }
+          url = `${accountBaseUrl(account, openaiBaseUrl, mistralBaseUrl, zaiBaseUrl)}/backend-api/codex/models?client_version=${encodeURIComponent(
+            MODELS_CLIENT_VERSION,
+          )}`;
+        } else {
+          const baseUrl = accountBaseUrl(account, openaiBaseUrl, mistralBaseUrl, zaiBaseUrl);
+          if (!baseUrl) continue;
+          url = `${baseUrl}/v1/models`;
         }
-        const url = `${openaiBaseUrl}/backend-api/codex/models?client_version=${encodeURIComponent(
-          MODELS_CLIENT_VERSION,
-        )}`;
+
         const r = await fetch(url, { headers });
-        if (r.ok) {
-          const json: any = await r.json();
+        if (!r.ok) continue;
+        const json: any = await r.json();
+
+        if (provider === "openai") {
           const upstream = Array.isArray(json?.models) ? json.models : [];
           for (const entry of upstream) {
             const slug =
@@ -264,58 +373,35 @@ async function discoverModels(
                 ? entry.slug.trim()
                 : "";
             if (!slug) continue;
-            byId.set(slug, modelObject(slug, "openai", entry));
+            byId.set(
+              slug,
+              mergeModelAvailability(
+                byId.get(slug),
+                modelObject(slug, provider, entry),
+                provider,
+                account.id,
+              ),
+            );
           }
+          continue;
         }
-      } catch {}
-    }
 
-    const mistralAccount = accounts.find(
-      (a) => a.enabled && a.accessToken && normalizeProvider(a) === "mistral",
-    );
-    if (mistralAccount) {
-      try {
-        const headers: Record<string, string> = {
-          authorization: `Bearer ${mistralAccount.accessToken}`,
-          accept: "application/json",
-        };
-        const r = await fetch(`${mistralBaseUrl}/v1/models`, { headers });
-        if (r.ok) {
-          const json: any = await r.json();
-          const upstream = Array.isArray(json?.data) ? json.data : [];
-          for (const entry of upstream) {
-            const id =
-              typeof entry?.id === "string" && entry.id.trim()
-                ? entry.id.trim()
-                : "";
-            if (!id) continue;
-            byId.set(id, modelObject(id, "mistral", entry));
-          }
-        }
-      } catch {}
-    }
-
-    const zaiAccount = accounts.find(
-      (a) => a.enabled && a.accessToken && normalizeProvider(a) === "zai",
-    );
-    if (zaiAccount) {
-      try {
-        const headers: Record<string, string> = {
-          authorization: `Bearer ${zaiAccount.accessToken}`,
-          accept: "application/json",
-        };
-        const r = await fetch(`${zaiBaseUrl}/v1/models`, { headers });
-        if (r.ok) {
-          const json: any = await r.json();
-          const upstream = Array.isArray(json?.data) ? json.data : [];
-          for (const entry of upstream) {
-            const id =
-              typeof entry?.id === "string" && entry.id.trim()
-                ? entry.id.trim()
-                : "";
-            if (!id) continue;
-            byId.set(id, modelObject(id, "zai", entry));
-          }
+        const upstream = Array.isArray(json?.data) ? json.data : [];
+        for (const entry of upstream) {
+          const id =
+            typeof entry?.id === "string" && entry.id.trim()
+              ? entry.id.trim()
+              : "";
+          if (!id) continue;
+          byId.set(
+            id,
+            mergeModelAvailability(
+              byId.get(id),
+              modelObject(id, provider, entry),
+              provider,
+              account.id,
+            ),
+          );
         }
       } catch {}
     }
@@ -329,11 +415,13 @@ async function discoverModels(
       .filter((a) => a.enabled && a.targets.length > 0);
     for (const alias of aliases) {
       const firstTarget = alias.targets[0];
-      const provider = inferProviderFromModel(firstTarget, Array.from(byId.values()));
+      const providers = providersForModel(firstTarget, Array.from(byId.values()));
+      const provider = providers[0] ?? inferProviderFromModel(firstTarget, Array.from(byId.values()));
       byId.set(alias.id, {
         ...modelObject(alias.id, provider),
         metadata: {
           ...modelObject(alias.id, provider).metadata,
+          provider_candidates: providers,
           is_alias: true,
           alias_targets: [...alias.targets],
         },
@@ -431,11 +519,16 @@ function buildRoutingCandidates(
     const targetKey = normalizeModelLookupKey(target);
     if (!targetKey || seen.has(targetKey)) continue;
     seen.add(targetKey);
-    out.push({
-      requestedModel: requestModel,
-      resolvedModel: target,
-      provider: inferProviderFromModel(target, discoveredModels),
-    });
+    for (const provider of providersForModel(target, discoveredModels)) {
+      const routeKey = `${targetKey}::${provider}`;
+      if (seen.has(routeKey)) continue;
+      seen.add(routeKey);
+      out.push({
+        requestedModel: requestModel,
+        resolvedModel: target,
+        provider,
+      });
+    }
   }
 
   if (out.length) return out;
@@ -592,10 +685,12 @@ let accounts = store.getCachedAccounts();
     accounts = await Promise.all(
       accounts.map(async (account) => {
         const valid = await ensureValidToken(account, oauthConfig);
-        const provider = normalizeProvider(valid);
-        let usageBaseUrl = openaiBaseUrl;
-        if (provider === "mistral") usageBaseUrl = mistralBaseUrl;
-        else if (provider === "zai") usageBaseUrl = zaiBaseUrl;
+        const usageBaseUrl = accountBaseUrl(
+          valid,
+          openaiBaseUrl,
+          mistralBaseUrl,
+          zaiBaseUrl,
+        );
         await refreshUsageIfNeeded(valid, usageBaseUrl);
         return valid;
       }),
@@ -631,7 +726,9 @@ let accounts = store.getCachedAccounts();
 
     for (const candidate of routingCandidates) {
       const providerAccounts = accounts.filter(
-        (a) => normalizeProvider(a) === candidate.provider,
+        (a) =>
+          normalizeProvider(a) === candidate.provider &&
+          accountSupportsModel(a.id, candidate.resolvedModel, discoveredModels),
       );
       if (!providerAccounts.length) continue;
       providerTried = true;
@@ -652,9 +749,16 @@ let accounts = store.getCachedAccounts();
       await store.upsertAccount(selected);
 
       const shouldReturnChatCompletions = isChatCompletionsPath;
-      let payloadToUpstream = isChatCompletions
-        ? chatCompletionsToResponsesPayload(req.body, sessionId)
-        : normalizeResponsesPayload(req.body, sessionId);
+      const isOpenAiCompatible = candidate.provider === "openai-compatible";
+      let payloadToUpstream =
+        isChatCompletions && !isOpenAiCompatible
+          ? chatCompletionsToResponsesPayload(req.body, sessionId)
+          : normalizeResponsesPayload(req.body, sessionId);
+
+      if (isOpenAiCompatible && isChatCompletions) {
+        payloadToUpstream = { ...(req.body ?? {}) };
+      }
+
       if (isResponsesCompactPath && payloadToUpstream && typeof payloadToUpstream === "object") {
         delete payloadToUpstream.store;
         delete payloadToUpstream.stream;
@@ -690,12 +794,21 @@ let accounts = store.getCachedAccounts();
       if (sessionId) headers.session_id = sessionId;
 
       try {
-        let upstreamBaseUrl = openaiBaseUrl;
+        let upstreamBaseUrl = accountBaseUrl(
+          selected,
+          openaiBaseUrl,
+          mistralBaseUrl,
+          zaiBaseUrl,
+        );
         let upstreamPath = isResponsesCompactPath ? UPSTREAM_COMPACT_PATH : UPSTREAM_PATH;
 
         if (candidate.provider === "mistral") {
           upstreamBaseUrl = mistralBaseUrl;
           upstreamPath = isResponsesCompactPath ? mistralCompactUpstreamPath : mistralUpstreamPath;
+        } else if (candidate.provider === "openai-compatible") {
+          upstreamPath = isChatCompletionsPath
+            ? "/v1/chat/completions"
+            : "/v1/responses";
         } else if (candidate.provider === "zai") {
           upstreamBaseUrl = zaiBaseUrl;
           upstreamPath = isResponsesCompactPath ? zaiCompactUpstreamPath : zaiUpstreamPath;

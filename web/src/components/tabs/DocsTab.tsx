@@ -47,6 +47,7 @@ export function DocsTab({ totalTraceCostFromRows }: { totalTraceCostFromRows: nu
             <li>Admin endpoints require the <span className="mono">x-admin-token</span> header.</li>
             <li>Sanitized mode is enabled with the <span className="mono">?sanitized=1</span> URL flag.</li>
             <li>Trace totals and model spend in the UI are estimates derived from token pricing.</li>
+            <li>Model aliases can override an exposed provider model when the alias uses the same model name.</li>
           </ul>
         </section>
 

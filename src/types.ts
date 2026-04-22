@@ -1,4 +1,4 @@
-export type ProviderId = "openai" | "mistral" | "zai";
+export type ProviderId = "openai" | "openai-compatible" | "mistral" | "zai";
 
 export type UsageWindow = {
   usedPercent?: number;
@@ -35,6 +35,7 @@ export type Account = {
   refreshToken?: string;
   expiresAt?: number;
   chatgptAccountId?: string;
+  baseUrl?: string;
   enabled: boolean;
   priority?: number;
   usage?: UsageSnapshot;

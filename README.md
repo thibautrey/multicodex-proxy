@@ -31,6 +31,7 @@ MultiVibe acts as an OpenAI-compatible gateway that lets you route requests acro
 - **Multi-account routing** with quota-aware failover
 - **Model aliases** (for example `small`) with ordered fallback across providers/models
 - **OAuth onboarding** from dashboard (manual redirect paste flow)
+- **Manual OpenAI-compatible connections** with custom `baseUrl` + API key
 - **Persistent account storage** across container restarts
 - **Request tracing v2** (retention capped at 1000, server pagination, tokens/model/error/latency stats, optional full payload)
 - **Usage stats endpoint** with global + per-account + per-route aggregates over full history
@@ -75,6 +76,8 @@ When a request arrives, MultiVibe chooses an account with this strategy:
 
 When the requested model is an alias, MultiVibe resolves it to ordered target models and automatically falls back across target models/providers as quotas are hit.
 
+Aliases may also intentionally reuse an already exposed provider model name. In that case, the alias overrides the provider model and routes requests using the alias target order instead.
+
 ---
 
 ## 📦 Persistence
@@ -116,6 +119,7 @@ Because this is often deployed remotely (Unraid/VPS), onboarding uses a manual r
 6. Paste that URL in the dashboard and click **Complete OAuth**
 
 Mistral accounts still use manual token entry in the dashboard.
+OpenAI-compatible accounts use manual `baseUrl` + API key entry in the dashboard.
 
 Default expected redirect URI:
 
