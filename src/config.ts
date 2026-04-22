@@ -34,15 +34,15 @@ export const ZAI_COMPACT_UPSTREAM_PATH =
 export const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
 export const MAX_ACCOUNT_RETRY_ATTEMPTS = Math.max(
   1,
-  Number(process.env.MAX_ACCOUNT_RETRY_ATTEMPTS ?? 5),
+  Number(process.env.MAX_ACCOUNT_RETRY_ATTEMPTS ?? 10),
 );
 export const MAX_UPSTREAM_RETRIES = Math.max(
   0,
-  Number(process.env.MAX_UPSTREAM_RETRIES ?? 3),
+  Number(process.env.MAX_UPSTREAM_RETRIES ?? 5),
 );
 export const UPSTREAM_BASE_DELAY_MS = Math.max(
   100,
-  Number(process.env.UPSTREAM_BASE_DELAY_MS ?? 1000),
+  Number(process.env.UPSTREAM_BASE_DELAY_MS ?? 2000),
 );
 export const PI_USER_AGENT = `pi (${os.platform()} ${os.release()}; ${os.arch()})`;
 
