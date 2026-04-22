@@ -6,14 +6,11 @@ import {
   PI_USER_AGENT,
   PROXY_MODELS,
   TRACE_INCLUDE_BODY,
-  TOKEN_REFRESH_MARGIN_MS,
   UPSTREAM_BASE_DELAY_MS,
-  UPSTREAM_PATH,
   UPSTREAM_COMPACT_PATH,
-  ZAI_BASE_URL,
-  ZAI_UPSTREAM_PATH,
-  ZAI_COMPACT_UPSTREAM_PATH,
+  UPSTREAM_PATH,
 } from "../../config.js";
+import type { ModelAlias, ProviderId } from "../../types.js";
 import {
   chatCompletionObjectToSSE,
   convertResponsesSSEToChatCompletionSSE,
@@ -31,15 +28,15 @@ import {
 } from "../../responses/payloads.js";
 import {
   chooseAccountForProvider,
+  getZaiBlockDuration,
   isQuotaErrorText,
-  markQuotaHit,
   markEmptyResponseError,
+  markQuotaHit,
   normalizeProvider,
+  parseZaiErrorCode,
   refreshUsageIfNeeded,
   rememberError,
-  parseZaiErrorCode,
   shouldBlockAccountForZaiError,
-  getZaiBlockDuration,
 } from "../../quota.js";
 import {
   ensureNonEmptyChatCompletion,
@@ -53,7 +50,6 @@ import { AccountStore } from "../../store.js";
 import type { OAuthConfig } from "../../oauth.js";
 import { TraceManager } from "../../traces.js";
 import { ensureValidToken } from "../../account-utils.js";
-import type { ModelAlias, ProviderId } from "../../types.js";
 import express from "express";
 
 type ProxyRoutesOptions = {
@@ -197,9 +193,10 @@ function mergeModelAvailability(
 ): ExposedModel {
   const providers = Array.from(
     new Set([
-      ...(current?.metadata.provider_candidates ?? [current?.metadata.provider].filter(
-        (value): value is ProviderId => Boolean(value),
-      )),
+      ...(current?.metadata.provider_candidates ??
+        [current?.metadata.provider].filter((value): value is ProviderId =>
+          Boolean(value),
+        )),
       provider,
     ]),
   );
@@ -295,7 +292,8 @@ function providersForModel(
     return Array.from(
       new Set(
         candidates.filter(
-          (value): value is ProviderId => typeof value === "string" && value.length > 0,
+          (value): value is ProviderId =>
+            typeof value === "string" && value.length > 0,
         ),
       ),
     );
@@ -356,7 +354,12 @@ async function discoverModels(
             MODELS_CLIENT_VERSION,
           )}`;
         } else {
-          const baseUrl = accountBaseUrl(account, openaiBaseUrl, mistralBaseUrl, zaiBaseUrl);
+          const baseUrl = accountBaseUrl(
+            account,
+            openaiBaseUrl,
+            mistralBaseUrl,
+            zaiBaseUrl,
+          );
           if (!baseUrl) continue;
           url = `${baseUrl}/v1/models`;
         }
@@ -415,8 +418,13 @@ async function discoverModels(
       .filter((a) => a.enabled && a.targets.length > 0);
     for (const alias of aliases) {
       const firstTarget = alias.targets[0];
-      const providers = providersForModel(firstTarget, Array.from(byId.values()));
-      const provider = providers[0] ?? inferProviderFromModel(firstTarget, Array.from(byId.values()));
+      const providers = providersForModel(
+        firstTarget,
+        Array.from(byId.values()),
+      );
+      const provider =
+        providers[0] ??
+        inferProviderFromModel(firstTarget, Array.from(byId.values()));
       byId.set(alias.id, {
         ...modelObject(alias.id, provider),
         metadata: {
@@ -475,8 +483,15 @@ function startBackgroundModelRefresh(
   // Refresh validation cache every 60 seconds asynchronously
   setInterval(async () => {
     try {
-      const models = await discoverModels(store, openaiBaseUrl, mistralBaseUrl, zaiBaseUrl);
-      console.log(`[model-cache] Background refresh: ${models.length} models available`);
+      const models = await discoverModels(
+        store,
+        openaiBaseUrl,
+        mistralBaseUrl,
+        zaiBaseUrl,
+      );
+      console.log(
+        `[model-cache] Background refresh: ${models.length} models available`,
+      );
     } catch (err) {
       console.error("[model-cache] Background refresh failed:", err);
     }
@@ -485,8 +500,15 @@ function startBackgroundModelRefresh(
   // Initial sync refresh after a short delay to populate cache on startup
   setTimeout(async () => {
     try {
-      const models = await discoverModels(store, openaiBaseUrl, mistralBaseUrl, zaiBaseUrl);
-      console.log(`[model-cache] Initial refresh: ${models.length} models available`);
+      const models = await discoverModels(
+        store,
+        openaiBaseUrl,
+        mistralBaseUrl,
+        zaiBaseUrl,
+      );
+      console.log(
+        `[model-cache] Initial refresh: ${models.length} models available`,
+      );
     } catch (err) {
       console.error("[model-cache] Initial refresh failed:", err);
     }
@@ -505,7 +527,9 @@ function buildRoutingCandidates(
   aliases: ModelAlias[],
 ): RoutingCandidate[] {
   const key = normalizeModelLookupKey(requestModel);
-  const alias = aliases.find((a) => a.enabled && normalizeModelLookupKey(a.id) === key);
+  const alias = aliases.find(
+    (a) => a.enabled && normalizeModelLookupKey(a.id) === key,
+  );
   const targets =
     alias && alias.targets.length
       ? alias.targets
@@ -633,18 +657,18 @@ async function fetchCodexWithRetry(
 }
 
 export function createProxyRouter(options: ProxyRoutesOptions) {
-    const {
-      store,
-      traceManager,
-      openaiBaseUrl,
-      mistralBaseUrl,
-      mistralUpstreamPath,
-      mistralCompactUpstreamPath,
-      zaiBaseUrl,
-      zaiUpstreamPath,
-      zaiCompactUpstreamPath,
-      oauthConfig,
-    } = options;
+  const {
+    store,
+    traceManager,
+    openaiBaseUrl,
+    mistralBaseUrl,
+    mistralUpstreamPath,
+    mistralCompactUpstreamPath,
+    zaiBaseUrl,
+    zaiUpstreamPath,
+    zaiCompactUpstreamPath,
+    oauthConfig,
+  } = options;
   const { recordTrace } = traceManager;
   const router = express.Router();
 
@@ -652,7 +676,10 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     return (req, res, next) => {
       if (req.method === "POST") return next();
 
-      res.setHeader("Allow", routeLabel === "/v1/responses" ? "POST, GET" : "POST");
+      res.setHeader(
+        "Allow",
+        routeLabel === "/v1/responses" ? "POST, GET" : "POST",
+      );
       const upgradeHeader = String(req.header("upgrade") ?? "").toLowerCase();
       const attemptedWebsocket = upgradeHeader === "websocket";
       const protocolHint = attemptedWebsocket
@@ -694,7 +721,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     const clientRequestedStream = Boolean(req.body?.stream);
     const sessionId = getSessionId(req);
 
-let accounts = store.getCachedAccounts();
+    let accounts = store.getCachedAccounts();
     if (!accounts.length)
       return res.status(503).json({ error: "no accounts configured" });
 
@@ -711,7 +738,8 @@ let accounts = store.getCachedAccounts();
         return valid;
       }),
     );
-    for (const account of accounts) store.markAccountModified(account.id, account);
+    for (const account of accounts)
+      store.markAccountModified(account.id, account);
 
     const requestModel =
       typeof req.body?.model === "string" && req.body.model.trim()
@@ -729,7 +757,12 @@ let accounts = store.getCachedAccounts();
       });
     }
 
-    const discoveredModels = await discoverModels(store, openaiBaseUrl, mistralBaseUrl, zaiBaseUrl);
+    const discoveredModels = await discoverModels(
+      store,
+      openaiBaseUrl,
+      mistralBaseUrl,
+      zaiBaseUrl,
+    );
     const modelAliases = store.getCachedModelAliases();
     const routingCandidates = buildRoutingCandidates(
       requestModel,
@@ -758,249 +791,296 @@ let accounts = store.getCachedAccounts();
           providerAccounts.filter((a) => !tried.has(a.id)),
           candidate.provider,
         );
-      if (!selected) break;
+        if (!selected) break;
 
-      tried.add(selected.id);
-      selected.state = { ...selected.state, lastSelectedAt: Date.now() };
-      await store.upsertAccount(selected);
+        tried.add(selected.id);
+        selected.state = { ...selected.state, lastSelectedAt: Date.now() };
+        await store.upsertAccount(selected);
 
-      const shouldReturnChatCompletions = isChatCompletionsPath;
-      const isOpenAiCompatible = candidate.provider === "openai-compatible";
-      let payloadToUpstream =
-        isChatCompletions && !isOpenAiCompatible
-          ? chatCompletionsToResponsesPayload(req.body, sessionId)
-          : normalizeResponsesPayload(req.body, sessionId);
+        const shouldReturnChatCompletions = isChatCompletionsPath;
+        const isOpenAiCompatible = candidate.provider === "openai-compatible";
+        let payloadToUpstream =
+          isChatCompletions && !isOpenAiCompatible
+            ? chatCompletionsToResponsesPayload(req.body, sessionId)
+            : normalizeResponsesPayload(req.body, sessionId);
 
-      if (isOpenAiCompatible && isChatCompletions) {
-        payloadToUpstream = { ...(req.body ?? {}) };
-      }
-
-      if (isResponsesCompactPath && payloadToUpstream && typeof payloadToUpstream === "object") {
-        delete payloadToUpstream.store;
-        delete payloadToUpstream.stream;
-        delete payloadToUpstream.include;
-        delete payloadToUpstream.tool_choice;
-        delete payloadToUpstream.parallel_tool_calls;
-      }
-      if (isResponsesCompactPath && payloadToUpstream && typeof payloadToUpstream === "object") {
-        delete payloadToUpstream.store;
-      }
-      if (candidate.resolvedModel) payloadToUpstream.model = candidate.resolvedModel;
-      const requestBody = TRACE_INCLUDE_BODY ? req.body : undefined;
-      const tracedModel =
-        requestModel ??
-        (typeof payloadToUpstream?.model === "string" &&
-        payloadToUpstream.model.trim()
-          ? payloadToUpstream.model.trim()
-          : undefined);
-
-      const headers: Record<string, string> = {
-        "content-type": "application/json",
-        authorization: `Bearer ${selected.accessToken}`,
-        accept: "text/event-stream",
-        originator: "pi",
-        "User-Agent": PI_USER_AGENT,
-      };
-      if (candidate.provider === "openai") {
-        headers["OpenAI-Beta"] = "responses=experimental";
-      }
-      if (candidate.provider === "openai" && selected.chatgptAccountId) {
-        headers["chatgpt-account-id"] = selected.chatgptAccountId;
-      }
-      if (sessionId) headers.session_id = sessionId;
-
-      try {
-        let upstreamBaseUrl = accountBaseUrl(
-          selected,
-          openaiBaseUrl,
-          mistralBaseUrl,
-          zaiBaseUrl,
-        );
-        let upstreamPath = isResponsesCompactPath ? UPSTREAM_COMPACT_PATH : UPSTREAM_PATH;
-
-        if (candidate.provider === "mistral") {
-          upstreamBaseUrl = mistralBaseUrl;
-          upstreamPath = isResponsesCompactPath ? mistralCompactUpstreamPath : mistralUpstreamPath;
-        } else if (candidate.provider === "openai-compatible") {
-          upstreamPath = isChatCompletionsPath
-            ? "/v1/chat/completions"
-            : "/v1/responses";
-        } else if (candidate.provider === "zai") {
-          upstreamBaseUrl = zaiBaseUrl;
-          upstreamPath = isResponsesCompactPath ? zaiCompactUpstreamPath : zaiUpstreamPath;
+        if (isOpenAiCompatible && isChatCompletions) {
+          payloadToUpstream = { ...(req.body ?? {}) };
         }
-        const upstream = await fetchCodexWithRetry(
-          `${upstreamBaseUrl}${upstreamPath}`,
-          {
-            method: "POST",
-            headers,
-            body: JSON.stringify(payloadToUpstream),
-          },
-        );
 
-        const contentType = upstream.headers.get("content-type") ?? "";
-        const isStream = contentType.includes("text/event-stream");
+        if (
+          isResponsesCompactPath &&
+          payloadToUpstream &&
+          typeof payloadToUpstream === "object"
+        ) {
+          delete payloadToUpstream.store;
+          delete payloadToUpstream.stream;
+          delete payloadToUpstream.include;
+          delete payloadToUpstream.tool_choice;
+          delete payloadToUpstream.parallel_tool_calls;
+        }
+        if (
+          isResponsesCompactPath &&
+          payloadToUpstream &&
+          typeof payloadToUpstream === "object"
+        ) {
+          delete payloadToUpstream.store;
+        }
+        if (candidate.resolvedModel)
+          payloadToUpstream.model = candidate.resolvedModel;
+        const requestBody = TRACE_INCLUDE_BODY ? req.body : undefined;
+        const tracedModel =
+          requestModel ??
+          (typeof payloadToUpstream?.model === "string" &&
+          payloadToUpstream.model.trim()
+            ? payloadToUpstream.model.trim()
+            : undefined);
 
-        if (isStream) {
-          if (shouldReturnChatCompletions && clientRequestedStream) {
-            res.set("Content-Type", "text/event-stream");
-            res.set("Cache-Control", "no-cache");
-            res.set("Connection", "keep-alive");
+        const headers: Record<string, string> = {
+          "content-type": "application/json",
+          authorization: `Bearer ${selected.accessToken}`,
+          accept: "text/event-stream",
+          originator: "pi",
+          "User-Agent": PI_USER_AGENT,
+        };
+        if (candidate.provider === "openai") {
+          headers["OpenAI-Beta"] = "responses=experimental";
+        }
+        if (candidate.provider === "openai" && selected.chatgptAccountId) {
+          headers["chatgpt-account-id"] = selected.chatgptAccountId;
+        }
+        if (sessionId) headers.session_id = sessionId;
 
-            const model =
-              req.body?.model ?? payloadToUpstream?.model ?? "unknown";
-            let accumulatedUsage: any = null;
-            let streamedFallbackText = "";
+        try {
+          let upstreamBaseUrl = accountBaseUrl(
+            selected,
+            openaiBaseUrl,
+            mistralBaseUrl,
+            zaiBaseUrl,
+          );
+          let upstreamPath = isResponsesCompactPath
+            ? UPSTREAM_COMPACT_PATH
+            : UPSTREAM_PATH;
 
+          if (candidate.provider === "mistral") {
+            upstreamBaseUrl = mistralBaseUrl;
+            upstreamPath = isResponsesCompactPath
+              ? mistralCompactUpstreamPath
+              : mistralUpstreamPath;
+          } else if (candidate.provider === "openai-compatible") {
+            upstreamPath = isChatCompletionsPath
+              ? "/v1/chat/completions"
+              : "/v1/responses";
+          } else if (candidate.provider === "zai") {
+            upstreamBaseUrl = zaiBaseUrl;
+            upstreamPath = isResponsesCompactPath
+              ? zaiCompactUpstreamPath
+              : zaiUpstreamPath;
+          }
+          const upstream = await fetchCodexWithRetry(
+            `${upstreamBaseUrl}${upstreamPath}`,
+            {
+              method: "POST",
+              headers,
+              body: JSON.stringify(payloadToUpstream),
+            },
+          );
+
+          const contentType = upstream.headers.get("content-type") ?? "";
+          const isStream = contentType.includes("text/event-stream");
+
+          if (isStream) {
+            if (shouldReturnChatCompletions && clientRequestedStream) {
+              res.set("Content-Type", "text/event-stream");
+              res.set("Cache-Control", "no-cache");
+              res.set("Connection", "keep-alive");
+
+              const model =
+                req.body?.model ?? payloadToUpstream?.model ?? "unknown";
+              let accumulatedUsage: any = null;
+              let streamedFallbackText = "";
+
+              if (!upstream.body) return res.end();
+              const reader = upstream.body.getReader();
+              const decoder = new TextDecoder();
+              let doneSent = false;
+
+              while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+
+                const chunk = decoder.decode(value, { stream: true });
+                const lines = chunk.split("\n");
+
+                for (const line of lines) {
+                  if (!line.startsWith("data:")) continue;
+
+                  const payload = line.slice(5).trim();
+                  if (payload && payload !== "[DONE]") {
+                    try {
+                      const event = JSON.parse(payload);
+                      if (
+                        event?.type === "response.output_text.delta" &&
+                        typeof event?.delta === "string"
+                      ) {
+                        streamedFallbackText += sanitizeAssistantTextChunk(
+                          event.delta,
+                        );
+                      } else if (
+                        event?.type === "response.output_text.done" &&
+                        !streamedFallbackText &&
+                        typeof event?.text === "string"
+                      ) {
+                        streamedFallbackText = sanitizeAssistantTextChunk(
+                          event.text,
+                        );
+                      }
+                    } catch {}
+                  }
+
+                  const converted = convertResponsesSSEToChatCompletionSSE(
+                    line,
+                    model,
+                    streamedFallbackText,
+                  );
+                  if (converted) {
+                    res.write(converted);
+                    if (converted.includes("[DONE]")) doneSent = true;
+                  } else if (line.includes('"response.reasoning')) {
+                    res.write(": keepalive\n\n");
+                  }
+
+                  if (line.includes("response.completed")) {
+                    try {
+                      const payload = JSON.parse(line.slice(5).trim());
+                      accumulatedUsage = payload?.response?.usage;
+                    } catch {}
+                  }
+                }
+              }
+              if (!doneSent) res.write("data: [DONE]\n\n");
+              res.end();
+
+              recordTrace({
+                at: Date.now(),
+                route: req.path,
+                accountId: selected.id,
+                accountEmail: selected.email,
+                model: tracedModel,
+                status: upstream.status,
+                stream: true,
+                latencyMs: Date.now() - startedAt,
+                usage: accumulatedUsage,
+                requestBody,
+              });
+              return;
+            }
+
+            if (shouldReturnChatCompletions) {
+              const txt = await upstream.text();
+              const parsedChat = parseResponsesSSEToChatCompletion(
+                txt,
+                req.body?.model ?? payloadToUpstream?.model ?? "unknown",
+              );
+              const normalized = ensureNonEmptyChatCompletion(parsedChat);
+
+              // If response was empty/patched and upstream returned OK, retry with another account
+              if (normalized.patched && upstream.ok) {
+                markEmptyResponseError(
+                  selected,
+                  "empty assistant output in SSE",
+                );
+                await store.upsertAccount(selected);
+                continue; // Try next account
+              }
+
+              res
+                .status(upstream.ok ? 200 : upstream.status)
+                .json(normalized.chat);
+
+              const upstreamError = !upstream.ok
+                ? txt.slice(0, 500)
+                : undefined;
+              recordTrace({
+                at: Date.now(),
+                route: req.path,
+                accountId: selected.id,
+                accountEmail: selected.email,
+                model: tracedModel,
+                status: upstream.status,
+                stream: true,
+                latencyMs: Date.now() - startedAt,
+                usage: normalized.chat?.usage,
+                requestBody,
+                upstreamError,
+                upstreamContentType: contentType,
+                ...inspectAssistantPayload(normalized.chat),
+              });
+              return;
+            }
+
+            if (!clientRequestedStream) {
+              const txt = await upstream.text();
+              const respObj = parseResponsesSSEToResponseObject(txt);
+              res.status(upstream.ok ? 200 : upstream.status).json(respObj);
+              const upstreamError = !upstream.ok
+                ? txt.slice(0, 500)
+                : undefined;
+              recordTrace({
+                at: Date.now(),
+                route: req.path,
+                accountId: selected.id,
+                accountEmail: selected.email,
+                model: tracedModel,
+                status: upstream.status,
+                stream: false,
+                latencyMs: Date.now() - startedAt,
+                usage: respObj?.usage,
+                requestBody,
+                upstreamError,
+                upstreamContentType: contentType,
+              });
+              return;
+            }
+
+            res.status(upstream.status);
+            setForwardHeaders(upstream, res);
             if (!upstream.body) return res.end();
             const reader = upstream.body.getReader();
             const decoder = new TextDecoder();
-            let doneSent = false;
+            let sseBuffer = "";
+            let accumulatedUsage: any = null;
 
             while (true) {
               const { value, done } = await reader.read();
               if (done) break;
+              sseBuffer += decoder.decode(value, { stream: true });
 
-              const chunk = decoder.decode(value, { stream: true });
-              const lines = chunk.split("\n");
+              while (true) {
+                const next = takeNextSSEFrame(sseBuffer);
+                if (!next) break;
+                sseBuffer = next.rest;
 
-              for (const line of lines) {
-                if (!line.startsWith("data:")) continue;
-
-                const payload = line.slice(5).trim();
-                if (payload && payload !== "[DONE]") {
+                if (next.frame.includes("response.completed")) {
                   try {
-                    const event = JSON.parse(payload);
-                    if (
-                      event?.type === "response.output_text.delta" &&
-                      typeof event?.delta === "string"
-                    ) {
-                      streamedFallbackText += sanitizeAssistantTextChunk(
-                        event.delta,
-                      );
-                    } else if (
-                      event?.type === "response.output_text.done" &&
-                      !streamedFallbackText &&
-                      typeof event?.text === "string"
-                    ) {
-                      streamedFallbackText = sanitizeAssistantTextChunk(
-                        event.text,
-                      );
+                    const dataLine = next.frame
+                      .split(/\r?\n/)
+                      .find((line) => line.trim().startsWith("data:"));
+                    if (dataLine) {
+                      const payload = JSON.parse(dataLine.slice(5).trim());
+                      if (payload?.response?.usage) {
+                        accumulatedUsage = payload.response.usage;
+                      }
                     }
                   } catch {}
                 }
 
-                const converted = convertResponsesSSEToChatCompletionSSE(
-                  line,
-                  model,
-                  streamedFallbackText,
-                );
-                if (converted) {
-                  res.write(converted);
-                  if (converted.includes("[DONE]")) doneSent = true;
-                } else if (line.includes('"response.reasoning')) {
-                  res.write(": keepalive\n\n");
-                }
-
-                if (line.includes("response.completed")) {
-                  try {
-                    const payload = JSON.parse(line.slice(5).trim());
-                    accumulatedUsage = payload?.response?.usage;
-                  } catch {}
-                }
+                const filtered = sanitizeResponsesSSEFrame(next.frame);
+                if (filtered !== null) res.write(`${filtered}\n\n`);
               }
             }
-            if (!doneSent) res.write("data: [DONE]\n\n");
-            res.end();
 
-            recordTrace({
-              at: Date.now(),
-              route: req.path,
-              accountId: selected.id,
-              accountEmail: selected.email,
-              model: tracedModel,
-              status: upstream.status,
-              stream: true,
-              latencyMs: Date.now() - startedAt,
-              usage: accumulatedUsage,
-              requestBody,
-            });
-            return;
-          }
-
-          if (shouldReturnChatCompletions) {
-            const txt = await upstream.text();
-            const parsedChat = parseResponsesSSEToChatCompletion(
-              txt,
-              req.body?.model ?? payloadToUpstream?.model ?? "unknown",
-            );
-            const normalized = ensureNonEmptyChatCompletion(parsedChat);
-            
-            // If response was empty/patched and upstream returned OK, retry with another account
-            if (normalized.patched && upstream.ok) {
-              markEmptyResponseError(selected, "empty assistant output in SSE");
-              await store.upsertAccount(selected);
-              continue; // Try next account
-            }
-            
-            res
-              .status(upstream.ok ? 200 : upstream.status)
-              .json(normalized.chat);
-
-            const upstreamError = !upstream.ok ? txt.slice(0, 500) : undefined;
-            recordTrace({
-              at: Date.now(),
-              route: req.path,
-              accountId: selected.id,
-              accountEmail: selected.email,
-              model: tracedModel,
-              status: upstream.status,
-              stream: true,
-              latencyMs: Date.now() - startedAt,
-              usage: normalized.chat?.usage,
-              requestBody,
-              upstreamError,
-              upstreamContentType: contentType,
-              ...inspectAssistantPayload(normalized.chat),
-            });
-            return;
-          }
-
-          if (!clientRequestedStream) {
-            const txt = await upstream.text();
-            const respObj = parseResponsesSSEToResponseObject(txt);
-            res.status(upstream.ok ? 200 : upstream.status).json(respObj);
-            const upstreamError = !upstream.ok ? txt.slice(0, 500) : undefined;
-            recordTrace({
-              at: Date.now(),
-              route: req.path,
-              accountId: selected.id,
-              accountEmail: selected.email,
-              model: tracedModel,
-              status: upstream.status,
-              stream: false,
-              latencyMs: Date.now() - startedAt,
-              usage: respObj?.usage,
-              requestBody,
-              upstreamError,
-              upstreamContentType: contentType,
-            });
-            return;
-          }
-
-          res.status(upstream.status);
-          setForwardHeaders(upstream, res);
-          if (!upstream.body) return res.end();
-          const reader = upstream.body.getReader();
-          const decoder = new TextDecoder();
-          let sseBuffer = "";
-          let accumulatedUsage: any = null;
-
-          while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            sseBuffer += decoder.decode(value, { stream: true });
-
+            sseBuffer += decoder.decode();
             while (true) {
               const next = takeNextSSEFrame(sseBuffer);
               if (!next) break;
@@ -1023,325 +1103,333 @@ let accounts = store.getCachedAccounts();
               const filtered = sanitizeResponsesSSEFrame(next.frame);
               if (filtered !== null) res.write(`${filtered}\n\n`);
             }
+            if (sseBuffer.trim()) {
+              const filtered = sanitizeResponsesSSEFrame(sseBuffer);
+              if (filtered !== null) res.write(`${filtered}\n\n`);
+            }
+            res.end();
+
+            recordTrace({
+              at: Date.now(),
+              route: req.path,
+              accountId: selected.id,
+              accountEmail: selected.email,
+              model: tracedModel,
+              status: upstream.status,
+              stream: true,
+              latencyMs: Date.now() - startedAt,
+              usage: accumulatedUsage,
+              requestBody,
+            });
+            return;
           }
 
-          sseBuffer += decoder.decode();
-          while (true) {
-            const next = takeNextSSEFrame(sseBuffer);
-            if (!next) break;
-            sseBuffer = next.rest;
+          let bufferedText: string | undefined = undefined;
+          if (shouldReturnChatCompletions && clientRequestedStream) {
+            let raw = await upstream.text();
+            const upstreamEmptyBody = !raw;
+            if (!raw)
+              raw = JSON.stringify({
+                error: `upstream ${upstream.status} with empty body`,
+              });
+            bufferedText = raw;
 
-            if (next.frame.includes("response.completed")) {
-              try {
-                const dataLine = next.frame
-                  .split(/\r?\n/)
-                  .find((line) => line.trim().startsWith("data:"));
-                if (dataLine) {
-                  const payload = JSON.parse(dataLine.slice(5).trim());
-                  if (payload?.response?.usage) {
-                    accumulatedUsage = payload.response.usage;
-                  }
-                }
-              } catch {}
+            let parsed: any = undefined;
+            try {
+              parsed = JSON.parse(raw);
+            } catch {}
+
+            if (upstream.ok && parsed && parsed.object === "chat.completion") {
+              const normalized = ensureNonEmptyChatCompletion(
+                sanitizeChatCompletionObject(parsed),
+              );
+
+              // If response was empty/patched, retry with another account
+              if (normalized.patched) {
+                markEmptyResponseError(
+                  selected,
+                  "empty assistant output in chat.completion",
+                );
+                await store.upsertAccount(selected);
+                continue; // Try next account
+              }
+
+              res.status(200);
+              res.set("Content-Type", "text/event-stream");
+              res.set("Cache-Control", "no-cache");
+              res.set("Connection", "keep-alive");
+              res.write(chatCompletionObjectToSSE(normalized.chat));
+              res.end();
+
+              recordTrace({
+                at: Date.now(),
+                route: req.path,
+                accountId: selected.id,
+                accountEmail: selected.email,
+                model: tracedModel,
+                status: upstream.status,
+                stream: true,
+                latencyMs: Date.now() - startedAt,
+                usage: normalized.chat?.usage,
+                requestBody,
+                upstreamContentType: contentType,
+                upstreamEmptyBody,
+                ...inspectAssistantPayload(normalized.chat),
+              });
+              return;
             }
 
-            const filtered = sanitizeResponsesSSEFrame(next.frame);
-            if (filtered !== null) res.write(`${filtered}\n\n`);
-          }
-          if (sseBuffer.trim()) {
-            const filtered = sanitizeResponsesSSEFrame(sseBuffer);
-            if (filtered !== null) res.write(`${filtered}\n\n`);
-          }
-          res.end();
+            if (upstream.ok && parsed && parsed.object === "response") {
+              const converted = responseObjectToChatCompletion(
+                parsed,
+                req.body?.model ?? payloadToUpstream?.model ?? "unknown",
+              );
+              res.status(200);
+              res.set("Content-Type", "text.event-stream");
+              res.set("Cache-Control", "no-cache");
+              res.set("Connection", "keep-alive");
+              res.write(chatCompletionObjectToSSE(converted));
+              res.end();
 
-          recordTrace({
-            at: Date.now(),
-            route: req.path,
-            accountId: selected.id,
-            accountEmail: selected.email,
-            model: tracedModel,
-            status: upstream.status,
-            stream: true,
-            latencyMs: Date.now() - startedAt,
-            usage: accumulatedUsage,
-            requestBody,
-          });
-          return;
-        }
+              recordTrace({
+                at: Date.now(),
+                route: req.path,
+                accountId: selected.id,
+                accountEmail: selected.email,
+                model: tracedModel,
+                status: upstream.status,
+                stream: true,
+                latencyMs: Date.now() - startedAt,
+                usage: converted?.usage,
+                requestBody,
+                upstreamContentType: contentType,
+                upstreamEmptyBody,
+                ...inspectAssistantPayload(converted),
+              });
+              return;
+            }
+          }
 
-        let bufferedText: string | undefined = undefined;
-        if (shouldReturnChatCompletions && clientRequestedStream) {
-          let raw = await upstream.text();
-          const upstreamEmptyBody = !raw;
-          if (!raw)
-            raw = JSON.stringify({
+          let text = bufferedText ?? (await upstream.text());
+          const upstreamEmptyBody = !text;
+          if (!text)
+            text = JSON.stringify({
               error: `upstream ${upstream.status} with empty body`,
             });
-          bufferedText = raw;
+          const upstreamError = !upstream.ok ? text.slice(0, 500) : undefined;
 
           let parsed: any = undefined;
           try {
-            parsed = JSON.parse(raw);
+            parsed = JSON.parse(text);
           } catch {}
-
-          if (upstream.ok && parsed && parsed.object === "chat.completion") {
-            const normalized = ensureNonEmptyChatCompletion(
-              sanitizeChatCompletionObject(parsed),
-            );
-            
-            // If response was empty/patched, retry with another account
-            if (normalized.patched) {
-              markEmptyResponseError(selected, "empty assistant output in chat.completion");
-              await store.upsertAccount(selected);
-              continue; // Try next account
-            }
-            
-            res.status(200);
-            res.set("Content-Type", "text/event-stream");
-            res.set("Cache-Control", "no-cache");
-            res.set("Connection", "keep-alive");
-            res.write(chatCompletionObjectToSSE(normalized.chat));
-            res.end();
-
-            recordTrace({
-              at: Date.now(),
-              route: req.path,
-              accountId: selected.id,
-              accountEmail: selected.email,
-              model: tracedModel,
-              status: upstream.status,
-              stream: true,
-              latencyMs: Date.now() - startedAt,
-              usage: normalized.chat?.usage,
-              requestBody,
-              upstreamContentType: contentType,
-              upstreamEmptyBody,
-              ...inspectAssistantPayload(normalized.chat),
-            });
-            return;
-          }
-
-          if (upstream.ok && parsed && parsed.object === "response") {
-            const converted = responseObjectToChatCompletion(
-              parsed,
-              req.body?.model ?? payloadToUpstream?.model ?? "unknown",
-            );
-            res.status(200);
-            res.set("Content-Type", "text.event-stream");
-            res.set("Cache-Control", "no-cache");
-            res.set("Connection", "keep-alive");
-            res.write(chatCompletionObjectToSSE(converted));
-            res.end();
-
-            recordTrace({
-              at: Date.now(),
-              route: req.path,
-              accountId: selected.id,
-              accountEmail: selected.email,
-              model: tracedModel,
-              status: upstream.status,
-              stream: true,
-              latencyMs: Date.now() - startedAt,
-              usage: converted?.usage,
-              requestBody,
-              upstreamContentType: contentType,
-              upstreamEmptyBody,
-              ...inspectAssistantPayload(converted),
-            });
-            return;
-          }
-        }
-
-        let text = bufferedText ?? (await upstream.text());
-        const upstreamEmptyBody = !text;
-        if (!text)
-          text = JSON.stringify({
-            error: `upstream ${upstream.status} with empty body`,
-          });
-        const upstreamError = !upstream.ok ? text.slice(0, 500) : undefined;
-
-        let parsed: any = undefined;
-        try {
-          parsed = JSON.parse(text);
-        } catch {}
-        if (parsed?.object === "chat.completion") {
-          parsed = sanitizeChatCompletionObject(parsed);
-          text = JSON.stringify(parsed);
-        } else if (parsed?.object === "response") {
-          parsed = stripReasoningFromResponseObject(parsed);
-          text = JSON.stringify(parsed);
-        }
-
-        if (
-          shouldReturnChatCompletions &&
-          clientRequestedStream &&
-          upstream.ok
-        ) {
-          let chatResp: any = undefined;
-
           if (parsed?.object === "chat.completion") {
-            const normalized = ensureNonEmptyChatCompletion(
-              sanitizeChatCompletionObject(parsed),
-            );
-            // If response was empty/patched, retry with another account
-            if (normalized.patched) {
-              markEmptyResponseError(selected, "empty assistant output in chat.completion");
-              await store.upsertAccount(selected);
-              continue; // Try next account
-            }
-            chatResp = normalized.chat;
+            parsed = sanitizeChatCompletionObject(parsed);
+            text = JSON.stringify(parsed);
           } else if (parsed?.object === "response") {
-            chatResp = responseObjectToChatCompletion(
-              parsed,
-              req.body?.model ?? payloadToUpstream?.model ?? "unknown",
-            );
-          } else if (text.includes("data:")) {
-            chatResp = parseResponsesSSEToChatCompletion(
-              text,
-              req.body?.model ?? payloadToUpstream?.model ?? "unknown",
-            );
+            parsed = stripReasoningFromResponseObject(parsed);
+            text = JSON.stringify(parsed);
           }
 
-          if (chatResp) {
-            const normalized = ensureNonEmptyChatCompletion(chatResp);
-            
-            // If response was empty/patched, retry with another account
-            if (normalized.patched) {
-              markEmptyResponseError(selected, "empty assistant output in chat completion");
-              await store.upsertAccount(selected);
-              continue; // Try next account
-            }
-            
-            chatResp = normalized.chat;
-            res.status(200);
-            res.set("Content-Type", "text/event-stream");
-            res.set("Cache-Control", "no-cache");
-            res.set("Connection", "keep-alive");
-            res.write(chatCompletionObjectToSSE(chatResp));
-            res.end();
+          if (
+            shouldReturnChatCompletions &&
+            clientRequestedStream &&
+            upstream.ok
+          ) {
+            let chatResp: any = undefined;
 
-            recordTrace({
-              at: Date.now(),
-              route: req.path,
-              accountId: selected.id,
-              accountEmail: selected.email,
-              model: tracedModel,
-              status: upstream.status,
-              stream: true,
-              latencyMs: Date.now() - startedAt,
-              usage: chatResp?.usage,
-              requestBody,
-              upstreamError,
-              upstreamContentType: contentType,
-              upstreamEmptyBody,
-              ...inspectAssistantPayload(chatResp),
-            });
-            return;
-          }
-        }
-
-        if (
-          !shouldReturnChatCompletions &&
-          clientRequestedStream &&
-          upstream.ok
-        ) {
-          if (parsed?.object === "response") {
-            const sanitized = stripReasoningFromResponseObject(parsed);
-            res.status(200);
-            res.set("Content-Type", "text/event-stream");
-            res.set("Cache-Control", "no-cache");
-            res.set("Connection", "keep-alive");
-            res.write(responseObjectToSSE(sanitized));
-            res.end();
-
-            recordTrace({
-              at: Date.now(),
-              route: req.path,
-              accountId: selected.id,
-              accountEmail: selected.email,
-              model: tracedModel,
-              status: upstream.status,
-              stream: true,
-              latencyMs: Date.now() - startedAt,
-              usage: sanitized?.usage,
-              requestBody,
-              upstreamError,
-              upstreamContentType: contentType,
-              upstreamEmptyBody,
-              ...inspectAssistantPayload(sanitized),
-            });
-            return;
-          }
-
-          if (!parsed && text.includes("data:")) {
-            res.status(200);
-            res.set("Content-Type", "text/event-stream");
-            res.set("Cache-Control", "no-cache");
-            res.set("Connection", "keep-alive");
-
-            const rawFrames = text.split(/\n\n/).filter((f) => f.trim());
-            let lastResponseObj: any = null;
-
-            for (const rawFrame of rawFrames) {
-              const filtered = sanitizeResponsesSSEFrame(rawFrame);
-              if (filtered) {
-                res.write(
-                  filtered.endsWith("\n\n") ? filtered : filtered + "\n\n",
+            if (parsed?.object === "chat.completion") {
+              const normalized = ensureNonEmptyChatCompletion(
+                sanitizeChatCompletionObject(parsed),
+              );
+              // If response was empty/patched, retry with another account
+              if (normalized.patched) {
+                markEmptyResponseError(
+                  selected,
+                  "empty assistant output in chat.completion",
                 );
-                if (rawFrame.includes('"response.completed"')) {
-                  try {
-                    const dataLine = rawFrame
-                      .split("\n")
-                      .find((l) => l.startsWith("data:"));
-                    if (dataLine) {
-                      const obj = JSON.parse(dataLine.slice(5).trim());
-                      if (obj?.response) lastResponseObj = obj.response;
-                    }
-                  } catch {}
+                await store.upsertAccount(selected);
+                continue; // Try next account
+              }
+              chatResp = normalized.chat;
+            } else if (parsed?.object === "response") {
+              chatResp = responseObjectToChatCompletion(
+                parsed,
+                req.body?.model ?? payloadToUpstream?.model ?? "unknown",
+              );
+            } else if (text.includes("data:")) {
+              chatResp = parseResponsesSSEToChatCompletion(
+                text,
+                req.body?.model ?? payloadToUpstream?.model ?? "unknown",
+              );
+            }
+
+            if (chatResp) {
+              const normalized = ensureNonEmptyChatCompletion(chatResp);
+
+              // If response was empty/patched, retry with another account
+              if (normalized.patched) {
+                markEmptyResponseError(
+                  selected,
+                  "empty assistant output in chat completion",
+                );
+                await store.upsertAccount(selected);
+                continue; // Try next account
+              }
+
+              chatResp = normalized.chat;
+              res.status(200);
+              res.set("Content-Type", "text/event-stream");
+              res.set("Cache-Control", "no-cache");
+              res.set("Connection", "keep-alive");
+              res.write(chatCompletionObjectToSSE(chatResp));
+              res.end();
+
+              recordTrace({
+                at: Date.now(),
+                route: req.path,
+                accountId: selected.id,
+                accountEmail: selected.email,
+                model: tracedModel,
+                status: upstream.status,
+                stream: true,
+                latencyMs: Date.now() - startedAt,
+                usage: chatResp?.usage,
+                requestBody,
+                upstreamError,
+                upstreamContentType: contentType,
+                upstreamEmptyBody,
+                ...inspectAssistantPayload(chatResp),
+              });
+              return;
+            }
+          }
+
+          if (
+            !shouldReturnChatCompletions &&
+            clientRequestedStream &&
+            upstream.ok
+          ) {
+            if (parsed?.object === "response") {
+              const sanitized = stripReasoningFromResponseObject(parsed);
+              res.status(200);
+              res.set("Content-Type", "text/event-stream");
+              res.set("Cache-Control", "no-cache");
+              res.set("Connection", "keep-alive");
+              res.write(responseObjectToSSE(sanitized));
+              res.end();
+
+              recordTrace({
+                at: Date.now(),
+                route: req.path,
+                accountId: selected.id,
+                accountEmail: selected.email,
+                model: tracedModel,
+                status: upstream.status,
+                stream: true,
+                latencyMs: Date.now() - startedAt,
+                usage: sanitized?.usage,
+                requestBody,
+                upstreamError,
+                upstreamContentType: contentType,
+                upstreamEmptyBody,
+                ...inspectAssistantPayload(sanitized),
+              });
+              return;
+            }
+
+            if (!parsed && text.includes("data:")) {
+              res.status(200);
+              res.set("Content-Type", "text/event-stream");
+              res.set("Cache-Control", "no-cache");
+              res.set("Connection", "keep-alive");
+
+              const rawFrames = text.split(/\n\n/).filter((f) => f.trim());
+              let lastResponseObj: any = null;
+
+              for (const rawFrame of rawFrames) {
+                const filtered = sanitizeResponsesSSEFrame(rawFrame);
+                if (filtered) {
+                  res.write(
+                    filtered.endsWith("\n\n") ? filtered : filtered + "\n\n",
+                  );
+                  if (rawFrame.includes('"response.completed"')) {
+                    try {
+                      const dataLine = rawFrame
+                        .split("\n")
+                        .find((l) => l.startsWith("data:"));
+                      if (dataLine) {
+                        const obj = JSON.parse(dataLine.slice(5).trim());
+                        if (obj?.response) lastResponseObj = obj.response;
+                      }
+                    } catch {}
+                  }
                 }
               }
+
+              res.end();
+
+              recordTrace({
+                at: Date.now(),
+                route: req.path,
+                accountId: selected.id,
+                accountEmail: selected.email,
+                model: tracedModel,
+                status: upstream.status,
+                stream: true,
+                latencyMs: Date.now() - startedAt,
+                usage: lastResponseObj?.usage,
+                requestBody,
+                upstreamError,
+                upstreamContentType: contentType,
+                upstreamEmptyBody,
+                ...inspectAssistantPayload(lastResponseObj),
+              });
+              return;
             }
-
-            res.end();
-
-            recordTrace({
-              at: Date.now(),
-              route: req.path,
-              accountId: selected.id,
-              accountEmail: selected.email,
-              model: tracedModel,
-              status: upstream.status,
-              stream: true,
-              latencyMs: Date.now() - startedAt,
-              usage: lastResponseObj?.usage,
-              requestBody,
-              upstreamError,
-              upstreamContentType: contentType,
-              upstreamEmptyBody,
-              ...inspectAssistantPayload(lastResponseObj),
-            });
-            return;
           }
-        }
 
-        if (text.includes("event: response.")) {
-          if (shouldReturnChatCompletions) {
-            const parsedChat = parseResponsesSSEToChatCompletion(
-              text,
-              req.body?.model ?? payloadToUpstream?.model ?? "unknown",
-            );
-            const normalized = ensureNonEmptyChatCompletion(parsedChat);
-            
-            // If response was empty/patched and upstream returned OK, retry with another account
-            if (normalized.patched && upstream.ok) {
-              markEmptyResponseError(selected, "empty assistant output in response event");
-              await store.upsertAccount(selected);
-              continue; // Try next account
+          if (text.includes("event: response.")) {
+            if (shouldReturnChatCompletions) {
+              const parsedChat = parseResponsesSSEToChatCompletion(
+                text,
+                req.body?.model ?? payloadToUpstream?.model ?? "unknown",
+              );
+              const normalized = ensureNonEmptyChatCompletion(parsedChat);
+
+              // If response was empty/patched and upstream returned OK, retry with another account
+              if (normalized.patched && upstream.ok) {
+                markEmptyResponseError(
+                  selected,
+                  "empty assistant output in response event",
+                );
+                await store.upsertAccount(selected);
+                continue; // Try next account
+              }
+
+              res
+                .status(upstream.ok ? 200 : upstream.status)
+                .json(normalized.chat);
+              recordTrace({
+                at: Date.now(),
+                route: req.path,
+                accountId: selected.id,
+                accountEmail: selected.email,
+                model: tracedModel,
+                status: upstream.status,
+                stream: false,
+                latencyMs: Date.now() - startedAt,
+                usage: normalized.chat?.usage,
+                requestBody,
+                upstreamError,
+                upstreamContentType: contentType,
+                upstreamEmptyBody,
+                ...inspectAssistantPayload(normalized.chat),
+              });
+              return;
             }
-            
-            res
-              .status(upstream.ok ? 200 : upstream.status)
-              .json(normalized.chat);
+
+            const respObj = parseResponsesSSEToResponseObject(text);
+            res.status(upstream.ok ? 200 : upstream.status).json(respObj);
             recordTrace({
               at: Date.now(),
               route: req.path,
@@ -1351,18 +1439,22 @@ let accounts = store.getCachedAccounts();
               status: upstream.status,
               stream: false,
               latencyMs: Date.now() - startedAt,
-              usage: normalized.chat?.usage,
+              usage: respObj?.usage,
               requestBody,
               upstreamError,
               upstreamContentType: contentType,
               upstreamEmptyBody,
-              ...inspectAssistantPayload(normalized.chat),
+              ...inspectAssistantPayload(respObj),
             });
             return;
           }
 
-          const respObj = parseResponsesSSEToResponseObject(text);
-          res.status(upstream.ok ? 200 : upstream.status).json(respObj);
+          res.status(upstream.status);
+          setForwardHeaders(upstream, res);
+          res.type(contentType || "application/json").send(text);
+
+          const usage = extractUsageFromPayload(parsed);
+
           recordTrace({
             at: Date.now(),
             route: req.path,
@@ -1372,89 +1464,70 @@ let accounts = store.getCachedAccounts();
             status: upstream.status,
             stream: false,
             latencyMs: Date.now() - startedAt,
-            usage: respObj?.usage,
+            usage,
             requestBody,
             upstreamError,
             upstreamContentType: contentType,
             upstreamEmptyBody,
-            ...inspectAssistantPayload(respObj),
+            ...inspectAssistantPayload(parsed),
           });
+
+          if (upstream.ok) return;
+
+          // Handle z.ai specific business error codes
+          const zaiErrorCode =
+            candidate.provider === "zai" ? parseZaiErrorCode(text) : null;
+          if (zaiErrorCode && shouldBlockAccountForZaiError(zaiErrorCode)) {
+            const blockDuration = getZaiBlockDuration(zaiErrorCode);
+            const until = Date.now() + blockDuration;
+            selected.state = {
+              ...selected.state,
+              blockedUntil: until,
+              blockedReason: `z.ai error ${zaiErrorCode}`,
+            };
+            rememberError(
+              selected,
+              `z.ai error ${zaiErrorCode}: ${text.slice(0, 200)}`,
+            );
+            await store.upsertAccount(selected);
+            continue;
+          }
+
+          if (upstream.status === 429 || isQuotaErrorText(text)) {
+            markQuotaHit(selected, `quota/rate-limit: ${upstream.status}`);
+            await store.upsertAccount(selected);
+            continue;
+          }
+
+          rememberError(
+            selected,
+            `upstream ${upstream.status}: ${text.slice(0, 200)}`,
+          );
+          await store.upsertAccount(selected);
           return;
-        }
-
-        res.status(upstream.status);
-        setForwardHeaders(upstream, res);
-        res.type(contentType || "application/json").send(text);
-
-        const usage = extractUsageFromPayload(parsed);
-
-        recordTrace({
-          at: Date.now(),
-          route: req.path,
-          accountId: selected.id,
-          accountEmail: selected.email,
-          model: tracedModel,
-          status: upstream.status,
-          stream: false,
-          latencyMs: Date.now() - startedAt,
-          usage,
-          requestBody,
-          upstreamError,
-          upstreamContentType: contentType,
-          upstreamEmptyBody,
-          ...inspectAssistantPayload(parsed),
-        });
-
-        if (upstream.ok) return;
-
-        // Handle z.ai specific business error codes
-        const zaiErrorCode = candidate.provider === "zai" ? parseZaiErrorCode(text) : null;
-        if (zaiErrorCode && shouldBlockAccountForZaiError(zaiErrorCode)) {
-          const blockDuration = getZaiBlockDuration(zaiErrorCode);
-          const until = Date.now() + blockDuration;
-          selected.state = {
-            ...selected.state,
-            blockedUntil: until,
-            blockedReason: `z.ai error ${zaiErrorCode}`,
-          };
-          rememberError(selected, `z.ai error ${zaiErrorCode}: ${text.slice(0, 200)}`);
+        } catch (err: any) {
+          const msg = err?.message ?? String(err);
+          rememberError(selected, msg);
           await store.upsertAccount(selected);
-          continue;
+          recordTrace({
+            at: Date.now(),
+            route: req.path,
+            accountId: selected.id,
+            accountEmail: selected.email,
+            model: tracedModel,
+            status: 599,
+            stream: false,
+            latencyMs: Date.now() - startedAt,
+            error: msg,
+            requestBody,
+          });
         }
-
-        if (upstream.status === 429 || isQuotaErrorText(text)) {
-          markQuotaHit(selected, `quota/rate-limit: ${upstream.status}`);
-          await store.upsertAccount(selected);
-          continue;
-        }
-
-        rememberError(
-          selected,
-          `upstream ${upstream.status}: ${text.slice(0, 200)}`,
-        );
-        await store.upsertAccount(selected);
-        return;
-      } catch (err: any) {
-        const msg = err?.message ?? String(err);
-        rememberError(selected, msg);
-        await store.upsertAccount(selected);
-        recordTrace({
-          at: Date.now(),
-          route: req.path,
-          accountId: selected.id,
-          accountEmail: selected.email,
-          model: tracedModel,
-          status: 599,
-          stream: false,
-          latencyMs: Date.now() - startedAt,
-          error: msg,
-          requestBody,
-        });
       }
     }
-    }
     if (!providerTried) {
-      return res.status(503).json({ error: "no provider accounts configured for requested model" });
+      return res
+        .status(503)
+        .json({ error: "no provider accounts configured for requested model" });
     }
     res.status(429).json({ error: "all accounts exhausted or unavailable" });
   }
@@ -1486,13 +1559,23 @@ let accounts = store.getCachedAccounts();
   }
 
   router.get("/models", async (_req, res) => {
-    const models = await discoverModels(store, openaiBaseUrl, mistralBaseUrl, zaiBaseUrl);
+    const models = await discoverModels(
+      store,
+      openaiBaseUrl,
+      mistralBaseUrl,
+      zaiBaseUrl,
+    );
     res.json({ object: "list", data: models.map(toOpenAiModelShape) });
   });
 
   router.get("/models/:id", async (req, res) => {
     const id = req.params.id;
-    const models = await discoverModels(store, openaiBaseUrl, mistralBaseUrl, zaiBaseUrl);
+    const models = await discoverModels(
+      store,
+      openaiBaseUrl,
+      mistralBaseUrl,
+      zaiBaseUrl,
+    );
     const model = models.find((m) => m.id === id);
     if (!model)
       return res.status(404).json({
