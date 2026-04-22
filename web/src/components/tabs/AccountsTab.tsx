@@ -322,32 +322,114 @@ export function AccountsTab(props: Props) {
     return provider === "mistral" ? "Mistral" : "OpenAI";
   };
 
+  const openAiCount = accounts.filter((account) => (account.provider ?? "openai") === "openai").length;
+  const mistralCount = accounts.filter((account) => account.provider === "mistral").length;
+  const blockedCount = accounts.filter((account) => account.state?.blockedUntil && account.state.blockedUntil > Date.now()).length;
+  const enabledCount = accounts.filter((account) => account.enabled).length;
+
+  const renderUsageCell = (value?: number, resetAt?: number) => {
+    const safeValue = typeof value === "number" ? Math.max(0, Math.min(100, value)) : 0;
+    return (
+      <div className="usage-cell">
+        <div className="usage-value-row">
+          <strong>{typeof value === "number" ? `${Math.round(value)}%` : "?"}</strong>
+          <small>{fmt(resetAt)}</small>
+        </div>
+        <div className="mini-progress">
+          <span style={{ width: `${safeValue}%` }} />
+        </div>
+      </div>
+    );
+  };
+
   return (
     <>
-      <section className="grid cards3">
-        <Metric title="Requests (selected range)" value={`${traceStats.totals.requests}`} />
-        <Metric title="Estimated cost (selected range)" value={usd(traceStats.totals.costUsd)} />
-        <Metric title="Top model by volume" value={traceStats.models[0]?.model ?? "-"} />
+      <section className="section-header">
+        <div>
+          <div className="eyebrow">Provider operations</div>
+          <h2>Accounts are the real control plane</h2>
+          <p className="muted">
+            This is where routing reliability is won or lost. The UI needs to make quota
+            pressure, blocked state, and onboarding steps obvious enough that you do not
+            have to inspect raw JSON or remember the OAuth flow from memory.
+          </p>
+        </div>
+      </section>
+
+      <section className="grid cards4">
+        <Metric title="Accounts" value={`${accounts.length}`} detail="Total configured providers" />
+        <Metric title="Enabled" value={`${enabledCount}`} detail="Available for routing" tone="success" />
+        <Metric title="Blocked" value={`${blockedCount}`} detail="Need manual review or quota reset" tone={blockedCount > 0 ? "warning" : "default"} />
+        <Metric title="Top model" value={traceStats.models[0]?.model ?? "-"} detail="Highest volume in the selected range" />
+      </section>
+
+      <section className="grid cards2">
+        <section className="panel">
+          <div className="section-split-header">
+            <div>
+              <div className="eyebrow">Onboarding</div>
+              <h2>Add provider capacity</h2>
+            </div>
+            <button className="btn" onClick={() => setShowAddAccount(true)}>
+              Add account
+            </button>
+          </div>
+          <p className="muted section-copy">
+            OpenAI uses a browser OAuth flow. Mistral uses direct token entry. Both paths end
+            up here, so the UI should make the distinction explicit before the user opens a modal.
+          </p>
+          <div className="info-grid">
+            <div className="info-tile">
+              <span className="info-label">OpenAI</span>
+              <strong>{openAiCount}</strong>
+              <p className="muted">OAuth-based onboarding and reauthentication.</p>
+            </div>
+            <div className="info-tile">
+              <span className="info-label">Mistral</span>
+              <strong>{mistralCount}</strong>
+              <p className="muted">Manual token entry with optional refresh token.</p>
+            </div>
+          </div>
+        </section>
+
+        <section className="panel">
+          <div className="section-split-header">
+            <div>
+              <div className="eyebrow">Operator notes</div>
+              <h2>What to watch for</h2>
+            </div>
+            <span className={sanitized ? "badge badge-live" : "badge"}>{sanitized ? "Sanitized mode" : "Live identities"}</span>
+          </div>
+          <ul className="clean-list">
+            <li>5h and weekly windows should remain readable without opening account details.</li>
+            <li>Blocked accounts should stand out before they quietly remove capacity.</li>
+            <li>Reauth should be one click for OpenAI accounts that already have an email attached.</li>
+          </ul>
+        </section>
       </section>
 
       <section className="panel">
-        <div className="inline wrap row-between">
-          <h2>Accounts</h2>
-          <button className="btn" onClick={() => setShowAddAccount(true)}>
-            Add account
-          </button>
+        <div className="section-split-header">
+          <div>
+            <div className="eyebrow">Live inventory</div>
+            <h2>Accounts</h2>
+          </div>
+          <span className="badge">{traceStats.totals.requests} requests in selected range</span>
         </div>
+        <p className="muted section-copy">
+          Each row should tell you who the account belongs to, how close it is to quota
+          limits, and whether routing can still trust it.
+        </p>
         <div className="table-wrap">
-          <table>
+          <table className="data-table">
             <thead>
               <tr>
                 <th>Vendor</th>
-                <th>Email</th>
-                <th>ID</th>
-                <th>5h</th>
-                <th>Week</th>
-                <th>Blocked</th>
-                <th>Error</th>
+                <th>Account</th>
+                <th>5h quota</th>
+                <th>Weekly quota</th>
+                <th>Routing state</th>
+                <th>Last error</th>
                 <th />
               </tr>
             </thead>
@@ -365,11 +447,24 @@ export function AccountsTab(props: Props) {
                       {providerLabel(a.provider)}
                     </span>
                   </td>
-                  <td>{sanitized ? maskEmail(a.email) : a.email ?? "-"}</td>
-                  <td className="mono">{sanitized ? maskId(a.id) : a.id}</td>
-                  <td>{typeof a.usage?.primary?.usedPercent === "number" ? `${Math.round(a.usage.primary.usedPercent)}%` : "?"}<small>{fmt(a.usage?.primary?.resetAt)}</small></td>
-                  <td>{typeof a.usage?.secondary?.usedPercent === "number" ? `${Math.round(a.usage.secondary.usedPercent)}%` : "?"}<small>{fmt(a.usage?.secondary?.resetAt)}</small></td>
-                  <td>{fmt(a.state?.blockedUntil)}</td>
+                  <td>
+                    <div className="account-cell">
+                      <strong>{sanitized ? maskEmail(a.email) : a.email ?? "No email set"}</strong>
+                      <span className="mono muted">{sanitized ? maskId(a.id) : a.id}</span>
+                    </div>
+                  </td>
+                  <td>{renderUsageCell(a.usage?.primary?.usedPercent, a.usage?.primary?.resetAt)}</td>
+                  <td>{renderUsageCell(a.usage?.secondary?.usedPercent, a.usage?.secondary?.resetAt)}</td>
+                  <td>
+                    <div className="state-stack">
+                      <span className={a.enabled ? "badge badge-live" : "badge badge-warn"}>
+                        {a.enabled ? "Enabled" : "Disabled"}
+                      </span>
+                      <span className={a.state?.blockedUntil && a.state.blockedUntil > Date.now() ? "badge badge-warn" : "badge"}>
+                        {a.state?.blockedUntil && a.state.blockedUntil > Date.now() ? `Blocked until ${fmt(a.state?.blockedUntil)}` : "Not blocked"}
+                      </span>
+                    </div>
+                  </td>
                   <td className="mono">{a.state?.lastError?.slice(0, 80) ?? "-"}</td>
                   <td className="inline wrap">
                     <button className="btn ghost" onClick={() => openEditModal(a)}>Change key</button>
@@ -389,6 +484,13 @@ export function AccountsTab(props: Props) {
                   </td>
                 </tr>
               ))}
+              {!accounts.length && (
+                <tr>
+                  <td colSpan={7} className="muted empty-row">
+                    No accounts configured yet. Add an OpenAI or Mistral account to expose models and enable routing.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

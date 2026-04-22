@@ -59,57 +59,105 @@ export function AliasesTab({
 
   return (
     <>
-      <section className="panel">
-        <h2>Create model alias</h2>
-        <div className="grid alias-grid">
-          <label>
-            Alias name
-            <input
-              value={id}
-              onChange={(e) => setId(e.target.value)}
-              placeholder="small"
-            />
-          </label>
-          <label>
-            Targets (priority order)
-            <input
-              value={targets}
-              onChange={(e) => setTargets(e.target.value)}
-              placeholder="gpt-5.1-codex-mini,devstral-small-latest"
-            />
-          </label>
-          <label>
-            Description (optional)
-            <input
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Small, low-cost coding model"
-            />
-          </label>
-          <label className="inline">
-            <input
-              type="checkbox"
-              checked={enabled}
-              onChange={(e) => setEnabled(e.target.checked)}
-            />
-            Enabled
-          </label>
-        </div>
-        <div className="inline wrap">
-          <button
-            className="btn"
-            disabled={isSubmitting || !id.trim() || !parsedTargets.length}
-            onClick={() => void onSubmit()}
-          >
-            {isSubmitting ? "Saving..." : "Create alias"}
-          </button>
+      <section className="section-header">
+        <div>
+          <div className="eyebrow">Routing abstraction</div>
+          <h2>Model aliases define your stable contract</h2>
+          <p className="muted">
+            Aliases matter because clients should not care which provider/model is currently
+            healthiest. The UI should make the fallback order easy to read and easy to trust.
+          </p>
         </div>
       </section>
 
+      <section className="grid cards2">
+        <section className="panel">
+          <div className="section-split-header">
+            <div>
+              <div className="eyebrow">Create</div>
+              <h2>New model alias</h2>
+            </div>
+            <span className="badge">{aliases.length} existing</span>
+          </div>
+          <div className="grid alias-grid">
+            <label>
+              Alias name
+              <input
+                value={id}
+                onChange={(e) => setId(e.target.value)}
+                placeholder="small"
+              />
+            </label>
+            <label>
+              Targets (priority order)
+              <input
+                value={targets}
+                onChange={(e) => setTargets(e.target.value)}
+                placeholder="gpt-5.1-codex-mini,devstral-small-latest"
+              />
+            </label>
+            <label>
+              Description (optional)
+              <input
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Small, low-cost coding model"
+              />
+            </label>
+            <label className="inline">
+              <input
+                type="checkbox"
+                checked={enabled}
+                onChange={(e) => setEnabled(e.target.checked)}
+              />
+              Enabled
+            </label>
+          </div>
+          {parsedTargets.length > 0 && (
+            <div className="alias-preview">
+              <span className="muted">Resolved order</span>
+              <div className="chips">
+                {parsedTargets.map((target) => (
+                  <span key={target} className="chip mono">{target}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="inline wrap">
+            <button
+              className="btn"
+              disabled={isSubmitting || !id.trim() || !parsedTargets.length}
+              onClick={() => void onSubmit()}
+            >
+              {isSubmitting ? "Saving..." : "Create alias"}
+            </button>
+          </div>
+        </section>
+
+        <section className="panel">
+          <div className="section-split-header">
+            <div>
+              <div className="eyebrow">Guidance</div>
+              <h2>Alias design rules</h2>
+            </div>
+          </div>
+          <ul className="clean-list">
+            <li>Put the preferred model first and fallback targets after it.</li>
+            <li>Use aliases to stabilize client integrations while provider health changes underneath.</li>
+            <li>Descriptions should explain intent, not repeat the target list.</li>
+          </ul>
+        </section>
+      </section>
+
       <section className="panel">
-        <h2>Aliases</h2>
+        <div className="section-split-header">
+          <div>
+            <div className="eyebrow">Inventory</div>
+            <h2>Aliases</h2>
+          </div>
+        </div>
         <div className="table-wrap">
-          <table>
+          <table className="data-table">
             <thead>
               <tr>
                 <th>Alias</th>
@@ -125,7 +173,11 @@ export function AliasesTab({
                   <td className="mono">{a.id}</td>
                   <td className="mono">{a.targets.join(", ")}</td>
                   <td>{a.description ?? "-"}</td>
-                  <td>{a.enabled ? "yes" : "no"}</td>
+                  <td>
+                    <span className={a.enabled ? "badge badge-live" : "badge badge-warn"}>
+                      {a.enabled ? "Enabled" : "Disabled"}
+                    </span>
+                  </td>
                   <td className="inline wrap">
                     <button
                       className="btn ghost"
@@ -146,7 +198,7 @@ export function AliasesTab({
               ))}
               {!aliases.length && (
                 <tr>
-                  <td colSpan={5} className="muted">
+                  <td colSpan={5} className="muted empty-row">
                     No aliases yet.
                   </td>
                 </tr>

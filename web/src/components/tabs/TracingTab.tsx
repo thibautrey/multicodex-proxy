@@ -80,17 +80,63 @@ export function TracingTab(props: Props) {
 
   return (
     <>
+      <section className="section-header">
+        <div>
+          <div className="eyebrow">Trace analysis</div>
+          <h2>Traffic, latency, and spend in one pass</h2>
+          <p className="muted">
+            This tab is most valuable when it helps you narrow from a range-level anomaly
+            down to a specific request without context switching.
+          </p>
+        </div>
+      </section>
+
       <section className="grid cards5">
-        <Metric title="Requests" value={`${traceStats.totals.requests}`} />
-        <Metric title="Error rate" value={pct(traceStats.totals.errorRate)} />
-        <Metric title="Total tokens" value={formatTokenCount(traceStats.totals.tokensTotal)} />
-        <Metric title="Total cost" value={usd(traceStats.totals.costUsd)} />
-        <Metric title="Avg latency" value={`${Math.round(traceStats.totals.latencyAvgMs)}ms`} />
+        <Metric title="Requests" value={`${traceStats.totals.requests}`} detail="Within the selected range" />
+        <Metric title="Error rate" value={pct(traceStats.totals.errorRate)} detail="Share of traced failures" tone={traceStats.totals.errorRate > 0.05 ? "warning" : "default"} />
+        <Metric title="Total tokens" value={formatTokenCount(traceStats.totals.tokensTotal)} detail="Input and output combined" />
+        <Metric title="Total cost" value={usd(traceStats.totals.costUsd)} detail="Estimated from model pricing" />
+        <Metric title="Avg latency" value={`${Math.round(traceStats.totals.latencyAvgMs)}ms`} detail="Average end-to-end latency" />
+      </section>
+
+      <section className="panel">
+        <div className="section-split-header">
+          <div>
+            <div className="eyebrow">Controls</div>
+            <h2>Trace range and export</h2>
+          </div>
+          <div className="inline wrap">
+            <select
+              value={traceRange}
+              onChange={(e) => {
+                setTraceRange(e.target.value as TraceRangePreset);
+                void gotoTracePage(1);
+              }}
+            >
+              <option value="24h">Last 24h</option>
+              <option value="7d">Last 7d</option>
+              <option value="30d">Last 30d</option>
+              <option value="all">All time</option>
+            </select>
+            <button className="btn secondary" onClick={() => void exportTracesZip()} disabled={exportInProgress}>
+              {exportInProgress ? "Exporting..." : "Export all (.zip)"}
+            </button>
+          </div>
+        </div>
+        <p className="muted section-copy">
+          Use shorter windows for incident response and wider windows for routing cost
+          analysis. Export keeps the current range selection.
+        </p>
       </section>
 
       <section className="grid cards2">
         <section className="panel">
+          <div className="chart-header">
+            <div>
+              <div className="eyebrow">Volume</div>
           <h2>Tokens over time (hourly)</h2>
+            </div>
+          </div>
           <div className="chart-wrap">
             <ResponsiveContainer width="100%" height={260}>
               <LineChart data={tokensTimeseries}>
@@ -107,7 +153,12 @@ export function TracingTab(props: Props) {
           </div>
         </section>
         <section className="panel">
+          <div className="chart-header">
+            <div>
+              <div className="eyebrow">Distribution</div>
           <h2>Model usage</h2>
+            </div>
+          </div>
           <div className="chart-wrap">
             <ResponsiveContainer width="100%" height={260}>
               <BarChart data={modelChartData}>
@@ -125,7 +176,12 @@ export function TracingTab(props: Props) {
 
       <section className="grid cards2">
         <section className="panel">
+          <div className="chart-header">
+            <div>
+              <div className="eyebrow">Spend</div>
           <h2>Model cost (USD)</h2>
+            </div>
+          </div>
           <div className="chart-wrap">
             <ResponsiveContainer width="100%" height={260}>
               <BarChart data={modelCostChartData}>
@@ -140,7 +196,12 @@ export function TracingTab(props: Props) {
           </div>
         </section>
         <section className="panel">
+          <div className="chart-header">
+            <div>
+              <div className="eyebrow">Reliability</div>
           <h2>Error trend (hourly)</h2>
+            </div>
+          </div>
           <div className="chart-wrap">
             <ResponsiveContainer width="100%" height={260}>
               <LineChart data={tokensTimeseries}>
@@ -156,7 +217,12 @@ export function TracingTab(props: Props) {
           </div>
         </section>
         <section className="panel">
+          <div className="chart-header">
+            <div>
+              <div className="eyebrow">Spend</div>
           <h2>Cost over time (hourly)</h2>
+            </div>
+          </div>
           <div className="chart-wrap">
             <ResponsiveContainer width="100%" height={260}>
               <LineChart data={tokensTimeseries}>
@@ -173,7 +239,12 @@ export function TracingTab(props: Props) {
       </section>
 
       <section className="panel">
+        <div className="chart-header">
+          <div>
+            <div className="eyebrow">Latency</div>
         <h2>Latency p50/p95 (hourly)</h2>
+          </div>
+        </div>
         <div className="chart-wrap">
           <ResponsiveContainer width="100%" height={260}>
             <LineChart data={tokensTimeseries}>
@@ -190,7 +261,12 @@ export function TracingTab(props: Props) {
       </section>
 
       <section className="panel">
+        <div className="chart-header">
+          <div>
+            <div className="eyebrow">Mix</div>
         <h2>Model split by token volume</h2>
+          </div>
+        </div>
         <div className="chart-wrap">
           <ResponsiveContainer width="100%" height={260}>
               <PieChart>
@@ -213,31 +289,23 @@ export function TracingTab(props: Props) {
       </section>
 
       <section className="panel">
-        <div className="trace-head">
-          <h2>Request tracing</h2>
+        <div className="section-split-header">
+          <div>
+            <div className="eyebrow">Drilldown</div>
+            <h2>Request tracing</h2>
+          </div>
           <div className="inline wrap">
-            <select
-              value={traceRange}
-              onChange={(e) => {
-                setTraceRange(e.target.value as TraceRangePreset);
-                void gotoTracePage(1);
-              }}
-            >
-              <option value="24h">Last 24h</option>
-              <option value="7d">Last 7d</option>
-              <option value="30d">Last 30d</option>
-              <option value="all">All time</option>
-            </select>
             <button className="btn ghost" onClick={() => void gotoTracePage(tracePagination.page - 1)} disabled={!tracePagination.hasPrev}>Previous</button>
             <span className="mono">Page {tracePagination.page} / {tracePagination.totalPages} ({tracePagination.total} traces)</span>
             <button className="btn ghost" onClick={() => void gotoTracePage(tracePagination.page + 1)} disabled={!tracePagination.hasNext}>Next</button>
-            <button className="btn secondary" onClick={() => void exportTracesZip()} disabled={exportInProgress}>
-              {exportInProgress ? "Exporting..." : "Export all (.zip)"}
-            </button>
           </div>
         </div>
+        <p className="muted section-copy">
+          Click a row to expand the captured request body and the normalized trace object.
+          This is where chart-level anomalies should end.
+        </p>
         <div className="table-wrap">
-          <table>
+          <table className="data-table">
             <thead>
               <tr>
                 <th>Time</th>
