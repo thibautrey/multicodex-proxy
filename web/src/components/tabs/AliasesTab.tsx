@@ -64,13 +64,17 @@ export function AliasesTab({
           <h2>Create model alias</h2>
           <span className="badge">{aliases.length} aliases</span>
         </div>
+          <p className="muted">
+            Alias names can reuse an already exposed model name. If they do, the alias overrides
+            the provider model and routes requests to the configured targets instead.
+          </p>
           <div className="grid alias-grid">
             <label>
               Alias name
               <input
                 value={id}
                 onChange={(e) => setId(e.target.value)}
-                placeholder="small"
+                placeholder="small or gpt-5.4"
               />
             </label>
             <label>

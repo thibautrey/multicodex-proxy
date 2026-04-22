@@ -17,7 +17,8 @@ type RouteCache = {
 
 const routeCache: RouteCache = { bucket: -1, accountId: undefined };
 
-export function normalizeProvider(account?: Account): ProviderId {
+export function normalizeProvider(account?: Pick<Account, "provider">): ProviderId {
+  if (account?.provider === "openai-compatible") return "openai-compatible";
   if (account?.provider === "mistral") return "mistral";
   if (account?.provider === "zai") return "zai";
   return "openai";
@@ -182,7 +183,7 @@ export async function refreshUsageIfNeeded(account: Account, chatgptBaseUrl: str
   if (!force && account.usage && Date.now() - account.usage.fetchedAt < USAGE_CACHE_TTL_MS) return account;
   const provider = normalizeProvider(account);
   // Mistral and z.ai don't have usage endpoints - use internal tracking
-  if (provider === "mistral" || provider === "zai") {
+  if (provider === "mistral" || provider === "zai" || provider === "openai-compatible") {
     account.usage = {
       ...account.usage,
       fetchedAt: Date.now(),

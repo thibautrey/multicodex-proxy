@@ -1,11 +1,12 @@
 export type Account = {
   id: string;
-  provider?: "openai" | "mistral";
+  provider?: "openai" | "openai-compatible" | "mistral" | "zai";
   email?: string;
   enabled: boolean;
   accessToken?: string;
   refreshToken?: string;
   chatgptAccountId?: string;
+  baseUrl?: string;
   priority?: number;
   usage?: any;
   state?: any;
@@ -88,7 +89,8 @@ export type ExposedModel = {
   id: string;
   owned_by?: string;
   metadata?: {
-    provider?: "openai" | "mistral";
+    provider?: "openai" | "openai-compatible" | "mistral" | "zai";
+    provider_candidates?: Array<"openai" | "openai-compatible" | "mistral" | "zai">;
     is_alias?: boolean;
     alias_targets?: string[];
   };

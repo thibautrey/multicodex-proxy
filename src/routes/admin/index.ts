@@ -33,6 +33,12 @@ export type AdminRoutesOptions = {
   storagePaths: StoragePaths;
 };
 
+function normalizeBaseUrl(value: unknown): string | undefined {
+  const raw = String(value ?? "").trim();
+  if (!raw) return undefined;
+  return raw.replace(/\/+$/, "");
+}
+
 function parseQueryNumber(v: unknown): number | undefined {
   if (typeof v === "number" && Number.isFinite(v)) return v;
   if (typeof v === "string") {
@@ -519,14 +525,27 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     const body = req.body ?? {};
     if (!body.accessToken)
       return res.status(400).json({ error: "accessToken required" });
+    const provider =
+      body.provider === "mistral"
+        ? "mistral"
+        : body.provider === "zai"
+          ? "zai"
+          : body.provider === "openai-compatible"
+            ? "openai-compatible"
+            : "openai";
+    const baseUrl = normalizeBaseUrl(body.baseUrl);
+    if (provider === "openai-compatible" && !baseUrl) {
+      return res.status(400).json({ error: "baseUrl required for openai-compatible accounts" });
+    }
     const account: Account = {
       id: body.id ?? randomUUID(),
-      provider: body.provider === "mistral" ? "mistral" : "openai",
+      provider,
       email: body.email,
       accessToken: body.accessToken,
       refreshToken: body.refreshToken,
       expiresAt: body.expiresAt,
       chatgptAccountId: body.chatgptAccountId,
+      baseUrl,
       enabled: body.enabled ?? true,
       priority: body.priority ?? 0,
       usage: body.usage,
@@ -537,7 +556,17 @@ export function createAdminRouter(options: AdminRoutesOptions) {
   });
 
   router.patch("/accounts/:id", async (req, res) => {
-    const updated = await store.patchAccount(req.params.id, req.body ?? {});
+    const body = { ...(req.body ?? {}) };
+    if ("baseUrl" in body) {
+      body.baseUrl = normalizeBaseUrl(body.baseUrl);
+    }
+    const existing = (await store.listAccounts()).find((a) => a.id === req.params.id);
+    if (!existing) return res.status(404).json({ error: "not found" });
+    const next = { ...existing, ...body };
+    if (normalizeProvider(next) === "openai-compatible" && !next.baseUrl) {
+      return res.status(400).json({ error: "baseUrl required for openai-compatible accounts" });
+    }
+    const updated = await store.patchAccount(req.params.id, body);
     if (!updated) return res.status(404).json({ error: "not found" });
     res.json({ ok: true, account: redact(updated) });
   });
@@ -570,7 +599,8 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     account = await ensureValidToken(account, oauthConfig);
     const provider = normalizeProvider(account);
     let usageBaseUrl = openaiBaseUrl;
-    if (provider === "mistral") usageBaseUrl = mistralBaseUrl;
+    if (provider === "openai-compatible") usageBaseUrl = account.baseUrl ?? "";
+    else if (provider === "mistral") usageBaseUrl = mistralBaseUrl;
     else if (provider === "zai") usageBaseUrl = zaiBaseUrl;
     await refreshUsageIfNeeded(account, usageBaseUrl, true);
     await store.upsertAccount(account);
@@ -583,7 +613,8 @@ export function createAdminRouter(options: AdminRoutesOptions) {
         const valid = await ensureValidToken(account, oauthConfig);
         const provider = normalizeProvider(valid);
         let usageBaseUrl = openaiBaseUrl;
-        if (provider === "mistral") usageBaseUrl = mistralBaseUrl;
+        if (provider === "openai-compatible") usageBaseUrl = valid.baseUrl ?? "";
+        else if (provider === "mistral") usageBaseUrl = mistralBaseUrl;
         else if (provider === "zai") usageBaseUrl = zaiBaseUrl;
         await refreshUsageIfNeeded(valid, usageBaseUrl, true);
         return valid;
