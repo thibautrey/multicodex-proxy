@@ -123,6 +123,14 @@ export function accountUsable(a: Account): boolean {
   return !(typeof until === "number" && Date.now() < until);
 }
 
+export function clearEmptyResponseHistory(account: Account) {
+  if (!account.state?.recentEmptyResponses?.length) return;
+  account.state = {
+    ...account.state,
+    recentEmptyResponses: [],
+  };
+}
+
 export function chooseAccount(accounts: Account[]): Account | null {
   const now = Date.now();
   const windowMs = Number.isFinite(DEFAULT_ROUTING_WINDOW_MS) && DEFAULT_ROUTING_WINDOW_MS > 0 ? DEFAULT_ROUTING_WINDOW_MS : 5 * 60 * 1000;
@@ -132,7 +140,14 @@ export function chooseAccount(accounts: Account[]): Account | null {
     const blockedUntil = a.state?.blockedUntil ?? 0;
     return blockedUntil <= now;
   });
-  if (!available.length) return null;
+
+  if (!available.length) {
+    const enabled = accounts.filter((a) => a.enabled);
+    if (!enabled.length) return null;
+    return [...enabled].sort(
+      (a, b) => (a.state?.blockedUntil ?? 0) - (b.state?.blockedUntil ?? 0),
+    )[0] ?? null;
+  }
 
   const bucket = nowBucket(now, windowMs);
 
@@ -216,8 +231,13 @@ export async function refreshUsageIfNeeded(account: Account, chatgptBaseUrl: str
   }
 }
 
+const RATE_LIMIT_BLOCK_MS = Number(process.env.RATE_LIMIT_BLOCK_MS ?? 60_000);
+
 export function markQuotaHit(account: Account, message: string) {
-  const until = nextResetAt(account.usage) ?? Date.now() + BLOCK_FALLBACK_MS;
+  const isRateLimit = /\b429\b/.test(message);
+  const until = isRateLimit
+    ? Date.now() + RATE_LIMIT_BLOCK_MS
+    : (nextResetAt(account.usage) ?? Date.now() + BLOCK_FALLBACK_MS);
   account.state = {
     ...account.state,
     blockedUntil: until,

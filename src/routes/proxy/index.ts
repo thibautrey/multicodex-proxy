@@ -28,6 +28,7 @@ import {
 } from "../../responses/payloads.js";
 import {
   chooseAccountForProvider,
+  clearEmptyResponseHistory,
   getZaiBlockDuration,
   isQuotaErrorText,
   markEmptyResponseError,
@@ -885,6 +886,11 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               body: JSON.stringify(payloadToUpstream),
             },
           );
+
+          if (upstream.ok) {
+            clearEmptyResponseHistory(selected);
+            await store.upsertAccount(selected);
+          }
 
           const contentType = upstream.headers.get("content-type") ?? "";
           const isStream = contentType.includes("text/event-stream");
