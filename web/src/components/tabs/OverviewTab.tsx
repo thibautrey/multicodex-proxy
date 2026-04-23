@@ -17,7 +17,16 @@ export function OverviewTab({ stats, usageStats, traceStats, storageInfo, models
 
   const filteredModels = useMemo(() => {
     if (providerTab === "all") return models;
-    return models.filter((m) => (m.metadata?.provider ?? "openai") === providerTab);
+
+    return models.filter((model) => {
+      const providers = model.metadata?.provider_candidates?.length
+        ? model.metadata.provider_candidates
+        : model.metadata?.provider
+          ? [model.metadata.provider]
+          : [];
+
+      return providers.includes(providerTab);
+    });
   }, [models, providerTab]);
 
   return (

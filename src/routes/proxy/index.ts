@@ -904,15 +904,77 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               const reader = upstream.body.getReader();
               const decoder = new TextDecoder();
               let doneSent = false;
+              let sseBuffer = "";
 
               while (true) {
                 const { value, done } = await reader.read();
                 if (done) break;
 
-                const chunk = decoder.decode(value, { stream: true });
-                const lines = chunk.split("\n");
+                sseBuffer += decoder.decode(value, { stream: true });
+                while (true) {
+                  const next = takeNextSSEFrame(sseBuffer);
+                  if (!next) break;
+                  sseBuffer = next.rest;
 
-                for (const line of lines) {
+                  const lines = next.frame.split(/\r?\n/);
+                  for (const rawLine of lines) {
+                    const line = rawLine.trim();
+                    if (!line.startsWith("data:")) continue;
+
+                    const payload = line.slice(5).trim();
+                    if (payload && payload !== "[DONE]") {
+                      try {
+                        const event = JSON.parse(payload);
+                        if (
+                          event?.type === "response.output_text.delta" &&
+                          typeof event?.delta === "string"
+                        ) {
+                          streamedFallbackText += sanitizeAssistantTextChunk(
+                            event.delta,
+                          );
+                        } else if (
+                          event?.type === "response.output_text.done" &&
+                          !streamedFallbackText &&
+                          typeof event?.text === "string"
+                        ) {
+                          streamedFallbackText = sanitizeAssistantTextChunk(
+                            event.text,
+                          );
+                        }
+                      } catch {}
+                    }
+
+                    const converted = convertResponsesSSEToChatCompletionSSE(
+                      line,
+                      model,
+                      streamedFallbackText,
+                    );
+                    if (converted) {
+                      res.write(converted);
+                      if (converted.includes("[DONE]")) doneSent = true;
+                    } else if (line.includes('"response.reasoning')) {
+                      res.write(": keepalive\n\n");
+                    }
+
+                    if (line.includes("response.completed")) {
+                      try {
+                        const payload = JSON.parse(line.slice(5).trim());
+                        accumulatedUsage = payload?.response?.usage;
+                      } catch {}
+                    }
+                  }
+                }
+              }
+
+              sseBuffer += decoder.decode();
+              while (true) {
+                const next = takeNextSSEFrame(sseBuffer);
+                if (!next) break;
+                sseBuffer = next.rest;
+
+                const lines = next.frame.split(/\r?\n/);
+                for (const rawLine of lines) {
+                  const line = rawLine.trim();
                   if (!line.startsWith("data:")) continue;
 
                   const payload = line.slice(5).trim();
@@ -958,6 +1020,56 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                   }
                 }
               }
+              if (sseBuffer.trim()) {
+                const lines = sseBuffer.split(/\r?\n/);
+                for (const rawLine of lines) {
+                  const line = rawLine.trim();
+                  if (!line.startsWith("data:")) continue;
+
+                  const payload = line.slice(5).trim();
+                  if (payload && payload !== "[DONE]") {
+                    try {
+                      const event = JSON.parse(payload);
+                      if (
+                        event?.type === "response.output_text.delta" &&
+                        typeof event?.delta === "string"
+                      ) {
+                        streamedFallbackText += sanitizeAssistantTextChunk(
+                          event.delta,
+                        );
+                      } else if (
+                        event?.type === "response.output_text.done" &&
+                        !streamedFallbackText &&
+                        typeof event?.text === "string"
+                      ) {
+                        streamedFallbackText = sanitizeAssistantTextChunk(
+                          event.text,
+                        );
+                      }
+                    } catch {}
+                  }
+
+                  const converted = convertResponsesSSEToChatCompletionSSE(
+                    line,
+                    model,
+                    streamedFallbackText,
+                  );
+                  if (converted) {
+                    res.write(converted);
+                    if (converted.includes("[DONE]")) doneSent = true;
+                  } else if (line.includes('"response.reasoning')) {
+                    res.write(": keepalive\n\n");
+                  }
+
+                  if (line.includes("response.completed")) {
+                    try {
+                      const payload = JSON.parse(line.slice(5).trim());
+                      accumulatedUsage = payload?.response?.usage;
+                    } catch {}
+                  }
+                }
+              }
+
               if (!doneSent) res.write("data: [DONE]\n\n");
               res.end();
 
@@ -1521,6 +1633,10 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             error: msg,
             requestBody,
           });
+          if (res.headersSent) {
+            res.end();
+            return;
+          }
         }
       }
     }
@@ -1529,7 +1645,9 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         .status(503)
         .json({ error: "no provider accounts configured for requested model" });
     }
-    res.status(429).json({ error: "all accounts exhausted or unavailable" });
+    if (!res.headersSent) {
+      res.status(429).json({ error: "all accounts exhausted or unavailable" });
+    }
   }
 
   function setForwardHeaders(from: Response, to: express.Response) {
