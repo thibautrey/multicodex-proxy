@@ -1678,8 +1678,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
   });
 
   function toOpenAiModelShape(model: ExposedModel) {
-    const { metadata: _, ...rest } = model;
-    return rest;
+    return model;
   }
 
   router.get("/models", async (_req, res) => {
