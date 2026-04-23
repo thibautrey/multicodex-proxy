@@ -1,6 +1,14 @@
 import React, { useMemo, useState } from "react";
 import type { ModelAlias } from "../../types";
 
+type EditAliasState = {
+  originalId: string;
+  id: string;
+  targets: string;
+  description: string;
+  enabled: boolean;
+};
+
 type Props = {
   aliases: ModelAlias[];
   saveAlias: (body: {
@@ -24,6 +32,8 @@ export function AliasesTab({
   const [description, setDescription] = useState("");
   const [enabled, setEnabled] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [editingAlias, setEditingAlias] = useState<EditAliasState | null>(null);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
 
   const parsedTargets = useMemo(
     () =>
@@ -36,6 +46,19 @@ export function AliasesTab({
         ),
       ),
     [targets],
+  );
+
+  const parsedEditTargets = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (editingAlias?.targets ?? "")
+            .split(",")
+            .map((x) => x.trim())
+            .filter(Boolean),
+        ),
+      ),
+    [editingAlias?.targets],
   );
 
   const onSubmit = async () => {
@@ -54,6 +77,37 @@ export function AliasesTab({
       setEnabled(true);
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const closeEditModal = () => {
+    setEditingAlias(null);
+    setIsSavingEdit(false);
+  };
+
+  const openEditModal = (alias: ModelAlias) => {
+    setEditingAlias({
+      originalId: alias.id,
+      id: alias.id,
+      targets: alias.targets.join(", "),
+      description: alias.description ?? "",
+      enabled: alias.enabled,
+    });
+  };
+
+  const saveEditedAlias = async () => {
+    if (!editingAlias || !editingAlias.id.trim() || !parsedEditTargets.length) return;
+    setIsSavingEdit(true);
+    try {
+      await patchAlias(editingAlias.originalId, {
+        id: editingAlias.id.trim(),
+        targets: parsedEditTargets,
+        enabled: editingAlias.enabled,
+        description: editingAlias.description.trim() || undefined,
+      });
+      closeEditModal();
+    } finally {
+      setIsSavingEdit(false);
     }
   };
 
@@ -152,6 +206,12 @@ export function AliasesTab({
                   <td className="inline wrap">
                     <button
                       className="btn ghost"
+                      onClick={() => openEditModal(a)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      className="btn ghost"
                       onClick={() =>
                         void patchAlias(a.id, { enabled: !a.enabled })
                       }
@@ -178,6 +238,91 @@ export function AliasesTab({
           </table>
         </div>
       </section>
+
+      {editingAlias && (
+        <div className="modal-backdrop" onClick={closeEditModal}>
+          <div className="modal panel" onClick={(e) => e.stopPropagation()}>
+            <div className="inline wrap row-between">
+              <h2>Update model alias</h2>
+              <button className="btn ghost" onClick={closeEditModal}>
+                Close
+              </button>
+            </div>
+            <div className="grid modal-grid">
+              <label>
+                Alias name
+                <input
+                  value={editingAlias.id}
+                  onChange={(e) =>
+                    setEditingAlias((current) =>
+                      current ? { ...current, id: e.target.value } : current,
+                    )
+                  }
+                  placeholder="small or gpt-5.4"
+                />
+              </label>
+              <label>
+                Targets (priority order)
+                <input
+                  value={editingAlias.targets}
+                  onChange={(e) =>
+                    setEditingAlias((current) =>
+                      current ? { ...current, targets: e.target.value } : current,
+                    )
+                  }
+                  placeholder="gpt-5.1-codex-mini,devstral-small-latest"
+                />
+              </label>
+              <label>
+                Description (optional)
+                <input
+                  value={editingAlias.description}
+                  onChange={(e) =>
+                    setEditingAlias((current) =>
+                      current ? { ...current, description: e.target.value } : current,
+                    )
+                  }
+                  placeholder="Small, low-cost coding model"
+                />
+              </label>
+              <label className="inline">
+                <input
+                  type="checkbox"
+                  checked={editingAlias.enabled}
+                  onChange={(e) =>
+                    setEditingAlias((current) =>
+                      current ? { ...current, enabled: e.target.checked } : current,
+                    )
+                  }
+                />
+                Enabled
+              </label>
+            </div>
+            {parsedEditTargets.length > 0 && (
+              <div className="alias-preview">
+                <span className="muted">Resolved order</span>
+                <div className="chips">
+                  {parsedEditTargets.map((target) => (
+                    <span key={target} className="chip mono">{target}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="inline wrap">
+              <button
+                className="btn"
+                disabled={isSavingEdit || !editingAlias.id.trim() || !parsedEditTargets.length}
+                onClick={() => void saveEditedAlias()}
+              >
+                {isSavingEdit ? "Saving..." : "Save changes"}
+              </button>
+              <button className="btn ghost" onClick={closeEditModal}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
