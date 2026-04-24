@@ -53,6 +53,7 @@ import type { OAuthConfig } from "../../oauth.js";
 import { TraceManager } from "../../traces.js";
 import { ensureValidToken } from "../../account-utils.js";
 import express from "express";
+import { randomUUID } from "node:crypto";
 
 type ProxyRoutesOptions = {
   store: AccountStore;
@@ -660,6 +661,66 @@ function takeNextSSEFrame(buffer: string): SSEFrame {
   };
 }
 
+type ResponsesStreamState = {
+  accumulatedUsage: any;
+  streamedFallbackText: string;
+  sawResponseCompleted: boolean;
+};
+
+function inspectResponsesDataLine(
+  line: string,
+  state: ResponsesStreamState,
+): void {
+  if (!line.startsWith("data:")) return;
+
+  const payload = line.slice(5).trim();
+  if (!payload || payload === "[DONE]") return;
+
+  try {
+    const event = JSON.parse(payload);
+    if (
+      event?.type === "response.output_text.delta" &&
+      typeof event?.delta === "string"
+    ) {
+      state.streamedFallbackText += sanitizeAssistantTextChunk(event.delta);
+    } else if (
+      event?.type === "response.output_text.done" &&
+      !state.streamedFallbackText &&
+      typeof event?.text === "string"
+    ) {
+      state.streamedFallbackText = sanitizeAssistantTextChunk(event.text);
+    } else if (event?.type === "response.completed") {
+      state.sawResponseCompleted = true;
+      state.accumulatedUsage = event?.response?.usage ?? state.accumulatedUsage;
+    }
+  } catch {}
+}
+
+function synthesizeResponsesCompletedEvent(
+  model: string,
+  state: ResponsesStreamState,
+): string | null {
+  if (state.sawResponseCompleted) return null;
+  const text = state.streamedFallbackText.trim();
+  if (!text) return null;
+
+  return responseObjectToSSE({
+    id: `resp_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
+    object: "response",
+    created_at: Math.floor(Date.now() / 1000),
+    model,
+    status: "completed",
+    usage: state.accumulatedUsage,
+    output: [
+      {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text }],
+      },
+    ],
+  });
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -1250,7 +1311,11 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             const reader = upstream.body.getReader();
             const decoder = new TextDecoder();
             let sseBuffer = "";
-            let accumulatedUsage: any = null;
+            const streamState: ResponsesStreamState = {
+              accumulatedUsage: null,
+              streamedFallbackText: "",
+              sawResponseCompleted: false,
+            };
 
             while (true) {
               const { value, done } = await reader.read();
@@ -1262,18 +1327,8 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 if (!next) break;
                 sseBuffer = next.rest;
 
-                if (next.frame.includes("response.completed")) {
-                  try {
-                    const dataLine = next.frame
-                      .split(/\r?\n/)
-                      .find((line) => line.trim().startsWith("data:"));
-                    if (dataLine) {
-                      const payload = JSON.parse(dataLine.slice(5).trim());
-                      if (payload?.response?.usage) {
-                        accumulatedUsage = payload.response.usage;
-                      }
-                    }
-                  } catch {}
+                for (const rawLine of next.frame.split(/\r?\n/)) {
+                  inspectResponsesDataLine(rawLine.trim(), streamState);
                 }
 
                 const filtered = sanitizeResponsesSSEFrame(next.frame);
@@ -1287,26 +1342,27 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               if (!next) break;
               sseBuffer = next.rest;
 
-              if (next.frame.includes("response.completed")) {
-                try {
-                  const dataLine = next.frame
-                    .split(/\r?\n/)
-                    .find((line) => line.trim().startsWith("data:"));
-                  if (dataLine) {
-                    const payload = JSON.parse(dataLine.slice(5).trim());
-                    if (payload?.response?.usage) {
-                      accumulatedUsage = payload.response.usage;
-                    }
-                  }
-                } catch {}
+              for (const rawLine of next.frame.split(/\r?\n/)) {
+                inspectResponsesDataLine(rawLine.trim(), streamState);
               }
 
               const filtered = sanitizeResponsesSSEFrame(next.frame);
               if (filtered !== null) res.write(`${filtered}\n\n`);
             }
             if (sseBuffer.trim()) {
+              for (const rawLine of sseBuffer.split(/\r?\n/)) {
+                inspectResponsesDataLine(rawLine.trim(), streamState);
+              }
               const filtered = sanitizeResponsesSSEFrame(sseBuffer);
               if (filtered !== null) res.write(`${filtered}\n\n`);
+            }
+            const syntheticCompleted = synthesizeResponsesCompletedEvent(
+              tracedModel ?? payloadToUpstream?.model ?? "unknown",
+              streamState,
+            );
+            if (syntheticCompleted) {
+              res.write(syntheticCompleted);
+              streamState.sawResponseCompleted = true;
             }
             res.end();
 
@@ -1319,7 +1375,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               status: upstream.status,
               stream: true,
               latencyMs: Date.now() - startedAt,
-              usage: accumulatedUsage,
+              usage: streamState.accumulatedUsage,
               requestBody,
             });
             return;
