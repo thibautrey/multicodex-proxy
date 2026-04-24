@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Metric } from "../Metric";
 import { fmt, maskEmail, maskId } from "../../lib/ui";
 import type { Account, TraceStats } from "../../types";
@@ -518,12 +519,13 @@ export function AccountsTab(props: Props) {
                           <circle cx="9" cy="14.5" r="1.5" />
                         </svg>
                       </button>
-                      {openMenu?.accountId === a.id && (
-                        <div
-                          className="account-action-menu"
-                          style={{ top: openMenu.top, left: openMenu.left }}
-                          onClick={(e) => e.stopPropagation()}
-                        >
+                      {openMenu?.accountId === a.id &&
+                        createPortal(
+                          <div
+                            className="account-action-menu"
+                            style={{ top: openMenu.top, left: openMenu.left }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
                           <button
                             className="account-action-item"
                             onClick={() => openEditModal(a)}
@@ -582,8 +584,9 @@ export function AccountsTab(props: Props) {
                           >
                             Delete
                           </button>
-                        </div>
-                      )}
+                          </div>,
+                          document.body,
+                        )}
                     </div>
                   </td>
                 </tr>
