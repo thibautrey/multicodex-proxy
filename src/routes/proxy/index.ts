@@ -10,7 +10,7 @@ import {
   UPSTREAM_COMPACT_PATH,
   UPSTREAM_PATH,
 } from "../../config.js";
-import type { ModelAlias, ProviderId } from "../../types.js";
+import type { ModelAlias, ProviderId, UpstreamMode } from "../../types.js";
 import {
   chatCompletionObjectToSSE,
   convertResponsesSSEToChatCompletionSSE,
@@ -25,6 +25,7 @@ import {
   getSessionId,
   inspectAssistantPayload,
   normalizeResponsesPayload,
+  responsesToChatCompletionsPayload,
 } from "../../responses/payloads.js";
 import {
   chooseAccountForProvider,
@@ -184,6 +185,19 @@ function accountBaseUrl(
   if (provider === "mistral") return mistralBaseUrl;
   if (provider === "zai") return zaiBaseUrl;
   return openaiBaseUrl;
+}
+
+function resolveUpstreamMode(
+  account: { provider?: ProviderId; upstreamMode?: UpstreamMode },
+  isChatCompletionsPath: boolean,
+  isResponsesCompactPath: boolean,
+): UpstreamMode {
+  if (isResponsesCompactPath) return "responses";
+  if (account.upstreamMode) return account.upstreamMode;
+  if (normalizeProvider(account) === "openai-compatible" && isChatCompletionsPath) {
+    return "chat/completions";
+  }
+  return "responses";
 }
 
 function mergeModelAvailability(
@@ -799,15 +813,19 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         await store.upsertAccount(selected);
 
         const shouldReturnChatCompletions = isChatCompletionsPath;
-        const isOpenAiCompatible = candidate.provider === "openai-compatible";
-        let payloadToUpstream =
-          isChatCompletions && !isOpenAiCompatible
+        const upstreamMode = resolveUpstreamMode(
+          selected,
+          isChatCompletionsPath,
+          isResponsesCompactPath,
+        );
+        const shouldSendChatCompletions = upstreamMode === "chat/completions";
+        let payloadToUpstream = shouldSendChatCompletions
+          ? isChatCompletionsPath
+            ? { ...(req.body ?? {}) }
+            : responsesToChatCompletionsPayload(req.body)
+          : isChatCompletions
             ? chatCompletionsToResponsesPayload(req.body, sessionId)
             : normalizeResponsesPayload(req.body, sessionId);
-
-        if (isOpenAiCompatible && isChatCompletions) {
-          payloadToUpstream = { ...(req.body ?? {}) };
-        }
 
         if (
           isResponsesCompactPath &&
@@ -869,7 +887,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               ? mistralCompactUpstreamPath
               : mistralUpstreamPath;
           } else if (candidate.provider === "openai-compatible") {
-            upstreamPath = isChatCompletionsPath
+            upstreamPath = shouldSendChatCompletions
               ? "/v1/chat/completions"
               : "/v1/responses";
           } else if (candidate.provider === "zai") {

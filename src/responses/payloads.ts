@@ -194,3 +194,97 @@ export function chatCompletionsToResponsesPayload(
   applyCodexParityDefaults(payload, sessionId);
   return payload;
 }
+
+export function responsesToChatCompletionsPayload(body: any) {
+  const payload = { ...(body ?? {}) };
+  const input = Array.isArray(payload.input) ? payload.input : [];
+  const messages: any[] = [];
+
+  const instructions =
+    typeof payload.instructions === "string" ? payload.instructions.trim() : "";
+  if (instructions) {
+    messages.push({ role: "system", content: instructions });
+  }
+
+  for (const item of input) {
+    if (item?.type === "function_call") {
+      messages.push({
+        role: "assistant",
+        content: "",
+        tool_calls: [
+          {
+            id: item.call_id ?? item.id ?? `call_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
+            type: "function",
+            function: {
+              name: item.name ?? "unknown",
+              arguments:
+                typeof item.arguments === "string"
+                  ? item.arguments
+                  : JSON.stringify(item.arguments ?? {}),
+            },
+          },
+        ],
+      });
+      continue;
+    }
+
+    if (item?.type === "function_call_output") {
+      messages.push({
+        role: "tool",
+        tool_call_id:
+          item.call_id ?? item.id ?? `call_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
+        content:
+          typeof item.output === "string"
+            ? item.output
+            : JSON.stringify(item.output ?? ""),
+      });
+      continue;
+    }
+
+    const role =
+      item?.role === "assistant"
+        ? "assistant"
+        : item?.role === "system"
+          ? "system"
+          : "user";
+    const content = Array.isArray(item?.content)
+      ? item.content
+          .map((part: any) =>
+            typeof part?.text === "string"
+              ? { type: "text", text: part.text }
+              : null,
+          )
+          .filter(Boolean)
+      : typeof item?.content === "string"
+        ? item.content
+        : "";
+
+    messages.push({ role, content });
+  }
+
+  const out: any = {
+    model: payload.model,
+    messages,
+    stream: payload.stream ?? true,
+  };
+
+  if (Array.isArray(payload.tools)) {
+    out.tools = payload.tools.map((tool: any) => {
+      if (tool?.type === "function") {
+        return {
+          type: "function",
+          function: {
+            name: tool.name,
+            description: tool.description,
+            parameters: tool.parameters,
+            strict: tool.strict,
+          },
+        };
+      }
+      return tool;
+    });
+  }
+  if (typeof payload.tool_choice !== "undefined") out.tool_choice = payload.tool_choice;
+  if (typeof payload.temperature !== "undefined") out.temperature = payload.temperature;
+  return out;
+}

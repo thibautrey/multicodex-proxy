@@ -1,4 +1,5 @@
 export type ProviderId = "openai" | "openai-compatible" | "mistral" | "zai";
+export type UpstreamMode = "responses" | "chat/completions";
 
 export type UsageWindow = {
   usedPercent?: number;
@@ -30,6 +31,7 @@ export type AccountState = {
 export type Account = {
   id: string;
   provider?: ProviderId;
+  upstreamMode?: UpstreamMode;
   email?: string;
   accessToken: string;
   refreshToken?: string;
