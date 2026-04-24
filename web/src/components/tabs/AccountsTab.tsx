@@ -19,7 +19,7 @@ type Props = {
   oauthRedirectUri: string;
 };
 
-type AccountProvider = "openai" | "openai-compatible" | "mistral";
+type AccountProvider = "openai" | "openai-compatible" | "mistral" | "zai";
 
 type EditAccountState = {
   id: string;
@@ -52,7 +52,7 @@ function isOAuthProvider(provider: AccountProvider) {
 }
 
 function isManualTokenProvider(provider: AccountProvider) {
-  return provider === "mistral" || provider === "openai-compatible";
+  return provider === "mistral" || provider === "openai-compatible" || provider === "zai";
 }
 
 function providerFavicon(provider?: string) {
@@ -258,6 +258,8 @@ export function AccountsTab(props: Props) {
     const nextProvider: AccountProvider =
       account.provider === "mistral"
         ? "mistral"
+        : account.provider === "zai"
+          ? "zai"
         : account.provider === "openai-compatible"
           ? "openai-compatible"
           : "openai";
@@ -432,6 +434,9 @@ export function AccountsTab(props: Props) {
   const mistralCount = accounts.filter(
     (account) => account.provider === "mistral",
   ).length;
+  const zaiCount = accounts.filter(
+    (account) => account.provider === "zai",
+  ).length;
   const blockedCount = accounts.filter(
     (account) =>
       account.state?.blockedUntil && account.state.blockedUntil > Date.now(),
@@ -492,6 +497,7 @@ export function AccountsTab(props: Props) {
               {openAiCompatibleCount} OpenAI-compatible
             </span>
             <span className="badge">{mistralCount} Mistral</span>
+            <span className="badge">{zaiCount} z.ai</span>
             <button className="btn" onClick={() => setShowAddAccount(true)}>
               Add account
             </button>
@@ -680,7 +686,7 @@ export function AccountsTab(props: Props) {
                 <tr>
                   <td colSpan={7} className="muted empty-row">
                     No accounts configured yet. Add an OpenAI,
-                    OpenAI-compatible, or Mistral account to expose models and
+                    OpenAI-compatible, Mistral, or z.ai account to expose models and
                     enable routing.
                   </td>
                 </tr>
@@ -711,6 +717,7 @@ export function AccountsTab(props: Props) {
                   <option value="openai">OpenAI</option>
                   <option value="openai-compatible">OpenAI-compatible</option>
                   <option value="mistral">Mistral</option>
+                  <option value="zai">z.ai</option>
                 </select>
               </label>
               <label>

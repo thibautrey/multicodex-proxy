@@ -59,6 +59,124 @@ function parseOpenAIUsage(data: any): UsageSnapshot {
   return parseUsage(data);
 }
 
+function bearerToken(token: string): string {
+  const trimmed = String(token ?? "").trim();
+  if (!trimmed) return "";
+  return /^Bearer\s+/i.test(trimmed) ? trimmed : `Bearer ${trimmed}`;
+}
+
+function isZaiQuotaBaseUrl(baseUrl?: string): boolean {
+  const raw = String(baseUrl ?? "").trim();
+  if (!raw) return false;
+  try {
+    const { hostname } = new URL(raw);
+    return hostname === "api.z.ai" || hostname === "z.ai" || hostname === "open.bigmodel.cn";
+  } catch {
+    return /(^|\.)z\.ai\b|open\.bigmodel\.cn\b/i.test(raw);
+  }
+}
+
+function zaiQuotaUrl(baseUrl: string): string {
+  const raw = String(baseUrl ?? "").trim();
+  try {
+    const url = new URL(raw);
+    const host = url.hostname.toLowerCase();
+    url.pathname = host === "open.bigmodel.cn"
+      ? "/api/monitor/usage/quota/limit"
+      : "/api/monitor/usage/quota/limit";
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    const trimmed = raw.replace(/\/+$/, "");
+    return `${trimmed}/api/monitor/usage/quota/limit`;
+  }
+}
+
+function toPercent(used?: number, total?: number): number | undefined {
+  if (typeof used !== "number" || Number.isNaN(used)) return undefined;
+  if (typeof total === "number" && Number.isFinite(total) && total > 0) {
+    return Math.max(0, Math.min(100, (used / total) * 100));
+  }
+  return undefined;
+}
+
+function parseResetAt(value: any): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 1e12 ? value : value * 1000;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsedNumber = Number(value);
+    if (Number.isFinite(parsedNumber)) {
+      return parsedNumber > 1e12 ? parsedNumber : parsedNumber * 1000;
+    }
+    const parsedDate = Date.parse(value);
+    if (Number.isFinite(parsedDate)) return parsedDate;
+  }
+  return undefined;
+}
+
+function pickFirstNumber(...values: any[]): number | undefined {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim()) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return undefined;
+}
+
+function parseZaiWindow(window: any): { usedPercent?: number; resetAt?: number } | undefined {
+  if (!window || typeof window !== "object") return undefined;
+
+  const usedPercent = pickFirstNumber(
+    window.usedPercent,
+    window.used_percent,
+    window.usagePercent,
+    window.usage_percent,
+    window.percent,
+    window.percentUsed,
+  );
+  const used = pickFirstNumber(window.used, window.usage, window.used_amount, window.consumed);
+  const total = pickFirstNumber(window.total, window.limit, window.quota, window.max, window.capacity);
+  const resetAt = parseResetAt(window.resetAt ?? window.reset_at ?? window.resetTime ?? window.reset_time ?? window.expireAt ?? window.expire_at);
+
+  const percent = typeof usedPercent === "number"
+    ? Math.max(0, Math.min(100, usedPercent))
+    : toPercent(used, total);
+
+  if (typeof percent !== "number" && typeof resetAt !== "number") return undefined;
+  return { usedPercent: percent, resetAt };
+}
+
+function parseZaiUsage(data: any): UsageSnapshot {
+  const root = data?.data && typeof data.data === "object" ? data.data : data;
+
+  const primary = parseZaiWindow(
+    root?.primary ??
+      root?.fiveHour ??
+      root?.five_hour ??
+      root?.hour5 ??
+      root?.shortTerm ??
+      root?.short_term ??
+      root?.rate_limit?.primary_window,
+  );
+
+  const secondary = parseZaiWindow(
+    root?.secondary ??
+      root?.weekly ??
+      root?.week ??
+      root?.weeklyQuota ??
+      root?.weekly_quota ??
+      root?.longTerm ??
+      root?.long_term ??
+      root?.rate_limit?.secondary_window,
+  );
+
+  return { primary, secondary, fetchedAt: Date.now() };
+}
+
 export function rememberError(account: Account, message: string) {
   const next = [{ at: Date.now(), message }, ...(account.state?.recentErrors ?? [])].slice(0, 10);
   account.state = { ...account.state, lastError: message, recentErrors: next };
@@ -197,8 +315,11 @@ export function chooseAccountForProvider(
 export async function refreshUsageIfNeeded(account: Account, chatgptBaseUrl: string, force = false): Promise<Account> {
   if (!force && account.usage && Date.now() - account.usage.fetchedAt < USAGE_CACHE_TTL_MS) return account;
   const provider = normalizeProvider(account);
-  // Mistral and z.ai don't have usage endpoints - use internal tracking
-  if (provider === "mistral" || provider === "zai" || provider === "openai-compatible") {
+  const shouldUseZaiQuotaEndpoint =
+    provider === "zai" || (provider === "openai-compatible" && isZaiQuotaBaseUrl(chatgptBaseUrl));
+
+  // Mistral and generic OpenAI-compatible providers don't have supported usage endpoints - use internal tracking
+  if (provider === "mistral" || (provider === "openai-compatible" && !shouldUseZaiQuotaEndpoint)) {
     account.usage = {
       ...account.usage,
       fetchedAt: Date.now(),
@@ -210,9 +331,20 @@ export async function refreshUsageIfNeeded(account: Account, chatgptBaseUrl: str
   const timeout = setTimeout(() => controller.abort(), USAGE_TIMEOUT_MS);
   try {
     const headers: Record<string, string> = {
-      authorization: `Bearer ${account.accessToken}`,
+      authorization: bearerToken(account.accessToken),
       accept: "application/json",
     };
+
+    if (shouldUseZaiQuotaEndpoint) {
+      const usageUrl = zaiQuotaUrl(chatgptBaseUrl);
+      const res = await fetch(usageUrl, { headers, signal: controller.signal });
+      if (!res.ok) throw new Error(`usage probe failed ${res.status}`);
+      const json = await res.json();
+      account.usage = parseZaiUsage(json);
+      account.state = { ...account.state, lastError: undefined };
+      return account;
+    }
+
     const usageUrl = `${chatgptBaseUrl}/backend-api/wham/usage`;
     if (provider === "openai" && account.chatgptAccountId) {
       headers["ChatGPT-Account-Id"] = account.chatgptAccountId;
