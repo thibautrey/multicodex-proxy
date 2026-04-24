@@ -652,6 +652,7 @@ button:disabled {
 
 .table-wrap {
   overflow-x: auto;
+  overflow-y: visible;
   border-radius: 18px;
   border: 1px solid var(--line);
   background: var(--surface);
@@ -706,9 +707,9 @@ tbody tr:last-child td {
 }
 
 .icon-menu-btn {
-  display: inline-grid;
-  gap: 4px;
-  justify-items: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 38px;
   height: 38px;
   padding: 0;
@@ -722,18 +723,14 @@ tbody tr:last-child td {
   background: var(--surface-muted);
 }
 
-.icon-menu-btn span {
-  width: 4px;
-  height: 4px;
-  border-radius: 999px;
-  background: var(--muted-strong);
+.icon-menu-btn svg {
+  fill: currentColor;
+  color: var(--muted-strong);
 }
 
 .account-action-menu {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 20;
+  position: fixed;
+  z-index: 2000;
   min-width: 220px;
   padding: 8px;
   border: 1px solid var(--line);
@@ -764,7 +761,7 @@ tbody tr:last-child td {
   cursor: default;
 }
 
-.account-action-item.danger {
+.account-action-item-danger {
   color: var(--danger);
 }
 
