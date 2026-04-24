@@ -97,6 +97,13 @@ export function AccountsTab(props: Props) {
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [oauthBusyId, setOauthBusyId] = useState<string | null>(null);
   const [oauthDialog, setOauthDialog] = useState<OAuthDialogState | null>(null);
+  const [openMenuAccountId, setOpenMenuAccountId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const onPointerDown = () => setOpenMenuAccountId(null);
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, []);
 
   useEffect(() => {
     if (!oauthDialog) return;
@@ -215,6 +222,7 @@ export function AccountsTab(props: Props) {
   };
 
   const openEditModal = (account: Account) => {
+    setOpenMenuAccountId(null);
     const nextProvider: AccountProvider =
       account.provider === "mistral"
         ? "mistral"
@@ -329,6 +337,7 @@ export function AccountsTab(props: Props) {
   };
 
   const reauthAccount = async (account: Account) => {
+    setOpenMenuAccountId(null);
     if ((account.provider ?? "openai") !== "openai") return;
     if (!account.email?.trim()) {
       window.alert("This OpenAI account has no email, so reauth cannot be started.");
@@ -463,25 +472,84 @@ export function AccountsTab(props: Props) {
                     </div>
                   </td>
                   <td className="mono">{a.state?.lastError?.slice(0, 80) ?? "-"}</td>
-                  <td className="inline wrap">
-                    <button className="btn ghost" onClick={() => openEditModal(a)}>
-                      {a.provider === "openai" ? "Reauth settings" : "Change key"}
-                    </button>
-                    {a.provider === "openai" && (
+                  <td>
+                    <div className="account-actions-cell">
                       <button
-                        className="btn ghost"
-                        disabled={oauthBusyId === a.id}
-                        onClick={() => void reauthAccount(a)}
+                        className="icon-menu-btn"
+                        aria-label={`Open actions for ${a.email ?? a.id}`}
+                        aria-expanded={openMenuAccountId === a.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOpenMenuAccountId((current) => (current === a.id ? null : a.id));
+                        }}
                       >
-                        {oauthBusyId === a.id ? "Opening..." : "Reauth"}
+                        <span />
+                        <span />
+                        <span />
                       </button>
-                    )}
-                    <button className="btn ghost" onClick={() => void patch(a.id, { enabled: !a.enabled })}>
-                      {a.enabled ? "Disable" : "Enable"}
-                    </button>
-                    <button className="btn ghost" onClick={() => void unblock(a.id)}>Unblock</button>
-                    <button className="btn ghost" onClick={() => void refreshUsage(a.id)}>Refresh</button>
-                    <button className="btn danger" onClick={() => void del(a.id)}>Delete</button>
+                      {openMenuAccountId === a.id && (
+                        <div className="account-action-menu" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            className="account-action-item"
+                            onClick={() => openEditModal(a)}
+                          >
+                            Modify parameters
+                          </button>
+                          <button
+                            className="account-action-item"
+                            onClick={() => {
+                              setOpenMenuAccountId(null);
+                              void patch(a.id, { enabled: !a.enabled });
+                            }}
+                          >
+                            {a.enabled ? "Disable" : "Enable"}
+                          </button>
+                          <button
+                            className="account-action-item"
+                            onClick={() => {
+                              setOpenMenuAccountId(null);
+                              void unblock(a.id);
+                            }}
+                          >
+                            Unblock
+                          </button>
+                          <button
+                            className="account-action-item"
+                            onClick={() => {
+                              setOpenMenuAccountId(null);
+                              void refreshUsage(a.id);
+                            }}
+                          >
+                            Refresh usage
+                          </button>
+                          {a.provider === "openai" ? (
+                            <button
+                              className="account-action-item"
+                              disabled={oauthBusyId === a.id}
+                              onClick={() => void reauthAccount(a)}
+                            >
+                              {oauthBusyId === a.id ? "Opening..." : "Reauth"}
+                            </button>
+                          ) : (
+                            <button
+                              className="account-action-item"
+                              onClick={() => openEditModal(a)}
+                            >
+                              Change key
+                            </button>
+                          )}
+                          <button
+                            className="account-action-item danger"
+                            onClick={() => {
+                              setOpenMenuAccountId(null);
+                              void del(a.id);
+                            }}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}

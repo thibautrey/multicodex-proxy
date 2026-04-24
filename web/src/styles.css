@@ -699,6 +699,75 @@ tbody tr:last-child td {
   gap: 8px;
 }
 
+.account-actions-cell {
+  position: relative;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.icon-menu-btn {
+  display: inline-grid;
+  gap: 4px;
+  justify-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.icon-menu-btn:hover {
+  background: var(--surface-muted);
+}
+
+.icon-menu-btn span {
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--muted-strong);
+}
+
+.account-action-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 20;
+  min-width: 220px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+}
+
+.account-action-item {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.account-action-item:hover {
+  background: var(--surface-muted);
+}
+
+.account-action-item:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.account-action-item.danger {
+  color: var(--danger);
+}
+
 .usage-cell {
   display: grid;
   gap: 8px;
