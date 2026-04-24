@@ -97,12 +97,25 @@ export function AccountsTab(props: Props) {
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [oauthBusyId, setOauthBusyId] = useState<string | null>(null);
   const [oauthDialog, setOauthDialog] = useState<OAuthDialogState | null>(null);
-  const [openMenuAccountId, setOpenMenuAccountId] = useState<string | null>(null);
+  const [openMenu, setOpenMenu] = useState<{
+    accountId: string;
+    top: number;
+    left: number;
+  } | null>(null);
 
   useEffect(() => {
-    const onPointerDown = () => setOpenMenuAccountId(null);
+    const closeMenu = () => setOpenMenu(null);
+    const onPointerDown = () => closeMenu();
+    const onScroll = () => closeMenu();
+    const onResize = () => closeMenu();
     window.addEventListener("pointerdown", onPointerDown);
-    return () => window.removeEventListener("pointerdown", onPointerDown);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onResize);
+    };
   }, []);
 
   useEffect(() => {
@@ -222,7 +235,7 @@ export function AccountsTab(props: Props) {
   };
 
   const openEditModal = (account: Account) => {
-    setOpenMenuAccountId(null);
+    setOpenMenu(null);
     const nextProvider: AccountProvider =
       account.provider === "mistral"
         ? "mistral"
@@ -337,7 +350,7 @@ export function AccountsTab(props: Props) {
   };
 
   const reauthAccount = async (account: Account) => {
-    setOpenMenuAccountId(null);
+    setOpenMenu(null);
     if ((account.provider ?? "openai") !== "openai") return;
     if (!account.email?.trim()) {
       window.alert("This OpenAI account has no email, so reauth cannot be started.");
@@ -466,9 +479,11 @@ export function AccountsTab(props: Props) {
                       <span className={a.enabled ? "badge badge-live" : "badge badge-warn"}>
                         {a.enabled ? "Enabled" : "Disabled"}
                       </span>
-                      <span className={a.state?.blockedUntil && a.state.blockedUntil > Date.now() ? "badge badge-warn" : "badge"}>
-                        {a.state?.blockedUntil && a.state.blockedUntil > Date.now() ? `Blocked until ${fmt(a.state?.blockedUntil)}` : "Not blocked"}
-                      </span>
+                      {a.state?.blockedUntil && a.state.blockedUntil > Date.now() && (
+                        <span className="badge badge-warn">
+                          {`Blocked until ${fmt(a.state?.blockedUntil)}`}
+                        </span>
+                      )}
                     </div>
                   </td>
                   <td className="mono">{a.state?.lastError?.slice(0, 80) ?? "-"}</td>
@@ -477,18 +492,38 @@ export function AccountsTab(props: Props) {
                       <button
                         className="icon-menu-btn"
                         aria-label={`Open actions for ${a.email ?? a.id}`}
-                        aria-expanded={openMenuAccountId === a.id}
+                        aria-expanded={openMenu?.accountId === a.id}
                         onClick={(e) => {
                           e.stopPropagation();
-                          setOpenMenuAccountId((current) => (current === a.id ? null : a.id));
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          setOpenMenu((current) =>
+                            current?.accountId === a.id
+                              ? null
+                              : {
+                                  accountId: a.id,
+                                  top: rect.bottom + 8,
+                                  left: rect.right - 220,
+                                },
+                          );
                         }}
                       >
-                        <span />
-                        <span />
-                        <span />
+                        <svg
+                          width="18"
+                          height="18"
+                          viewBox="0 0 18 18"
+                          aria-hidden="true"
+                        >
+                          <circle cx="9" cy="3.5" r="1.5" />
+                          <circle cx="9" cy="9" r="1.5" />
+                          <circle cx="9" cy="14.5" r="1.5" />
+                        </svg>
                       </button>
-                      {openMenuAccountId === a.id && (
-                        <div className="account-action-menu" onClick={(e) => e.stopPropagation()}>
+                      {openMenu?.accountId === a.id && (
+                        <div
+                          className="account-action-menu"
+                          style={{ top: openMenu.top, left: openMenu.left }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
                           <button
                             className="account-action-item"
                             onClick={() => openEditModal(a)}
@@ -498,7 +533,7 @@ export function AccountsTab(props: Props) {
                           <button
                             className="account-action-item"
                             onClick={() => {
-                              setOpenMenuAccountId(null);
+                              setOpenMenu(null);
                               void patch(a.id, { enabled: !a.enabled });
                             }}
                           >
@@ -507,7 +542,7 @@ export function AccountsTab(props: Props) {
                           <button
                             className="account-action-item"
                             onClick={() => {
-                              setOpenMenuAccountId(null);
+                              setOpenMenu(null);
                               void unblock(a.id);
                             }}
                           >
@@ -516,7 +551,7 @@ export function AccountsTab(props: Props) {
                           <button
                             className="account-action-item"
                             onClick={() => {
-                              setOpenMenuAccountId(null);
+                              setOpenMenu(null);
                               void refreshUsage(a.id);
                             }}
                           >
@@ -539,9 +574,9 @@ export function AccountsTab(props: Props) {
                             </button>
                           )}
                           <button
-                            className="account-action-item danger"
+                            className="account-action-item account-action-item-danger"
                             onClick={() => {
-                              setOpenMenuAccountId(null);
+                              setOpenMenu(null);
                               void del(a.id);
                             }}
                           >
