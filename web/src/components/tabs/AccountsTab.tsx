@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
-import { Metric } from "../Metric";
-import { fmt, maskEmail, maskId } from "../../lib/ui";
 import type { Account, TraceStats } from "../../types";
+import React, { useEffect, useState } from "react";
+import { fmt, maskEmail, maskId } from "../../lib/ui";
+
+import { Metric } from "../Metric";
+import { createPortal } from "react-dom";
 
 type Props = {
   traceStats: TraceStats;
@@ -94,7 +95,9 @@ export function AccountsTab(props: Props) {
   const [manualPriority, setManualPriority] = useState("0");
   const [manualEnabled, setManualEnabled] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [editingAccount, setEditingAccount] = useState<EditAccountState | null>(null);
+  const [editingAccount, setEditingAccount] = useState<EditAccountState | null>(
+    null,
+  );
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [oauthBusyId, setOauthBusyId] = useState<string | null>(null);
   const [oauthDialog, setOauthDialog] = useState<OAuthDialogState | null>(null);
@@ -134,14 +137,18 @@ export function AccountsTab(props: Props) {
     const onMessage = (event: MessageEvent) => {
       const data = event.data;
       if (!data || typeof data !== "object") return;
-      if ((data as { type?: string }).type !== "multivibe-oauth-callback") return;
+      if ((data as { type?: string }).type !== "multivibe-oauth-callback")
+        return;
       const callbackUrl = (data as { callbackUrl?: string }).callbackUrl;
       if (typeof callbackUrl !== "string" || !callbackUrl.trim()) return;
 
       try {
         const received = new URL(callbackUrl);
         const expected = new URL(oauthDialog.expectedRedirectUri);
-        if (received.origin !== expected.origin || received.pathname !== expected.pathname) {
+        if (
+          received.origin !== expected.origin ||
+          received.pathname !== expected.pathname
+        ) {
           return;
         }
       } catch {
@@ -192,7 +199,8 @@ export function AccountsTab(props: Props) {
         const authorizeUrl = result?.authorizeUrl as string | undefined;
         const flowId = result?.flowId as string | undefined;
         const expectedRedirectUri =
-          (result?.expectedRedirectUri as string | undefined) || oauthRedirectUri;
+          (result?.expectedRedirectUri as string | undefined) ||
+          oauthRedirectUri;
         if (!authorizeUrl || !flowId) {
           throw new Error("Missing OAuth flow details from start response");
         }
@@ -233,7 +241,8 @@ export function AccountsTab(props: Props) {
         email: manualEmail.trim() || undefined,
         accessToken: manualAccessToken.trim(),
         refreshToken: manualRefreshToken.trim() || undefined,
-        baseUrl: provider === "openai-compatible" ? manualBaseUrl.trim() : undefined,
+        baseUrl:
+          provider === "openai-compatible" ? manualBaseUrl.trim() : undefined,
         upstreamMode: manualUpstreamMode || undefined,
         priority: Number(manualPriority) || 0,
         enabled: manualEnabled,
@@ -272,11 +281,15 @@ export function AccountsTab(props: Props) {
       if (!editingAccount.email.trim()) return;
       setIsSavingEdit(true);
       try {
-        const result = await startOAuth(editingAccount.email.trim(), editingAccount.id);
+        const result = await startOAuth(
+          editingAccount.email.trim(),
+          editingAccount.id,
+        );
         const authorizeUrl = result?.authorizeUrl as string | undefined;
         const flowId = result?.flowId as string | undefined;
         const expectedRedirectUri =
-          (result?.expectedRedirectUri as string | undefined) || oauthRedirectUri;
+          (result?.expectedRedirectUri as string | undefined) ||
+          oauthRedirectUri;
         if (!authorizeUrl || !flowId) {
           throw new Error("Missing OAuth flow details from start response");
         }
@@ -308,7 +321,11 @@ export function AccountsTab(props: Props) {
     }
 
     if (!editingAccount.accessToken.trim()) return;
-    if (editingAccount.provider === "openai-compatible" && !editingAccount.baseUrl.trim()) return;
+    if (
+      editingAccount.provider === "openai-compatible" &&
+      !editingAccount.baseUrl.trim()
+    )
+      return;
     setIsSavingEdit(true);
     try {
       await patch(editingAccount.id, {
@@ -338,11 +355,14 @@ export function AccountsTab(props: Props) {
         current ? { ...current, isSubmitting: true } : current,
       );
       const result = await completeOAuth(oauthDialog.flowId, input);
-      const accountId = String(result?.account?.id ?? oauthDialog.accountId ?? "").trim();
+      const accountId = String(
+        result?.account?.id ?? oauthDialog.accountId ?? "",
+      ).trim();
       if (
         oauthDialog.mode === "create" &&
         accountId &&
-        (oauthDialog.pendingPriority !== 0 || oauthDialog.pendingEnabled === false)
+        (oauthDialog.pendingPriority !== 0 ||
+          oauthDialog.pendingEnabled === false)
       ) {
         await patch(accountId, {
           priority: oauthDialog.pendingPriority ?? 0,
@@ -363,7 +383,9 @@ export function AccountsTab(props: Props) {
     setOpenMenu(null);
     if ((account.provider ?? "openai") !== "openai") return;
     if (!account.email?.trim()) {
-      window.alert("This OpenAI account has no email, so reauth cannot be started.");
+      window.alert(
+        "This OpenAI account has no email, so reauth cannot be started.",
+      );
       return;
     }
     setOauthBusyId(account.id);
@@ -401,18 +423,30 @@ export function AccountsTab(props: Props) {
     }
   };
 
-  const openAiCount = accounts.filter((account) => (account.provider ?? "openai") === "openai").length;
-  const openAiCompatibleCount = accounts.filter((account) => account.provider === "openai-compatible").length;
-  const mistralCount = accounts.filter((account) => account.provider === "mistral").length;
-  const blockedCount = accounts.filter((account) => account.state?.blockedUntil && account.state.blockedUntil > Date.now()).length;
+  const openAiCount = accounts.filter(
+    (account) => (account.provider ?? "openai") === "openai",
+  ).length;
+  const openAiCompatibleCount = accounts.filter(
+    (account) => account.provider === "openai-compatible",
+  ).length;
+  const mistralCount = accounts.filter(
+    (account) => account.provider === "mistral",
+  ).length;
+  const blockedCount = accounts.filter(
+    (account) =>
+      account.state?.blockedUntil && account.state.blockedUntil > Date.now(),
+  ).length;
   const enabledCount = accounts.filter((account) => account.enabled).length;
 
   const renderUsageCell = (value?: number, resetAt?: number) => {
-    const safeValue = typeof value === "number" ? Math.max(0, Math.min(100, value)) : 0;
+    const safeValue =
+      typeof value === "number" ? Math.max(0, Math.min(100, value)) : 0;
     return (
       <div className="usage-cell">
         <div className="usage-value-row">
-          <strong>{typeof value === "number" ? `${Math.round(value)}%` : "?"}</strong>
+          <strong>
+            {typeof value === "number" ? `${Math.round(value)}%` : "?"}
+          </strong>
           <small>{fmt(resetAt)}</small>
         </div>
         <div className="mini-progress">
@@ -425,10 +459,28 @@ export function AccountsTab(props: Props) {
   return (
     <>
       <section className="grid cards4">
-        <Metric title="Accounts" value={`${accounts.length}`} detail="Total configured providers" />
-        <Metric title="Enabled" value={`${enabledCount}`} detail="Available for routing" tone="success" />
-        <Metric title="Blocked" value={`${blockedCount}`} detail="Need manual review or quota reset" tone={blockedCount > 0 ? "warning" : "default"} />
-        <Metric title="Top model" value={traceStats.models[0]?.model ?? "-"} detail="Highest volume in the selected range" />
+        <Metric
+          title="Accounts"
+          value={`${accounts.length}`}
+          detail="Total configured providers"
+        />
+        <Metric
+          title="Enabled"
+          value={`${enabledCount}`}
+          detail="Available for routing"
+          tone="success"
+        />
+        <Metric
+          title="Blocked"
+          value={`${blockedCount}`}
+          detail="Need manual review or quota reset"
+          tone={blockedCount > 0 ? "warning" : "default"}
+        />
+        <Metric
+          title="Top model"
+          value={traceStats.models[0]?.model ?? "-"}
+          detail="Highest volume in the selected range"
+        />
       </section>
 
       <section className="panel">
@@ -436,7 +488,9 @@ export function AccountsTab(props: Props) {
           <h2>Accounts</h2>
           <div className="inline wrap">
             <span className="badge">{openAiCount} OpenAI</span>
-            <span className="badge">{openAiCompatibleCount} OpenAI-compatible</span>
+            <span className="badge">
+              {openAiCompatibleCount} OpenAI-compatible
+            </span>
             <span className="badge">{mistralCount} Mistral</span>
             <button className="btn" onClick={() => setShowAddAccount(true)}>
               Add account
@@ -472,31 +526,53 @@ export function AccountsTab(props: Props) {
                   </td>
                   <td>
                     <div className="account-cell">
-                      <strong>{sanitized ? maskEmail(a.email) : a.email ?? "No email set"}</strong>
-                      <span className="mono muted">{sanitized ? maskId(a.id) : a.id}</span>
+                      <strong>
+                        {sanitized
+                          ? maskEmail(a.email)
+                          : (a.email ?? "No email set")}
+                      </strong>
                       {a.baseUrl && (
                         <span className="mono muted">{a.baseUrl}</span>
                       )}
                       {a.upstreamMode && (
-                        <span className="mono muted">upstream: {a.upstreamMode}</span>
-                      )}
-                    </div>
-                  </td>
-                  <td>{renderUsageCell(a.usage?.primary?.usedPercent, a.usage?.primary?.resetAt)}</td>
-                  <td>{renderUsageCell(a.usage?.secondary?.usedPercent, a.usage?.secondary?.resetAt)}</td>
-                  <td>
-                    <div className="state-stack">
-                      <span className={a.enabled ? "badge badge-live" : "badge badge-warn"}>
-                        {a.enabled ? "Enabled" : "Disabled"}
-                      </span>
-                      {a.state?.blockedUntil && a.state.blockedUntil > Date.now() && (
-                        <span className="badge badge-warn">
-                          {`Blocked until ${fmt(a.state?.blockedUntil)}`}
+                        <span className="mono muted">
+                          upstream: {a.upstreamMode}
                         </span>
                       )}
                     </div>
                   </td>
-                  <td className="mono">{a.state?.lastError?.slice(0, 80) ?? "-"}</td>
+                  <td>
+                    {renderUsageCell(
+                      a.usage?.primary?.usedPercent,
+                      a.usage?.primary?.resetAt,
+                    )}
+                  </td>
+                  <td>
+                    {renderUsageCell(
+                      a.usage?.secondary?.usedPercent,
+                      a.usage?.secondary?.resetAt,
+                    )}
+                  </td>
+                  <td>
+                    <div className="state-stack">
+                      <span
+                        className={
+                          a.enabled ? "badge badge-live" : "badge badge-warn"
+                        }
+                      >
+                        {a.enabled ? "Enabled" : "Disabled"}
+                      </span>
+                      {a.state?.blockedUntil &&
+                        a.state.blockedUntil > Date.now() && (
+                          <span className="badge badge-warn">
+                            {`Blocked until ${fmt(a.state?.blockedUntil)}`}
+                          </span>
+                        )}
+                    </div>
+                  </td>
+                  <td className="mono">
+                    {a.state?.lastError?.slice(0, 80) ?? "-"}
+                  </td>
                   <td>
                     <div className="account-actions-cell">
                       <button
@@ -603,7 +679,9 @@ export function AccountsTab(props: Props) {
               {!accounts.length && (
                 <tr>
                   <td colSpan={7} className="muted empty-row">
-                    No accounts configured yet. Add an OpenAI, OpenAI-compatible, or Mistral account to expose models and enable routing.
+                    No accounts configured yet. Add an OpenAI,
+                    OpenAI-compatible, or Mistral account to expose models and
+                    enable routing.
                   </td>
                 </tr>
               )}
@@ -626,7 +704,9 @@ export function AccountsTab(props: Props) {
                 Provider
                 <select
                   value={provider}
-                  onChange={(e) => setProvider(e.target.value as AccountProvider)}
+                  onChange={(e) =>
+                    setProvider(e.target.value as AccountProvider)
+                  }
                 >
                   <option value="openai">OpenAI</option>
                   <option value="openai-compatible">OpenAI-compatible</option>
@@ -663,7 +743,9 @@ export function AccountsTab(props: Props) {
                 >
                   <option value="">Automatic</option>
                   <option value="responses">Force `/v1/responses`</option>
-                  <option value="chat/completions">Force `/v1/chat/completions`</option>
+                  <option value="chat/completions">
+                    Force `/v1/chat/completions`
+                  </option>
                 </select>
               </label>
               {isManualTokenProvider(provider) ? (
@@ -687,9 +769,9 @@ export function AccountsTab(props: Props) {
                 </>
               ) : (
                 <div className="muted">
-                  OpenAI onboarding uses OAuth. Start the flow, complete the browser callback,
-                  then paste the full callback URL here instead of entering access or refresh
-                  tokens manually.
+                  OpenAI onboarding uses OAuth. Start the flow, complete the
+                  browser callback, then paste the full callback URL here
+                  instead of entering access or refresh tokens manually.
                 </div>
               )}
               <label>
@@ -717,7 +799,8 @@ export function AccountsTab(props: Props) {
                   (isOAuthProvider(provider)
                     ? !manualEmail.trim()
                     : !manualAccessToken.trim() ||
-                      (provider === "openai-compatible" && !manualBaseUrl.trim()))
+                      (provider === "openai-compatible" &&
+                        !manualBaseUrl.trim()))
                 }
                 onClick={() => void submitManualAccount()}
               >
@@ -766,7 +849,9 @@ export function AccountsTab(props: Props) {
                     value={editingAccount.baseUrl}
                     onChange={(e) =>
                       setEditingAccount((current) =>
-                        current ? { ...current, baseUrl: e.target.value } : current,
+                        current
+                          ? { ...current, baseUrl: e.target.value }
+                          : current,
                       )
                     }
                     placeholder="https://your-api.example.com"
@@ -793,7 +878,9 @@ export function AccountsTab(props: Props) {
                 >
                   <option value="">Automatic</option>
                   <option value="responses">Force `/v1/responses`</option>
-                  <option value="chat/completions">Force `/v1/chat/completions`</option>
+                  <option value="chat/completions">
+                    Force `/v1/chat/completions`
+                  </option>
                 </select>
               </label>
               {isManualTokenProvider(editingAccount.provider) ? (
@@ -804,7 +891,9 @@ export function AccountsTab(props: Props) {
                       value={editingAccount.accessToken}
                       onChange={(e) =>
                         setEditingAccount((current) =>
-                          current ? { ...current, accessToken: e.target.value } : current,
+                          current
+                            ? { ...current, accessToken: e.target.value }
+                            : current,
                         )
                       }
                       placeholder="Required"
@@ -816,7 +905,9 @@ export function AccountsTab(props: Props) {
                       value={editingAccount.refreshToken}
                       onChange={(e) =>
                         setEditingAccount((current) =>
-                          current ? { ...current, refreshToken: e.target.value } : current,
+                          current
+                            ? { ...current, refreshToken: e.target.value }
+                            : current,
                         )
                       }
                       placeholder="Optional"
@@ -825,8 +916,9 @@ export function AccountsTab(props: Props) {
                 </>
               ) : (
                 <div className="muted">
-                  OpenAI reauth uses OAuth. Save changes to open the login flow, then paste the
-                  full callback URL instead of editing tokens manually.
+                  OpenAI reauth uses OAuth. Save changes to open the login flow,
+                  then paste the full callback URL instead of editing tokens
+                  manually.
                 </div>
               )}
               <label>
@@ -835,7 +927,9 @@ export function AccountsTab(props: Props) {
                   value={editingAccount.priority}
                   onChange={(e) =>
                     setEditingAccount((current) =>
-                      current ? { ...current, priority: e.target.value } : current,
+                      current
+                        ? { ...current, priority: e.target.value }
+                        : current,
                     )
                   }
                   placeholder="0"
@@ -847,7 +941,9 @@ export function AccountsTab(props: Props) {
                   checked={editingAccount.enabled}
                   onChange={(e) =>
                     setEditingAccount((current) =>
-                      current ? { ...current, enabled: e.target.checked } : current,
+                      current
+                        ? { ...current, enabled: e.target.checked }
+                        : current,
                     )
                   }
                 />
@@ -887,7 +983,11 @@ export function AccountsTab(props: Props) {
         <div className="modal-backdrop" onClick={closeOauthDialog}>
           <div className="modal panel" onClick={(e) => e.stopPropagation()}>
             <div className="inline wrap row-between">
-              <h2>{oauthDialog.mode === "create" ? "Complete OpenAI OAuth" : "Complete OpenAI reauth"}</h2>
+              <h2>
+                {oauthDialog.mode === "create"
+                  ? "Complete OpenAI OAuth"
+                  : "Complete OpenAI reauth"}
+              </h2>
               <button className="btn ghost" onClick={closeOauthDialog}>
                 Close
               </button>
@@ -907,7 +1007,9 @@ export function AccountsTab(props: Props) {
                   value={oauthDialog.callbackInput}
                   onChange={(e) =>
                     setOauthDialog((current) =>
-                      current ? { ...current, callbackInput: e.target.value } : current,
+                      current
+                        ? { ...current, callbackInput: e.target.value }
+                        : current,
                     )
                   }
                   placeholder="Paste the full URL after the browser reaches the callback page"
@@ -916,20 +1018,24 @@ export function AccountsTab(props: Props) {
               </label>
             </div>
             <div className="muted">
-              Complete the OpenAI login in the opened browser tab. When the browser reaches
-              the callback page, copy the full URL and paste it here. Do not paste access or
-              refresh tokens.
+              Complete the OpenAI login in the opened browser tab. When the
+              browser reaches the callback page, copy the full URL and paste it
+              here. Do not paste access or refresh tokens.
             </div>
             <div className="inline wrap">
               <button
                 className="btn"
-                onClick={() => window.open(oauthDialog.authorizeUrl, "_blank", "noreferrer")}
+                onClick={() =>
+                  window.open(oauthDialog.authorizeUrl, "_blank", "noreferrer")
+                }
               >
                 Open login page
               </button>
               <button
                 className="btn"
-                disabled={oauthDialog.isSubmitting || !oauthDialog.callbackInput.trim()}
+                disabled={
+                  oauthDialog.isSubmitting || !oauthDialog.callbackInput.trim()
+                }
                 onClick={() => void submitOauthCallback()}
               >
                 {oauthDialog.isSubmitting ? "Completing..." : "Complete OAuth"}
