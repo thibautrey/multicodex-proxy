@@ -335,6 +335,65 @@ function accountSupportsModel(
   return accountIds.includes(accountId);
 }
 
+function supportedToolTypesForRoute(
+  provider: ProviderId,
+  model: string | undefined,
+  discoveredModels: ExposedModel[],
+): Set<string> {
+  const key = normalizeModelLookupKey(model);
+  const discovered = key
+    ? discoveredModels.find(
+        (entry) =>
+          normalizeModelLookupKey(entry.id) === key &&
+          (entry.metadata.provider === provider ||
+            entry.metadata.provider_candidates?.includes(provider)),
+      )
+    : undefined;
+
+  const rawTypes = discovered?.metadata.supported_tool_types;
+  if (Array.isArray(rawTypes) && rawTypes.length > 0) {
+    return new Set(
+      rawTypes.filter(
+        (value): value is string =>
+          typeof value === "string" && value.trim().length > 0,
+      ),
+    );
+  }
+
+  // OpenAI-compatible providers vary widely; default conservatively.
+  if (provider === "openai-compatible") return new Set(["function"]);
+
+  return new Set(["function"]);
+}
+
+function filterUnsupportedTools(
+  payload: any,
+  provider: ProviderId,
+  model: string | undefined,
+  discoveredModels: ExposedModel[],
+) {
+  if (!payload || typeof payload !== "object" || !Array.isArray(payload.tools)) {
+    return;
+  }
+
+  const supportedToolTypes = supportedToolTypesForRoute(
+    provider,
+    model,
+    discoveredModels,
+  );
+  payload.tools = payload.tools.filter(
+    (tool: any) =>
+      typeof tool?.type === "string" && supportedToolTypes.has(tool.type),
+  );
+
+  if (payload.tools.length === 0) {
+    delete payload.tools;
+    if (payload.tool_choice === "auto" || payload.tool_choice === "required") {
+      delete payload.tool_choice;
+    }
+  }
+}
+
 async function discoverModels(
   store: AccountStore,
   openaiBaseUrl: string,
@@ -847,6 +906,12 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         }
         if (candidate.resolvedModel)
           payloadToUpstream.model = candidate.resolvedModel;
+        filterUnsupportedTools(
+          payloadToUpstream,
+          candidate.provider,
+          candidate.resolvedModel,
+          discoveredModels,
+        );
         const requestBody = TRACE_INCLUDE_BODY ? req.body : undefined;
         const tracedModel =
           requestModel ??
