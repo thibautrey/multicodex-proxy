@@ -465,6 +465,19 @@ button:disabled {
   padding: 8px 4px 0;
 }
 
+.trace-range-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: nowrap;
+}
+
+.trace-range-controls select,
+.trace-range-controls .btn {
+  width: auto;
+  flex: 0 0 auto;
+}
+
 .section-header p,
 .section-copy {
   margin-top: 8px;

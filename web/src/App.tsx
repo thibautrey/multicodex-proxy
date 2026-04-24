@@ -48,6 +48,7 @@ export default function App() {
   const [storageInfo, setStorageInfo] = useState<any>(null);
   const [oauthRedirectUri, setOauthRedirectUri] = useState("");
   const [chatPrompt, setChatPrompt] = useState("Give me a one-line hello");
+  const [chatModel, setChatModel] = useState("");
   const [chatOut, setChatOut] = useState("");
   const [error, setError] = useState("");
   const [expandedTraceId, setExpandedTraceId] = useState<string | null>(null);
@@ -150,6 +151,16 @@ export default function App() {
     const mdl = await fetch("/v1/models").then((r) => r.json());
     setModels((mdl.data ?? []) as ExposedModel[]);
   };
+
+  useEffect(() => {
+    if (!models.length) {
+      if (chatModel) setChatModel("");
+      return;
+    }
+    if (!chatModel || !models.some((model) => model.id === chatModel)) {
+      setChatModel(models[0]?.id ?? "");
+    }
+  }, [chatModel, models]);
 
   const getRangeBounds = (range: TraceRangePreset): { sinceMs?: number; untilMs?: number } => {
     const now = Date.now();
@@ -370,7 +381,10 @@ export default function App() {
     const r = await fetch("/v1/chat/completions", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model: models[0]?.id || "gpt-5.3-codex", messages: [{ role: "user", content: chatPrompt }] }),
+      body: JSON.stringify({
+        model: chatModel || models[0]?.id || "gpt-5.3-codex",
+        messages: [{ role: "user", content: chatPrompt }],
+      }),
     });
     const j = await r.json();
     setChatOut((j?.choices?.[0]?.message?.content as string) || JSON.stringify(j, null, 2));
@@ -545,6 +559,9 @@ export default function App() {
           <PlaygroundTab
             chatPrompt={chatPrompt}
             setChatPrompt={setChatPrompt}
+            chatModel={chatModel}
+            setChatModel={setChatModel}
+            models={models}
             runChatTest={runChatTest}
             chatOut={chatOut}
           />

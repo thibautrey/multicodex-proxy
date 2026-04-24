@@ -88,18 +88,10 @@ export function TracingTab(props: Props) {
 
   return (
     <>
-      <section className="grid cards5">
-        <Metric title="Requests" value={`${traceStats.totals.requests}`} detail="Within the selected range" />
-        <Metric title="Error rate" value={pct(traceStats.totals.errorRate)} detail="Share of traced failures" tone={traceStats.totals.errorRate > 0.05 ? "warning" : "default"} />
-        <Metric title="Total tokens" value={formatTokenCount(traceStats.totals.tokensTotal)} detail="Input and output combined" />
-        <Metric title="Total cost" value={usd(traceStats.totals.costUsd)} detail="Estimated from model pricing" />
-        <Metric title="Avg latency" value={`${Math.round(traceStats.totals.latencyAvgMs)}ms`} detail="Average end-to-end latency" />
-      </section>
-
       <section className="panel">
         <div className="section-split-header">
           <h2>Trace range</h2>
-          <div className="inline wrap">
+          <div className="trace-range-controls">
             <select
               value={traceRange}
               onChange={(e) => {
@@ -117,6 +109,14 @@ export function TracingTab(props: Props) {
             </button>
           </div>
         </div>
+      </section>
+
+      <section className="grid cards5">
+        <Metric title="Requests" value={`${traceStats.totals.requests}`} detail="Within the selected range" />
+        <Metric title="Error rate" value={pct(traceStats.totals.errorRate)} detail="Share of traced failures" tone={traceStats.totals.errorRate > 0.05 ? "warning" : "default"} />
+        <Metric title="Total tokens" value={formatTokenCount(traceStats.totals.tokensTotal)} detail="Input and output combined" />
+        <Metric title="Total cost" value={usd(traceStats.totals.costUsd)} detail="Estimated from model pricing" />
+        <Metric title="Avg latency" value={`${Math.round(traceStats.totals.latencyAvgMs)}ms`} detail="Average end-to-end latency" />
       </section>
 
       <section className="grid cards2">
