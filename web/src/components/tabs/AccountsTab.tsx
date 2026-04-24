@@ -106,7 +106,16 @@ export function AccountsTab(props: Props) {
 
   useEffect(() => {
     const closeMenu = () => setOpenMenu(null);
-    const onPointerDown = () => closeMenu();
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) {
+        closeMenu();
+        return;
+      }
+      if (target.closest(".icon-menu-btn")) return;
+      if (target.closest(".account-action-menu")) return;
+      closeMenu();
+    };
     const onScroll = () => closeMenu();
     const onResize = () => closeMenu();
     window.addEventListener("pointerdown", onPointerDown);
@@ -526,64 +535,64 @@ export function AccountsTab(props: Props) {
                             style={{ top: openMenu.top, left: openMenu.left }}
                             onClick={(e) => e.stopPropagation()}
                           >
-                          <button
-                            className="account-action-item"
-                            onClick={() => openEditModal(a)}
-                          >
-                            Modify parameters
-                          </button>
-                          <button
-                            className="account-action-item"
-                            onClick={() => {
-                              setOpenMenu(null);
-                              void patch(a.id, { enabled: !a.enabled });
-                            }}
-                          >
-                            {a.enabled ? "Disable" : "Enable"}
-                          </button>
-                          <button
-                            className="account-action-item"
-                            onClick={() => {
-                              setOpenMenu(null);
-                              void unblock(a.id);
-                            }}
-                          >
-                            Unblock
-                          </button>
-                          <button
-                            className="account-action-item"
-                            onClick={() => {
-                              setOpenMenu(null);
-                              void refreshUsage(a.id);
-                            }}
-                          >
-                            Refresh usage
-                          </button>
-                          {a.provider === "openai" ? (
-                            <button
-                              className="account-action-item"
-                              disabled={oauthBusyId === a.id}
-                              onClick={() => void reauthAccount(a)}
-                            >
-                              {oauthBusyId === a.id ? "Opening..." : "Reauth"}
-                            </button>
-                          ) : (
                             <button
                               className="account-action-item"
                               onClick={() => openEditModal(a)}
                             >
-                              Change key
+                              Modify parameters
                             </button>
-                          )}
-                          <button
-                            className="account-action-item account-action-item-danger"
-                            onClick={() => {
-                              setOpenMenu(null);
-                              void del(a.id);
-                            }}
-                          >
-                            Delete
-                          </button>
+                            <button
+                              className="account-action-item"
+                              onClick={() => {
+                                setOpenMenu(null);
+                                void patch(a.id, { enabled: !a.enabled });
+                              }}
+                            >
+                              {a.enabled ? "Disable" : "Enable"}
+                            </button>
+                            <button
+                              className="account-action-item"
+                              onClick={() => {
+                                setOpenMenu(null);
+                                void unblock(a.id);
+                              }}
+                            >
+                              Unblock
+                            </button>
+                            <button
+                              className="account-action-item"
+                              onClick={() => {
+                                setOpenMenu(null);
+                                void refreshUsage(a.id);
+                              }}
+                            >
+                              Refresh usage
+                            </button>
+                            {a.provider === "openai" ? (
+                              <button
+                                className="account-action-item"
+                                disabled={oauthBusyId === a.id}
+                                onClick={() => void reauthAccount(a)}
+                              >
+                                {oauthBusyId === a.id ? "Opening..." : "Reauth"}
+                              </button>
+                            ) : (
+                              <button
+                                className="account-action-item"
+                                onClick={() => openEditModal(a)}
+                              >
+                                Change key
+                              </button>
+                            )}
+                            <button
+                              className="account-action-item account-action-item-danger"
+                              onClick={() => {
+                                setOpenMenu(null);
+                                void del(a.id);
+                              }}
+                            >
+                              Delete
+                            </button>
                           </div>,
                           document.body,
                         )}
