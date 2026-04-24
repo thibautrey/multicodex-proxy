@@ -22,6 +22,7 @@ type AccountProvider = "openai" | "openai-compatible" | "mistral";
 type EditAccountState = {
   id: string;
   provider: AccountProvider;
+  upstreamMode: "" | "responses" | "chat/completions";
   email: string;
   accessToken: string;
   refreshToken: string;
@@ -86,6 +87,9 @@ export function AccountsTab(props: Props) {
   const [manualRefreshToken, setManualRefreshToken] = useState("");
   const [manualChatgptAccountId, setManualChatgptAccountId] = useState("");
   const [manualBaseUrl, setManualBaseUrl] = useState("");
+  const [manualUpstreamMode, setManualUpstreamMode] = useState<
+    "" | "responses" | "chat/completions"
+  >("");
   const [manualPriority, setManualPriority] = useState("0");
   const [manualEnabled, setManualEnabled] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -132,6 +136,7 @@ export function AccountsTab(props: Props) {
     setManualRefreshToken("");
     setManualChatgptAccountId("");
     setManualBaseUrl("");
+    setManualUpstreamMode("");
     setManualPriority("0");
     setManualEnabled(true);
     setIsSubmitting(false);
@@ -199,6 +204,7 @@ export function AccountsTab(props: Props) {
         accessToken: manualAccessToken.trim(),
         refreshToken: manualRefreshToken.trim() || undefined,
         baseUrl: provider === "openai-compatible" ? manualBaseUrl.trim() : undefined,
+        upstreamMode: manualUpstreamMode || undefined,
         priority: Number(manualPriority) || 0,
         enabled: manualEnabled,
       });
@@ -218,6 +224,7 @@ export function AccountsTab(props: Props) {
     setEditingAccount({
       id: account.id,
       provider: nextProvider,
+      upstreamMode: account.upstreamMode ?? "",
       email: account.email ?? "",
       accessToken: account.accessToken ?? "",
       refreshToken: account.refreshToken ?? "",
@@ -281,6 +288,7 @@ export function AccountsTab(props: Props) {
           editingAccount.provider === "openai-compatible"
             ? editingAccount.baseUrl.trim()
             : undefined,
+        upstreamMode: editingAccount.upstreamMode || undefined,
         priority: Number(editingAccount.priority) || 0,
         enabled: editingAccount.enabled,
       });
@@ -437,6 +445,9 @@ export function AccountsTab(props: Props) {
                       {a.baseUrl && (
                         <span className="mono muted">{a.baseUrl}</span>
                       )}
+                      {a.upstreamMode && (
+                        <span className="mono muted">upstream: {a.upstreamMode}</span>
+                      )}
                     </div>
                   </td>
                   <td>{renderUsageCell(a.usage?.primary?.usedPercent, a.usage?.primary?.resetAt)}</td>
@@ -525,6 +536,21 @@ export function AccountsTab(props: Props) {
                   />
                 </label>
               )}
+              <label>
+                Upstream mode (optional)
+                <select
+                  value={manualUpstreamMode}
+                  onChange={(e) =>
+                    setManualUpstreamMode(
+                      e.target.value as "" | "responses" | "chat/completions",
+                    )
+                  }
+                >
+                  <option value="">Automatic</option>
+                  <option value="responses">Force `/v1/responses`</option>
+                  <option value="chat/completions">Force `/v1/chat/completions`</option>
+                </select>
+              </label>
               {isManualTokenProvider(provider) ? (
                 <>
                   <label>
@@ -632,6 +658,29 @@ export function AccountsTab(props: Props) {
                   />
                 </label>
               )}
+              <label>
+                Upstream mode (optional)
+                <select
+                  value={editingAccount.upstreamMode}
+                  onChange={(e) =>
+                    setEditingAccount((current) =>
+                      current
+                        ? {
+                            ...current,
+                            upstreamMode: e.target.value as
+                              | ""
+                              | "responses"
+                              | "chat/completions",
+                          }
+                        : current,
+                    )
+                  }
+                >
+                  <option value="">Automatic</option>
+                  <option value="responses">Force `/v1/responses`</option>
+                  <option value="chat/completions">Force `/v1/chat/completions`</option>
+                </select>
+              </label>
               {isManualTokenProvider(editingAccount.provider) ? (
                 <>
                   <label>
