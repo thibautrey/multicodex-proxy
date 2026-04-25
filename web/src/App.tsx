@@ -74,6 +74,10 @@ export default function App() {
 
   const usageStats = useMemo(() => {
     const primary = accounts
+      .filter((a) => {
+        const weeklyUsed = a.usage?.secondary?.usedPercent;
+        return typeof weeklyUsed !== "number" || weeklyUsed < 100;
+      })
       .map((a) => a.usage?.primary?.usedPercent)
       .filter((v): v is number => typeof v === "number");
     const secondary = accounts
