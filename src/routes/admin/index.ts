@@ -1,7 +1,12 @@
 import express from "express";
 import { randomUUID } from "node:crypto";
 import { AccountStore, OAuthStateStore } from "../../store.js";
-import type { Account, ModelAlias, UpstreamMode } from "../../types.js";
+import type {
+  Account,
+  CompatibilityMode,
+  ModelAlias,
+  UpstreamMode,
+} from "../../types.js";
 import { normalizeProvider, refreshUsageIfNeeded } from "../../quota.js";
 import {
   accountFromOAuth,
@@ -42,6 +47,16 @@ function normalizeBaseUrl(value: unknown): string | undefined {
 function normalizeUpstreamMode(value: unknown): UpstreamMode | undefined {
   if (value === "responses") return "responses";
   if (value === "chat/completions") return "chat/completions";
+  return undefined;
+}
+
+function normalizeCompatibilityMode(
+  value: unknown,
+): CompatibilityMode | undefined {
+  if (value === "auto") return "auto";
+  if (value === "responses") return "responses";
+  if (value === "chat-completions-bridge")
+    return "chat-completions-bridge";
   return undefined;
 }
 
@@ -541,6 +556,9 @@ export function createAdminRouter(options: AdminRoutesOptions) {
             : "openai";
     const baseUrl = normalizeBaseUrl(body.baseUrl);
     const upstreamMode = normalizeUpstreamMode(body.upstreamMode);
+    const compatibilityMode = normalizeCompatibilityMode(
+      body.compatibilityMode,
+    );
     if (provider === "openai-compatible" && !baseUrl) {
       return res.status(400).json({ error: "baseUrl required for openai-compatible accounts" });
     }
@@ -548,6 +566,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       id: body.id ?? randomUUID(),
       provider,
       upstreamMode,
+      compatibilityMode,
       email: body.email,
       accessToken: body.accessToken,
       refreshToken: body.refreshToken,
@@ -570,6 +589,11 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     }
     if ("upstreamMode" in body) {
       body.upstreamMode = normalizeUpstreamMode(body.upstreamMode);
+    }
+    if ("compatibilityMode" in body) {
+      body.compatibilityMode = normalizeCompatibilityMode(
+        body.compatibilityMode,
+      );
     }
     const existing = (await store.listAccounts()).find((a) => a.id === req.params.id);
     if (!existing) return res.status(404).json({ error: "not found" });

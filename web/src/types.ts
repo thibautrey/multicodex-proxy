@@ -2,6 +2,7 @@ export type Account = {
   id: string;
   provider?: "openai" | "openai-compatible" | "mistral" | "zai";
   upstreamMode?: "responses" | "chat/completions";
+  compatibilityMode?: "auto" | "responses" | "chat-completions-bridge";
   email?: string;
   enabled: boolean;
   accessToken?: string;

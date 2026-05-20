@@ -13,7 +13,13 @@ import {
 import type { ModelAlias, ProviderId, UpstreamMode } from "../../types.js";
 import {
   chatCompletionObjectToSSE,
+  chatCompletionObjectToResponseObject,
   convertResponsesSSEToChatCompletionSSE,
+  convertChatCompletionSSEToResponseSSE,
+  createChatStreamAccumulator,
+  finalizeChatCompletionSSEToResponseSSE,
+  parseChatCompletionSSEToChatCompletion,
+  parseChatCompletionSSEToResponseObject,
   parseResponsesSSEToChatCompletion,
   parseResponsesSSEToResponseObject,
   responseObjectToChatCompletion,
@@ -26,6 +32,7 @@ import {
   inspectAssistantPayload,
   normalizeResponsesPayload,
   responsesToChatCompletionsPayload,
+  sanitizeGenericChatCompletionsPayload,
 } from "../../responses/payloads.js";
 import {
   chooseAccountForProvider,
@@ -41,7 +48,9 @@ import {
   shouldBlockAccountForZaiError,
 } from "../../quota.js";
 import {
+  chatCompletionHasAssistantOutput,
   ensureNonEmptyChatCompletion,
+  responseHasAssistantOutput,
   sanitizeAssistantTextChunk,
   sanitizeChatCompletionObject,
   sanitizeResponsesSSEFrame,
@@ -189,13 +198,19 @@ function accountBaseUrl(
 }
 
 function resolveUpstreamMode(
-  account: { provider?: ProviderId; upstreamMode?: UpstreamMode },
+  account: {
+    provider?: ProviderId;
+    upstreamMode?: UpstreamMode;
+    compatibilityMode?: string;
+  },
   isChatCompletionsPath: boolean,
   isResponsesCompactPath: boolean,
 ): UpstreamMode {
   if (isResponsesCompactPath) return "responses";
   if (account.upstreamMode) return account.upstreamMode;
-  if (normalizeProvider(account) === "openai-compatible" && isChatCompletionsPath) {
+  const provider = normalizeProvider(account);
+  if (provider === "openai-compatible") {
+    if (account.compatibilityMode === "responses") return "responses";
     return "chat/completions";
   }
   return "responses";
@@ -667,6 +682,14 @@ type ResponsesStreamState = {
   sawResponseCompleted: boolean;
 };
 
+type BufferedResponsesStreamResult = {
+  body: string;
+  usage: any;
+  upstreamEmptyBody: boolean;
+  assistantEmptyOutput: boolean;
+  tracePayload: any;
+};
+
 function inspectResponsesDataLine(
   line: string,
   state: ResponsesStreamState,
@@ -696,6 +719,32 @@ function inspectResponsesDataLine(
   } catch {}
 }
 
+function parseSSEDataPayloads(frame: string): any[] {
+  const payloads: any[] = [];
+  for (const rawLine of frame.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line.startsWith("data:")) continue;
+    const payload = line.slice(5).trim();
+    if (!payload || payload === "[DONE]") continue;
+    try {
+      payloads.push(JSON.parse(payload));
+    } catch {}
+  }
+  return payloads;
+}
+
+function isChatCompletionSSEFrame(frame: string): boolean {
+  return parseSSEDataPayloads(frame).some(
+    (payload) => payload?.object === "chat.completion.chunk",
+  );
+}
+
+function isDoneSSEFrame(frame: string): boolean {
+  return frame
+    .split(/\r?\n/)
+    .some((line) => line.trim() === "data: [DONE]");
+}
+
 function synthesizeResponsesCompletedEvent(
   model: string,
   state: ResponsesStreamState,
@@ -719,6 +768,127 @@ function synthesizeResponsesCompletedEvent(
       },
     ],
   });
+}
+
+function splitSSEFrames(text: string): string[] {
+  const frames: string[] = [];
+  let buffer = text;
+
+  while (true) {
+    const next = takeNextSSEFrame(buffer);
+    if (!next) break;
+    frames.push(next.frame);
+    buffer = next.rest;
+  }
+
+  if (buffer.trim()) frames.push(buffer);
+  return frames;
+}
+
+function appendSSEFrame(target: string[], frame: string): void {
+  if (!frame) return;
+  target.push(frame.endsWith("\n\n") ? frame : `${frame}\n\n`);
+}
+
+function renderBufferedResponsesStream(
+  rawText: string,
+  model: string,
+): BufferedResponsesStreamResult {
+  const frames = splitSSEFrames(rawText);
+  const upstreamEmptyBody = !rawText.trim();
+  const sawChatCompletionStream = frames.some(isChatCompletionSSEFrame);
+
+  if (sawChatCompletionStream) {
+    const body: string[] = [];
+    const chatStreamState = createChatStreamAccumulator(model);
+
+    for (const frame of frames) {
+      if (isChatCompletionSSEFrame(frame)) {
+        const converted = convertChatCompletionSSEToResponseSSE(
+          frame,
+          chatStreamState,
+        );
+        if (converted) body.push(converted);
+        continue;
+      }
+
+      if (isDoneSSEFrame(frame)) {
+        const completed = finalizeChatCompletionSSEToResponseSSE(
+          chatStreamState,
+        );
+        if (completed) body.push(completed);
+      }
+    }
+
+    const completed = finalizeChatCompletionSSEToResponseSSE(chatStreamState);
+    if (completed) body.push(completed);
+
+    const chat = parseChatCompletionSSEToChatCompletion(rawText, model);
+    return {
+      body: body.join(""),
+      usage: chat?.usage,
+      upstreamEmptyBody,
+      assistantEmptyOutput: !chatCompletionHasAssistantOutput(chat),
+      tracePayload: chat,
+    };
+  }
+
+  const body: string[] = [];
+  const streamState: ResponsesStreamState = {
+    accumulatedUsage: null,
+    streamedFallbackText: "",
+    sawResponseCompleted: false,
+  };
+
+  for (const frame of frames) {
+    for (const rawLine of frame.split(/\r?\n/)) {
+      inspectResponsesDataLine(rawLine.trim(), streamState);
+    }
+    const filtered = sanitizeResponsesSSEFrame(frame);
+    if (filtered !== null) appendSSEFrame(body, filtered);
+  }
+
+  const syntheticCompleted = synthesizeResponsesCompletedEvent(
+    model,
+    streamState,
+  );
+  if (syntheticCompleted) {
+    body.push(syntheticCompleted);
+    streamState.sawResponseCompleted = true;
+  }
+
+  const response = parseResponsesSSEToResponseObject(body.join("") || rawText);
+  const hasAssistantOutput =
+    responseHasAssistantOutput(response) ||
+    Boolean(streamState.streamedFallbackText.trim());
+  if (!responseHasAssistantOutput(response) && streamState.streamedFallbackText.trim()) {
+    const repairedCompleted = responseObjectToSSE({
+      ...response,
+      output: [
+        {
+          type: "message",
+          role: "assistant",
+          content: [
+            { type: "output_text", text: streamState.streamedFallbackText },
+          ],
+        },
+      ],
+    });
+    for (let i = body.length - 1; i >= 0; i--) {
+      if (body[i].includes('"response.completed"')) {
+        body[i] = repairedCompleted;
+        break;
+      }
+    }
+  }
+
+  return {
+    body: body.join(""),
+    usage: streamState.accumulatedUsage ?? response?.usage,
+    upstreamEmptyBody,
+    assistantEmptyOutput: !hasAssistantOutput,
+    tracePayload: response,
+  };
 }
 
 function sleep(ms: number): Promise<void> {
@@ -907,6 +1077,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     const tried = new Set<string>();
     const maxAttempts = Math.min(accounts.length, MAX_ACCOUNT_RETRY_ATTEMPTS);
     let providerTried = false;
+    let sawEmptyAssistantOutput = false;
 
     for (const candidate of routingCandidates) {
       const providerAccounts = accounts.filter(
@@ -946,6 +1117,11 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           : isChatCompletions
             ? chatCompletionsToResponsesPayload(req.body, sessionId)
             : normalizeResponsesPayload(req.body, sessionId);
+        if (shouldSendChatCompletions && candidate.provider === "openai-compatible") {
+          payloadToUpstream = sanitizeGenericChatCompletionsPayload(
+            payloadToUpstream,
+          );
+        }
 
         if (
           isResponsesCompactPath &&
@@ -980,6 +1156,38 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           payloadToUpstream.model.trim()
             ? payloadToUpstream.model.trim()
             : undefined);
+
+        const retryEmptyAssistantOutput = async (
+          message: string,
+          stream: boolean,
+          details: {
+            usage?: any;
+            upstreamContentType?: string;
+            upstreamEmptyBody?: boolean;
+            tracePayload?: any;
+          } = {},
+        ) => {
+          sawEmptyAssistantOutput = true;
+          markEmptyResponseError(selected, message);
+          await store.upsertAccount(selected);
+          recordTrace({
+            at: Date.now(),
+            route: req.path,
+            accountId: selected.id,
+            accountEmail: selected.email,
+            model: tracedModel,
+            status: 502,
+            stream,
+            latencyMs: Date.now() - startedAt,
+            usage: details.usage,
+            requestBody,
+            error: message,
+            upstreamContentType: details.upstreamContentType,
+            upstreamEmptyBody: details.upstreamEmptyBody,
+            assistantEmptyOutput: true,
+            ...inspectAssistantPayload(details.tracePayload),
+          });
+        };
 
         const headers: Record<string, string> = {
           "content-type": "application/json",
@@ -1031,11 +1239,6 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             },
           );
 
-          if (upstream.ok) {
-            clearEmptyResponseHistory(selected);
-            await store.upsertAccount(selected);
-          }
-
           const contentType = upstream.headers.get("content-type") ?? "";
           const isStream = contentType.includes("text/event-stream");
 
@@ -1044,6 +1247,61 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               res.set("Content-Type", "text/event-stream");
               res.set("Cache-Control", "no-cache");
               res.set("Connection", "keep-alive");
+
+              if (shouldSendChatCompletions) {
+                if (!upstream.body) return res.end();
+                const reader = upstream.body.getReader();
+                const decoder = new TextDecoder();
+                let sseBuffer = "";
+                let doneSent = false;
+                let accumulatedUsage: any = null;
+
+                const forwardFrame = (frame: string) => {
+                  res.write(frame.endsWith("\n\n") ? frame : `${frame}\n\n`);
+                  if (frame.includes("[DONE]")) doneSent = true;
+                  for (const payload of parseSSEDataPayloads(frame)) {
+                    if (payload?.usage) accumulatedUsage = payload.usage;
+                  }
+                };
+
+                while (true) {
+                  const { value, done } = await reader.read();
+                  if (done) break;
+                  sseBuffer += decoder.decode(value, { stream: true });
+                  while (true) {
+                    const next = takeNextSSEFrame(sseBuffer);
+                    if (!next) break;
+                    sseBuffer = next.rest;
+                    forwardFrame(next.frame);
+                  }
+                }
+
+                sseBuffer += decoder.decode();
+                while (true) {
+                  const next = takeNextSSEFrame(sseBuffer);
+                  if (!next) break;
+                  sseBuffer = next.rest;
+                  forwardFrame(next.frame);
+                }
+                if (sseBuffer.trim()) forwardFrame(sseBuffer);
+                if (!doneSent) res.write("data: [DONE]\n\n");
+                res.end();
+
+                recordTrace({
+                  at: Date.now(),
+                  route: req.path,
+                  accountId: selected.id,
+                  accountEmail: selected.email,
+                  model: tracedModel,
+                  status: upstream.status,
+                  stream: true,
+                  latencyMs: Date.now() - startedAt,
+                  usage: accumulatedUsage,
+                  requestBody,
+                  upstreamContentType: contentType,
+                });
+                return;
+              }
 
               const model =
                 req.body?.model ?? payloadToUpstream?.model ?? "unknown";
@@ -1240,14 +1498,15 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
 
             if (shouldReturnChatCompletions) {
               const txt = await upstream.text();
-              const parsedChat = parseResponsesSSEToChatCompletion(
-                txt,
-                req.body?.model ?? payloadToUpstream?.model ?? "unknown",
-              );
+              const model = req.body?.model ?? payloadToUpstream?.model ?? "unknown";
+              const parsedChat = txt.includes("chat.completion.chunk")
+                ? parseChatCompletionSSEToChatCompletion(txt, model)
+                : parseResponsesSSEToChatCompletion(txt, model);
               const normalized = ensureNonEmptyChatCompletion(parsedChat);
 
               // If response was empty/patched and upstream returned OK, retry with another account
               if (normalized.patched && upstream.ok) {
+                sawEmptyAssistantOutput = true;
                 markEmptyResponseError(
                   selected,
                   "empty assistant output in SSE",
@@ -1283,7 +1542,26 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
 
             if (!clientRequestedStream) {
               const txt = await upstream.text();
-              const respObj = parseResponsesSSEToResponseObject(txt);
+              const model = req.body?.model ?? payloadToUpstream?.model ?? "unknown";
+              const rendered = renderBufferedResponsesStream(txt, model);
+
+              if (upstream.ok && rendered.assistantEmptyOutput) {
+                await retryEmptyAssistantOutput(
+                  "empty assistant output in responses stream",
+                  false,
+                  {
+                    usage: rendered.usage,
+                    upstreamContentType: contentType,
+                    upstreamEmptyBody: rendered.upstreamEmptyBody,
+                    tracePayload: rendered.tracePayload,
+                  },
+                );
+                continue;
+              }
+
+              const respObj = parseResponsesSSEToResponseObject(
+                rendered.body || txt,
+              );
               res.status(upstream.ok ? 200 : upstream.status).json(respObj);
               const upstreamError = !upstream.ok
                 ? txt.slice(0, 500)
@@ -1297,73 +1575,59 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 status: upstream.status,
                 stream: false,
                 latencyMs: Date.now() - startedAt,
-                usage: respObj?.usage,
+                usage: rendered.usage ?? respObj?.usage,
                 requestBody,
                 upstreamError,
                 upstreamContentType: contentType,
+                upstreamEmptyBody: rendered.upstreamEmptyBody,
+                ...inspectAssistantPayload(rendered.tracePayload ?? respObj),
               });
               return;
             }
 
+            const rawText = upstream.body ? await upstream.text() : "";
+            const rendered = renderBufferedResponsesStream(
+              rawText,
+              tracedModel ?? payloadToUpstream?.model ?? "unknown",
+            );
+
+            if (upstream.ok && rendered.assistantEmptyOutput) {
+              sawEmptyAssistantOutput = true;
+              markEmptyResponseError(
+                selected,
+                "empty assistant output in responses stream",
+              );
+              await store.upsertAccount(selected);
+              recordTrace({
+                at: Date.now(),
+                route: req.path,
+                accountId: selected.id,
+                accountEmail: selected.email,
+                model: tracedModel,
+                status: 502,
+                stream: true,
+                latencyMs: Date.now() - startedAt,
+                usage: rendered.usage,
+                requestBody,
+                error: "empty assistant output in responses stream",
+                upstreamContentType: contentType,
+                upstreamEmptyBody: rendered.upstreamEmptyBody,
+                assistantEmptyOutput: true,
+              });
+              continue;
+            }
+
+            if (upstream.ok) {
+              clearEmptyResponseHistory(selected);
+              await store.upsertAccount(selected);
+            }
+
             res.status(upstream.status);
             setForwardHeaders(upstream, res);
-            if (!upstream.body) return res.end();
-            const reader = upstream.body.getReader();
-            const decoder = new TextDecoder();
-            let sseBuffer = "";
-            const streamState: ResponsesStreamState = {
-              accumulatedUsage: null,
-              streamedFallbackText: "",
-              sawResponseCompleted: false,
-            };
-
-            while (true) {
-              const { value, done } = await reader.read();
-              if (done) break;
-              sseBuffer += decoder.decode(value, { stream: true });
-
-              while (true) {
-                const next = takeNextSSEFrame(sseBuffer);
-                if (!next) break;
-                sseBuffer = next.rest;
-
-                for (const rawLine of next.frame.split(/\r?\n/)) {
-                  inspectResponsesDataLine(rawLine.trim(), streamState);
-                }
-
-                const filtered = sanitizeResponsesSSEFrame(next.frame);
-                if (filtered !== null) res.write(`${filtered}\n\n`);
-              }
-            }
-
-            sseBuffer += decoder.decode();
-            while (true) {
-              const next = takeNextSSEFrame(sseBuffer);
-              if (!next) break;
-              sseBuffer = next.rest;
-
-              for (const rawLine of next.frame.split(/\r?\n/)) {
-                inspectResponsesDataLine(rawLine.trim(), streamState);
-              }
-
-              const filtered = sanitizeResponsesSSEFrame(next.frame);
-              if (filtered !== null) res.write(`${filtered}\n\n`);
-            }
-            if (sseBuffer.trim()) {
-              for (const rawLine of sseBuffer.split(/\r?\n/)) {
-                inspectResponsesDataLine(rawLine.trim(), streamState);
-              }
-              const filtered = sanitizeResponsesSSEFrame(sseBuffer);
-              if (filtered !== null) res.write(`${filtered}\n\n`);
-            }
-            const syntheticCompleted = synthesizeResponsesCompletedEvent(
-              tracedModel ?? payloadToUpstream?.model ?? "unknown",
-              streamState,
-            );
-            if (syntheticCompleted) {
-              res.write(syntheticCompleted);
-              streamState.sawResponseCompleted = true;
-            }
+            res.set("Content-Type", "text/event-stream");
+            res.set("Cache-Control", "no-cache");
+            res.set("Connection", "keep-alive");
+            res.write(rendered.body);
             res.end();
 
             recordTrace({
@@ -1375,8 +1639,11 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               status: upstream.status,
               stream: true,
               latencyMs: Date.now() - startedAt,
-              usage: streamState.accumulatedUsage,
+              usage: rendered.usage,
               requestBody,
+              upstreamContentType: contentType,
+              upstreamEmptyBody: rendered.upstreamEmptyBody,
+              ...inspectAssistantPayload(rendered.tracePayload),
             });
             return;
           }
@@ -1403,6 +1670,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
 
               // If response was empty/patched, retry with another account
               if (normalized.patched) {
+                sawEmptyAssistantOutput = true;
                 markEmptyResponseError(
                   selected,
                   "empty assistant output in chat.completion",
@@ -1437,12 +1705,25 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             }
 
             if (upstream.ok && parsed && parsed.object === "response") {
+              const sanitized = stripReasoningFromResponseObject(parsed);
+              if (!responseHasAssistantOutput(sanitized)) {
+                await retryEmptyAssistantOutput(
+                  "empty assistant output in response object",
+                  true,
+                  {
+                    upstreamContentType: contentType,
+                    upstreamEmptyBody,
+                    tracePayload: sanitized,
+                  },
+                );
+                continue;
+              }
               const converted = responseObjectToChatCompletion(
-                parsed,
+                sanitized,
                 req.body?.model ?? payloadToUpstream?.model ?? "unknown",
               );
               res.status(200);
-              res.set("Content-Type", "text.event-stream");
+              res.set("Content-Type", "text/event-stream");
               res.set("Cache-Control", "no-cache");
               res.set("Connection", "keep-alive");
               res.write(chatCompletionObjectToSSE(converted));
@@ -1500,6 +1781,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               );
               // If response was empty/patched, retry with another account
               if (normalized.patched) {
+                sawEmptyAssistantOutput = true;
                 markEmptyResponseError(
                   selected,
                   "empty assistant output in chat.completion",
@@ -1511,6 +1793,11 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             } else if (parsed?.object === "response") {
               chatResp = responseObjectToChatCompletion(
                 parsed,
+                req.body?.model ?? payloadToUpstream?.model ?? "unknown",
+              );
+            } else if (text.includes("chat.completion.chunk")) {
+              chatResp = parseChatCompletionSSEToChatCompletion(
+                text,
                 req.body?.model ?? payloadToUpstream?.model ?? "unknown",
               );
             } else if (text.includes("data:")) {
@@ -1525,6 +1812,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
 
               // If response was empty/patched, retry with another account
               if (normalized.patched) {
+                sawEmptyAssistantOutput = true;
                 markEmptyResponseError(
                   selected,
                   "empty assistant output in chat completion",
@@ -1566,8 +1854,64 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             clientRequestedStream &&
             upstream.ok
           ) {
+            if (parsed?.object === "chat.completion") {
+              if (!chatCompletionHasAssistantOutput(parsed)) {
+                await retryEmptyAssistantOutput(
+                  "empty assistant output in chat.completion",
+                  true,
+                  {
+                    upstreamContentType: contentType,
+                    upstreamEmptyBody,
+                    tracePayload: parsed,
+                  },
+                );
+                continue;
+              }
+              const respObj = chatCompletionObjectToResponseObject(
+                parsed,
+                req.body?.model ?? payloadToUpstream?.model ?? "unknown",
+              );
+              res.status(200);
+              res.set("Content-Type", "text/event-stream");
+              res.set("Cache-Control", "no-cache");
+              res.set("Connection", "keep-alive");
+              res.write(responseObjectToSSE(respObj));
+              res.end();
+
+              recordTrace({
+                at: Date.now(),
+                route: req.path,
+                accountId: selected.id,
+                accountEmail: selected.email,
+                model: tracedModel,
+                status: upstream.status,
+                stream: true,
+                latencyMs: Date.now() - startedAt,
+                usage: respObj?.usage,
+                requestBody,
+                upstreamError,
+                upstreamContentType: contentType,
+                upstreamEmptyBody,
+                ...inspectAssistantPayload(respObj),
+              });
+              return;
+            }
+
             if (parsed?.object === "response") {
               const sanitized = stripReasoningFromResponseObject(parsed);
+              if (!responseHasAssistantOutput(sanitized)) {
+                await retryEmptyAssistantOutput(
+                  "empty assistant output in response object",
+                  true,
+                  {
+                    usage: sanitized?.usage,
+                    upstreamContentType: contentType,
+                    upstreamEmptyBody,
+                    tracePayload: sanitized,
+                  },
+                );
+                continue;
+              }
               res.status(200);
               res.set("Content-Type", "text/event-stream");
               res.set("Cache-Control", "no-cache");
@@ -1595,34 +1939,29 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             }
 
             if (!parsed && text.includes("data:")) {
+              const rendered = renderBufferedResponsesStream(
+                text,
+                req.body?.model ?? payloadToUpstream?.model ?? "unknown",
+              );
+              if (rendered.assistantEmptyOutput) {
+                await retryEmptyAssistantOutput(
+                  "empty assistant output in responses stream",
+                  true,
+                  {
+                    usage: rendered.usage,
+                    upstreamContentType: contentType,
+                    upstreamEmptyBody: rendered.upstreamEmptyBody,
+                    tracePayload: rendered.tracePayload,
+                  },
+                );
+                continue;
+              }
+
               res.status(200);
               res.set("Content-Type", "text/event-stream");
               res.set("Cache-Control", "no-cache");
               res.set("Connection", "keep-alive");
-
-              const rawFrames = text.split(/\n\n/).filter((f) => f.trim());
-              let lastResponseObj: any = null;
-
-              for (const rawFrame of rawFrames) {
-                const filtered = sanitizeResponsesSSEFrame(rawFrame);
-                if (filtered) {
-                  res.write(
-                    filtered.endsWith("\n\n") ? filtered : filtered + "\n\n",
-                  );
-                  if (rawFrame.includes('"response.completed"')) {
-                    try {
-                      const dataLine = rawFrame
-                        .split("\n")
-                        .find((l) => l.startsWith("data:"));
-                      if (dataLine) {
-                        const obj = JSON.parse(dataLine.slice(5).trim());
-                        if (obj?.response) lastResponseObj = obj.response;
-                      }
-                    } catch {}
-                  }
-                }
-              }
-
+              res.write(rendered.body);
               res.end();
 
               recordTrace({
@@ -1634,12 +1973,12 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 status: upstream.status,
                 stream: true,
                 latencyMs: Date.now() - startedAt,
-                usage: lastResponseObj?.usage,
+                usage: rendered.usage,
                 requestBody,
                 upstreamError,
                 upstreamContentType: contentType,
-                upstreamEmptyBody,
-                ...inspectAssistantPayload(lastResponseObj),
+                upstreamEmptyBody: rendered.upstreamEmptyBody,
+                ...inspectAssistantPayload(rendered.tracePayload),
               });
               return;
             }
@@ -1655,6 +1994,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
 
               // If response was empty/patched and upstream returned OK, retry with another account
               if (normalized.patched && upstream.ok) {
+                sawEmptyAssistantOutput = true;
                 markEmptyResponseError(
                   selected,
                   "empty assistant output in response event",
@@ -1685,7 +2025,26 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               return;
             }
 
-            const respObj = parseResponsesSSEToResponseObject(text);
+            const rendered = renderBufferedResponsesStream(
+              text,
+              req.body?.model ?? payloadToUpstream?.model ?? "unknown",
+            );
+            if (upstream.ok && rendered.assistantEmptyOutput) {
+              await retryEmptyAssistantOutput(
+                "empty assistant output in responses stream",
+                false,
+                {
+                  usage: rendered.usage,
+                  upstreamContentType: contentType,
+                  upstreamEmptyBody: rendered.upstreamEmptyBody,
+                  tracePayload: rendered.tracePayload,
+                },
+              );
+              continue;
+            }
+            const respObj = parseResponsesSSEToResponseObject(
+              rendered.body || text,
+            );
             res.status(upstream.ok ? 200 : upstream.status).json(respObj);
             recordTrace({
               at: Date.now(),
@@ -1704,6 +2063,86 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               ...inspectAssistantPayload(respObj),
             });
             return;
+          }
+
+          if (!shouldReturnChatCompletions && parsed?.object === "response") {
+            const sanitized = stripReasoningFromResponseObject(parsed);
+            if (upstream.ok && !responseHasAssistantOutput(sanitized)) {
+              await retryEmptyAssistantOutput(
+                "empty assistant output in response object",
+                false,
+                {
+                  usage: sanitized?.usage,
+                  upstreamContentType: contentType,
+                  upstreamEmptyBody,
+                  tracePayload: sanitized,
+                },
+              );
+              continue;
+            }
+            res.status(upstream.ok ? 200 : upstream.status).json(sanitized);
+            recordTrace({
+              at: Date.now(),
+              route: req.path,
+              accountId: selected.id,
+              accountEmail: selected.email,
+              model: tracedModel,
+              status: upstream.status,
+              stream: false,
+              latencyMs: Date.now() - startedAt,
+              usage: sanitized?.usage,
+              requestBody,
+              upstreamError,
+              upstreamContentType: contentType,
+              upstreamEmptyBody,
+              ...inspectAssistantPayload(sanitized),
+            });
+            return;
+          }
+
+          if (!shouldReturnChatCompletions && parsed?.object === "chat.completion") {
+            if (upstream.ok && !chatCompletionHasAssistantOutput(parsed)) {
+              await retryEmptyAssistantOutput(
+                "empty assistant output in chat.completion",
+                false,
+                {
+                  upstreamContentType: contentType,
+                  upstreamEmptyBody,
+                  tracePayload: parsed,
+                },
+              );
+              continue;
+            }
+            const respObj = chatCompletionObjectToResponseObject(
+              parsed,
+              req.body?.model ?? payloadToUpstream?.model ?? "unknown",
+            );
+            res.status(upstream.ok ? 200 : upstream.status).json(respObj);
+            recordTrace({
+              at: Date.now(),
+              route: req.path,
+              accountId: selected.id,
+              accountEmail: selected.email,
+              model: tracedModel,
+              status: upstream.status,
+              stream: false,
+              latencyMs: Date.now() - startedAt,
+              usage: respObj?.usage,
+              requestBody,
+              upstreamError,
+              upstreamContentType: contentType,
+              upstreamEmptyBody,
+              ...inspectAssistantPayload(respObj),
+            });
+            return;
+          }
+
+          if (upstream.ok && upstreamEmptyBody) {
+            await retryEmptyAssistantOutput("empty upstream body", clientRequestedStream, {
+              upstreamContentType: contentType,
+              upstreamEmptyBody,
+            });
+            continue;
           }
 
           res.status(upstream.status);
@@ -1791,6 +2230,17 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         .json({ error: "no provider accounts configured for requested model" });
     }
     if (!res.headersSent) {
+      if (sawEmptyAssistantOutput) {
+        res.status(502).json({
+          error: {
+            message:
+              "Upstream returned no assistant output after retrying all eligible accounts.",
+            type: "upstream_error",
+            code: "empty_assistant_output",
+          },
+        });
+        return;
+      }
       res.status(429).json({ error: "all accounts exhausted or unavailable" });
     }
   }
