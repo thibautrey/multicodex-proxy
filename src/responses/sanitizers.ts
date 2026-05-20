@@ -15,7 +15,7 @@ export function sanitizeAssistantTextChunk(text: string): string {
   return sanitizeOutputText(text);
 }
 
-function hasContentOrToolCalls(choice: any): boolean {
+export function chatChoiceHasAssistantOutput(choice: any): boolean {
   const content = choice?.message?.content;
   const contentText =
     typeof content === "string"
@@ -34,6 +34,34 @@ function hasContentOrToolCalls(choice: any): boolean {
   return hasText || hasToolCalls;
 }
 
+export function responseHasAssistantOutput(response: any): boolean {
+  if (!response || typeof response !== "object") return false;
+  const output = Array.isArray(response?.output) ? response.output : [];
+  for (const item of output) {
+    if (item?.type === "function_call" && shouldExposeFunctionCallName(item?.name)) {
+      return true;
+    }
+    if (item?.type !== "message" || item?.role !== "assistant") continue;
+    const parts = Array.isArray(item?.content) ? item.content : [];
+    for (const part of parts) {
+      if (part?.type === "output_text" && asNonEmptyString(part?.text)) {
+        return true;
+      }
+      if (part?.type === "refusal" && asNonEmptyString(part?.refusal)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+export function chatCompletionHasAssistantOutput(chat: any): boolean {
+  if (!chat || typeof chat !== "object" || chat.object !== "chat.completion") {
+    return false;
+  }
+  return chatChoiceHasAssistantOutput(chat?.choices?.[0]);
+}
+
 export function withFallbackAssistantContent(chat: any, fallbackText: string) {
   const safeFallback = asNonEmptyString(sanitizeOutputText(fallbackText));
   if (!safeFallback) return chat;
@@ -41,7 +69,7 @@ export function withFallbackAssistantContent(chat: any, fallbackText: string) {
     return chat;
   const choice = chat?.choices?.[0];
   if (!choice) return chat;
-  if (hasContentOrToolCalls(choice)) return chat;
+  if (chatChoiceHasAssistantOutput(choice)) return chat;
 
   return {
     ...chat,
@@ -66,7 +94,7 @@ export function ensureNonEmptyChatCompletion(chat: any): {
     return { chat, patched: false };
   const choice = chat?.choices?.[0];
   if (!choice) return { chat, patched: false };
-  if (hasContentOrToolCalls(choice)) return { chat, patched: false };
+  if (chatChoiceHasAssistantOutput(choice)) return { chat, patched: false };
 
   const patched = {
     ...chat,

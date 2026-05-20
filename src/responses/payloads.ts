@@ -206,6 +206,12 @@ export function responsesToChatCompletionsPayload(body: any) {
     messages.push({ role: "system", content: instructions });
   }
 
+  if (typeof payload.input === "string") {
+    messages.push({ role: "user", content: payload.input });
+  } else if (!Array.isArray(payload.input) && typeof payload.prompt === "string") {
+    messages.push({ role: "user", content: payload.prompt });
+  }
+
   for (const item of input) {
     if (item?.type === "function_call") {
       messages.push({
@@ -250,7 +256,9 @@ export function responsesToChatCompletionsPayload(body: any) {
     const content = Array.isArray(item?.content)
       ? item.content
           .map((part: any) =>
-            typeof part?.text === "string"
+            typeof part === "string"
+              ? { type: "text", text: part }
+              : typeof part?.text === "string"
               ? { type: "text", text: part.text }
               : null,
           )
@@ -286,5 +294,27 @@ export function responsesToChatCompletionsPayload(body: any) {
   }
   if (typeof payload.tool_choice !== "undefined") out.tool_choice = payload.tool_choice;
   if (typeof payload.temperature !== "undefined") out.temperature = payload.temperature;
+  const outputLimit =
+    payload.max_tokens ?? payload.max_completion_tokens ?? payload.max_output_tokens;
+  if (typeof outputLimit !== "undefined") out.max_tokens = outputLimit;
+  return out;
+}
+
+export function sanitizeGenericChatCompletionsPayload(body: any) {
+  const out = { ...(body ?? {}) };
+  delete out.reasoning;
+  delete out.reasoning_effort;
+  delete out.include;
+  delete out.text;
+  delete out.store;
+  delete out.parallel_tool_calls;
+  if (typeof out.max_output_tokens !== "undefined") {
+    out.max_tokens = out.max_tokens ?? out.max_output_tokens;
+    delete out.max_output_tokens;
+  }
+  if (typeof out.max_completion_tokens !== "undefined") {
+    out.max_tokens = out.max_tokens ?? out.max_completion_tokens;
+    delete out.max_completion_tokens;
+  }
   return out;
 }
