@@ -51,6 +51,7 @@ import {
   chatCompletionHasAssistantOutput,
   ensureNonEmptyChatCompletion,
   responseHasAssistantOutput,
+  responseStreamHasAssistantOutput,
   sanitizeAssistantTextChunk,
   sanitizeChatCompletionObject,
   sanitizeResponsesSSEFrame,
@@ -824,11 +825,14 @@ function renderBufferedResponsesStream(
     if (completed) body.push(completed);
 
     const chat = parseChatCompletionSSEToChatCompletion(rawText, model);
+    const hasAssistantOutput = responseStreamHasAssistantOutput(body.join(""), {
+      requireFunctionCallOutputItem: true,
+    });
     return {
       body: body.join(""),
       usage: chat?.usage,
       upstreamEmptyBody,
-      assistantEmptyOutput: !chatCompletionHasAssistantOutput(chat),
+      assistantEmptyOutput: !hasAssistantOutput,
       tracePayload: chat,
     };
   }
@@ -858,9 +862,9 @@ function renderBufferedResponsesStream(
   }
 
   const response = parseResponsesSSEToResponseObject(body.join("") || rawText);
-  const hasAssistantOutput =
-    responseHasAssistantOutput(response) ||
-    Boolean(streamState.streamedFallbackText.trim());
+  const hasAssistantOutput = responseStreamHasAssistantOutput(body.join(""), {
+    requireFunctionCallOutputItem: true,
+  });
   if (!responseHasAssistantOutput(response) && streamState.streamedFallbackText.trim()) {
     const repairedCompleted = responseObjectToSSE({
       ...response,
@@ -1183,9 +1187,9 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             requestBody,
             error: message,
             upstreamContentType: details.upstreamContentType,
+            ...inspectAssistantPayload(details.tracePayload),
             upstreamEmptyBody: details.upstreamEmptyBody,
             assistantEmptyOutput: true,
-            ...inspectAssistantPayload(details.tracePayload),
           });
         };
 

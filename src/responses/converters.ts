@@ -1,5 +1,6 @@
 import {
   ensureNonEmptyChatCompletion,
+  isValidChatToolCall,
   sanitizeAssistantTextChunk,
   sanitizeChatCompletionObject,
   sanitizeResponsesEvent,
@@ -25,6 +26,7 @@ export type ChatStreamAccumulator = {
   createdSent: boolean;
   contentStarted: boolean;
   contentDone: boolean;
+  functionCallsDone: boolean;
   completedSent: boolean;
 };
 
@@ -101,7 +103,7 @@ function usageResponsesToChat(usage: any) {
 
 function normalizeChatToolCalls(toolCalls: any[]): any[] {
   return toolCalls
-    .filter((tc: any) => shouldExposeFunctionCallName(tc?.function?.name))
+    .filter((tc: any) => isValidChatToolCall(tc))
     .map((tc: any, idx: number) => ({
       id: tc?.id ?? `call_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
       type: "function",
@@ -338,12 +340,69 @@ function responseContentDoneFrames(state: ChatStreamAccumulator) {
   })}\n\n`;
 }
 
+function responseFunctionCallFrames(state: ChatStreamAccumulator) {
+  if (state.functionCallsDone) return "";
+  const toolCalls = normalizeChatToolCalls(state.toolCalls);
+  if (!toolCalls.length) return "";
+
+  state.functionCallsDone = true;
+  const out: string[] = [responseCreatedFrame(state)];
+  const firstOutputIndex = state.contentStarted ? 1 : 0;
+
+  toolCalls.forEach((tc: any, idx: number) => {
+    const outputIndex = firstOutputIndex + idx;
+    const item = {
+      id: tc.id,
+      type: "function_call",
+      status: "in_progress",
+      arguments: "",
+      call_id: tc.id,
+      name: tc.function.name,
+    };
+    const doneItem = {
+      ...item,
+      status: "completed",
+      arguments: tc.function.arguments,
+    };
+
+    out.push(`event: response.output_item.added\ndata: ${JSON.stringify({
+      type: "response.output_item.added",
+      output_index: outputIndex,
+      item,
+    })}\n\n`);
+
+    if (tc.function.arguments) {
+      out.push(`event: response.function_call_arguments.delta\ndata: ${JSON.stringify({
+        type: "response.function_call_arguments.delta",
+        item_id: tc.id,
+        output_index: outputIndex,
+        delta: tc.function.arguments,
+      })}\n\n`);
+    }
+
+    out.push(`event: response.function_call_arguments.done\ndata: ${JSON.stringify({
+      type: "response.function_call_arguments.done",
+      item_id: tc.id,
+      output_index: outputIndex,
+      arguments: tc.function.arguments,
+    })}\n\n`);
+
+    out.push(`event: response.output_item.done\ndata: ${JSON.stringify({
+      type: "response.output_item.done",
+      output_index: outputIndex,
+      item: doneItem,
+    })}\n\n`);
+  });
+
+  return out.join("");
+}
+
 export function finalizeChatCompletionSSEToResponseSSE(
   state: ChatStreamAccumulator,
 ): string | null {
   if (state.completedSent) return null;
   state.completedSent = true;
-  return `${responseCreatedFrame(state)}${responseContentDoneFrames(state)}${responseObjectToSSE(
+  return `${responseCreatedFrame(state)}${responseContentDoneFrames(state)}${responseFunctionCallFrames(state)}${responseObjectToSSE(
     responseObjectFromChatStreamState(state),
   )}`;
 }
@@ -366,6 +425,7 @@ export function createChatStreamAccumulator(
     createdSent: false,
     contentStarted: false,
     contentDone: false,
+    functionCallsDone: false,
     completedSent: false,
   };
 }

@@ -4,6 +4,10 @@ import {
   toUpstreamInputContent,
   toolContentToOutput,
 } from "./helpers.js";
+import {
+  isValidChatToolCall,
+  isValidResponseFunctionCall,
+} from "./sanitizers.js";
 
 import express from "express";
 import { randomUUID } from "node:crypto";
@@ -48,7 +52,7 @@ export function inspectAssistantPayload(payload: any): {
     const hasText = Boolean(asNonEmptyString(contentText));
     const hasToolCalls =
       Array.isArray(choice?.message?.tool_calls) &&
-      choice.message.tool_calls.length > 0;
+      choice.message.tool_calls.some((tc: any) => isValidChatToolCall(tc));
     const assistantEmptyOutput = !hasText && !hasToolCalls;
 
     return { assistantEmptyOutput, assistantFinishReason: finishReason };
@@ -56,10 +60,20 @@ export function inspectAssistantPayload(payload: any): {
 
   if (payload.object === "response") {
     const outputs = Array.isArray(payload?.output) ? payload.output : [];
+    const hasFunctionCall = outputs.some((item: any) =>
+      isValidResponseFunctionCall(item),
+    );
     const assistantMsg = outputs.find(
       (item: any) => item?.type === "message" && item?.role === "assistant",
     );
-    if (!assistantMsg) return {};
+    if (!assistantMsg) {
+      return {
+        assistantEmptyOutput: !hasFunctionCall,
+        assistantFinishReason:
+          asNonEmptyString(payload?.status) ??
+          asNonEmptyString(payload?.stop_reason),
+      };
+    }
 
     const contentParts = Array.isArray(assistantMsg?.content)
       ? assistantMsg.content
@@ -67,7 +81,7 @@ export function inspectAssistantPayload(payload: any): {
     const hasOutputText = contentParts.some((part: any) =>
       Boolean(asNonEmptyString(part?.text)),
     );
-    const assistantEmptyOutput = !hasOutputText;
+    const assistantEmptyOutput = !hasOutputText && !hasFunctionCall;
     const assistantFinishReason =
       asNonEmptyString(payload?.status) ??
       asNonEmptyString(payload?.stop_reason);

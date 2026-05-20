@@ -30,15 +30,46 @@ export function chatChoiceHasAssistantOutput(choice: any): boolean {
   const hasText = Boolean(asNonEmptyString(contentText));
   const hasToolCalls =
     Array.isArray(choice?.message?.tool_calls) &&
-    choice.message.tool_calls.length > 0;
+    choice.message.tool_calls.some((tc: any) => isValidChatToolCall(tc));
   return hasText || hasToolCalls;
+}
+
+export function isValidChatToolCall(toolCall: any): boolean {
+  if (!toolCall || typeof toolCall !== "object") return false;
+  const fn = toolCall.function ?? {};
+  return Boolean(
+    asNonEmptyString(fn.name) &&
+      shouldExposeFunctionCallName(fn.name) &&
+      normalizedToolArguments(fn.arguments),
+  );
+}
+
+export function isValidResponseFunctionCall(item: any): boolean {
+  if (!item || typeof item !== "object") return false;
+  return Boolean(
+    item.type === "function_call" &&
+      asNonEmptyString(item.name) &&
+      shouldExposeFunctionCallName(item.name) &&
+      asNonEmptyString(item.call_id ?? item.id) &&
+      normalizedToolArguments(item.arguments),
+  );
+}
+
+function normalizedToolArguments(args: any): string | undefined {
+  if (typeof args === "string") return asNonEmptyString(args);
+  if (args === undefined || args === null) return undefined;
+  try {
+    return asNonEmptyString(JSON.stringify(args));
+  } catch {
+    return asNonEmptyString(String(args));
+  }
 }
 
 export function responseHasAssistantOutput(response: any): boolean {
   if (!response || typeof response !== "object") return false;
   const output = Array.isArray(response?.output) ? response.output : [];
   for (const item of output) {
-    if (item?.type === "function_call" && shouldExposeFunctionCallName(item?.name)) {
+    if (isValidResponseFunctionCall(item)) {
       return true;
     }
     if (item?.type !== "message" || item?.role !== "assistant") continue;
@@ -60,6 +91,79 @@ export function chatCompletionHasAssistantOutput(chat: any): boolean {
     return false;
   }
   return chatChoiceHasAssistantOutput(chat?.choices?.[0]);
+}
+
+function responseMessageItemHasVisibleOutput(item: any): boolean {
+  if (item?.type !== "message" || item?.role !== "assistant") return false;
+  const parts = Array.isArray(item?.content) ? item.content : [];
+  return parts.some((part: any) => {
+    if (part?.type === "output_text") return Boolean(asNonEmptyString(part?.text));
+    if (part?.type === "refusal") return Boolean(asNonEmptyString(part?.refusal));
+    return false;
+  });
+}
+
+export function responseStreamHasAssistantOutput(
+  sseText: string,
+  options: { requireFunctionCallOutputItem?: boolean } = {},
+): boolean {
+  let hasVisibleText = false;
+  let hasOutputItemFunctionCall = false;
+  let hasCompletedFunctionCall = false;
+
+  for (const rawLine of sseText.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line.startsWith("data:")) continue;
+    const payload = line.slice(5).trim();
+    if (!payload || payload === "[DONE]") continue;
+
+    try {
+      const event = JSON.parse(payload);
+      if (
+        event?.type === "response.output_text.delta" &&
+        asNonEmptyString(sanitizeAssistantTextChunk(event.delta ?? ""))
+      ) {
+        hasVisibleText = true;
+      }
+
+      if (
+        event?.type === "response.output_text.done" &&
+        asNonEmptyString(event.text)
+      ) {
+        hasVisibleText = true;
+      }
+
+      if (
+        event?.type === "response.output_item.done" &&
+        responseMessageItemHasVisibleOutput(event.item)
+      ) {
+        hasVisibleText = true;
+      }
+
+      if (
+        event?.type === "response.output_item.done" &&
+        isValidResponseFunctionCall(event.item)
+      ) {
+        hasOutputItemFunctionCall = true;
+      }
+
+      if (event?.type === "response.completed") {
+        const output = Array.isArray(event?.response?.output)
+          ? event.response.output
+          : [];
+        for (const item of output) {
+          if (responseMessageItemHasVisibleOutput(item)) hasVisibleText = true;
+          if (isValidResponseFunctionCall(item)) hasCompletedFunctionCall = true;
+        }
+      }
+    } catch {}
+  }
+
+  return (
+    hasVisibleText ||
+    hasOutputItemFunctionCall ||
+    (!options.requireFunctionCallOutputItem && hasCompletedFunctionCall)
+  );
 }
 
 export function withFallbackAssistantContent(chat: any, fallbackText: string) {
