@@ -25,12 +25,28 @@ import {
   UPSTREAM_PATH,
   OAUTH_STATE_PATH,
   PORT,
+  REQUEST_BODY_LIMIT,
 } from "./config.js";
 import { createBodyParserMiddleware } from "./middleware/decompression.js";
 import http from "node:http";
 
 const app = express();
 app.use(createBodyParserMiddleware());
+
+app.use(
+  (err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (err?.type === "entity.too.large") {
+      return res.status(413).json({
+        error: {
+          message: `Request body is too large. Limit is ${REQUEST_BODY_LIMIT}.`,
+          type: "invalid_request_error",
+          code: "payload_too_large",
+        },
+      });
+    }
+    next(err);
+  },
+);
 
 const dataDir = path.dirname(STORE_PATH);
 await cleanupOrphanedTmpFiles(dataDir);

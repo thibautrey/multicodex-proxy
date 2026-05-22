@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "context-engine": {
+      "command": "/Users/thibaut/.local/bin/cce",
+      "args": [
+        "serve",
+        "--project-dir",
+        "/Users/thibaut/gitRepo/multicodex-proxy"
+      ]
+    }
+  }
+}

@@ -1,5 +1,6 @@
 import { decompress } from "@foxglove/wasm-zstd";
 import express from "express";
+import { REQUEST_BODY_LIMIT } from "../config.js";
 
 function parseJsonBody(raw: Uint8Array): Record<string, unknown> {
   const str = new TextDecoder().decode(raw);
@@ -11,21 +12,23 @@ function parseJsonBody(raw: Uint8Array): Record<string, unknown> {
 }
 
 export function createBodyParserMiddleware() {
+  const jsonParser = express.json({ limit: REQUEST_BODY_LIMIT });
+
   return async (req: express.Request, res: express.Response, next: express.NextFunction) => {
     const contentEncoding = req.headers["content-encoding"];
 
     if (!contentEncoding) {
-      return express.json({ limit: "20mb" })(req, res, next);
+      return jsonParser(req, res, next);
     }
 
     const encodings = contentEncoding.split(",").map((e: string) => e.trim().toLowerCase());
 
     if (!encodings.includes("zstd")) {
-      return express.json({ limit: "20mb" })(req, res, next);
+      return jsonParser(req, res, next);
     }
 
     if (req.method !== "POST" && req.method !== "PUT" && req.method !== "PATCH") {
-      return express.json({ limit: "20mb" })(req, res, next);
+      return jsonParser(req, res, next);
     }
 
     const chunks: Buffer[] = [];
