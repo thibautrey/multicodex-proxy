@@ -606,6 +606,67 @@ function startBackgroundModelRefresh(
   }, 1000);
 }
 
+const EFFORT_TIERS = ["minimal", "low", "medium", "high", "xhigh"] as const;
+type EffortTier = (typeof EFFORT_TIERS)[number];
+
+const EFFORT_TARGET_RE = /^(minimal|low|medium|high|xhigh):(.+)$/;
+
+function parseEffortTarget(target: string): { effort?: EffortTier; model: string } {
+  const m = target.match(EFFORT_TARGET_RE);
+  if (m) return { effort: m[1] as EffortTier, model: m[2] };
+  return { model: target };
+}
+
+/**
+ * Filters an alias's targets to the best matching effort tier.
+ *
+ * - If requestEffort is set: prefer exact-match qualified targets, then
+ *   fall back one tier up (xhigh->high->...->minimal) for any missing tier,
+ *   then fall back down, and finally use unqualified targets as catch-all.
+ * - If requestEffort is undefined: use only unqualified targets.
+ */
+function resolveEffortTargets(
+  targets: string[],
+  requestEffort: EffortTier | undefined,
+): string[] {
+  const qualified = new Map<EffortTier, string[]>();
+  const unqualified: string[] = [];
+
+  for (const t of targets) {
+    const { effort, model } = parseEffortTarget(t);
+    if (effort) {
+      const list = qualified.get(effort);
+      if (list) list.push(model);
+      else qualified.set(effort, [model]);
+    } else {
+      unqualified.push(model);
+    }
+  }
+
+  if (!requestEffort) return unqualified;
+
+  // Exact match first
+  const exact = qualified.get(requestEffort);
+  if (exact && exact.length) return exact;
+
+  // Fallback: climb up then down the effort ladder
+  const idx = EFFORT_TIERS.indexOf(requestEffort);
+  if (idx === -1) return unqualified;
+
+  // Try higher (more intensive) tiers first
+  for (let i = idx + 1; i < EFFORT_TIERS.length; i++) {
+    const fb = qualified.get(EFFORT_TIERS[i]);
+    if (fb && fb.length) return fb;
+  }
+  // Then lower tiers
+  for (let i = idx - 1; i >= 0; i--) {
+    const fb = qualified.get(EFFORT_TIERS[i]);
+    if (fb && fb.length) return fb;
+  }
+
+  return unqualified;
+}
+
 type RoutingCandidate = {
   requestedModel: string | undefined;
   resolvedModel: string | undefined;
@@ -616,17 +677,21 @@ function buildRoutingCandidates(
   requestModel: string | undefined,
   discoveredModels: ExposedModel[],
   aliases: ModelAlias[],
+  requestEffort?: EffortTier,
 ): RoutingCandidate[] {
   const key = normalizeModelLookupKey(requestModel);
   const alias = aliases.find(
     (a) => a.enabled && normalizeModelLookupKey(a.id) === key,
   );
-  const targets =
-    alias && alias.targets.length
-      ? alias.targets
-      : requestModel
-        ? [requestModel]
-        : [];
+
+  let targets: string[];
+  if (alias && alias.targets.length) {
+    targets = resolveEffortTargets(alias.targets, requestEffort);
+  } else if (requestModel) {
+    targets = [requestModel];
+  } else {
+    targets = [];
+  }
 
   const out: RoutingCandidate[] = [];
   const seen = new Set<string>();
@@ -1055,6 +1120,17 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         ? req.body.model.trim()
         : undefined;
 
+    // Extract reasoning effort from the request for effort-based alias routing.
+    // Chat Completions uses flat reasoning_effort; Responses uses reasoning.effort.
+    const rawEffort: string | undefined =
+      typeof req.body?.reasoning_effort === "string"
+        ? req.body.reasoning_effort
+        : req.body?.reasoning?.effort;
+    const requestEffort: EffortTier | undefined =
+      rawEffort && (EFFORT_TIERS as readonly string[]).includes(rawEffort)
+        ? (rawEffort as EffortTier)
+        : undefined;
+
     // Fast O(1) validation against cached model set
     if (!isModelAllowed(requestModel)) {
       return res.status(400).json({
@@ -1077,6 +1153,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       requestModel,
       discoveredModels,
       modelAliases,
+      requestEffort,
     );
     const tried = new Set<string>();
     const maxAttempts = Math.min(accounts.length, MAX_ACCOUNT_RETRY_ATTEMPTS);

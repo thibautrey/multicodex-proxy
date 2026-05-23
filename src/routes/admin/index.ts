@@ -98,6 +98,24 @@ function normalizeAliasTargets(value: unknown): string[] {
   );
 }
 
+const EFFORT_TIERS = ["minimal", "low", "medium", "high", "xhigh"] as const;
+const EFFORT_TARGET_RE = /^(minimal|low|medium|high|xhigh):(.+)$/;
+const MODEL_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*(\/[a-zA-Z0-9._-]+)*$/;
+
+function validateAliasTargets(targets: string[]): string | null {
+  for (const t of targets) {
+    const m = t.match(EFFORT_TARGET_RE);
+    if (m) {
+      const model = m[2];
+      if (!model || !MODEL_NAME_RE.test(model))
+        return `Invalid model name after effort prefix in target "${t}"`;
+    } else if (!MODEL_NAME_RE.test(t)) {
+      return `Invalid target format: "${t}". Expected a model name or effort:model (e.g. xhigh:gpt-5.3-pro)`;
+    }
+  }
+  return null;
+}
+
 function parseTraceWindowBounds(query: Record<string, unknown>) {
   return {
     sinceMs: parseQueryNumber(query.sinceMs),
@@ -298,6 +316,9 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     if (!targets.length)
       return res.status(400).json({ error: "at least one target is required" });
 
+    const targetErr = validateAliasTargets(targets);
+    if (targetErr) return res.status(400).json({ error: targetErr });
+
     const alias: ModelAlias = {
       id,
       targets,
@@ -329,6 +350,8 @@ export function createAdminRouter(options: AdminRoutesOptions) {
           .status(400)
           .json({ error: "at least one target is required" });
       }
+      const targetErr = validateAliasTargets(targets);
+      if (targetErr) return res.status(400).json({ error: targetErr });
       patch.targets = targets;
     }
 

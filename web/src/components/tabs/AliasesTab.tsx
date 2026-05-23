@@ -136,8 +136,12 @@ export function AliasesTab({
               <input
                 value={targets}
                 onChange={(e) => setTargets(e.target.value)}
-                placeholder="gpt-5.1-codex-mini,devstral-small-latest"
+                placeholder="xhigh:gpt-5.3-pro, gpt-5.1-codex-mini"
               />
+              <span className="muted" style={{fontSize: "0.8rem"}}>
+                Prefix with effort:model to route by reasoning effort (e.g. xhigh:gpt-5.3-pro).
+                Unqualified targets match any effort.
+              </span>
             </label>
             <label>
               Description (optional)
@@ -160,9 +164,17 @@ export function AliasesTab({
             <div className="alias-preview">
               <span className="muted">Resolved order</span>
               <div className="chips">
-                {parsedTargets.map((target) => (
-                  <span key={target} className="chip mono">{target}</span>
-                ))}
+                {parsedTargets.map((target) => {
+                  const em = target.match(/^(minimal|low|medium|high|xhigh):(.+)$/);
+                  return em ? (
+                    <span key={target} className="chip">
+                      <span className="badge badge-live" style={{marginRight: 4}}>{em[1]}</span>
+                      <span className="mono">{em[2]}</span>
+                    </span>
+                  ) : (
+                    <span key={target} className="chip mono">{target}</span>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -270,8 +282,12 @@ export function AliasesTab({
                       current ? { ...current, targets: e.target.value } : current,
                     )
                   }
-                  placeholder="gpt-5.1-codex-mini,devstral-small-latest"
+                  placeholder="xhigh:gpt-5.3-pro, gpt-5.1-codex-mini"
                 />
+                <span className="muted" style={{fontSize: "0.8rem"}}>
+                  Prefix with effort:model to route by reasoning effort (e.g. xhigh:gpt-5.3-pro).
+                  Unqualified targets match any effort.
+                </span>
               </label>
               <label>
                 Description (optional)
@@ -302,9 +318,17 @@ export function AliasesTab({
               <div className="alias-preview">
                 <span className="muted">Resolved order</span>
                 <div className="chips">
-                  {parsedEditTargets.map((target) => (
-                    <span key={target} className="chip mono">{target}</span>
-                  ))}
+                  {parsedEditTargets.map((target) => {
+                    const em = target.match(/^(minimal|low|medium|high|xhigh):(.+)$/);
+                    return em ? (
+                      <span key={target} className="chip">
+                        <span className="badge badge-live" style={{marginRight: 4}}>{em[1]}</span>
+                        <span className="mono">{em[2]}</span>
+                      </span>
+                    ) : (
+                      <span key={target} className="chip mono">{target}</span>
+                    );
+                  })}
                 </div>
               </div>
             )}
