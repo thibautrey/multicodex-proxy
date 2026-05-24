@@ -272,7 +272,7 @@ Model alias admin endpoints:
 | `OAUTH_STATE_PATH`              | `/data/oauth-state.json`                  | OAuth flow state                                                    |
 | `TRACE_FILE_PATH`               | `/data/requests-trace.jsonl`              | Request trace file (retained to latest 1000 entries)                |
 | `TRACE_STATS_HISTORY_PATH`      | `/data/requests-stats-history.jsonl`      | Lightweight request history for long-term stats                     |
-| `TRACE_INCLUDE_BODY`            | `true`                                    | Persist full request payloads; trace stats still work when disabled |
+| `TRACE_INCLUDE_BODY`            | `false`                                   | Persist full request payloads when explicitly enabled; trace stats still work when disabled |
 | `REQUEST_BODY_LIMIT`            | `100mb`                                   | Max accepted JSON request body size                                 |
 | `PROXY_MODELS`                  | `gpt-5.3-codex,gpt-5.2-codex,gpt-5-codex` | Fallback comma-separated model list for `/v1/models`                |
 | `MODELS_CLIENT_VERSION`         | `1.0.0`                                   | Version sent to `/backend-api/codex/models` for model discovery     |

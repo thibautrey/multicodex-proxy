@@ -108,6 +108,7 @@ type TraceBucketAggregate = {
   tokensOutput: number;
   tokensTotal: number;
   costUsd: number;
+  latencyMsTotal: number;
   latencies: number[];
   models: Map<string, TraceModelStats>;
 };
@@ -116,6 +117,7 @@ const DEFAULT_RETENTION_MAX = 1000;
 const DEFAULT_PAGE_SIZE_MAX = 100;
 const DEFAULT_LEGACY_LIMIT_MAX = 2000;
 const HOUR_MS = 3_600_000;
+const MAX_LATENCY_SAMPLES_PER_BUCKET = 2000;
 
 function safeNumber(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -464,9 +466,24 @@ function createEmptyBucket(at: number): TraceBucketAggregate {
     tokensOutput: 0,
     tokensTotal: 0,
     costUsd: 0,
+    latencyMsTotal: 0,
     latencies: [],
     models: new Map(),
   };
+}
+
+function addLatencySample(bucket: TraceBucketAggregate, latencyMs: number) {
+  if (!Number.isFinite(latencyMs)) return;
+  const sampleCount = bucket.latencies.length;
+  if (sampleCount < MAX_LATENCY_SAMPLES_PER_BUCKET) {
+    bucket.latencies.push(latencyMs);
+    return;
+  }
+
+  // Deterministic down-sampling keeps hourly percentile estimates bounded
+  // while preserving coverage across the whole bucket window.
+  const replaceAt = bucket.requests % MAX_LATENCY_SAMPLES_PER_BUCKET;
+  bucket.latencies[replaceAt] = latencyMs;
 }
 
 function addTraceToBucket(bucket: TraceBucketAggregate, trace: TraceEntry) {
@@ -488,7 +505,8 @@ function addTraceToBucket(bucket: TraceBucketAggregate, trace: TraceEntry) {
   bucket.tokensOutput += trace.tokensOutput ?? 0;
   bucket.tokensTotal += traceTokensTotal;
   bucket.costUsd += traceCost;
-  bucket.latencies.push(trace.latencyMs);
+  bucket.latencyMsTotal += Number.isFinite(trace.latencyMs) ? trace.latencyMs : 0;
+  addLatencySample(bucket, trace.latencyMs);
 
   const existing = bucket.models.get(model);
   if (existing) {
@@ -812,7 +830,7 @@ export function createTraceManager(config: TraceManagerConfig) {
       tokensOutput += bucket.tokensOutput;
       tokensTotal += bucket.tokensTotal;
       costUsd += bucket.costUsd;
-      latencyWeightedTotal += bucket.latencies.reduce((sum, value) => sum + value, 0);
+      latencyWeightedTotal += bucket.latencyMsTotal;
 
       for (const model of bucket.models.values()) {
         const existing = modelMap.get(model.model);
