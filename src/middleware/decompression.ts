@@ -2,6 +2,25 @@ import { decompress } from "@foxglove/wasm-zstd";
 import express from "express";
 import { REQUEST_BODY_LIMIT } from "../config.js";
 
+function parseByteLimit(value: string): number {
+  const trimmed = value.trim().toLowerCase();
+  const match = trimmed.match(/^(\d+(?:\.\d+)?)\s*(b|kb|kib|mb|mib|gb|gib)?$/);
+  if (!match) return 100 * 1024 * 1024;
+
+  const amount = Number(match[1]);
+  const unit = match[2] ?? "b";
+  const multiplier =
+    unit === "gb" || unit === "gib"
+      ? 1024 * 1024 * 1024
+      : unit === "mb" || unit === "mib"
+        ? 1024 * 1024
+        : unit === "kb" || unit === "kib"
+          ? 1024
+          : 1;
+
+  return Math.max(1, Math.floor(amount * multiplier));
+}
+
 function parseJsonBody(raw: Uint8Array): Record<string, unknown> {
   const str = new TextDecoder().decode(raw);
   try {
@@ -13,6 +32,18 @@ function parseJsonBody(raw: Uint8Array): Record<string, unknown> {
 
 export function createBodyParserMiddleware() {
   const jsonParser = express.json({ limit: REQUEST_BODY_LIMIT });
+  const requestBodyLimitBytes = parseByteLimit(REQUEST_BODY_LIMIT);
+
+  function sendPayloadTooLarge(res: express.Response) {
+    if (res.headersSent) return;
+    res.status(413).json({
+      error: {
+        message: `Request body is too large. Limit is ${REQUEST_BODY_LIMIT}.`,
+        type: "invalid_request_error",
+        code: "payload_too_large",
+      },
+    });
+  }
 
   return async (req: express.Request, res: express.Response, next: express.NextFunction) => {
     const contentEncoding = req.headers["content-encoding"];
@@ -32,25 +63,43 @@ export function createBodyParserMiddleware() {
     }
 
     const chunks: Buffer[] = [];
+    let receivedBytes = 0;
+    let done = false;
 
     req.on("data", (chunk: Buffer) => {
+      if (done) return;
+      receivedBytes += chunk.length;
+      if (receivedBytes > requestBodyLimitBytes) {
+        done = true;
+        chunks.length = 0;
+        sendPayloadTooLarge(res);
+        req.destroy();
+        return;
+      }
       chunks.push(chunk);
     });
 
     req.on("end", async () => {
+      if (done) return;
+      done = true;
       try {
         const rawBody = Buffer.concat(chunks);
 
         let bodyBuffer: Buffer;
         try {
-          bodyBuffer = decompress(rawBody, rawBody.length * 10);
+          bodyBuffer = decompress(rawBody, requestBodyLimitBytes);
         } catch {
           res.status(400).json({
             error: {
-              message: "Failed to decompress zstd body",
+              message: "Failed to decompress zstd body within the request body limit",
               type: "invalid_request_error",
             },
           });
+          return;
+        }
+
+        if (bodyBuffer.length > requestBodyLimitBytes) {
+          sendPayloadTooLarge(res);
           return;
         }
 
@@ -84,8 +133,16 @@ export function createBodyParserMiddleware() {
       }
     });
 
-    req.on("error", () => {
-      next();
+    req.on("aborted", () => {
+      done = true;
+      chunks.length = 0;
+    });
+
+    req.on("error", (err) => {
+      if (done) return;
+      done = true;
+      chunks.length = 0;
+      next(err);
     });
   };
 }
