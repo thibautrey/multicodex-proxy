@@ -17,7 +17,11 @@ const EXACT_PRICING: Record<string, ModelPricing> = {
   "gpt-5.1-codex-max": { inputPer1M: 1.25, outputPer1M: 10.0 },
   "gpt-5.1-codex-mini": { inputPer1M: 0.25, outputPer1M: 2.0 },
   "gpt-5.2-codex": { inputPer1M: 1.75, outputPer1M: 14.0 },
-  "gpt-5.3-codex": { inputPer1M: 1.75, outputPer1M: 14.0 }
+  "gpt-5.3-codex": { inputPer1M: 1.75, outputPer1M: 14.0 },
+  "deepseek-v4-flash": { inputPer1M: 0.14, outputPer1M: 0.28 },
+  "deepseek-v4-pro": { inputPer1M: 0.435, outputPer1M: 0.87 },
+  "deepseek-chat": { inputPer1M: 0.14, outputPer1M: 0.28 },
+  "deepseek-reasoner": { inputPer1M: 0.14, outputPer1M: 0.28 }
 };
 
 const PREFIX_PRICING: Array<{ prefix: string; pricing: ModelPricing }> = [
@@ -33,7 +37,11 @@ const PREFIX_PRICING: Array<{ prefix: string; pricing: ModelPricing }> = [
   { prefix: "gpt-5.1-codex", pricing: { inputPer1M: 1.25, outputPer1M: 10.0 } },
   { prefix: "gpt-5-codex", pricing: { inputPer1M: 1.25, outputPer1M: 10.0 } },
   { prefix: "codex-mini-latest", pricing: { inputPer1M: 1.5, outputPer1M: 6.0 } },
-  { prefix: "gpt-5", pricing: { inputPer1M: 5.0, outputPer1M: 15.0 } }
+  { prefix: "gpt-5", pricing: { inputPer1M: 5.0, outputPer1M: 15.0 } },
+  { prefix: "deepseek-v4-flash", pricing: { inputPer1M: 0.14, outputPer1M: 0.28 } },
+  { prefix: "deepseek-v4-pro", pricing: { inputPer1M: 0.435, outputPer1M: 0.87 } },
+  { prefix: "deepseek-chat", pricing: { inputPer1M: 0.14, outputPer1M: 0.28 } },
+  { prefix: "deepseek-reasoner", pricing: { inputPer1M: 0.14, outputPer1M: 0.28 } }
 ];
 
 export function getModelPricing(model?: string): ModelPricing | undefined {

@@ -640,11 +640,16 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       (a) => a.id === req.params.id,
     );
     if (!account) return res.status(404).json({ error: "not found" });
-    account.state = {
-      ...account.state,
-      blockedUntil: undefined,
-      blockedReason: undefined,
-    };
+    const targetModel = typeof req.query.model === "string" && req.query.model.trim()
+      ? req.query.model.trim().toLowerCase()
+      : undefined;
+    if (targetModel) {
+      const modelBlocks = { ...account.state?.modelBlocks };
+      delete modelBlocks[targetModel];
+      account.state = { ...account.state, modelBlocks };
+    } else {
+      account.state = { ...account.state, modelBlocks: {} };
+    }
     await store.upsertAccount(account);
     res.json({ ok: true, account: redact(account) });
   });

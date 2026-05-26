@@ -275,12 +275,16 @@ export function TracingTab(props: Props) {
                 const accountLabel = sanitized
                   ? maskEmail(t.accountEmail) || maskId(t.accountId)
                   : t.accountEmail ?? t.accountId ?? "-";
+                const modelLabel =
+                  t.requestedModel && t.resolvedModel
+                    ? `${t.requestedModel} -> ${t.resolvedModel}`
+                    : (t.model ?? "-");
                 return (
                   <React.Fragment key={t.id}>
                     <tr onClick={() => void toggleExpandedTrace(t.id)} className="trace-row">
                       <td>{fmt(t.at)}</td>
                       <td className="mono">{routeLabel(t.route)}</td>
-                      <td className="mono">{t.model ?? "-"}</td>
+                      <td className="mono">{modelLabel}</td>
                       <td>
                         <span className="inline wrap">
                           {provider && (

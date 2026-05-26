@@ -11,7 +11,15 @@ export type Account = {
   baseUrl?: string;
   priority?: number;
   usage?: any;
-  state?: any;
+  state?: {
+    modelBlocks?: Record<string, { until: number; reason: string }>;
+    lastError?: string;
+    lastSelectedAt?: number;
+    recentErrors?: Array<{ at: number; message: string }>;
+    recentEmptyResponses?: Array<{ at: number; message: string }>;
+    needsTokenRefresh?: boolean;
+    lastUsageRefreshAt?: number;
+  };
 };
 
 export type Trace = {
@@ -21,6 +29,8 @@ export type Trace = {
   accountId?: string;
   accountEmail?: string;
   model?: string;
+  requestedModel?: string;
+  resolvedModel?: string;
   status: number;
   isError: boolean;
   stream: boolean;
