@@ -35,6 +35,12 @@ const TAB_ITEMS: Array<{ id: Tab; label: string }> = [
   { id: "docs", label: "Docs" },
 ];
 
+function activeModelBlockCount(account: Account) {
+  return Object.values(account.state?.modelBlocks ?? {}).filter(
+    (block) => block.until > Date.now(),
+  ).length;
+}
+
 export default function App() {
   const [tab, setTab] = useState<Tab>(initialTab);
   const [locationSearch, setLocationSearch] = useState(window.location.search);
@@ -67,7 +73,7 @@ export default function App() {
     () => ({
       total: accounts.length,
       enabled: accounts.filter((a) => a.enabled).length,
-      blocked: accounts.filter((a) => a.state?.blockedUntil && a.state.blockedUntil > Date.now()).length,
+      blocked: accounts.filter((a) => activeModelBlockCount(a) > 0).length,
     }),
     [accounts],
   );

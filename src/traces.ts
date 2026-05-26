@@ -10,6 +10,8 @@ export type TraceEntry = {
   accountId?: string;
   accountEmail?: string;
   model?: string;
+  requestedModel?: string;
+  resolvedModel?: string;
   status: number;
   isError: boolean;
   stream: boolean;
@@ -195,6 +197,10 @@ function normalizeTrace(raw: any): TraceEntry | null {
     accountEmail:
       typeof raw.accountEmail === "string" ? raw.accountEmail : undefined,
     model,
+    requestedModel:
+      typeof raw.requestedModel === "string" ? raw.requestedModel : undefined,
+    resolvedModel:
+      typeof raw.resolvedModel === "string" ? raw.resolvedModel : undefined,
     status,
     isError: typeof raw.isError === "boolean" ? raw.isError : status >= 400,
     stream: Boolean(raw.stream),

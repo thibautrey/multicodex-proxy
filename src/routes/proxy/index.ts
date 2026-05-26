@@ -35,6 +35,7 @@ import {
   sanitizeGenericChatCompletionsPayload,
 } from "../../responses/payloads.js";
 import {
+  accountUsable,
   chooseAccountForProvider,
   clearEmptyResponseHistory,
   getZaiBlockDuration,
@@ -611,6 +612,38 @@ type EffortTier = (typeof EFFORT_TIERS)[number];
 
 const EFFORT_TARGET_RE = /^(minimal|low|medium|high|xhigh):(.+)$/;
 
+function hasReasoningEffort(payload: any): boolean {
+  if (!payload || typeof payload !== "object") return false;
+  if (Object.prototype.hasOwnProperty.call(payload, "reasoning_effort")) {
+    return true;
+  }
+  return (
+    payload.reasoning &&
+    typeof payload.reasoning === "object" &&
+    Object.prototype.hasOwnProperty.call(payload.reasoning, "effort")
+  );
+}
+
+function defaultChatGptReasoningEffort(
+  payload: any,
+  upstreamMode: UpstreamMode,
+): void {
+  if (!payload || typeof payload !== "object" || hasReasoningEffort(payload)) {
+    return;
+  }
+
+  if (upstreamMode === "chat/completions") {
+    payload.reasoning_effort = "low";
+    return;
+  }
+
+  payload.reasoning =
+    payload.reasoning && typeof payload.reasoning === "object"
+      ? payload.reasoning
+      : {};
+  payload.reasoning.effort = "low";
+}
+
 function parseEffortTarget(target: string): { effort?: EffortTier; model: string } {
   const m = target.match(EFFORT_TARGET_RE);
   if (m) return { effort: m[1] as EffortTier, model: m[2] };
@@ -1175,7 +1208,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       );
       for (let i = 0; i < attemptsForProvider; i++) {
         const selected = chooseAccountForProvider(
-          providerAccounts.filter((a) => !tried.has(a.id)),
+          providerAccounts.filter((a) => !tried.has(a.id) && accountUsable(a, candidate.resolvedModel)),
           candidate.provider,
         );
         if (!selected) break;
@@ -1224,6 +1257,9 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         }
         if (candidate.resolvedModel)
           payloadToUpstream.model = candidate.resolvedModel;
+        if (candidate.provider === "openai" && selected.chatgptAccountId) {
+          defaultChatGptReasoningEffort(payloadToUpstream, upstreamMode);
+        }
         filterUnsupportedTools(
           payloadToUpstream,
           candidate.provider,
@@ -1237,6 +1273,14 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           payloadToUpstream.model.trim()
             ? payloadToUpstream.model.trim()
             : undefined);
+        const blockModel = candidate.resolvedModel ?? tracedModel ?? "unknown";
+        const traceModelResolution = {
+          requestedModel: requestModel,
+          resolvedModel:
+            candidate.resolvedModel && candidate.resolvedModel !== requestModel
+              ? candidate.resolvedModel
+              : undefined,
+        };
 
         const retryEmptyAssistantOutput = async (
           message: string,
@@ -1249,7 +1293,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           } = {},
         ) => {
           sawEmptyAssistantOutput = true;
-          markEmptyResponseError(selected, message);
+          markEmptyResponseError(selected, blockModel, message);
           await store.upsertAccount(selected);
           recordTrace({
             at: Date.now(),
@@ -1257,6 +1301,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             accountId: selected.id,
             accountEmail: selected.email,
             model: tracedModel,
+            ...traceModelResolution,
             status: 502,
             stream,
             latencyMs: Date.now() - startedAt,
@@ -1374,6 +1419,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                   accountId: selected.id,
                   accountEmail: selected.email,
                   model: tracedModel,
+            ...traceModelResolution,
                   status: upstream.status,
                   stream: true,
                   latencyMs: Date.now() - startedAt,
@@ -1568,6 +1614,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 accountId: selected.id,
                 accountEmail: selected.email,
                 model: tracedModel,
+            ...traceModelResolution,
                 status: upstream.status,
                 stream: true,
                 latencyMs: Date.now() - startedAt,
@@ -1590,6 +1637,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 sawEmptyAssistantOutput = true;
                 markEmptyResponseError(
                   selected,
+                  blockModel,
                   "empty assistant output in SSE",
                 );
                 await store.upsertAccount(selected);
@@ -1609,6 +1657,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 accountId: selected.id,
                 accountEmail: selected.email,
                 model: tracedModel,
+            ...traceModelResolution,
                 status: upstream.status,
                 stream: true,
                 latencyMs: Date.now() - startedAt,
@@ -1653,6 +1702,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 accountId: selected.id,
                 accountEmail: selected.email,
                 model: tracedModel,
+            ...traceModelResolution,
                 status: upstream.status,
                 stream: false,
                 latencyMs: Date.now() - startedAt,
@@ -1676,6 +1726,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               sawEmptyAssistantOutput = true;
               markEmptyResponseError(
                 selected,
+                blockModel,
                 "empty assistant output in responses stream",
               );
               await store.upsertAccount(selected);
@@ -1685,6 +1736,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 accountId: selected.id,
                 accountEmail: selected.email,
                 model: tracedModel,
+            ...traceModelResolution,
                 status: 502,
                 stream: true,
                 latencyMs: Date.now() - startedAt,
@@ -1699,7 +1751,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             }
 
             if (upstream.ok) {
-              clearEmptyResponseHistory(selected);
+              clearEmptyResponseHistory(selected, blockModel);
               await store.upsertAccount(selected);
             }
 
@@ -1717,6 +1769,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               accountId: selected.id,
               accountEmail: selected.email,
               model: tracedModel,
+            ...traceModelResolution,
               status: upstream.status,
               stream: true,
               latencyMs: Date.now() - startedAt,
@@ -1754,6 +1807,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 sawEmptyAssistantOutput = true;
                 markEmptyResponseError(
                   selected,
+                  blockModel,
                   "empty assistant output in chat.completion",
                 );
                 await store.upsertAccount(selected);
@@ -1773,6 +1827,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 accountId: selected.id,
                 accountEmail: selected.email,
                 model: tracedModel,
+            ...traceModelResolution,
                 status: upstream.status,
                 stream: true,
                 latencyMs: Date.now() - startedAt,
@@ -1816,6 +1871,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 accountId: selected.id,
                 accountEmail: selected.email,
                 model: tracedModel,
+            ...traceModelResolution,
                 status: upstream.status,
                 stream: true,
                 latencyMs: Date.now() - startedAt,
@@ -1865,6 +1921,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 sawEmptyAssistantOutput = true;
                 markEmptyResponseError(
                   selected,
+                  blockModel,
                   "empty assistant output in chat.completion",
                 );
                 await store.upsertAccount(selected);
@@ -1896,6 +1953,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 sawEmptyAssistantOutput = true;
                 markEmptyResponseError(
                   selected,
+                  blockModel,
                   "empty assistant output in chat completion",
                 );
                 await store.upsertAccount(selected);
@@ -1916,6 +1974,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 accountId: selected.id,
                 accountEmail: selected.email,
                 model: tracedModel,
+            ...traceModelResolution,
                 status: upstream.status,
                 stream: true,
                 latencyMs: Date.now() - startedAt,
@@ -1965,6 +2024,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 accountId: selected.id,
                 accountEmail: selected.email,
                 model: tracedModel,
+            ...traceModelResolution,
                 status: upstream.status,
                 stream: true,
                 latencyMs: Date.now() - startedAt,
@@ -2006,6 +2066,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 accountId: selected.id,
                 accountEmail: selected.email,
                 model: tracedModel,
+            ...traceModelResolution,
                 status: upstream.status,
                 stream: true,
                 latencyMs: Date.now() - startedAt,
@@ -2051,6 +2112,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 accountId: selected.id,
                 accountEmail: selected.email,
                 model: tracedModel,
+            ...traceModelResolution,
                 status: upstream.status,
                 stream: true,
                 latencyMs: Date.now() - startedAt,
@@ -2078,6 +2140,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 sawEmptyAssistantOutput = true;
                 markEmptyResponseError(
                   selected,
+                  blockModel,
                   "empty assistant output in response event",
                 );
                 await store.upsertAccount(selected);
@@ -2093,6 +2156,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 accountId: selected.id,
                 accountEmail: selected.email,
                 model: tracedModel,
+            ...traceModelResolution,
                 status: upstream.status,
                 stream: false,
                 latencyMs: Date.now() - startedAt,
@@ -2133,6 +2197,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               accountId: selected.id,
               accountEmail: selected.email,
               model: tracedModel,
+            ...traceModelResolution,
               status: upstream.status,
               stream: false,
               latencyMs: Date.now() - startedAt,
@@ -2168,6 +2233,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               accountId: selected.id,
               accountEmail: selected.email,
               model: tracedModel,
+            ...traceModelResolution,
               status: upstream.status,
               stream: false,
               latencyMs: Date.now() - startedAt,
@@ -2205,6 +2271,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               accountId: selected.id,
               accountEmail: selected.email,
               model: tracedModel,
+            ...traceModelResolution,
               status: upstream.status,
               stream: false,
               latencyMs: Date.now() - startedAt,
@@ -2238,6 +2305,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             accountId: selected.id,
             accountEmail: selected.email,
             model: tracedModel,
+            ...traceModelResolution,
             status: upstream.status,
             stream: false,
             latencyMs: Date.now() - startedAt,
@@ -2257,11 +2325,10 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           if (zaiErrorCode && shouldBlockAccountForZaiError(zaiErrorCode)) {
             const blockDuration = getZaiBlockDuration(zaiErrorCode);
             const until = Date.now() + blockDuration;
-            selected.state = {
-              ...selected.state,
-              blockedUntil: until,
-              blockedReason: `z.ai error ${zaiErrorCode}`,
-            };
+            const modelKey = (blockModel).toLowerCase();
+            const modelBlocks = { ...selected.state?.modelBlocks };
+            modelBlocks[modelKey] = { until, reason: `z.ai error ${zaiErrorCode}` };
+            selected.state = { ...selected.state, modelBlocks };
             rememberError(
               selected,
               `z.ai error ${zaiErrorCode}: ${text.slice(0, 200)}`,
@@ -2271,7 +2338,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           }
 
           if (upstream.status === 429 || isQuotaErrorText(text)) {
-            markQuotaHit(selected, `quota/rate-limit: ${upstream.status}`);
+            markQuotaHit(selected, blockModel, `quota/rate-limit: ${upstream.status}`);
             await store.upsertAccount(selected);
             continue;
           }
@@ -2292,6 +2359,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             accountId: selected.id,
             accountEmail: selected.email,
             model: tracedModel,
+            ...traceModelResolution,
             status: 599,
             stream: false,
             latencyMs: Date.now() - startedAt,

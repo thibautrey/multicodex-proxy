@@ -68,6 +68,12 @@ function providerLabel(provider?: string) {
   return "OpenAI";
 }
 
+function activeModelBlocks(account: Account) {
+  return Object.entries(account.state?.modelBlocks ?? {}).filter(
+    ([, block]) => block.until > Date.now(),
+  );
+}
+
 export function AccountsTab(props: Props) {
   const {
     traceStats,
@@ -438,8 +444,7 @@ export function AccountsTab(props: Props) {
     (account) => account.provider === "zai",
   ).length;
   const blockedCount = accounts.filter(
-    (account) =>
-      account.state?.blockedUntil && account.state.blockedUntil > Date.now(),
+    (account) => activeModelBlocks(account).length > 0,
   ).length;
   const enabledCount = accounts.filter((account) => account.enabled).length;
 
@@ -517,7 +522,9 @@ export function AccountsTab(props: Props) {
               </tr>
             </thead>
             <tbody>
-              {accounts.map((a) => (
+              {accounts.map((a) => {
+                const modelBlocks = activeModelBlocks(a);
+                return (
                 <tr key={a.id}>
                   <td>
                     <span className="provider-badge">
@@ -568,12 +575,11 @@ export function AccountsTab(props: Props) {
                       >
                         {a.enabled ? "Enabled" : "Disabled"}
                       </span>
-                      {a.state?.blockedUntil &&
-                        a.state.blockedUntil > Date.now() && (
-                          <span className="badge badge-warn">
-                            {`Blocked until ${fmt(a.state?.blockedUntil)}`}
-                          </span>
-                        )}
+                      {modelBlocks.map(([model, block]) => (
+                        <span className="badge badge-warn" key={model}>
+                          {`${model} blocked until ${fmt(block.until)}`}
+                        </span>
+                      ))}
                     </div>
                   </td>
                   <td className="mono">
@@ -681,7 +687,8 @@ export function AccountsTab(props: Props) {
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
               {!accounts.length && (
                 <tr>
                   <td colSpan={7} className="muted empty-row">

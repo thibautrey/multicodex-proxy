@@ -22,8 +22,7 @@ export type AccountError = {
 };
 
 export type AccountState = {
-  blockedUntil?: number;
-  blockedReason?: string;
+  modelBlocks?: Record<string, { until: number; reason: string }>;
   lastError?: string;
   lastSelectedAt?: number;
   recentErrors?: AccountError[];

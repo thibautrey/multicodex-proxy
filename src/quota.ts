@@ -177,31 +177,35 @@ function parseZaiUsage(data: any): UsageSnapshot {
   return { primary, secondary, fetchedAt: Date.now() };
 }
 
+function setModelBlock(account: Account, model: string, until: number, reason: string) {
+  const modelKey = model.toLowerCase();
+  const modelBlocks = { ...account.state?.modelBlocks };
+  modelBlocks[modelKey] = { until, reason };
+  account.state = { ...account.state, modelBlocks };
+}
+
 export function rememberError(account: Account, message: string) {
   const next = [{ at: Date.now(), message }, ...(account.state?.recentErrors ?? [])].slice(0, 10);
   account.state = { ...account.state, lastError: message, recentErrors: next };
 }
 
-export function markEmptyResponseError(account: Account, message: string = "empty assistant output") {
-  // Track consecutive empty responses to decide when to temporarily block the account
+export function markEmptyResponseError(account: Account, model: string, message: string = "empty assistant output") {
+  // Track consecutive empty responses to decide when to temporarily block the account+model
   const recentEmpty = account.state?.recentEmptyResponses ?? [];
   const next = [{ at: Date.now(), message }, ...recentEmpty].slice(0, 5);
   const consecutive = next.filter(e => Date.now() - e.at < EMPTY_RESPONSE_WINDOW_MS).length;
-  
-  // Block account if threshold exceeded within window
-  const blockUntil = consecutive >= EMPTY_RESPONSE_BLOCK_THRESHOLD 
-    ? Date.now() + EMPTY_RESPONSE_BLOCK_DURATION_MS 
-    : undefined;
   
   account.state = { 
     ...account.state, 
     lastError: message, 
     recentEmptyResponses: next,
-    blockedUntil: blockUntil ?? account.state?.blockedUntil,
-    blockedReason: blockUntil 
-      ? `empty responses (${consecutive} in ${Math.round(EMPTY_RESPONSE_WINDOW_MS / 60_000)}m)` 
-      : account.state?.blockedReason,
   };
+
+  // Block model on account if threshold exceeded within window
+  if (consecutive >= EMPTY_RESPONSE_BLOCK_THRESHOLD) {
+    const blockUntil = Date.now() + EMPTY_RESPONSE_BLOCK_DURATION_MS;
+    setModelBlock(account, model, blockUntil, `empty responses (${consecutive} in ${Math.round(EMPTY_RESPONSE_WINDOW_MS / 60_000)}m)`);
+  }
 }
 
 export function usageUntouched(usage?: UsageSnapshot): boolean {
@@ -235,37 +239,39 @@ export function isQuotaErrorText(s: string): boolean {
   return false;
 }
 
-export function accountUsable(a: Account): boolean {
+export function accountUsable(a: Account, model?: string): boolean {
   if (!a.enabled) return false;
-  const until = a.state?.blockedUntil;
-  return !(typeof until === "number" && Date.now() < until);
+  if (!model) return true;
+  const modelKey = model.toLowerCase();
+  const block = a.state?.modelBlocks?.[modelKey];
+  return !(block && Date.now() < block.until);
 }
 
-export function clearEmptyResponseHistory(account: Account) {
-  if (!account.state?.recentEmptyResponses?.length) return;
-  account.state = {
-    ...account.state,
-    recentEmptyResponses: [],
-  };
+export function clearEmptyResponseHistory(account: Account, model?: string) {
+  const modelKey = model?.toLowerCase();
+  if (modelKey) {
+    const modelBlocks = { ...account.state?.modelBlocks };
+    delete modelBlocks[modelKey];
+    account.state = {
+      ...account.state,
+      recentEmptyResponses: [],
+      modelBlocks,
+    };
+  } else {
+    account.state = {
+      ...account.state,
+      recentEmptyResponses: [],
+    };
+  }
 }
 
 export function chooseAccount(accounts: Account[]): Account | null {
   const now = Date.now();
   const windowMs = Number.isFinite(DEFAULT_ROUTING_WINDOW_MS) && DEFAULT_ROUTING_WINDOW_MS > 0 ? DEFAULT_ROUTING_WINDOW_MS : 5 * 60 * 1000;
 
-  const available = accounts.filter((a) => {
-    if (!a.enabled) return false;
-    const blockedUntil = a.state?.blockedUntil ?? 0;
-    return blockedUntil <= now;
-  });
+  const available = accounts.filter((a) => a.enabled);
 
-  if (!available.length) {
-    const enabled = accounts.filter((a) => a.enabled);
-    if (!enabled.length) return null;
-    return [...enabled].sort(
-      (a, b) => (a.state?.blockedUntil ?? 0) - (b.state?.blockedUntil ?? 0),
-    )[0] ?? null;
-  }
+  if (!available.length) return null;
 
   const bucket = nowBucket(now, windowMs);
 
@@ -365,16 +371,12 @@ export async function refreshUsageIfNeeded(account: Account, chatgptBaseUrl: str
 
 const RATE_LIMIT_BLOCK_MS = Number(process.env.RATE_LIMIT_BLOCK_MS ?? 60_000);
 
-export function markQuotaHit(account: Account, message: string) {
+export function markQuotaHit(account: Account, model: string, message: string) {
   const isRateLimit = /\b429\b/.test(message);
   const until = isRateLimit
     ? Date.now() + RATE_LIMIT_BLOCK_MS
     : (nextResetAt(account.usage) ?? Date.now() + BLOCK_FALLBACK_MS);
-  account.state = {
-    ...account.state,
-    blockedUntil: until,
-    blockedReason: message,
-  };
+  setModelBlock(account, model, until, message);
   rememberError(account, message);
 }
 
