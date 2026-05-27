@@ -1132,8 +1132,13 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     if (!accounts.length)
       return res.status(503).json({ error: "no accounts configured" });
 
+    // Only refresh tokens/usage for enabled accounts. Skipping disabled
+    // accounts avoids wasting API calls and prevents a race where stale
+    // account objects overwrite admin changes (e.g. re-enabling a disabled
+    // account).
     accounts = await Promise.all(
       accounts.map(async (account) => {
+        if (!account.enabled) return account;
         const valid = await ensureValidToken(account, oauthConfig);
         const usageBaseUrl = accountBaseUrl(
           valid,
@@ -1145,8 +1150,11 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         return valid;
       }),
     );
-    for (const account of accounts)
-      store.markAccountModified(account.id, account);
+    for (const account of accounts) {
+      if (account.enabled) {
+        store.markAccountModified(account.id, account);
+      }
+    }
 
     const requestModel =
       typeof req.body?.model === "string" && req.body.model.trim()
