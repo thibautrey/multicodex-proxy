@@ -67,6 +67,28 @@ export const ACCOUNT_FLUSH_INTERVAL_MS = Number(
   process.env.ACCOUNT_FLUSH_INTERVAL_MS ?? 5_000,
 );
 
+// EXCLUDED_PROVIDER_MODELS: exclude a model from being routed to a specific provider.
+// Format: "provider1:modelA,provider1:modelB,provider2:modelC"
+// Example: "openai-compatible:gpt-5-codex,mistral:codestral-latest"
+// This is useful when multiple providers expose a model with the same name and you
+// want to ensure routing only targets the intended provider.
+export const EXCLUDED_PROVIDER_MODELS = (
+  process.env.EXCLUDED_PROVIDER_MODELS ?? ""
+)
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean)
+  .reduce((map, entry) => {
+    const colonIdx = entry.indexOf(":");
+    if (colonIdx <= 0) return map; // skip malformed entries
+    const provider = entry.slice(0, colonIdx).trim();
+    const model = entry.slice(colonIdx + 1).trim().toLowerCase();
+    if (!provider || !model) return map;
+    if (!map.has(provider)) map.set(provider, new Set());
+    map.get(provider)!.add(model);
+    return map;
+  }, new Map<string, Set<string>>());
+
 // Empty response retry configuration
 export const EMPTY_RESPONSE_BLOCK_THRESHOLD = Math.max(
   1,

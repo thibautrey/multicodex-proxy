@@ -1,4 +1,5 @@
 import {
+  EXCLUDED_PROVIDER_MODELS,
   MAX_ACCOUNT_RETRY_ATTEMPTS,
   MAX_UPSTREAM_RETRIES,
   MODELS_CACHE_MS,
@@ -256,6 +257,14 @@ function normalizeModelLookupKey(model?: string): string {
   return tail || raw;
 }
 
+/** Check whether a model is explicitly excluded from a provider via EXCLUDED_PROVIDER_MODELS. */
+function isModelExcludedFromProvider(model: string | undefined, provider: ProviderId): boolean {
+  const key = normalizeModelLookupKey(model);
+  if (!key || !EXCLUDED_PROVIDER_MODELS.size) return false;
+  const excluded = EXCLUDED_PROVIDER_MODELS.get(provider);
+  return excluded ? excluded.has(key) : false;
+}
+
 function inferProviderFromModel(
   model: string | undefined,
   discoveredModels: ExposedModel[],
@@ -468,6 +477,7 @@ async function discoverModels(
                 ? entry.slug.trim()
                 : "";
             if (!slug) continue;
+            if (isModelExcludedFromProvider(slug, provider)) continue;
             byId.set(
               slug,
               mergeModelAvailability(
@@ -488,6 +498,7 @@ async function discoverModels(
               ? entry.id.trim()
               : "";
           if (!id) continue;
+          if (isModelExcludedFromProvider(id, provider)) continue;
           byId.set(
             id,
             mergeModelAvailability(
@@ -733,6 +744,7 @@ function buildRoutingCandidates(
     if (!targetKey || seen.has(targetKey)) continue;
     seen.add(targetKey);
     for (const provider of providersForModel(target, discoveredModels)) {
+      if (isModelExcludedFromProvider(target, provider)) continue;
       const routeKey = `${targetKey}::${provider}`;
       if (seen.has(routeKey)) continue;
       seen.add(routeKey);
@@ -745,11 +757,28 @@ function buildRoutingCandidates(
   }
 
   if (out.length) return out;
+  // Fallback: infer a provider, but still respect exclusions
+  const fallbackProvider = inferProviderFromModel(requestModel, discoveredModels);
+  if (isModelExcludedFromProvider(requestModel, fallbackProvider)) {
+    // Try providers in order until we find a non-excluded one
+    const tryProviders: ProviderId[] = ["openai", "openai-compatible", "mistral", "zai"];
+    for (const p of tryProviders) {
+      if (!isModelExcludedFromProvider(requestModel, p)) {
+        return [
+          {
+            requestedModel: requestModel,
+            resolvedModel: requestModel,
+            provider: p,
+          },
+        ];
+      }
+    }
+  }
   return [
     {
       requestedModel: requestModel,
       resolvedModel: requestModel,
-      provider: inferProviderFromModel(requestModel, discoveredModels),
+      provider: fallbackProvider,
     },
   ];
 }
