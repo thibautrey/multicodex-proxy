@@ -15,3 +15,4 @@ data/*
 # Claude Code local settings
 .claude/
 data/requests-stats-history.jsonl
+data/requests-stats-history.jsonl
