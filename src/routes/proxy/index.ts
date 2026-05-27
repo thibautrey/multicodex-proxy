@@ -1,5 +1,7 @@
 import {
   EXCLUDED_PROVIDER_MODELS,
+  HANG_RETRY_INTERVAL_MS,
+  HANG_RETRY_MAX_DURATION_MS,
   MAX_ACCOUNT_RETRY_ATTEMPTS,
   MAX_UPSTREAM_RETRIES,
   MODELS_CACHE_MS,
@@ -1225,10 +1227,15 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       modelAliases,
       requestEffort,
     );
-    const tried = new Set<string>();
     const maxAttempts = Math.min(accounts.length, MAX_ACCOUNT_RETRY_ATTEMPTS);
-    let providerTried = false;
     let sawEmptyAssistantOutput = false;
+    const hangStart = Date.now();
+
+    // Outer hang loop: when all accounts are exhausted (e.g. all rate-limited),
+    // sleep and retry instead of failing immediately, up to HANG_RETRY_MAX_DURATION_MS.
+    while (true) {
+      const tried = new Set<string>();
+      let providerTried = false;
 
     for (const candidate of routingCandidates) {
       const providerAccounts = accounts.filter(
@@ -2415,6 +2422,19 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         .status(503)
         .json({ error: "no provider accounts configured for requested model" });
     }
+    if (res.headersSent) return;
+
+    const elapsed = Date.now() - hangStart;
+    if (elapsed >= HANG_RETRY_MAX_DURATION_MS) break; // fall through to final error response
+
+    // Wait before retrying: some accounts may have had their rate-limit blocks expire
+    await sleep(HANG_RETRY_INTERVAL_MS);
+    // Reload accounts from store to pick up any blocks that expired
+    accounts = store.getCachedAccounts();
+    // sawEmptyAssistantOutput is preserved across retries
+    }
+
+    // Max hang duration exceeded — all accounts still exhausted
     if (!res.headersSent) {
       if (sawEmptyAssistantOutput) {
         res.status(502).json({

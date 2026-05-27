@@ -290,6 +290,9 @@ Model alias admin endpoints:
 | `MAX_ACCOUNT_RETRY_ATTEMPTS`    | `10`                                      | Max accounts to try on quota/rate-limit errors                      |
 | `MAX_UPSTREAM_RETRIES`          | `5`                                       | Retries per upstream request (429/5xx)                              |
 | `UPSTREAM_BASE_DELAY_MS`        | `2000`                                    | Base backoff delay for upstream retries (ms)                        |
+| `HANG_RETRY_INTERVAL_MS`        | `10000`                                   | Delay between retry cycles when all accounts are exhausted (ms)     |
+| `HANG_RETRY_MAX_DURATION_MS`    | `120000`                                  | Max total time to hang-and-retry before returning 429 to client (ms)|
+| `RATE_LIMIT_BLOCK_MS`           | `60000`                                   | Duration to block an account+model after a 429 response (ms)        |
 
 ---
 

@@ -45,6 +45,14 @@ export const UPSTREAM_BASE_DELAY_MS = Math.max(
   100,
   Number(process.env.UPSTREAM_BASE_DELAY_MS ?? 2000),
 );
+export const HANG_RETRY_INTERVAL_MS = Math.max(
+  1000,
+  Number(process.env.HANG_RETRY_INTERVAL_MS ?? 10_000),
+);
+export const HANG_RETRY_MAX_DURATION_MS = Math.max(
+  5000,
+  Number(process.env.HANG_RETRY_MAX_DURATION_MS ?? 120_000),
+);
 export const PI_USER_AGENT = `pi (${os.platform()} ${os.release()}; ${os.arch()})`;
 
 export const PROXY_MODELS = (
