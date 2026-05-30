@@ -15,29 +15,6 @@ import {
 } from "../../config.js";
 import type { ModelAlias, ProviderId, UpstreamMode } from "../../types.js";
 import {
-  chatCompletionObjectToSSE,
-  chatCompletionObjectToResponseObject,
-  convertResponsesSSEToChatCompletionSSE,
-  convertChatCompletionSSEToResponseSSE,
-  createChatStreamAccumulator,
-  finalizeChatCompletionSSEToResponseSSE,
-  parseChatCompletionSSEToChatCompletion,
-  parseChatCompletionSSEToResponseObject,
-  parseResponsesSSEToChatCompletion,
-  parseResponsesSSEToResponseObject,
-  responseObjectToChatCompletion,
-  responseObjectToSSE,
-} from "../../responses/converters.js";
-import {
-  chatCompletionsToResponsesPayload,
-  extractUsageFromPayload,
-  getSessionId,
-  inspectAssistantPayload,
-  normalizeResponsesPayload,
-  responsesToChatCompletionsPayload,
-  sanitizeGenericChatCompletionsPayload,
-} from "../../responses/payloads.js";
-import {
   accountUsable,
   chooseAccountForProvider,
   clearEmptyResponseHistory,
@@ -61,6 +38,29 @@ import {
   sanitizeResponsesSSEFrame,
   stripReasoningFromResponseObject,
 } from "../../responses/sanitizers.js";
+import {
+  chatCompletionObjectToResponseObject,
+  chatCompletionObjectToSSE,
+  convertChatCompletionSSEToResponseSSE,
+  convertResponsesSSEToChatCompletionSSE,
+  createChatStreamAccumulator,
+  finalizeChatCompletionSSEToResponseSSE,
+  parseChatCompletionSSEToChatCompletion,
+  parseChatCompletionSSEToResponseObject,
+  parseResponsesSSEToChatCompletion,
+  parseResponsesSSEToResponseObject,
+  responseObjectToChatCompletion,
+  responseObjectToSSE,
+} from "../../responses/converters.js";
+import {
+  chatCompletionsToResponsesPayload,
+  extractUsageFromPayload,
+  getSessionId,
+  inspectAssistantPayload,
+  normalizeResponsesPayload,
+  responsesToChatCompletionsPayload,
+  sanitizeGenericChatCompletionsPayload,
+} from "../../responses/payloads.js";
 
 import { AccountStore } from "../../store.js";
 import type { OAuthConfig } from "../../oauth.js";
@@ -752,7 +752,7 @@ function buildRoutingCandidates(
       seen.add(routeKey);
       out.push({
         requestedModel: requestModel,
-        resolvedModel: target,
+        resolvedModel: requestModel,
         provider,
       });
     }
