@@ -752,7 +752,7 @@ function buildRoutingCandidates(
       seen.add(routeKey);
       out.push({
         requestedModel: requestModel,
-        resolvedModel: requestModel,
+        resolvedModel: target,
         provider,
       });
     }
