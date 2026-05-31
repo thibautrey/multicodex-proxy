@@ -971,6 +971,7 @@ details summary {
 /* Model selector dropdown + typeahead */
 .model-selector {
   width: 100%;
+  position: relative;
 }
 
 .model-selector-trigger {
