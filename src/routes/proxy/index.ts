@@ -1299,7 +1299,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         ) {
           delete payloadToUpstream.store;
         }
-        if (candidate.resolvedModel)
+        if (candidate.resolvedModel && candidate.resolvedModel !== candidate.requestedModel)
           payloadToUpstream.model = candidate.resolvedModel;
         if (candidate.provider === "openai" && selected.chatgptAccountId) {
           defaultChatGptReasoningEffort(payloadToUpstream, upstreamMode);
