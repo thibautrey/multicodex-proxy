@@ -1,5 +1,6 @@
 import React from "react";
 import type { ExposedModel } from "../../types";
+import { ModelSelector } from "../ui/ModelSelector";
 
 type Props = {
   chatPrompt: string;
@@ -38,14 +39,12 @@ export function PlaygroundTab({
         <div className="grid">
           <label className="control-field">
             <span className="control-label">Model</span>
-            <select value={chatModel} onChange={(e) => setChatModel(e.target.value)} disabled={!models.length}>
-              {!models.length && <option value="">No models available</option>}
-              {models.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.id}
-                </option>
-              ))}
-            </select>
+            <ModelSelector
+              models={models}
+              value={chatModel}
+              onChange={setChatModel}
+              disabled={!models.length}
+            />
           </label>
         </div>
 

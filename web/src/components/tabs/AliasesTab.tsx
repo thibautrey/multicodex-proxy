@@ -1,16 +1,18 @@
 import React, { useMemo, useState } from "react";
-import type { ModelAlias } from "../../types";
+import type { ModelAlias, ExposedModel } from "../../types";
+import { ModelSelector } from "../ui/ModelSelector";
 
 type EditAliasState = {
   originalId: string;
   id: string;
-  targets: string;
+  targets: string[];
   description: string;
   enabled: boolean;
 };
 
 type Props = {
   aliases: ModelAlias[];
+  models: ExposedModel[];
   saveAlias: (body: {
     id: string;
     targets: string[];
@@ -23,56 +25,34 @@ type Props = {
 
 export function AliasesTab({
   aliases,
+  models,
   saveAlias,
   patchAlias,
   deleteAlias,
 }: Props) {
   const [id, setId] = useState("");
-  const [targets, setTargets] = useState("");
+  const [targets, setTargets] = useState<string[]>([]);
   const [description, setDescription] = useState("");
   const [enabled, setEnabled] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [editingAlias, setEditingAlias] = useState<EditAliasState | null>(null);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
 
-  const parsedTargets = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          targets
-            .split(",")
-            .map((x) => x.trim())
-            .filter(Boolean),
-        ),
-      ),
-    [targets],
-  );
-
-  const parsedEditTargets = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          (editingAlias?.targets ?? "")
-            .split(",")
-            .map((x) => x.trim())
-            .filter(Boolean),
-        ),
-      ),
-    [editingAlias?.targets],
-  );
+  // Model list for selector (exclude current alias id to avoid self-reference)
+  const availableModels = useMemo(() => models, [models]);
 
   const onSubmit = async () => {
-    if (!id.trim() || !parsedTargets.length) return;
+    if (!id.trim() || !targets.length) return;
     setIsSubmitting(true);
     try {
       await saveAlias({
         id: id.trim(),
-        targets: parsedTargets,
+        targets,
         enabled,
         description: description.trim() || undefined,
       });
       setId("");
-      setTargets("");
+      setTargets([]);
       setDescription("");
       setEnabled(true);
     } finally {
@@ -89,25 +69,47 @@ export function AliasesTab({
     setEditingAlias({
       originalId: alias.id,
       id: alias.id,
-      targets: alias.targets.join(", "),
+      targets: [...alias.targets],
       description: alias.description ?? "",
       enabled: alias.enabled,
     });
   };
 
   const saveEditedAlias = async () => {
-    if (!editingAlias || !editingAlias.id.trim() || !parsedEditTargets.length) return;
+    if (!editingAlias || !editingAlias.id.trim() || !editingAlias.targets.length) return;
     setIsSavingEdit(true);
     try {
       await patchAlias(editingAlias.originalId, {
         id: editingAlias.id.trim(),
-        targets: parsedEditTargets,
+        targets: editingAlias.targets,
         enabled: editingAlias.enabled,
         description: editingAlias.description.trim() || undefined,
       });
       closeEditModal();
     } finally {
       setIsSavingEdit(false);
+    }
+  };
+
+  const addTarget = (modelId: string) => {
+    if (modelId && !targets.includes(modelId)) {
+      setTargets([...targets, modelId]);
+    }
+  };
+
+  const removeTarget = (modelId: string) => {
+    setTargets(targets.filter((t) => t !== modelId));
+  };
+
+  const addEditTarget = (modelId: string) => {
+    if (editingAlias && modelId && !editingAlias.targets.includes(modelId)) {
+      setEditingAlias({ ...editingAlias, targets: [...editingAlias.targets, modelId] });
+    }
+  };
+
+  const removeEditTarget = (modelId: string) => {
+    if (editingAlias) {
+      setEditingAlias({ ...editingAlias, targets: editingAlias.targets.filter((t) => t !== modelId) });
     }
   };
 
@@ -133,14 +135,14 @@ export function AliasesTab({
             </label>
             <label>
               Targets (priority order)
-              <input
-                value={targets}
-                onChange={(e) => setTargets(e.target.value)}
-                placeholder="xhigh:gpt-5.3-pro, gpt-5.1-codex-mini"
+              <ModelSelector
+                models={availableModels}
+                value=""
+                onChange={addTarget}
+                disabled={!availableModels.length}
               />
               <span className="muted" style={{fontSize: "0.8rem"}}>
-                Prefix with effort:model to route by reasoning effort (e.g. xhigh:gpt-5.3-pro).
-                Unqualified targets match any effort.
+                Select models in priority order. You can also type to filter.
               </span>
             </label>
             <label>
@@ -160,28 +162,30 @@ export function AliasesTab({
               Enabled
             </label>
           </div>
-          {parsedTargets.length > 0 && (
+          {targets.length > 0 && (
             <div className="alias-preview">
               <span className="muted">Resolved order</span>
               <div className="chips">
-                {parsedTargets.map((target) => {
-                  const em = target.match(/^(minimal|low|medium|high|xhigh):(.+)$/);
-                  return em ? (
-                    <span key={target} className="chip">
-                      <span className="badge badge-live" style={{marginRight: 4}}>{em[1]}</span>
-                      <span className="mono">{em[2]}</span>
-                    </span>
-                  ) : (
-                    <span key={target} className="chip mono">{target}</span>
-                  );
-                })}
+                {targets.map((target, index) => (
+                  <span key={target} className="chip">
+                    <span className="badge badge-live" style={{marginRight: 4}}>{index + 1}</span>
+                    <span className="mono">{target}</span>
+                    <button
+                      className="chip-remove"
+                      onClick={() => removeTarget(target)}
+                      title="Remove target"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
               </div>
             </div>
           )}
           <div className="inline wrap">
             <button
               className="btn"
-              disabled={isSubmitting || !id.trim() || !parsedTargets.length}
+              disabled={isSubmitting || !id.trim() || !targets.length}
               onClick={() => void onSubmit()}
             >
               {isSubmitting ? "Saving..." : "Create alias"}
@@ -275,18 +279,14 @@ export function AliasesTab({
               </label>
               <label>
                 Targets (priority order)
-                <input
-                  value={editingAlias.targets}
-                  onChange={(e) =>
-                    setEditingAlias((current) =>
-                      current ? { ...current, targets: e.target.value } : current,
-                    )
-                  }
-                  placeholder="xhigh:gpt-5.3-pro, gpt-5.1-codex-mini"
+                <ModelSelector
+                  models={availableModels}
+                  value=""
+                  onChange={addEditTarget}
+                  disabled={!availableModels.length}
                 />
                 <span className="muted" style={{fontSize: "0.8rem"}}>
-                  Prefix with effort:model to route by reasoning effort (e.g. xhigh:gpt-5.3-pro).
-                  Unqualified targets match any effort.
+                  Select models in priority order.
                 </span>
               </label>
               <label>
@@ -314,28 +314,30 @@ export function AliasesTab({
                 Enabled
               </label>
             </div>
-            {parsedEditTargets.length > 0 && (
+            {editingAlias.targets.length > 0 && (
               <div className="alias-preview">
                 <span className="muted">Resolved order</span>
                 <div className="chips">
-                  {parsedEditTargets.map((target) => {
-                    const em = target.match(/^(minimal|low|medium|high|xhigh):(.+)$/);
-                    return em ? (
-                      <span key={target} className="chip">
-                        <span className="badge badge-live" style={{marginRight: 4}}>{em[1]}</span>
-                        <span className="mono">{em[2]}</span>
-                      </span>
-                    ) : (
-                      <span key={target} className="chip mono">{target}</span>
-                    );
-                  })}
+                  {editingAlias.targets.map((target, index) => (
+                    <span key={target} className="chip">
+                      <span className="badge badge-live" style={{marginRight: 4}}>{index + 1}</span>
+                      <span className="mono">{target}</span>
+                      <button
+                        className="chip-remove"
+                        onClick={() => removeEditTarget(target)}
+                        title="Remove target"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
                 </div>
               </div>
             )}
             <div className="inline wrap">
               <button
                 className="btn"
-                disabled={isSavingEdit || !editingAlias.id.trim() || !parsedEditTargets.length}
+                disabled={isSavingEdit || !editingAlias.id.trim() || !editingAlias.targets.length}
                 onClick={() => void saveEditedAlias()}
               >
                 {isSavingEdit ? "Saving..." : "Save changes"}

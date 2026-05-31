@@ -967,3 +967,124 @@ details summary {
     border: none;
   }
 }
+
+/* Model selector dropdown + typeahead */
+.model-selector {
+  width: 100%;
+}
+
+.model-selector-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg2);
+  cursor: pointer;
+  box-sizing: border-box;
+  min-height: 34px;
+  gap: 8px;
+}
+
+.model-selector-trigger:hover:not([disabled]) {
+  border-color: var(--accent);
+}
+
+.model-selector-value {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+}
+
+.model-selector-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  outline: none;
+  color: var(--fg);
+  font: inherit;
+  padding: 0;
+}
+
+.model-selector-input::placeholder {
+  color: var(--fg2);
+}
+
+.model-selector-arrow {
+  font-size: 0.7rem;
+  color: var(--fg2);
+  transition: transform 0.15s;
+}
+
+.model-selector-arrow.open {
+  transform: rotate(180deg);
+}
+
+.model-selector-list {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  max-height: 280px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg1);
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  z-index: 100;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.model-selector-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.model-selector-item:hover {
+  background: var(--bg2);
+}
+
+.model-selector-item.selected {
+  background: var(--accent-subtle);
+}
+
+.model-selector-id {
+  font-weight: 500;
+}
+
+.model-selector-provider {
+  font-size: 0.8rem;
+  color: var(--fg2);
+}
+
+.model-selector-empty {
+  padding: 8px 10px;
+  color: var(--fg2);
+  text-align: center;
+  font-style: italic;
+}
+
+/* Chip remove button */
+.chip-remove {
+  margin-left: 4px;
+  padding: 0 2px;
+  border: none;
+  background: transparent;
+  color: var(--fg2);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.chip-remove:hover {
+  color: var(--danger);
+}
