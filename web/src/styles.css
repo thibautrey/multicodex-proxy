@@ -1034,7 +1034,7 @@ details summary {
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: 4px;
-  background: var(--bg1);
+  background: #fff;
   list-style: none;
   margin: 0;
   padding: 4px 0;
