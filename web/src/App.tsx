@@ -537,6 +537,7 @@ export default function App() {
         {tab === "aliases" && (
           <AliasesTab
             aliases={aliases}
+            models={models}
             saveAlias={saveAlias}
             patchAlias={patchAlias}
             deleteAlias={deleteAlias}
