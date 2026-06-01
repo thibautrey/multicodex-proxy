@@ -131,7 +131,7 @@ export class AccountStore {
     this.inMemoryAccounts = this.inMemoryAccounts.filter((a) => a.id !== id);
     if (this.inMemoryAccounts.length === before) return false;
     this.dirty = true;
-    this.scheduleFlush();
+    await this.flushIfDirty();
     return true;
   }
 
@@ -185,7 +185,7 @@ export class AccountStore {
     );
     if (this.inMemoryModelAliases.length === before) return false;
     this.dirty = true;
-    this.scheduleFlush();
+    await this.flushIfDirty();
     return true;
   }
 }
