@@ -156,6 +156,10 @@ function filterVisibleTraces<T extends { route?: string }>(traces: T[]): T[] {
   return traces.filter((trace) => !isHiddenTraceRoute(trace.route));
 }
 
+function isOpenAiEnabledAccount(account: Account | undefined): account is Account {
+  return Boolean(account && (account.provider ?? "openai") === "openai" && account.enabled);
+}
+
 function formatZipDosTime(date: Date) {
   const year = Math.max(1980, date.getUTCFullYear());
   const month = date.getUTCMonth() + 1;
@@ -302,6 +306,33 @@ export function createAdminRouter(options: AdminRoutesOptions) {
   router.get("/accounts", async (_req, res) =>
     res.json({ accounts: (await store.listAccounts()).map(redact) }),
   );
+
+  router.get("/settings", async (_req, res) =>
+    res.json({ ok: true, settings: await store.getSettings() }),
+  );
+
+  router.patch("/settings", async (req, res) => {
+    const body = req.body ?? {};
+    const patch: { defaultPassthroughAccountId?: string | undefined } = {};
+
+    if ("defaultPassthroughAccountId" in body) {
+      const accountId = String(body.defaultPassthroughAccountId ?? "").trim();
+      if (accountId) {
+        const account = (await store.listAccounts()).find((a) => a.id === accountId);
+        if (!isOpenAiEnabledAccount(account)) {
+          return res.status(400).json({
+            error: "defaultPassthroughAccountId must reference an enabled OpenAI account",
+          });
+        }
+        patch.defaultPassthroughAccountId = accountId;
+      } else {
+        patch.defaultPassthroughAccountId = undefined;
+      }
+    }
+
+    const settings = await store.patchSettings(patch);
+    res.json({ ok: true, settings });
+  });
 
   router.get("/model-aliases", async (_req, res) =>
     res.json({ modelAliases: await store.listModelAliases() }),

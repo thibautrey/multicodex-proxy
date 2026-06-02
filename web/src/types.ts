@@ -114,3 +114,7 @@ export type ModelAlias = {
   enabled: boolean;
   description?: string;
 };
+
+export type StoreSettings = {
+  defaultPassthroughAccountId?: string;
+};

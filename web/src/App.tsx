@@ -11,6 +11,7 @@ import type {
   Account,
   ExposedModel,
   ModelAlias,
+  StoreSettings,
   Tab,
   Trace,
   TracePagination,
@@ -50,6 +51,7 @@ export default function App() {
   const [tracePagination, setTracePagination] = useState<TracePagination>(EMPTY_TRACE_PAGINATION);
   const [models, setModels] = useState<ExposedModel[]>([]);
   const [aliases, setAliases] = useState<ModelAlias[]>([]);
+  const [settings, setSettings] = useState<StoreSettings>({});
   const [adminToken, setAdminToken] = useState(localStorage.getItem("adminToken") ?? tokenDefault);
   const [storageInfo, setStorageInfo] = useState<any>(null);
   const [oauthRedirectUri, setOauthRedirectUri] = useState("");
@@ -144,17 +146,19 @@ export default function App() {
   }, []);
 
   const loadBase = async () => {
-    const [acc, cfg, mdl, aliasRes] = await Promise.all([
+    const [acc, cfg, mdl, aliasRes, settingsRes] = await Promise.all([
       api("/admin/accounts"),
       api("/admin/config"),
       fetch("/v1/models").then((r) => r.json()),
       api("/admin/model-aliases"),
+      api("/admin/settings"),
     ]);
     setAccounts((acc.accounts ?? []) as Account[]);
     setStorageInfo(cfg.storage ?? null);
     setOauthRedirectUri(String(cfg.oauthRedirectUri ?? ""));
     setModels((mdl.data ?? []) as ExposedModel[]);
     setAliases((aliasRes.modelAliases ?? []) as ModelAlias[]);
+    setSettings((settingsRes.settings ?? {}) as StoreSettings);
   };
 
   const refreshModels = async () => {
@@ -342,6 +346,11 @@ export default function App() {
     await loadBase();
   };
 
+  const patchSettings = async (body: Partial<StoreSettings>) => {
+    await api("/admin/settings", { method: "PATCH", body: JSON.stringify(body) });
+    await loadBase();
+  };
+
   const startOAuth = async (email: string, accountId?: string) => {
     return api("/admin/oauth/start", {
       method: "POST",
@@ -522,12 +531,14 @@ export default function App() {
           <AccountsTab
             traceStats={filteredTraceStats}
             accounts={accounts}
+            settings={settings}
             sanitized={sanitized}
             patch={patch}
             del={del}
             unblock={unblock}
             refreshUsage={refreshUsage}
             createAccount={createAccount}
+            patchSettings={patchSettings}
             startOAuth={startOAuth}
             completeOAuth={completeOAuth}
             oauthRedirectUri={oauthRedirectUri}

@@ -2,6 +2,15 @@ import { decompress } from "@foxglove/wasm-zstd";
 import express from "express";
 import { REQUEST_BODY_LIMIT } from "../config.js";
 
+declare global {
+  namespace Express {
+    interface Request {
+      rawBody?: Buffer;
+      originalHeadersForPassthrough?: Record<string, string | string[] | undefined>;
+    }
+  }
+}
+
 function parseByteLimit(value: string): number {
   const trimmed = value.trim().toLowerCase();
   const match = trimmed.match(/^(\d+(?:\.\d+)?)\s*(b|kb|kib|mb|mib|gb|gib)?$/);
@@ -31,7 +40,12 @@ function parseJsonBody(raw: Uint8Array): Record<string, unknown> {
 }
 
 export function createBodyParserMiddleware() {
-  const jsonParser = express.json({ limit: REQUEST_BODY_LIMIT });
+  const jsonParser = express.json({
+    limit: REQUEST_BODY_LIMIT,
+    verify: (req, _res, buf) => {
+      (req as express.Request).rawBody = Buffer.from(buf);
+    },
+  });
   const requestBodyLimitBytes = parseByteLimit(REQUEST_BODY_LIMIT);
 
   function sendPayloadTooLarge(res: express.Response) {
@@ -46,6 +60,7 @@ export function createBodyParserMiddleware() {
   }
 
   return async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    req.originalHeadersForPassthrough = { ...req.headers };
     const contentEncoding = req.headers["content-encoding"];
 
     if (!contentEncoding) {
@@ -84,6 +99,7 @@ export function createBodyParserMiddleware() {
       done = true;
       try {
         const rawBody = Buffer.concat(chunks);
+        req.rawBody = rawBody;
 
         let bodyBuffer: Buffer;
         try {

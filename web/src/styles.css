@@ -485,6 +485,14 @@ button:disabled {
   line-height: 1.55;
 }
 
+.compact-field {
+  display: grid;
+  gap: 8px;
+  min-width: min(320px, 100%);
+  color: var(--muted-strong);
+  font-size: 13px;
+}
+
 .grid {
   display: grid;
   gap: 18px;
