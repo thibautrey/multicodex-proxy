@@ -7,6 +7,7 @@ web/*.tsbuildinfo
 data/accounts.json
 data/oauth-state.json
 data/requests-trace.jsonl
+data/*
 
 # CCE (code-context-engine)
 # CCE local cache (per-machine, not for version control)
