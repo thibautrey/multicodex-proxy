@@ -100,6 +100,19 @@ const modelsValidationCache: {
 
 const MODELS_VALIDATION_CACHE_MS = 60_000; // Refresh every 60 seconds
 
+const HOP_BY_HOP_HEADERS = new Set([
+  "connection",
+  "content-length",
+  "host",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+]);
+
 type ExposedModel = {
   id: string;
   object: "model";
@@ -185,6 +198,10 @@ function modelObject(
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
+}
+
+function isHopByHopHeader(name: string): boolean {
+  return HOP_BY_HOP_HEADERS.has(name.toLowerCase());
 }
 
 function accountBaseUrl(
@@ -2453,7 +2470,167 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
 
   function setForwardHeaders(from: Response, to: express.Response) {
     for (const [k, v] of from.headers.entries())
-      if (k.toLowerCase() !== "content-length") to.setHeader(k, v);
+      if (!isHopByHopHeader(k)) to.setHeader(k, v);
+  }
+
+  function requestHeadersForPassthrough(
+    req: express.Request,
+    account: { accessToken: string; chatgptAccountId?: string },
+  ): Record<string, string> {
+    const forwarded: Record<string, string> = {};
+    const originalHeaders = req.originalHeadersForPassthrough ?? req.headers;
+
+    for (const [rawName, rawValue] of Object.entries(originalHeaders)) {
+      const name = rawName.toLowerCase();
+      if (isHopByHopHeader(name) || name === "authorization") continue;
+      if (Array.isArray(rawValue)) {
+        forwarded[rawName] = rawValue.join(", ");
+      } else if (typeof rawValue === "string") {
+        forwarded[rawName] = rawValue;
+      }
+    }
+
+    forwarded.authorization = `Bearer ${account.accessToken}`;
+    forwarded["OpenAI-Beta"] = "responses=experimental";
+    if (account.chatgptAccountId) {
+      forwarded["chatgpt-account-id"] = account.chatgptAccountId;
+    }
+    return forwarded;
+  }
+
+  function requestBodyForPassthrough(req: express.Request): BodyInit | undefined {
+    const bufferToArrayBuffer = (buffer: Buffer): ArrayBuffer =>
+      buffer.buffer.slice(
+        buffer.byteOffset,
+        buffer.byteOffset + buffer.byteLength,
+      ) as ArrayBuffer;
+
+    if (req.method === "GET" || req.method === "HEAD") return undefined;
+    if (req.rawBody) return bufferToArrayBuffer(req.rawBody);
+    if (req.body === undefined) return undefined;
+    if (Buffer.isBuffer(req.body)) return bufferToArrayBuffer(req.body);
+    if (typeof req.body === "string") return req.body;
+    return JSON.stringify(req.body);
+  }
+
+  function shouldHandleRootPassthrough(req: express.Request): boolean {
+    const path = req.path || "/";
+    if (
+      path === "/" ||
+      path === "/health" ||
+      path === "/favicon.ico" ||
+      path.startsWith("/admin") ||
+      path.startsWith("/assets")
+    ) {
+      return false;
+    }
+
+    const accepts = String(req.header("accept") ?? "").toLowerCase();
+    if (req.method === "GET" && accepts.includes("text/html")) return false;
+    return true;
+  }
+
+  async function passthroughToDefaultChatGpt(
+    req: express.Request,
+    res: express.Response,
+  ) {
+    const startedAt = Date.now();
+    const settings = store.getCachedSettings();
+    const defaultAccountId = settings.defaultPassthroughAccountId;
+    const requestBody = TRACE_INCLUDE_BODY ? req.body : undefined;
+
+    if (!defaultAccountId) {
+      recordTrace({
+        at: Date.now(),
+        route: req.path,
+        status: 503,
+        stream: false,
+        latencyMs: Date.now() - startedAt,
+        requestBody,
+        error: "default passthrough account not configured",
+      });
+      return res
+        .status(503)
+        .json({ error: "default passthrough account not configured" });
+    }
+
+    let selected = store
+      .getCachedAccounts()
+      .find((account) => account.id === defaultAccountId);
+    if (!selected || normalizeProvider(selected) !== "openai" || !selected.enabled) {
+      recordTrace({
+        at: Date.now(),
+        route: req.path,
+        accountId: defaultAccountId,
+        accountEmail: selected?.email,
+        status: 503,
+        stream: false,
+        latencyMs: Date.now() - startedAt,
+        requestBody,
+        error: "default passthrough account unavailable",
+      });
+      return res
+        .status(503)
+        .json({ error: "default passthrough account unavailable" });
+    }
+
+    try {
+      selected = await ensureValidToken(selected, oauthConfig);
+      await store.upsertAccount(selected);
+
+      const upstream = await fetch(`${trimTrailingSlash(openaiBaseUrl)}${req.originalUrl}`, {
+        method: req.method,
+        headers: requestHeadersForPassthrough(req, selected),
+        body: requestBodyForPassthrough(req),
+      });
+
+      res.status(upstream.status);
+      setForwardHeaders(upstream, res);
+
+      if (upstream.body) {
+        const reader = upstream.body.getReader();
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          res.write(Buffer.from(value));
+        }
+        res.end();
+      } else {
+        res.end();
+      }
+
+      recordTrace({
+        at: Date.now(),
+        route: req.path,
+        accountId: selected.id,
+        accountEmail: selected.email,
+        status: upstream.status,
+        stream: Boolean(upstream.body),
+        latencyMs: Date.now() - startedAt,
+        requestBody,
+        upstreamContentType: upstream.headers.get("content-type") ?? undefined,
+      });
+    } catch (err: any) {
+      const msg = err?.message ?? String(err);
+      rememberError(selected, msg);
+      await store.upsertAccount(selected);
+      recordTrace({
+        at: Date.now(),
+        route: req.path,
+        accountId: selected.id,
+        accountEmail: selected.email,
+        status: 599,
+        stream: false,
+        latencyMs: Date.now() - startedAt,
+        requestBody,
+        error: msg,
+      });
+      if (!res.headersSent) {
+        res.status(502).json({ error: msg });
+      } else {
+        res.end();
+      }
+    }
   }
 
   router.all("/chat/completions", rejectNonPost("/v1/chat/completions"));
@@ -2503,6 +2680,14 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         },
       });
     res.json(toOpenAiModelShape(model));
+  });
+
+  router.all("*", (req, res, next) => {
+    if (req.baseUrl !== "/v1" && !shouldHandleRootPassthrough(req)) {
+      return next();
+    }
+    res.locals._multivibeTraced = true;
+    passthroughToDefaultChatGpt(req, res).catch(next);
   });
 
   return router;

@@ -1,4 +1,4 @@
-import type { Account, TraceStats } from "../../types";
+import type { Account, StoreSettings, TraceStats } from "../../types";
 import React, { useEffect, useState } from "react";
 import { fmt, maskEmail, maskId } from "../../lib/ui";
 
@@ -8,12 +8,14 @@ import { createPortal } from "react-dom";
 type Props = {
   traceStats: TraceStats;
   accounts: Account[];
+  settings: StoreSettings;
   sanitized: boolean;
   patch: (id: string, body: any) => Promise<void>;
   del: (id: string) => Promise<void>;
   unblock: (id: string) => Promise<void>;
   refreshUsage: (id: string) => Promise<void>;
   createAccount: (body: any) => Promise<void>;
+  patchSettings: (body: Partial<StoreSettings>) => Promise<void>;
   startOAuth: (email: string, accountId?: string) => Promise<any>;
   completeOAuth: (flowId: string, input: string) => Promise<any>;
   oauthRedirectUri: string;
@@ -78,12 +80,14 @@ export function AccountsTab(props: Props) {
   const {
     traceStats,
     accounts,
+    settings,
     sanitized,
     patch,
     del,
     unblock,
     refreshUsage,
     createAccount,
+    patchSettings,
     startOAuth,
     completeOAuth,
     oauthRedirectUri,
@@ -434,6 +438,12 @@ export function AccountsTab(props: Props) {
   const openAiCount = accounts.filter(
     (account) => (account.provider ?? "openai") === "openai",
   ).length;
+  const passthroughAccounts = accounts.filter(
+    (account) => (account.provider ?? "openai") === "openai" && account.enabled,
+  );
+  const selectedPassthroughAccount = accounts.find(
+    (account) => account.id === settings.defaultPassthroughAccountId,
+  );
   const openAiCompatibleCount = accounts.filter(
     (account) => account.provider === "openai-compatible",
   ).length;
@@ -491,6 +501,61 @@ export function AccountsTab(props: Props) {
           value={traceStats.models[0]?.model ?? "-"}
           detail="Highest volume in the selected range"
         />
+      </section>
+
+      <section className="panel">
+        <div className="section-split-header">
+          <div>
+            <h2>Default passthrough</h2>
+            <p className="muted">
+              Non-completions API routes are forwarded through this OpenAI account.
+            </p>
+          </div>
+          <label className="compact-field">
+            Account
+            <select
+              value={settings.defaultPassthroughAccountId ?? ""}
+              disabled={!passthroughAccounts.length}
+              onChange={(e) =>
+                void patchSettings({
+                  defaultPassthroughAccountId: e.target.value || undefined,
+                })
+              }
+            >
+              <option value="">
+                {passthroughAccounts.length
+                  ? "No default selected"
+                  : "No enabled OpenAI account"}
+              </option>
+              {passthroughAccounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {sanitized
+                    ? maskEmail(account.email)
+                    : (account.email ?? account.id)}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="state-stack">
+          {settings.defaultPassthroughAccountId ? (
+            selectedPassthroughAccount &&
+            (selectedPassthroughAccount.provider ?? "openai") === "openai" &&
+            selectedPassthroughAccount.enabled ? (
+              <span className="badge badge-live">
+                Active: {sanitized
+                  ? maskEmail(selectedPassthroughAccount.email)
+                  : (selectedPassthroughAccount.email ?? selectedPassthroughAccount.id)}
+              </span>
+            ) : (
+              <span className="badge badge-warn">
+                Selected passthrough account is unavailable
+              </span>
+            )
+          ) : (
+            <span className="badge badge-warn">No default account selected</span>
+          )}
+        </div>
       </section>
 
       <section className="panel">

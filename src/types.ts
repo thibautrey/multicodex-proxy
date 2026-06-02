@@ -55,9 +55,14 @@ export type ModelAlias = {
   description?: string;
 };
 
+export type StoreSettings = {
+  defaultPassthroughAccountId?: string;
+};
+
 export type StoreFile = {
   accounts: Account[];
   modelAliases?: ModelAlias[];
+  settings?: StoreSettings;
 };
 
 export type OAuthFlowState = {

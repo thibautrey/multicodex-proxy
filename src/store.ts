@@ -6,11 +6,12 @@ import type {
   ModelAlias,
   OAuthFlowState,
   OAuthStateFile,
+  StoreSettings,
   StoreFile,
 } from "./types.js";
 import { ACCOUNT_FLUSH_INTERVAL_MS } from "./config.js";
 
-const DEFAULT_FILE: StoreFile = { accounts: [], modelAliases: [] };
+const DEFAULT_FILE: StoreFile = { accounts: [], modelAliases: [], settings: {} };
 const DEFAULT_OAUTH_FILE: OAuthStateFile = { states: [] };
 
 async function ensureFile(filePath: string, seed: object) {
@@ -41,6 +42,7 @@ export async function cleanupOrphanedTmpFiles(dataDir: string): Promise<void> {
 export class AccountStore {
   private inMemoryAccounts: Account[] = [];
   private inMemoryModelAliases: ModelAlias[] = [];
+  private inMemorySettings: StoreSettings = {};
   private dirty = false;
   private flushTimer: NodeJS.Timeout | null = null;
 
@@ -58,6 +60,10 @@ export class AccountStore {
     this.inMemoryModelAliases = Array.isArray(data.modelAliases)
       ? data.modelAliases
       : [];
+    this.inMemorySettings =
+      data.settings && typeof data.settings === "object"
+        ? { ...data.settings }
+        : {};
     this.dirty = false;
   }
 
@@ -74,6 +80,7 @@ export class AccountStore {
     await writeJsonAtomic(this.filePath, {
       accounts: this.inMemoryAccounts,
       modelAliases: this.inMemoryModelAliases,
+      settings: this.inMemorySettings,
     });
     this.dirty = false;
     if (this.flushTimer) {
@@ -88,6 +95,28 @@ export class AccountStore {
 
   getCachedModelAliases(): ModelAlias[] {
     return this.inMemoryModelAliases.map((a) => ({ ...a, targets: [...a.targets] }));
+  }
+
+  getCachedSettings(): StoreSettings {
+    return { ...this.inMemorySettings };
+  }
+
+  async getSettings(): Promise<StoreSettings> {
+    return this.getCachedSettings();
+  }
+
+  async patchSettings(patch: Partial<StoreSettings>): Promise<StoreSettings> {
+    this.inMemorySettings = {
+      ...this.inMemorySettings,
+      ...patch,
+    };
+    if (!this.inMemorySettings.defaultPassthroughAccountId) {
+      delete this.inMemorySettings.defaultPassthroughAccountId;
+    }
+    this.dirty = true;
+    this.scheduleFlush();
+    await this.flushIfDirty();
+    return this.getCachedSettings();
   }
 
   markAccountModified(accountId: string, account: Account) {
