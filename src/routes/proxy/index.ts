@@ -2535,6 +2535,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     res: express.Response,
   ) {
     const startedAt = Date.now();
+    const traceRoute = req.originalUrl || req.path;
     const settings = store.getCachedSettings();
     const defaultAccountId = settings.defaultPassthroughAccountId;
     const requestBody = TRACE_INCLUDE_BODY ? req.body : undefined;
@@ -2542,7 +2543,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     if (!defaultAccountId) {
       recordTrace({
         at: Date.now(),
-        route: req.path,
+        route: traceRoute,
         status: 503,
         stream: false,
         latencyMs: Date.now() - startedAt,
@@ -2560,7 +2561,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     if (!selected || normalizeProvider(selected) !== "openai" || !selected.enabled) {
       recordTrace({
         at: Date.now(),
-        route: req.path,
+        route: traceRoute,
         accountId: defaultAccountId,
         accountEmail: selected?.email,
         status: 503,
@@ -2601,7 +2602,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
 
       recordTrace({
         at: Date.now(),
-        route: req.path,
+        route: traceRoute,
         accountId: selected.id,
         accountEmail: selected.email,
         status: upstream.status,
@@ -2616,7 +2617,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       await store.upsertAccount(selected);
       recordTrace({
         at: Date.now(),
-        route: req.path,
+        route: traceRoute,
         accountId: selected.id,
         accountEmail: selected.email,
         status: 599,
