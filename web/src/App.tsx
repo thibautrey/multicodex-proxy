@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import "./styles.css";
 import { estimateCostUsd } from "./model-pricing";
 import { api, tokenDefault } from "./lib/api";
@@ -24,6 +24,11 @@ import { OverviewTab } from "./components/tabs/OverviewTab";
 import { PlaygroundTab } from "./components/tabs/PlaygroundTab";
 import { TracingTab } from "./components/tabs/TracingTab";
 import { AliasesTab } from "./components/tabs/AliasesTab";
+import {
+  initialThemeMode,
+  ThemeSwitcher,
+  type ThemeMode,
+} from "./components/ui/ThemeSwitcher";
 
 const q = new URLSearchParams(window.location.search);
 const initialTab = (q.get("tab") as Tab) || "overview";
@@ -35,7 +40,6 @@ const TAB_ITEMS: Array<{ id: Tab; label: string }> = [
   { id: "playground", label: "Playground" },
   { id: "docs", label: "Docs" },
 ];
-
 function activeModelBlockCount(account: Account) {
   return Object.values(account.state?.modelBlocks ?? {}).filter(
     (block) => block.until > Date.now(),
@@ -53,6 +57,7 @@ export default function App() {
   const [aliases, setAliases] = useState<ModelAlias[]>([]);
   const [settings, setSettings] = useState<StoreSettings>({});
   const [adminToken, setAdminToken] = useState(localStorage.getItem("adminToken") ?? tokenDefault);
+  const [themeMode, setThemeMode] = useState<ThemeMode>(initialThemeMode);
   const [storageInfo, setStorageInfo] = useState<any>(null);
   const [oauthRedirectUri, setOauthRedirectUri] = useState("");
   const [chatPrompt, setChatPrompt] = useState("Give me a one-line hello");
@@ -70,6 +75,11 @@ export default function App() {
     const params = new URLSearchParams(locationSearch);
     return params.get("sanitized") === "1" || params.get("safe") === "1";
   }, [locationSearch]);
+
+  useLayoutEffect(() => {
+    document.documentElement.dataset.theme = themeMode;
+    localStorage.setItem("themeMode", themeMode);
+  }, [themeMode]);
 
   const stats = useMemo(
     () => ({
@@ -488,6 +498,7 @@ export default function App() {
             <p className="muted">Quota-aware, multi-provider router with OAuth onboarding and tracing.</p>
           </div>
           <div className="inline wrap topbar-actions">
+            <ThemeSwitcher value={themeMode} onChange={setThemeMode} />
             <span className={sanitized ? "badge badge-live" : "badge"}>
               {sanitized ? "Sanitized" : "Live"}
             </span>
