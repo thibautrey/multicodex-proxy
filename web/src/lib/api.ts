@@ -1,15 +1,23 @@
-export const tokenDefault = localStorage.getItem("adminToken") ?? "change-me";
+export class ApiError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
 
 export async function api(path: string, init?: RequestInit) {
   const res = await fetch(path, {
     ...init,
+    credentials: "same-origin",
     headers: {
       "content-type": "application/json",
-      "x-admin-token": localStorage.getItem("adminToken") ?? tokenDefault,
       ...(init?.headers ?? {}),
     },
   });
   const txt = await res.text();
-  if (!res.ok) throw new Error(txt || `HTTP ${res.status}`);
+  if (!res.ok) throw new ApiError(res.status, txt || `HTTP ${res.status}`);
   return txt ? JSON.parse(txt) : {};
 }

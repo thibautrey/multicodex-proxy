@@ -119,6 +119,22 @@ body,
   margin: 0 auto;
 }
 
+.auth-shell {
+  display: grid;
+  gap: 16px;
+  width: min(420px, 100%);
+  margin: 12vh auto 0;
+}
+
+.auth-shell h1 {
+  font-size: 2.35rem;
+}
+
+.auth-error {
+  padding: 12px 14px;
+  border-radius: 14px;
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
