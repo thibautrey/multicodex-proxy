@@ -16,6 +16,8 @@
   --accent: #dc8b3f;
   --danger: #c54b4b;
   --warning: #b86f1a;
+  --active-bg: #10211f;
+  --active-fg: #ffffff;
   --shadow: 0 24px 60px rgba(10, 28, 24, 0.12);
   --shadow-soft: 0 12px 30px rgba(10, 28, 24, 0.08);
   --error-bg: rgba(197, 75, 75, 0.1);
@@ -41,6 +43,8 @@
     --accent: #e5a86d;
     --danger: #ff7a7a;
     --warning: #f0b565;
+    --active-bg: #4ac8bc;
+    --active-fg: #061211;
     --shadow: 0 24px 60px rgba(0, 0, 0, 0.4);
     --shadow-soft: 0 12px 30px rgba(0, 0, 0, 0.28);
     --error-bg: rgba(255, 122, 122, 0.14);
@@ -447,9 +451,9 @@ button:disabled {
 }
 
 .tab.active {
-  background: var(--text);
-  border-color: var(--text);
-  color: var(--surface);
+  background: var(--active-bg);
+  border-color: var(--active-bg);
+  color: var(--active-fg);
 }
 
 .section-header,
@@ -1042,7 +1046,8 @@ details summary {
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: 4px;
-  background: #fff;
+  background: var(--panel-strong);
+  color: var(--text);
   list-style: none;
   margin: 0;
   padding: 4px 0;
