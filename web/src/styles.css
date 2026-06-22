@@ -1,4 +1,5 @@
 :root {
+  color-scheme: light;
   --bg: #edf1f0;
   --bg-strong: #d7e3de;
   --panel: rgba(255, 255, 255, 0.88);
@@ -23,7 +24,8 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
     --bg: #08100f;
     --bg-strong: #102120;
     --panel: rgba(11, 20, 19, 0.84);
@@ -46,6 +48,31 @@
     --error-bg: rgba(255, 122, 122, 0.14);
     --error-border: rgba(255, 122, 122, 0.24);
   }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #08100f;
+  --bg-strong: #102120;
+  --panel: rgba(11, 20, 19, 0.84);
+  --panel-strong: rgba(16, 28, 27, 0.92);
+  --surface: rgba(255, 255, 255, 0.04);
+  --surface-muted: rgba(255, 255, 255, 0.03);
+  --surface-accent: rgba(22, 115, 108, 0.14);
+  --line: rgba(222, 238, 235, 0.09);
+  --line-strong: rgba(222, 238, 235, 0.16);
+  --text: #f3f7f5;
+  --muted: #92a8a3;
+  --muted-strong: #ced8d4;
+  --primary: #4ac8bc;
+  --primary-strong: #2d9d92;
+  --accent: #e5a86d;
+  --danger: #ff7a7a;
+  --warning: #f0b565;
+  --shadow: 0 24px 60px rgba(0, 0, 0, 0.4);
+  --shadow-soft: 0 12px 30px rgba(0, 0, 0, 0.28);
+  --error-bg: rgba(255, 122, 122, 0.14);
+  --error-border: rgba(255, 122, 122, 0.24);
 }
 
 * {
@@ -268,6 +295,58 @@ p {
 
 .topbar-actions input {
   width: min(320px, 100%);
+}
+
+.theme-switcher {
+  display: inline-grid;
+  grid-template-columns: repeat(3, 38px);
+  align-items: center;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+.theme-option {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  width: 38px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--muted-strong);
+  box-shadow: none;
+}
+
+.theme-option svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.theme-option svg circle {
+  fill: currentColor;
+  stroke: none;
+}
+
+.theme-option:hover {
+  background: var(--surface-muted);
+  box-shadow: none;
+  transform: none;
+}
+
+.theme-option.active {
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--bg);
 }
 
 .badge {
