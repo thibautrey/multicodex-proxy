@@ -113,10 +113,14 @@ Because this is often deployed remotely (Unraid/VPS), onboarding uses a manual r
 
 1. Open dashboard
 2. For OpenAI accounts, enter the account email
-3. Click **Start OAuth**
+3. Choose **Browser callback** and click **Start OAuth**
 4. Complete login in browser
 5. Copy the full redirect URL shown after the callback completes
 6. Paste that URL in the dashboard and click **Complete OAuth**
+
+For headless or remote setups, choose **Device code** instead. The dashboard opens
+the verification page, shows a one-time code, and completes automatically after
+you approve the login.
 
 Mistral accounts still use manual token entry in the dashboard.
 OpenAI-compatible accounts use manual `baseUrl` + API key entry in the dashboard.
@@ -284,6 +288,10 @@ Model alias admin endpoints:
 | `OAUTH_CLIENT_ID`               | `app_EMoamEEZ73f0CkXaXp7hrann`            | OpenAI OAuth client id                                              |
 | `OAUTH_AUTHORIZATION_URL`       | `https://auth.openai.com/oauth/authorize` | OAuth authorize endpoint                                            |
 | `OAUTH_TOKEN_URL`               | `https://auth.openai.com/oauth/token`     | OAuth token endpoint                                                |
+| `OAUTH_DEVICE_AUTHORIZATION_URL`| `https://auth.openai.com/api/accounts/deviceauth/usercode` | OAuth device-code start endpoint                     |
+| `OAUTH_DEVICE_TOKEN_URL`        | `https://auth.openai.com/api/accounts/deviceauth/token` | OAuth device-code polling endpoint                         |
+| `OAUTH_DEVICE_VERIFICATION_URL` | `https://auth.openai.com/codex/device`    | OAuth device-code verification page                                 |
+| `OAUTH_DEVICE_REDIRECT_URI`     | `https://auth.openai.com/deviceauth/callback` | OAuth device-code token exchange redirect URI                 |
 | `OAUTH_SCOPE`                   | `openid profile email offline_access`     | OAuth scope                                                         |
 | `OAUTH_REDIRECT_URI`            | `http://localhost:1455/auth/callback`     | Redirect URI                                                        |
 | `MISTRAL_COMPACT_UPSTREAM_PATH` | `/v1/responses/compact`                   | Mistral upstream path for compact responses                         |

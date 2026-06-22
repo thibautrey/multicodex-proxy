@@ -70,11 +70,17 @@ export type OAuthFlowState = {
   email: string;
   codeVerifier: string;
   createdAt: number;
+  method?: "browser" | "device";
   targetAccountId?: string;
   status: "pending" | "success" | "error";
   error?: string;
   completedAt?: number;
   accountId?: string;
+  deviceAuthId?: string;
+  userCode?: string;
+  verificationUrl?: string;
+  intervalSeconds?: number;
+  expiresAt?: number;
 };
 
 export type OAuthStateFile = {

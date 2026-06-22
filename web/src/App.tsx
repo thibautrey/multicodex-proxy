@@ -351,11 +351,24 @@ export default function App() {
     await loadBase();
   };
 
-  const startOAuth = async (email: string, accountId?: string) => {
+  const startOAuth = async (
+    email: string,
+    accountId?: string,
+    method: "browser" | "device" = "browser",
+  ) => {
     return api("/admin/oauth/start", {
       method: "POST",
-      body: JSON.stringify({ email, accountId }),
+      body: JSON.stringify({ email, accountId, method }),
     });
+  };
+
+  const pollDeviceOAuth = async (flowId: string) => {
+    const result = await api("/admin/oauth/device/poll", {
+      method: "POST",
+      body: JSON.stringify({ flowId }),
+    });
+    if (result?.status === "success") await loadBase();
+    return result;
   };
 
   const completeOAuth = async (flowId: string, input: string) => {
@@ -540,6 +553,7 @@ export default function App() {
             createAccount={createAccount}
             patchSettings={patchSettings}
             startOAuth={startOAuth}
+            pollDeviceOAuth={pollDeviceOAuth}
             completeOAuth={completeOAuth}
             oauthRedirectUri={oauthRedirectUri}
           />
