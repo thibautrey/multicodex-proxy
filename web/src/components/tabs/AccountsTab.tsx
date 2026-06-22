@@ -1,5 +1,5 @@
 import type { Account, StoreSettings, TraceStats } from "../../types";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { fmt, maskEmail, maskId } from "../../lib/ui";
 
 import { Metric } from "../Metric";
@@ -16,12 +16,18 @@ type Props = {
   refreshUsage: (id: string) => Promise<void>;
   createAccount: (body: any) => Promise<void>;
   patchSettings: (body: Partial<StoreSettings>) => Promise<void>;
-  startOAuth: (email: string, accountId?: string) => Promise<any>;
+  startOAuth: (
+    email: string,
+    accountId?: string,
+    method?: OAuthMethod,
+  ) => Promise<any>;
+  pollDeviceOAuth: (flowId: string) => Promise<any>;
   completeOAuth: (flowId: string, input: string) => Promise<any>;
   oauthRedirectUri: string;
 };
 
 type AccountProvider = "openai" | "openai-compatible" | "mistral" | "zai";
+type OAuthMethod = "browser" | "device";
 
 type EditAccountState = {
   id: string;
@@ -41,6 +47,11 @@ type OAuthDialogState = {
   email: string;
   authorizeUrl: string;
   expectedRedirectUri: string;
+  method: OAuthMethod;
+  userCode?: string;
+  verificationUrl?: string;
+  intervalSeconds?: number;
+  expiresAt?: number;
   callbackInput: string;
   isSubmitting: boolean;
   mode: "create" | "reauth";
@@ -89,6 +100,7 @@ export function AccountsTab(props: Props) {
     createAccount,
     patchSettings,
     startOAuth,
+    pollDeviceOAuth,
     completeOAuth,
     oauthRedirectUri,
   } = props;
@@ -102,6 +114,10 @@ export function AccountsTab(props: Props) {
   const [manualUpstreamMode, setManualUpstreamMode] = useState<
     "" | "responses" | "chat/completions"
   >("");
+  const [manualOAuthMethod, setManualOAuthMethod] =
+    useState<OAuthMethod>("browser");
+  const [editOAuthMethod, setEditOAuthMethod] =
+    useState<OAuthMethod>("browser");
   const [manualPriority, setManualPriority] = useState("0");
   const [manualEnabled, setManualEnabled] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -111,6 +127,7 @@ export function AccountsTab(props: Props) {
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [oauthBusyId, setOauthBusyId] = useState<string | null>(null);
   const [oauthDialog, setOauthDialog] = useState<OAuthDialogState | null>(null);
+  const devicePollInFlight = useRef(false);
   const [openMenu, setOpenMenu] = useState<{
     accountId: string;
     top: number;
@@ -175,6 +192,79 @@ export function AccountsTab(props: Props) {
     return () => window.removeEventListener("message", onMessage);
   }, [oauthDialog]);
 
+  useEffect(() => {
+    if (!oauthDialog || oauthDialog.method !== "device") return;
+
+    let cancelled = false;
+    const delayMs = Math.max(1, oauthDialog.intervalSeconds ?? 5) * 1000;
+    const timer = window.setTimeout(async () => {
+      if (cancelled) return;
+      if (devicePollInFlight.current) return;
+      devicePollInFlight.current = true;
+      try {
+        console.log("[oauth-device] polling approval", {
+          flowId: oauthDialog.flowId,
+          intervalSeconds: oauthDialog.intervalSeconds ?? 5,
+        });
+        const result = await pollDeviceOAuth(oauthDialog.flowId);
+        console.log("[oauth-device] poll result", {
+          flowId: oauthDialog.flowId,
+          status: result?.status,
+          hasAccount: Boolean(result?.account),
+        });
+        if (cancelled) return;
+        if (result?.status === "success") {
+          const accountId = String(
+            result?.account?.id ?? oauthDialog.accountId ?? "",
+          ).trim();
+          if (
+            oauthDialog.mode === "create" &&
+            accountId &&
+            (oauthDialog.pendingPriority !== 0 ||
+              oauthDialog.pendingEnabled === false)
+          ) {
+            await patch(accountId, {
+              priority: oauthDialog.pendingPriority ?? 0,
+              enabled: oauthDialog.pendingEnabled ?? true,
+            });
+          }
+          closeOauthDialog();
+          closeModal();
+        } else {
+          setOauthDialog((current) =>
+            current
+              ? {
+                  ...current,
+                  isSubmitting: false,
+                  intervalSeconds:
+                    Number(result?.intervalSeconds) ||
+                    current.intervalSeconds ||
+                    5,
+                }
+              : current,
+          );
+        }
+      } catch (err) {
+        console.error("[oauth-device] poll failed", {
+          flowId: oauthDialog.flowId,
+          error: err,
+        });
+        if (!cancelled) {
+          setOauthDialog((current) =>
+            current ? { ...current, isSubmitting: false } : current,
+          );
+        }
+      } finally {
+        devicePollInFlight.current = false;
+      }
+    }, delayMs);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [oauthDialog, pollDeviceOAuth, patch]);
+
   const closeModal = () => {
     setShowAddAccount(false);
     setProvider("openai");
@@ -184,6 +274,7 @@ export function AccountsTab(props: Props) {
     setManualChatgptAccountId("");
     setManualBaseUrl("");
     setManualUpstreamMode("");
+    setManualOAuthMethod("browser");
     setManualPriority("0");
     setManualEnabled(true);
     setIsSubmitting(false);
@@ -192,6 +283,7 @@ export function AccountsTab(props: Props) {
 
   const closeEditModal = () => {
     setEditingAccount(null);
+    setEditOAuthMethod("browser");
     setIsSavingEdit(false);
   };
 
@@ -200,42 +292,83 @@ export function AccountsTab(props: Props) {
     sessionStorage.removeItem("multivibe-oauth-pending");
   };
 
+  const openOAuthDialog = async (options: {
+    email: string;
+    method: OAuthMethod;
+    mode: "create" | "reauth";
+    accountId?: string;
+    pendingPriority?: number;
+    pendingEnabled?: boolean;
+  }) => {
+    const result = await startOAuth(
+      options.email,
+      options.accountId,
+      options.method,
+    );
+    const flowId = result?.flowId as string | undefined;
+    if (!flowId) throw new Error("Missing OAuth flow details from start response");
+
+    const authorizeUrl = String(result?.authorizeUrl ?? "");
+    const expectedRedirectUri =
+      (result?.expectedRedirectUri as string | undefined) || oauthRedirectUri;
+    const verificationUrl = String(result?.verificationUrl ?? "");
+    const userCode = String(result?.userCode ?? "");
+
+    if (options.method === "browser" && !authorizeUrl) {
+      throw new Error("Missing browser OAuth authorize URL from start response");
+    }
+    if (options.method === "device" && (!verificationUrl || !userCode)) {
+      throw new Error("Missing device code details from start response");
+    }
+
+    setOauthDialog({
+      flowId,
+      email: options.email,
+      authorizeUrl,
+      expectedRedirectUri,
+      method: options.method,
+      userCode,
+      verificationUrl,
+      intervalSeconds: Number(result?.intervalSeconds) || 5,
+      expiresAt: Number(result?.expiresAt) || undefined,
+      callbackInput: "",
+      isSubmitting: false,
+      mode: options.mode,
+      accountId: options.accountId,
+      pendingPriority: options.pendingPriority,
+      pendingEnabled: options.pendingEnabled,
+    });
+    sessionStorage.setItem(
+      "multivibe-oauth-pending",
+      JSON.stringify({
+        flowId,
+        mode: options.mode,
+        method: options.method,
+        accountId: options.accountId,
+        pendingPriority: options.pendingPriority,
+        pendingEnabled: options.pendingEnabled,
+        timestamp: Date.now(),
+      }),
+    );
+    if (options.method === "browser") {
+      window.open(authorizeUrl, "_blank", "noreferrer");
+    } else {
+      window.open(verificationUrl, "_blank", "noreferrer");
+    }
+  };
+
   const submitManualAccount = async () => {
     if (isOAuthProvider(provider)) {
       if (!manualEmail.trim()) return;
       setIsSubmitting(true);
       try {
-        const result = await startOAuth(manualEmail.trim());
-        const authorizeUrl = result?.authorizeUrl as string | undefined;
-        const flowId = result?.flowId as string | undefined;
-        const expectedRedirectUri =
-          (result?.expectedRedirectUri as string | undefined) ||
-          oauthRedirectUri;
-        if (!authorizeUrl || !flowId) {
-          throw new Error("Missing OAuth flow details from start response");
-        }
-        setOauthDialog({
-          flowId,
+        await openOAuthDialog({
           email: manualEmail.trim(),
-          authorizeUrl,
-          expectedRedirectUri,
-          callbackInput: "",
-          isSubmitting: false,
+          method: manualOAuthMethod,
           mode: "create",
           pendingPriority: Number(manualPriority) || 0,
           pendingEnabled: manualEnabled,
         });
-        sessionStorage.setItem(
-          "multivibe-oauth-pending",
-          JSON.stringify({
-            flowId,
-            mode: "create",
-            pendingPriority: Number(manualPriority) || 0,
-            pendingEnabled: manualEnabled,
-            timestamp: Date.now(),
-          }),
-        );
-        window.open(authorizeUrl, "_blank", "noreferrer");
       } finally {
         setIsSubmitting(false);
       }
@@ -293,39 +426,13 @@ export function AccountsTab(props: Props) {
       if (!editingAccount.email.trim()) return;
       setIsSavingEdit(true);
       try {
-        const result = await startOAuth(
-          editingAccount.email.trim(),
-          editingAccount.id,
-        );
-        const authorizeUrl = result?.authorizeUrl as string | undefined;
-        const flowId = result?.flowId as string | undefined;
-        const expectedRedirectUri =
-          (result?.expectedRedirectUri as string | undefined) ||
-          oauthRedirectUri;
-        if (!authorizeUrl || !flowId) {
-          throw new Error("Missing OAuth flow details from start response");
-        }
         closeEditModal();
-        setOauthDialog({
-          flowId,
+        await openOAuthDialog({
           email: editingAccount.email.trim(),
-          authorizeUrl,
-          expectedRedirectUri,
-          callbackInput: "",
-          isSubmitting: false,
+          method: editOAuthMethod,
           mode: "reauth",
           accountId: editingAccount.id,
         });
-        sessionStorage.setItem(
-          "multivibe-oauth-pending",
-          JSON.stringify({
-            flowId,
-            mode: "reauth",
-            accountId: editingAccount.id,
-            timestamp: Date.now(),
-          }),
-        );
-        window.open(authorizeUrl, "_blank", "noreferrer");
       } finally {
         setIsSavingEdit(false);
       }
@@ -402,34 +509,34 @@ export function AccountsTab(props: Props) {
     }
     setOauthBusyId(account.id);
     try {
-      const result = await startOAuth(account.email.trim(), account.id);
-      const authorizeUrl = result?.authorizeUrl as string | undefined;
-      const flowId = result?.flowId as string | undefined;
-      const expectedRedirectUri =
-        (result?.expectedRedirectUri as string | undefined) || oauthRedirectUri;
-      if (!authorizeUrl || !flowId) {
-        throw new Error("Missing OAuth flow details from OAuth start response");
-      }
-      setOauthDialog({
-        flowId,
+      await openOAuthDialog({
         email: account.email.trim(),
-        authorizeUrl,
-        expectedRedirectUri,
-        callbackInput: "",
-        isSubmitting: false,
+        method: "browser",
         mode: "reauth",
         accountId: account.id,
       });
-      sessionStorage.setItem(
-        "multivibe-oauth-pending",
-        JSON.stringify({
-          flowId,
-          mode: "reauth",
-          accountId: account.id,
-          timestamp: Date.now(),
-        }),
+    } finally {
+      setOauthBusyId(null);
+    }
+  };
+
+  const reauthAccountWithDeviceCode = async (account: Account) => {
+    setOpenMenu(null);
+    if ((account.provider ?? "openai") !== "openai") return;
+    if (!account.email?.trim()) {
+      window.alert(
+        "This OpenAI account has no email, so reauth cannot be started.",
       );
-      window.open(authorizeUrl, "_blank", "noreferrer");
+      return;
+    }
+    setOauthBusyId(account.id);
+    try {
+      await openOAuthDialog({
+        email: account.email.trim(),
+        method: "device",
+        mode: "reauth",
+        accountId: account.id,
+      });
     } finally {
       setOauthBusyId(null);
     }
@@ -722,13 +829,26 @@ export function AccountsTab(props: Props) {
                               Refresh usage
                             </button>
                             {a.provider === "openai" ? (
-                              <button
-                                className="account-action-item"
-                                disabled={oauthBusyId === a.id}
-                                onClick={() => void reauthAccount(a)}
-                              >
-                                {oauthBusyId === a.id ? "Opening..." : "Reauth"}
-                              </button>
+                              <>
+                                <button
+                                  className="account-action-item"
+                                  disabled={oauthBusyId === a.id}
+                                  onClick={() => void reauthAccount(a)}
+                                >
+                                  {oauthBusyId === a.id
+                                    ? "Opening..."
+                                    : "Reauth"}
+                                </button>
+                                <button
+                                  className="account-action-item"
+                                  disabled={oauthBusyId === a.id}
+                                  onClick={() =>
+                                    void reauthAccountWithDeviceCode(a)
+                                  }
+                                >
+                                  Device-code reauth
+                                </button>
+                              </>
                             ) : (
                               <button
                                 className="account-action-item"
@@ -800,6 +920,20 @@ export function AccountsTab(props: Props) {
                   placeholder="account@email.com"
                 />
               </label>
+              {isOAuthProvider(provider) && (
+                <label>
+                  OpenAI login method
+                  <select
+                    value={manualOAuthMethod}
+                    onChange={(e) =>
+                      setManualOAuthMethod(e.target.value as OAuthMethod)
+                    }
+                  >
+                    <option value="browser">Browser callback</option>
+                    <option value="device">Device code</option>
+                  </select>
+                </label>
+              )}
               {provider === "openai-compatible" && (
                 <label>
                   Base URL
@@ -848,9 +982,9 @@ export function AccountsTab(props: Props) {
                 </>
               ) : (
                 <div className="muted">
-                  OpenAI onboarding uses OAuth. Start the flow, complete the
-                  browser callback, then paste the full callback URL here
-                  instead of entering access or refresh tokens manually.
+                  OpenAI onboarding uses OAuth. Browser callback opens the
+                  login page and asks for the callback URL. Device code shows a
+                  one-time code and completes automatically after approval.
                 </div>
               )}
               <label>
@@ -921,6 +1055,20 @@ export function AccountsTab(props: Props) {
                   placeholder="account@email.com"
                 />
               </label>
+              {isOAuthProvider(editingAccount.provider) && (
+                <label>
+                  OpenAI reauth method
+                  <select
+                    value={editOAuthMethod}
+                    onChange={(e) =>
+                      setEditOAuthMethod(e.target.value as OAuthMethod)
+                    }
+                  >
+                    <option value="browser">Browser callback</option>
+                    <option value="device">Device code</option>
+                  </select>
+                </label>
+              )}
               {editingAccount.provider === "openai-compatible" && (
                 <label>
                   Base URL
@@ -1076,49 +1224,87 @@ export function AccountsTab(props: Props) {
                 Email
                 <input value={oauthDialog.email} disabled />
               </label>
-              <label>
-                Redirect URI
-                <input value={oauthDialog.expectedRedirectUri} disabled />
-              </label>
-              <label>
-                Callback URL
-                <textarea
-                  value={oauthDialog.callbackInput}
-                  onChange={(e) =>
-                    setOauthDialog((current) =>
-                      current
-                        ? { ...current, callbackInput: e.target.value }
-                        : current,
-                    )
-                  }
-                  placeholder="Paste the full URL after the browser reaches the callback page"
-                  rows={5}
-                />
-              </label>
+              {oauthDialog.method === "device" ? (
+                <>
+                  <label>
+                    Verification URL
+                    <input value={oauthDialog.verificationUrl ?? ""} disabled />
+                  </label>
+                  <label>
+                    Device code
+                    <input
+                      className="mono"
+                      value={oauthDialog.userCode ?? ""}
+                      disabled
+                    />
+                  </label>
+                </>
+              ) : (
+                <>
+                  <label>
+                    Redirect URI
+                    <input value={oauthDialog.expectedRedirectUri} disabled />
+                  </label>
+                  <label>
+                    Callback URL
+                    <textarea
+                      value={oauthDialog.callbackInput}
+                      onChange={(e) =>
+                        setOauthDialog((current) =>
+                          current
+                            ? { ...current, callbackInput: e.target.value }
+                            : current,
+                        )
+                      }
+                      placeholder="Paste the full URL after the browser reaches the callback page"
+                      rows={5}
+                    />
+                  </label>
+                </>
+              )}
             </div>
             <div className="muted">
-              Complete the OpenAI login in the opened browser tab. When the
-              browser reaches the callback page, copy the full URL and paste it
-              here. Do not paste access or refresh tokens.
+              {oauthDialog.method === "device"
+                ? "Open the verification URL, enter the one-time code, and approve the OpenAI login. This dialog will complete automatically after approval. Do not share this code."
+                : "Complete the OpenAI login in the opened browser tab. When the browser reaches the callback page, copy the full URL and paste it here. Do not paste access or refresh tokens."}
             </div>
             <div className="inline wrap">
               <button
                 className="btn"
                 onClick={() =>
-                  window.open(oauthDialog.authorizeUrl, "_blank", "noreferrer")
+                  window.open(
+                    oauthDialog.method === "device"
+                      ? oauthDialog.verificationUrl
+                      : oauthDialog.authorizeUrl,
+                    "_blank",
+                    "noreferrer",
+                  )
                 }
               >
-                Open login page
+                {oauthDialog.method === "device"
+                  ? "Open verification page"
+                  : "Open login page"}
               </button>
-              <button
-                className="btn"
-                disabled={
-                  oauthDialog.isSubmitting || !oauthDialog.callbackInput.trim()
-                }
-                onClick={() => void submitOauthCallback()}
-              >
-                {oauthDialog.isSubmitting ? "Completing..." : "Complete OAuth"}
-              </button>
+              {oauthDialog.method === "browser" ? (
+                <button
+                  className="btn"
+                  disabled={
+                    oauthDialog.isSubmitting ||
+                    !oauthDialog.callbackInput.trim()
+                  }
+                  onClick={() => void submitOauthCallback()}
+                >
+                  {oauthDialog.isSubmitting
+                    ? "Completing..."
+                    : "Complete OAuth"}
+                </button>
+              ) : (
+                <button className="btn" disabled>
+                  {oauthDialog.isSubmitting
+                    ? "Checking..."
+                    : "Waiting for approval"}
+                </button>
+              )}
               <button className="btn ghost" onClick={closeOauthDialog}>
                 Cancel
               </button>
