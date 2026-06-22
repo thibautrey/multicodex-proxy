@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import "./styles.css";
 import { estimateCostUsd } from "./model-pricing";
-import { api, tokenDefault } from "./lib/api";
+import { ApiError, api } from "./lib/api";
 import {
   EMPTY_TRACE_PAGINATION,
   EMPTY_TRACE_STATS,
@@ -24,6 +24,11 @@ import { OverviewTab } from "./components/tabs/OverviewTab";
 import { PlaygroundTab } from "./components/tabs/PlaygroundTab";
 import { TracingTab } from "./components/tabs/TracingTab";
 import { AliasesTab } from "./components/tabs/AliasesTab";
+import {
+  initialThemeMode,
+  ThemeSwitcher,
+  type ThemeMode,
+} from "./components/ui/ThemeSwitcher";
 
 const q = new URLSearchParams(window.location.search);
 const initialTab = (q.get("tab") as Tab) || "overview";
@@ -35,7 +40,6 @@ const TAB_ITEMS: Array<{ id: Tab; label: string }> = [
   { id: "playground", label: "Playground" },
   { id: "docs", label: "Docs" },
 ];
-
 function activeModelBlockCount(account: Account) {
   return Object.values(account.state?.modelBlocks ?? {}).filter(
     (block) => block.until > Date.now(),
@@ -52,7 +56,10 @@ export default function App() {
   const [models, setModels] = useState<ExposedModel[]>([]);
   const [aliases, setAliases] = useState<ModelAlias[]>([]);
   const [settings, setSettings] = useState<StoreSettings>({});
-  const [adminToken, setAdminToken] = useState(localStorage.getItem("adminToken") ?? tokenDefault);
+  const [authenticated, setAuthenticated] = useState<boolean | null>(null);
+  const [loginToken, setLoginToken] = useState("");
+  const [loginBusy, setLoginBusy] = useState(false);
+  const [themeMode, setThemeMode] = useState<ThemeMode>(initialThemeMode);
   const [storageInfo, setStorageInfo] = useState<any>(null);
   const [oauthRedirectUri, setOauthRedirectUri] = useState("");
   const [chatPrompt, setChatPrompt] = useState("Give me a one-line hello");
@@ -70,6 +77,24 @@ export default function App() {
     const params = new URLSearchParams(locationSearch);
     return params.get("sanitized") === "1" || params.get("safe") === "1";
   }, [locationSearch]);
+
+  useEffect(() => {
+    localStorage.removeItem("adminToken");
+  }, []);
+
+  useLayoutEffect(() => {
+    document.documentElement.dataset.theme = themeMode;
+    localStorage.setItem("themeMode", themeMode);
+  }, [themeMode]);
+
+  const handleError = (e: any) => {
+    if (e instanceof ApiError && e.status === 401) {
+      setAuthenticated(false);
+      setError("");
+      return;
+    }
+    setError(e?.message ?? String(e));
+  };
 
   const stats = useMemo(
     () => ({
@@ -216,12 +241,46 @@ export default function App() {
     try {
       setError("");
       await loadBase();
+      setAuthenticated(true);
       if (tab === "tracing") {
         await loadTracing(tracePageRef.current, traceRangeRef.current);
       }
     } catch (e: any) {
-      setError(e?.message ?? String(e));
+      handleError(e);
     }
+  };
+
+  const login = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginBusy(true);
+    try {
+      setError("");
+      await api("/admin/session", {
+        method: "POST",
+        body: JSON.stringify({ token: loginToken }),
+      });
+      setLoginToken("");
+      setAuthenticated(true);
+      await loadBase();
+    } catch (err: any) {
+      setError(err instanceof ApiError && err.status === 401 ? "Invalid admin token." : err?.message ?? String(err));
+      setAuthenticated(false);
+    } finally {
+      setLoginBusy(false);
+    }
+  };
+
+  const logout = async () => {
+    try {
+      await api("/admin/session", { method: "DELETE" });
+    } catch {
+      // Treat logout as local even if the session is already gone.
+    }
+    setAuthenticated(false);
+    setAccounts([]);
+    setTraces([]);
+    setAliases([]);
+    setError("");
   };
 
   useEffect(() => {
@@ -267,9 +326,10 @@ export default function App() {
         setLocationSearch(u.search);
         sessionStorage.removeItem("multivibe-oauth-pending");
         await loadBase();
+        setAuthenticated(true);
         setTab("accounts");
       } catch (e: any) {
-        setError(e?.message ?? String(e));
+        handleError(e);
       }
     };
 
@@ -283,9 +343,15 @@ export default function App() {
     const load = async () => {
       try {
         setError("");
+        const session = await api("/admin/session");
+        if (!session?.authenticated) {
+          setAuthenticated(false);
+          return;
+        }
+        setAuthenticated(true);
         await loadBase();
       } catch (e: any) {
-        setError(e?.message ?? String(e));
+        handleError(e);
       }
     };
     void load();
@@ -298,7 +364,7 @@ export default function App() {
         setError("");
         await loadTracing(tracePageRef.current, traceRangeRef.current);
       } catch (e: any) {
-        setError(e?.message ?? String(e));
+        handleError(e);
       }
     };
     void load();
@@ -307,14 +373,14 @@ export default function App() {
   useEffect(() => {
     if (tab !== "tracing") return;
     const timer = window.setInterval(() => {
-      void loadTracing(tracePagination.page, traceRange).catch((e: any) => setError(e?.message ?? String(e)));
+      void loadTracing(tracePagination.page, traceRange).catch(handleError);
     }, 10_000);
     return () => window.clearInterval(timer);
   }, [tab, tracePagination.page, traceRange]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      void refreshModels().catch((e: any) => setError(e?.message ?? String(e)));
+      void refreshModels().catch(handleError);
     }, 30_000);
     return () => window.clearInterval(timer);
   }, []);
@@ -351,11 +417,24 @@ export default function App() {
     await loadBase();
   };
 
-  const startOAuth = async (email: string, accountId?: string) => {
+  const startOAuth = async (
+    email: string,
+    accountId?: string,
+    method: "browser" | "device" = "browser",
+  ) => {
     return api("/admin/oauth/start", {
       method: "POST",
-      body: JSON.stringify({ email, accountId }),
+      body: JSON.stringify({ email, accountId, method }),
     });
+  };
+
+  const pollDeviceOAuth = async (flowId: string) => {
+    const result = await api("/admin/oauth/device/poll", {
+      method: "POST",
+      body: JSON.stringify({ flowId }),
+    });
+    if (result?.status === "success") await loadBase();
+    return result;
   };
 
   const completeOAuth = async (flowId: string, input: string) => {
@@ -414,7 +493,7 @@ export default function App() {
       setError("");
       await loadTracing(page, traceRange);
     } catch (e: any) {
-      setError(e?.message ?? String(e));
+      handleError(e);
     }
   };
 
@@ -435,7 +514,7 @@ export default function App() {
       setExpandedTrace((res.trace ?? null) as Trace | null);
     } catch (e: any) {
       setExpandedTraceId(null);
-      setError(e?.message ?? String(e));
+      handleError(e);
     } finally {
       setExpandedTraceLoading(false);
     }
@@ -453,12 +532,11 @@ export default function App() {
     try {
       setError("");
       const res = await fetch(path, {
-        headers: {
-          "x-admin-token": localStorage.getItem("adminToken") ?? tokenDefault,
-        },
+        credentials: "same-origin",
       });
       if (!res.ok) {
         const txt = await res.text();
+        if (res.status === 401) throw new ApiError(401, txt || "unauthorized");
         throw new Error(txt || `HTTP ${res.status}`);
       }
       const blob = await res.blob();
@@ -473,11 +551,47 @@ export default function App() {
       link.remove();
       window.URL.revokeObjectURL(url);
     } catch (e: any) {
-      setError(e?.message ?? String(e));
+      handleError(e);
     } finally {
       setTraceExportInProgress(false);
     }
   };
+
+  if (authenticated === null) {
+    return (
+      <div className="page">
+        <div className="auth-shell panel">
+          <h1>MultiVibe</h1>
+          <p className="muted">Checking admin session...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!authenticated) {
+    return (
+      <div className="page">
+        <form className="auth-shell panel" onSubmit={login}>
+          <div>
+            <h1>MultiVibe</h1>
+            <p className="muted">Enter the admin token to unlock the dashboard.</p>
+          </div>
+          <input
+            autoFocus
+            type="password"
+            value={loginToken}
+            onChange={(e) => setLoginToken(e.target.value)}
+            placeholder="Admin token"
+            autoComplete="current-password"
+          />
+          {error && <div className="error auth-error">{error}</div>}
+          <button className="btn" type="submit" disabled={loginBusy || !loginToken.trim()}>
+            {loginBusy ? "Unlocking..." : "Unlock dashboard"}
+          </button>
+        </form>
+      </div>
+    );
+  }
 
   return (
     <div className="page">
@@ -488,17 +602,15 @@ export default function App() {
             <p className="muted">Quota-aware, multi-provider router with OAuth onboarding and tracing.</p>
           </div>
           <div className="inline wrap topbar-actions">
+            <ThemeSwitcher value={themeMode} onChange={setThemeMode} />
             <span className={sanitized ? "badge badge-live" : "badge"}>
               {sanitized ? "Sanitized" : "Live"}
             </span>
-            <input
-              value={adminToken}
-              onChange={(e) => setAdminToken(e.target.value)}
-              onBlur={() => localStorage.setItem("adminToken", adminToken)}
-              placeholder="Admin token"
-            />
             <button className="btn secondary" onClick={() => void refreshData()}>
               Refresh data
+            </button>
+            <button className="btn ghost" onClick={() => void logout()}>
+              Lock
             </button>
           </div>
         </header>
@@ -540,6 +652,7 @@ export default function App() {
             createAccount={createAccount}
             patchSettings={patchSettings}
             startOAuth={startOAuth}
+            pollDeviceOAuth={pollDeviceOAuth}
             completeOAuth={completeOAuth}
             oauthRedirectUri={oauthRedirectUri}
           />

@@ -2,6 +2,7 @@ import express from "express";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import crypto from "node:crypto";
 import { AccountStore, OAuthStateStore, cleanupOrphanedTmpFiles } from "./store.js";
 import { createTraceManager } from "./traces.js";
 import { createAdminRouter } from "./routes/admin/index.js";
@@ -121,16 +122,74 @@ const proxyRouter = createProxyRouter({
   oauthConfig,
 });
 
+const ADMIN_SESSION_COOKIE = "multivibe_admin_session";
+const ADMIN_SESSION_MAX_AGE_MS = 400 * 24 * 60 * 60 * 1000;
+
+function safeEqual(a: string, b: string): boolean {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
+function readCookie(req: express.Request, name: string): string | undefined {
+  const cookieHeader = req.header("cookie");
+  if (!cookieHeader) return undefined;
+  for (const part of cookieHeader.split(";")) {
+    const [rawKey, ...rawValue] = part.trim().split("=");
+    if (rawKey !== name) continue;
+    return decodeURIComponent(rawValue.join("="));
+  }
+  return undefined;
+}
+
+function adminSessionValue(): string {
+  return crypto
+    .createHmac("sha256", ADMIN_TOKEN)
+    .update("multivibe-admin-session-v1")
+    .digest("base64url");
+}
+
+function hasAdminSession(req: express.Request): boolean {
+  const sessionId = readCookie(req, ADMIN_SESSION_COOKIE);
+  if (!sessionId) return false;
+  return safeEqual(sessionId, adminSessionValue());
+}
+
+function shouldUseSecureCookie(req: express.Request): boolean {
+  return req.secure || req.header("x-forwarded-proto") === "https";
+}
+
+function setAdminSession(req: express.Request, res: express.Response) {
+  const sessionId = adminSessionValue();
+  res.cookie(ADMIN_SESSION_COOKIE, sessionId, {
+    httpOnly: true,
+    sameSite: "strict",
+    secure: shouldUseSecureCookie(req),
+    maxAge: ADMIN_SESSION_MAX_AGE_MS,
+    path: "/",
+  });
+}
+
+function clearAdminSession(req: express.Request, res: express.Response) {
+  res.clearCookie(ADMIN_SESSION_COOKIE, {
+    httpOnly: true,
+    sameSite: "strict",
+    secure: shouldUseSecureCookie(req),
+    path: "/",
+  });
+}
+
 function adminGuard(
   req: express.Request,
   res: express.Response,
   next: express.NextFunction,
 ) {
   if (!ADMIN_TOKEN) return next();
+  if (hasAdminSession(req)) return next();
   const token =
     req.header("x-admin-token") ||
     req.header("authorization")?.replace(/^Bearer\s+/i, "");
-  if (token !== ADMIN_TOKEN)
+  if (!token || !safeEqual(token, ADMIN_TOKEN))
     return res.status(401).json({ error: "unauthorized" });
   next();
 }
@@ -146,6 +205,24 @@ app.get("/health", (_req, res) =>
     buildId: process.env.APP_BUILD_ID ?? "unknown",
   }),
 );
+
+app.get("/admin/session", (req, res) => {
+  res.json({ authenticated: !ADMIN_TOKEN || hasAdminSession(req) });
+});
+
+app.post("/admin/session", (req, res) => {
+  if (!ADMIN_TOKEN) return res.json({ authenticated: true });
+  const token = String(req.body?.token ?? "");
+  if (!safeEqual(token, ADMIN_TOKEN))
+    return res.status(401).json({ error: "unauthorized" });
+  setAdminSession(req, res);
+  res.json({ authenticated: true });
+});
+
+app.delete("/admin/session", (req, res) => {
+  clearAdminSession(req, res);
+  res.json({ authenticated: false });
+});
 
 app.use("/admin", adminGuard, adminRouter);
 app.use("/v1", proxyRouter);
