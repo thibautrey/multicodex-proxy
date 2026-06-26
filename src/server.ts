@@ -2,6 +2,7 @@ import express from "express";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import * as Sentry from "@sentry/node";
 import { AccountStore, OAuthStateStore, cleanupOrphanedTmpFiles } from "./store.js";
 import { createTraceManager } from "./traces.js";
 import { createAdminRouter } from "./routes/admin/index.js";
@@ -32,6 +33,7 @@ import http from "node:http";
 
 const app = express();
 app.use(createBodyParserMiddleware());
+
 
 app.use(
   (err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -168,6 +170,9 @@ app.get("*", (req, res, next) => {
     if (err) next();
   });
 });
+
+// Sentry error handler must be registered after all routes and before listen().
+Sentry.setupExpressErrorHandler(app);
 
 const server = http.createServer(app);
 
