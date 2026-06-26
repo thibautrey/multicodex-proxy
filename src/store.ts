@@ -113,6 +113,9 @@ export class AccountStore {
     if (!this.inMemorySettings.defaultPassthroughAccountId) {
       delete this.inMemorySettings.defaultPassthroughAccountId;
     }
+    if (!this.inMemorySettings.imageRequestModelOverride) {
+      delete this.inMemorySettings.imageRequestModelOverride;
+    }
     this.dirty = true;
     this.scheduleFlush();
     await this.flushIfDirty();

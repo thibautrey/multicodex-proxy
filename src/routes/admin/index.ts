@@ -19,6 +19,7 @@ import {
 } from "../../oauth.js";
 import { ensureValidToken } from "../../account-utils.js";
 import type { TraceManager } from "../../traces.js";
+import { discoverModels } from "../proxy/index.js";
 
 type StoragePaths = {
   accountsPath: string;
@@ -158,6 +159,14 @@ function filterVisibleTraces<T extends { route?: string }>(traces: T[]): T[] {
 
 function isOpenAiEnabledAccount(account: Account | undefined): account is Account {
   return Boolean(account && (account.provider ?? "openai") === "openai" && account.enabled);
+}
+
+function normalizeModelLookupKey(model?: string): string {
+  const raw = (model ?? "").trim().toLowerCase();
+  if (!raw) return "";
+  if (!raw.includes("/")) return raw;
+  const tail = raw.split("/").pop()?.trim();
+  return tail || raw;
 }
 
 function formatZipDosTime(date: Date) {
@@ -313,7 +322,10 @@ export function createAdminRouter(options: AdminRoutesOptions) {
 
   router.patch("/settings", async (req, res) => {
     const body = req.body ?? {};
-    const patch: { defaultPassthroughAccountId?: string | undefined } = {};
+    const patch: {
+      defaultPassthroughAccountId?: string | undefined;
+      imageRequestModelOverride?: string | undefined;
+    } = {};
 
     if ("defaultPassthroughAccountId" in body) {
       const accountId = String(body.defaultPassthroughAccountId ?? "").trim();
@@ -327,6 +339,37 @@ export function createAdminRouter(options: AdminRoutesOptions) {
         patch.defaultPassthroughAccountId = accountId;
       } else {
         patch.defaultPassthroughAccountId = undefined;
+      }
+    }
+
+    if ("imageRequestModelOverride" in body) {
+      const model = String(body.imageRequestModelOverride ?? "").trim();
+      if (model) {
+        const discoveredModels = await discoverModels(
+          store,
+          openaiBaseUrl,
+          mistralBaseUrl,
+          zaiBaseUrl,
+        );
+        const aliases = await store.listModelAliases();
+        const validModelKeys = new Set<string>([
+          ...discoveredModels
+            .map((entry: any) => normalizeModelLookupKey(entry?.id))
+            .filter(Boolean),
+          ...aliases
+            .filter((alias) => alias.enabled)
+            .map((alias) => normalizeModelLookupKey(alias.id))
+            .filter(Boolean),
+        ]);
+        const modelKey = normalizeModelLookupKey(model);
+        if (!validModelKeys.has(modelKey)) {
+          return res.status(400).json({
+            error: "imageRequestModelOverride must reference an exposed model or enabled alias",
+          });
+        }
+        patch.imageRequestModelOverride = model;
+      } else {
+        patch.imageRequestModelOverride = undefined;
       }
     }
 

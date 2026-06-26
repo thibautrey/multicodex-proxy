@@ -549,9 +549,11 @@ export default function App() {
           <AliasesTab
             aliases={aliases}
             models={models}
+            settings={settings}
             saveAlias={saveAlias}
             patchAlias={patchAlias}
             deleteAlias={deleteAlias}
+            patchSettings={patchSettings}
           />
         )}
 
