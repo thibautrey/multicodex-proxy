@@ -57,6 +57,7 @@ export type ModelAlias = {
 
 export type StoreSettings = {
   defaultPassthroughAccountId?: string;
+  imageRequestModelOverride?: string;
 };
 
 export type StoreFile = {

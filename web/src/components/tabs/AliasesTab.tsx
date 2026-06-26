@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import type { ModelAlias, ExposedModel } from "../../types";
+import type { ModelAlias, ExposedModel, StoreSettings } from "../../types";
 import { ModelSelector } from "../ui/ModelSelector";
 
 type EditAliasState = {
@@ -13,6 +13,7 @@ type EditAliasState = {
 type Props = {
   aliases: ModelAlias[];
   models: ExposedModel[];
+  settings: StoreSettings;
   saveAlias: (body: {
     id: string;
     targets: string[];
@@ -21,20 +22,24 @@ type Props = {
   }) => Promise<void>;
   patchAlias: (id: string, body: Partial<ModelAlias>) => Promise<void>;
   deleteAlias: (id: string) => Promise<void>;
+  patchSettings: (body: Partial<StoreSettings>) => Promise<void>;
 };
 
 export function AliasesTab({
   aliases,
   models,
+  settings,
   saveAlias,
   patchAlias,
   deleteAlias,
+  patchSettings,
 }: Props) {
   const [id, setId] = useState("");
   const [targets, setTargets] = useState<string[]>([]);
   const [description, setDescription] = useState("");
   const [enabled, setEnabled] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSavingImageOverride, setIsSavingImageOverride] = useState(false);
   const [editingAlias, setEditingAlias] = useState<EditAliasState | null>(null);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
 
@@ -113,8 +118,51 @@ export function AliasesTab({
     }
   };
 
+  const saveImageOverride = async (modelId: string | undefined) => {
+    setIsSavingImageOverride(true);
+    try {
+      await patchSettings({ imageRequestModelOverride: modelId });
+    } finally {
+      setIsSavingImageOverride(false);
+    }
+  };
+
   return (
     <>
+      <section className="panel">
+        <div className="section-split-header">
+          <div>
+            <h2>Image request model</h2>
+            <p className="muted">
+              Requests containing images are routed to this model for that request only.
+            </p>
+          </div>
+          <span className="badge">
+            {settings.imageRequestModelOverride ? "Enabled" : "Default routing"}
+          </span>
+        </div>
+        <div className="grid alias-grid">
+          <label>
+            Override model
+            <ModelSelector
+              models={availableModels}
+              value={settings.imageRequestModelOverride ?? ""}
+              onChange={(modelId) => void saveImageOverride(modelId)}
+              disabled={!availableModels.length || isSavingImageOverride}
+            />
+          </label>
+          <label className="inline">
+            <button
+              className="btn ghost"
+              disabled={!settings.imageRequestModelOverride || isSavingImageOverride}
+              onClick={() => void saveImageOverride(undefined)}
+            >
+              Clear override
+            </button>
+          </label>
+        </div>
+      </section>
+
       <section className="panel">
         <div className="section-split-header">
           <h2>Create model alias</h2>

@@ -633,7 +633,7 @@ function filterUnsupportedTools(
   }
 }
 
-async function discoverModels(
+export async function discoverModels(
   store: AccountStore,
   openaiBaseUrl: string,
   mistralBaseUrl: string,
@@ -993,6 +993,46 @@ function buildRoutingCandidates(
       provider: fallbackProvider,
     },
   ];
+}
+
+export function buildImageAwareRoutingCandidates(
+  requestBody: any,
+  discoveredModels: ExposedModel[],
+  aliases: ModelAlias[],
+  imageRequestModelOverride?: string,
+  requestEffort?: EffortTier,
+): RoutingCandidate[] {
+  const requestModel =
+    typeof requestBody?.model === "string" && requestBody.model.trim()
+      ? requestBody.model.trim()
+      : undefined;
+  const requestHasImage = summarizeImagePayload(requestBody).hasImage;
+  const validOverride = imageRequestModelOverride
+    ? discoveredModels.some(
+        (model) =>
+          normalizeModelLookupKey(model.id) ===
+          normalizeModelLookupKey(imageRequestModelOverride),
+      ) ||
+      aliases.some(
+        (alias) =>
+          alias.enabled &&
+          normalizeModelLookupKey(alias.id) ===
+            normalizeModelLookupKey(imageRequestModelOverride),
+      )
+    : false;
+  const routingRequestModel =
+    requestHasImage && imageRequestModelOverride && validOverride
+      ? imageRequestModelOverride
+      : requestModel;
+  return buildRoutingCandidates(
+    routingRequestModel,
+    discoveredModels,
+    aliases,
+    requestEffort,
+  ).map((candidate) => ({
+    ...candidate,
+    requestedModel: requestModel,
+  }));
 }
 
 type SSEFrame = { frame: string; rest: string } | null;
@@ -1431,10 +1471,12 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       zaiBaseUrl,
     );
     const modelAliases = store.getCachedModelAliases();
-    const routingCandidates = buildRoutingCandidates(
-      requestModel,
+    const imageRequestModelOverride = store.getCachedSettings().imageRequestModelOverride;
+    const routingCandidates = buildImageAwareRoutingCandidates(
+      req.body,
       discoveredModels,
       modelAliases,
+      imageRequestModelOverride,
       requestEffort,
     );
     const maxAttempts = Math.min(accounts.length, MAX_ACCOUNT_RETRY_ATTEMPTS);
