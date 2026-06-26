@@ -20,4 +20,4 @@ COPY --from=build /app/web-dist ./web-dist
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
 EXPOSE 1455
-CMD ["node", "dist/server.js"]
+CMD ["node", "--import", "./dist/instrument.js", "dist/server.js"]

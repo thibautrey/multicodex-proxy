@@ -132,6 +132,199 @@ type ExposedModel = {
   };
 };
 
+type ImageTracePart = {
+  path: string;
+  type?: string;
+  keys?: string[];
+  imageUrl?: {
+    kind: "url" | "data" | "object" | "unknown";
+    length?: number;
+    prefix?: string;
+    mediaType?: string;
+    detail?: string;
+  };
+  fileId?: string;
+  mimeType?: string;
+  dataLength?: number;
+  textLength?: number;
+};
+
+type ImagePayloadTrace = {
+  incoming: ImageTraceSummary;
+  upstream: ImageTraceSummary;
+  droppedImagePartCount: number;
+};
+
+type ImageTraceSummary = {
+  format: "chat.completions" | "responses" | "unknown";
+  hasImage: boolean;
+  imagePartCount: number;
+  textPartCount: number;
+  messageCount?: number;
+  inputItemCount?: number;
+  parts: ImageTracePart[];
+};
+
+function truncateForTrace(value: string, max = 120): string {
+  return value.length <= max ? value : `${value.slice(0, max)}...`;
+}
+
+function objectKeysForTrace(value: any): string[] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return Object.keys(value).slice(0, 20);
+}
+
+function describeImageUrl(value: any): ImageTracePart["imageUrl"] {
+  const raw = typeof value === "string" ? value : value?.url;
+  const detail = typeof value?.detail === "string" ? value.detail : undefined;
+  if (typeof raw !== "string") {
+    return {
+      kind: value && typeof value === "object" ? "object" : "unknown",
+      detail,
+    };
+  }
+
+  const imageUrl: NonNullable<ImageTracePart["imageUrl"]> = {
+    kind: raw.startsWith("data:") ? "data" : "url",
+    length: raw.length,
+    prefix: truncateForTrace(raw, raw.startsWith("data:") ? 80 : 160),
+    detail,
+  };
+  const mediaType = raw.match(/^data:([^;,]+)/)?.[1];
+  if (mediaType) imageUrl.mediaType = mediaType;
+  return imageUrl;
+}
+
+function inspectContentPartForImages(part: any, path: string): ImageTracePart | null {
+  const type = typeof part?.type === "string" ? part.type : undefined;
+  const keys = objectKeysForTrace(part);
+
+  if (type === "image_url") {
+    return {
+      path,
+      type,
+      keys,
+      imageUrl: describeImageUrl(part?.image_url),
+    };
+  }
+
+  if (type === "input_image") {
+    return {
+      path,
+      type,
+      keys,
+      imageUrl:
+        typeof part?.image_url !== "undefined"
+          ? describeImageUrl(part.image_url)
+          : undefined,
+      fileId: typeof part?.file_id === "string" ? part.file_id : undefined,
+      mimeType: typeof part?.mime_type === "string" ? part.mime_type : undefined,
+      dataLength: typeof part?.data === "string" ? part.data.length : undefined,
+    };
+  }
+
+  if (type && type.includes("image")) {
+    return {
+      path,
+      type,
+      keys,
+      imageUrl:
+        typeof part?.image_url !== "undefined" ? describeImageUrl(part.image_url) : undefined,
+      fileId: typeof part?.file_id === "string" ? part.file_id : undefined,
+      mimeType: typeof part?.mime_type === "string" ? part.mime_type : undefined,
+      dataLength: typeof part?.data === "string" ? part.data.length : undefined,
+    };
+  }
+
+  if (type === "text" || type === "input_text" || type === "output_text") {
+    return {
+      path,
+      type,
+      keys,
+      textLength: typeof part?.text === "string" ? part.text.length : undefined,
+    };
+  }
+
+  return null;
+}
+
+function summarizeImagePayload(payload: any): ImageTraceSummary {
+  const messages = Array.isArray(payload?.messages) ? payload.messages : undefined;
+  const input = Array.isArray(payload?.input) ? payload.input : undefined;
+  const summary: ImageTraceSummary = {
+    format: messages ? "chat.completions" : input ? "responses" : "unknown",
+    hasImage: false,
+    imagePartCount: 0,
+    textPartCount: 0,
+    messageCount: messages?.length,
+    inputItemCount: input?.length,
+    parts: [],
+  };
+
+  const visitPart = (part: any, path: string) => {
+    const inspected = inspectContentPartForImages(part, path);
+    if (!inspected) return;
+    if (inspected.type?.includes("image")) {
+      summary.hasImage = true;
+      summary.imagePartCount += 1;
+    } else if (inspected.textLength !== undefined) {
+      summary.textPartCount += 1;
+    }
+    summary.parts.push(inspected);
+  };
+
+  if (messages) {
+    messages.forEach((message: any, messageIndex: number) => {
+      const content = message?.content;
+      if (Array.isArray(content)) {
+        content.forEach((part: any, partIndex: number) =>
+          visitPart(part, `messages[${messageIndex}].content[${partIndex}]`),
+        );
+      } else if (typeof content === "string") {
+        summary.textPartCount += 1;
+        summary.parts.push({
+          path: `messages[${messageIndex}].content`,
+          type: "string",
+          textLength: content.length,
+        });
+      }
+    });
+  }
+
+  if (input) {
+    input.forEach((item: any, itemIndex: number) => {
+      const content = item?.content;
+      if (Array.isArray(content)) {
+        content.forEach((part: any, partIndex: number) =>
+          visitPart(part, `input[${itemIndex}].content[${partIndex}]`),
+        );
+      } else if (typeof content === "string") {
+        summary.textPartCount += 1;
+        summary.parts.push({
+          path: `input[${itemIndex}].content`,
+          type: "string",
+          textLength: content.length,
+        });
+      }
+
+      visitPart(item, `input[${itemIndex}]`);
+    });
+  }
+
+  return summary;
+}
+
+function buildImagePayloadTrace(incomingPayload: any, upstreamPayload: any): ImagePayloadTrace | undefined {
+  const incoming = summarizeImagePayload(incomingPayload);
+  const upstream = summarizeImagePayload(upstreamPayload);
+  if (!incoming.hasImage && !upstream.hasImage) return undefined;
+  return {
+    incoming,
+    upstream,
+    droppedImagePartCount: Math.max(0, incoming.imagePartCount - upstream.imagePartCount),
+  };
+}
+
 function toSafeNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string" && value.trim()) {
@@ -1327,7 +1520,27 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           candidate.resolvedModel,
           discoveredModels,
         );
+        const imageTrace = buildImagePayloadTrace(req.body, payloadToUpstream);
+        if (imageTrace) {
+          console.info(
+            "[proxy:image-trace]",
+            JSON.stringify({
+              route: req.path,
+              accountId: selected.id,
+              provider: candidate.provider,
+              upstreamMode,
+              requestedModel: requestModel,
+              resolvedModel: candidate.resolvedModel,
+              incomingFormat: imageTrace.incoming.format,
+              upstreamFormat: imageTrace.upstream.format,
+              incomingImages: imageTrace.incoming.imagePartCount,
+              upstreamImages: imageTrace.upstream.imagePartCount,
+              droppedImagePartCount: imageTrace.droppedImagePartCount,
+            }),
+          );
+        }
         const requestBody = TRACE_INCLUDE_BODY ? req.body : undefined;
+        const traceImage = imageTrace ? { imageTrace } : {};
         const tracedModel =
           requestModel ??
           (typeof payloadToUpstream?.model === "string" &&
@@ -1368,6 +1581,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             latencyMs: Date.now() - startedAt,
             usage: details.usage,
             requestBody,
+            ...traceImage,
             error: message,
             upstreamContentType: details.upstreamContentType,
             ...inspectAssistantPayload(details.tracePayload),
@@ -1486,6 +1700,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                   latencyMs: Date.now() - startedAt,
                   usage: accumulatedUsage,
                   requestBody,
+            ...traceImage,
                   upstreamContentType: contentType,
                 });
                 return;
@@ -1681,6 +1896,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 latencyMs: Date.now() - startedAt,
                 usage: accumulatedUsage,
                 requestBody,
+            ...traceImage,
               });
               return;
             }
@@ -1724,6 +1940,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 latencyMs: Date.now() - startedAt,
                 usage: normalized.chat?.usage,
                 requestBody,
+            ...traceImage,
                 upstreamError,
                 upstreamContentType: contentType,
                 ...inspectAssistantPayload(normalized.chat),
@@ -1769,6 +1986,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 latencyMs: Date.now() - startedAt,
                 usage: rendered.usage ?? respObj?.usage,
                 requestBody,
+            ...traceImage,
                 upstreamError,
                 upstreamContentType: contentType,
                 upstreamEmptyBody: rendered.upstreamEmptyBody,
@@ -1803,6 +2021,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 latencyMs: Date.now() - startedAt,
                 usage: rendered.usage,
                 requestBody,
+            ...traceImage,
                 error: "empty assistant output in responses stream",
                 upstreamContentType: contentType,
                 upstreamEmptyBody: rendered.upstreamEmptyBody,
@@ -1836,6 +2055,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               latencyMs: Date.now() - startedAt,
               usage: rendered.usage,
               requestBody,
+            ...traceImage,
               upstreamContentType: contentType,
               upstreamEmptyBody: rendered.upstreamEmptyBody,
               ...inspectAssistantPayload(rendered.tracePayload),
@@ -1894,6 +2114,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 latencyMs: Date.now() - startedAt,
                 usage: normalized.chat?.usage,
                 requestBody,
+            ...traceImage,
                 upstreamContentType: contentType,
                 upstreamEmptyBody,
                 ...inspectAssistantPayload(normalized.chat),
@@ -1938,6 +2159,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 latencyMs: Date.now() - startedAt,
                 usage: converted?.usage,
                 requestBody,
+            ...traceImage,
                 upstreamContentType: contentType,
                 upstreamEmptyBody,
                 ...inspectAssistantPayload(converted),
@@ -2041,6 +2263,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 latencyMs: Date.now() - startedAt,
                 usage: chatResp?.usage,
                 requestBody,
+            ...traceImage,
                 upstreamError,
                 upstreamContentType: contentType,
                 upstreamEmptyBody,
@@ -2091,6 +2314,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 latencyMs: Date.now() - startedAt,
                 usage: respObj?.usage,
                 requestBody,
+            ...traceImage,
                 upstreamError,
                 upstreamContentType: contentType,
                 upstreamEmptyBody,
@@ -2133,6 +2357,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 latencyMs: Date.now() - startedAt,
                 usage: sanitized?.usage,
                 requestBody,
+            ...traceImage,
                 upstreamError,
                 upstreamContentType: contentType,
                 upstreamEmptyBody,
@@ -2179,6 +2404,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 latencyMs: Date.now() - startedAt,
                 usage: rendered.usage,
                 requestBody,
+            ...traceImage,
                 upstreamError,
                 upstreamContentType: contentType,
                 upstreamEmptyBody: rendered.upstreamEmptyBody,
@@ -2223,6 +2449,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 latencyMs: Date.now() - startedAt,
                 usage: normalized.chat?.usage,
                 requestBody,
+            ...traceImage,
                 upstreamError,
                 upstreamContentType: contentType,
                 upstreamEmptyBody,
@@ -2264,6 +2491,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               latencyMs: Date.now() - startedAt,
               usage: respObj?.usage,
               requestBody,
+            ...traceImage,
               upstreamError,
               upstreamContentType: contentType,
               upstreamEmptyBody,
@@ -2300,6 +2528,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               latencyMs: Date.now() - startedAt,
               usage: sanitized?.usage,
               requestBody,
+            ...traceImage,
               upstreamError,
               upstreamContentType: contentType,
               upstreamEmptyBody,
@@ -2338,6 +2567,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               latencyMs: Date.now() - startedAt,
               usage: respObj?.usage,
               requestBody,
+            ...traceImage,
               upstreamError,
               upstreamContentType: contentType,
               upstreamEmptyBody,
@@ -2372,6 +2602,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             latencyMs: Date.now() - startedAt,
             usage,
             requestBody,
+            ...traceImage,
             upstreamError,
             upstreamContentType: contentType,
             upstreamEmptyBody,
@@ -2426,6 +2657,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             latencyMs: Date.now() - startedAt,
             error: msg,
             requestBody,
+            ...traceImage,
           });
           if (res.headersSent) {
             res.end();
@@ -2467,7 +2699,6 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       res.status(429).json({ error: "all accounts exhausted or unavailable" });
     }
   }
-
   function setForwardHeaders(from: Response, to: express.Response) {
     for (const [k, v] of from.headers.entries())
       if (!isHopByHopHeader(k)) to.setHeader(k, v);

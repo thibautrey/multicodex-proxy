@@ -21,6 +21,10 @@ services:
       - OAUTH_TOKEN_URL=https://auth.openai.com/oauth/token
       - OAUTH_SCOPE=openid profile email offline_access
       - OAUTH_REDIRECT_URI=http://localhost:1455/auth/callback
+      # Sentry (optional - leave SENTRY_DSN empty to disable)
+      - SENTRY_DSN=${SENTRY_DSN:-}
+      - SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT:-production}
+      - SENTRY_TRACES_SAMPLE_RATE=${SENTRY_TRACES_SAMPLE_RATE:-0.1}
     volumes:
       - ./data:/data
     restart: unless-stopped

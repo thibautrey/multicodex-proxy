@@ -26,6 +26,7 @@ export type TraceEntry = {
   upstreamError?: string;
   upstreamContentType?: string;
   upstreamEmptyBody?: boolean;
+  imageTrace?: any;
   assistantEmptyOutput?: boolean;
   assistantFinishReason?: string;
 };
@@ -222,6 +223,7 @@ function normalizeTrace(raw: any): TraceEntry | null {
       typeof raw.upstreamEmptyBody === "boolean"
         ? raw.upstreamEmptyBody
         : undefined,
+    imageTrace: raw.imageTrace,
     assistantEmptyOutput:
       typeof raw.assistantEmptyOutput === "boolean"
         ? raw.assistantEmptyOutput
@@ -659,6 +661,7 @@ export function createTraceManager(config: TraceManagerConfig) {
       upstreamError: _upstreamError,
       upstreamContentType: _upstreamContentType,
       upstreamEmptyBody: _upstreamEmptyBody,
+      imageTrace: _imageTrace,
       assistantEmptyOutput: _assistantEmptyOutput,
       assistantFinishReason: _assistantFinishReason,
       ...rest
