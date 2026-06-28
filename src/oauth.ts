@@ -4,6 +4,10 @@ import type { Account, OAuthFlowState } from "./types.js";
 export type OAuthConfig = {
   authorizationUrl: string;
   tokenUrl: string;
+  deviceAuthorizationUrl: string;
+  deviceTokenUrl: string;
+  deviceVerificationUrl: string;
+  deviceRedirectUri: string;
   clientId: string;
   scope: string;
   audience?: string;
@@ -18,6 +22,22 @@ export type TokenResponse = {
   expires_in?: number;
 };
 
+export type DeviceCodeResponse = {
+  device_auth_id: string;
+  user_code: string;
+  verification_uri?: string;
+  verification_url?: string;
+  interval?: number | string;
+  expires_in?: number | string;
+  expires_at?: number | string;
+};
+
+export type DeviceTokenPollResponse = {
+  authorization_code: string;
+  code_challenge?: string;
+  code_verifier?: string;
+};
+
 export function base64url(input: Buffer | string) {
   return Buffer.from(input)
     .toString("base64")
@@ -29,12 +49,14 @@ export function base64url(input: Buffer | string) {
 export function createOAuthState(
   email: string,
   targetAccountId?: string,
+  method: "browser" | "device" = "browser",
 ): OAuthFlowState {
   return {
     id: randomUUID(),
     email,
     codeVerifier: base64url(randomBytes(32)),
     createdAt: Date.now(),
+    method,
     targetAccountId,
     status: "pending",
   };
@@ -100,15 +122,86 @@ async function postForm(url: string, body: URLSearchParams): Promise<TokenRespon
   return JSON.parse(text) as TokenResponse;
 }
 
-export async function exchangeCodeForToken(config: OAuthConfig, code: string, codeVerifier: string): Promise<TokenResponse> {
+async function postJson<T>(url: string, body: unknown): Promise<T> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  const text = await res.text();
+  let data: any;
+  try {
+    data = text ? JSON.parse(text) : undefined;
+  } catch {
+    data = undefined;
+  }
+  if (!res.ok) {
+    const error =
+      typeof data?.error === "string"
+        ? data.error
+        : typeof data?.error?.code === "string"
+          ? data.error.code
+          : text.slice(0, 400);
+    throw new Error(error || `device endpoint failed ${res.status}`);
+  }
+  return data as T;
+}
+
+export async function exchangeCodeForToken(
+  config: OAuthConfig,
+  code: string,
+  codeVerifier: string,
+  redirectUri = config.redirectUri,
+): Promise<TokenResponse> {
   const body = new URLSearchParams({
     grant_type: "authorization_code",
     client_id: config.clientId,
     code,
-    redirect_uri: config.redirectUri,
+    redirect_uri: redirectUri,
     code_verifier: codeVerifier,
   });
   return postForm(config.tokenUrl, body);
+}
+
+export async function requestDeviceCode(config: OAuthConfig): Promise<DeviceCodeResponse> {
+  return postJson<DeviceCodeResponse>(config.deviceAuthorizationUrl, {
+    client_id: config.clientId,
+  });
+}
+
+export async function pollDeviceCode(config: OAuthConfig, flow: OAuthFlowState): Promise<DeviceTokenPollResponse> {
+  if (!flow.deviceAuthId || !flow.userCode) {
+    throw new Error("device authorization has not been started");
+  }
+  const res = await fetch(config.deviceTokenUrl, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      device_auth_id: flow.deviceAuthId,
+      user_code: flow.userCode,
+    }),
+  });
+  const text = await res.text();
+  let data: any;
+  try {
+    data = text ? JSON.parse(text) : undefined;
+  } catch {
+    data = undefined;
+  }
+  if (res.ok) return data as DeviceTokenPollResponse;
+  if (res.status === 403 || res.status === 404) {
+    throw new Error(
+      data?.error?.code ??
+        data?.error ??
+        "deviceauth_authorization_pending",
+    );
+  }
+  throw new Error(
+    data?.error?.code ??
+      data?.error ??
+      `device authorization failed with status ${res.status}`,
+  );
 }
 
 export async function refreshAccessToken(config: OAuthConfig, refreshToken: string): Promise<TokenResponse> {
