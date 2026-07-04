@@ -2927,24 +2927,18 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     return model;
   }
 
-  router.get("/models", async (_req, res) => {
-    const models = await discoverModels(
-      store,
-      openaiBaseUrl,
-      mistralBaseUrl,
-      zaiBaseUrl,
-    );
+  async function listExposedModels() {
+    return discoverModels(store, openaiBaseUrl, mistralBaseUrl, zaiBaseUrl);
+  }
+
+  router.get(["/models", "/api/v1/models"], async (_req, res) => {
+    const models = await listExposedModels();
     res.json({ object: "list", data: models.map(toOpenAiModelShape) });
   });
 
-  router.get("/models/:id", async (req, res) => {
+  router.get(["/models/:id", "/api/v1/models/:id"], async (req, res) => {
     const id = req.params.id;
-    const models = await discoverModels(
-      store,
-      openaiBaseUrl,
-      mistralBaseUrl,
-      zaiBaseUrl,
-    );
+    const models = await listExposedModels();
     const model = models.find((m) => m.id === id);
     if (!model)
       return res.status(404).json({
@@ -2954,6 +2948,42 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         },
       });
     res.json(toOpenAiModelShape(model));
+  });
+
+  router.get("/api/tags", async (_req, res) => {
+    const models = await listExposedModels();
+    res.json({
+      models: models.map((model) => ({
+        name: model.id,
+        model: model.id,
+        modified_at: new Date(0).toISOString(),
+        size: 0,
+        digest: model.id,
+        details: {
+          family: model.metadata.provider,
+          parameter_size: "unknown",
+          quantization_level: "unknown",
+        },
+      })),
+    });
+  });
+
+  router.get("/version", (_req, res) => {
+    res.json({ version: process.env.APP_VERSION ?? "0.2.0" });
+  });
+
+  router.get("/props", (_req, res) => {
+    res.json({
+      default_model: PROXY_MODELS[0] ?? null,
+      models_url: "/v1/models",
+    });
+  });
+
+  router.get("/v1/props", (_req, res) => {
+    res.json({
+      default_model: PROXY_MODELS[0] ?? null,
+      models_url: "/v1/models",
+    });
   });
 
   router.all("*", (req, res, next) => {
