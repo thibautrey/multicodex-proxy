@@ -1,5 +1,6 @@
 export type ModelPricing = {
   inputPer1M: number;
+  cachedInputPer1M?: number;
   outputPer1M: number;
 };
 
@@ -17,6 +18,9 @@ const EXACT_PRICING: Record<string, ModelPricing> = {
   "gpt-5.1-codex-mini": { inputPer1M: 0.25, outputPer1M: 2.0 },
   "gpt-5.2-codex": { inputPer1M: 1.75, outputPer1M: 14.0 },
   "gpt-5.3-codex": { inputPer1M: 1.75, outputPer1M: 14.0 },
+  "gpt-5.6": { inputPer1M: 5.0, cachedInputPer1M: 0.5, outputPer1M: 30.0 },
+  "gpt-5.6-mini": { inputPer1M: 2.5, cachedInputPer1M: 0.25, outputPer1M: 15.0 },
+  "gpt-5.6-nano": { inputPer1M: 1.0, cachedInputPer1M: 0.1, outputPer1M: 6.0 },
   "deepseek-v4-flash": { inputPer1M: 0.14, outputPer1M: 0.28 },
   "deepseek-v4-pro": { inputPer1M: 0.435, outputPer1M: 0.87 },
   "deepseek-chat": { inputPer1M: 0.14, outputPer1M: 0.28 },
@@ -31,6 +35,9 @@ const PREFIX_PRICING: Array<{ prefix: string; pricing: ModelPricing }> = [
   { prefix: "gpt-4.1", pricing: { inputPer1M: 5.0, outputPer1M: 15.0 } },
   { prefix: "gpt-5.1-codex-max", pricing: { inputPer1M: 1.25, outputPer1M: 10.0 } },
   { prefix: "gpt-5.1-codex-mini", pricing: { inputPer1M: 0.25, outputPer1M: 2.0 } },
+  { prefix: "gpt-5.6-mini", pricing: { inputPer1M: 2.5, cachedInputPer1M: 0.25, outputPer1M: 15.0 } },
+  { prefix: "gpt-5.6-nano", pricing: { inputPer1M: 1.0, cachedInputPer1M: 0.1, outputPer1M: 6.0 } },
+  { prefix: "gpt-5.6", pricing: { inputPer1M: 5.0, cachedInputPer1M: 0.5, outputPer1M: 30.0 } },
   { prefix: "gpt-5.3-codex", pricing: { inputPer1M: 1.75, outputPer1M: 14.0 } },
   { prefix: "gpt-5.2-codex", pricing: { inputPer1M: 1.75, outputPer1M: 14.0 } },
   { prefix: "gpt-5.1-codex", pricing: { inputPer1M: 1.25, outputPer1M: 10.0 } },
@@ -54,10 +61,19 @@ export function getModelPricing(model?: string): ModelPricing | undefined {
   return undefined;
 }
 
-export function estimateCostUsd(model: string | undefined, tokensInput = 0, tokensOutput = 0): number | undefined {
+export function estimateCostUsd(
+  model: string | undefined,
+  tokensInput = 0,
+  tokensOutput = 0,
+  tokensInputCached = 0,
+): number | undefined {
   const pricing = getModelPricing(model);
   if (!pricing) return undefined;
-  const inCost = (Math.max(0, tokensInput) / 1_000_000) * pricing.inputPer1M;
+  const input = Math.max(0, tokensInput);
+  const cachedInput = Math.min(input, Math.max(0, tokensInputCached));
+  const uncachedInput = input - cachedInput;
+  const cachedInputRate = pricing.cachedInputPer1M ?? pricing.inputPer1M;
+  const inCost = (uncachedInput / 1_000_000) * pricing.inputPer1M + (cachedInput / 1_000_000) * cachedInputRate;
   const outCost = (Math.max(0, tokensOutput) / 1_000_000) * pricing.outputPer1M;
   return inCost + outCost;
 }

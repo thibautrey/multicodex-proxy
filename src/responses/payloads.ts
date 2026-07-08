@@ -27,6 +27,32 @@ export function getSessionId(req: express.Request): string | undefined {
   return value || undefined;
 }
 
+function responseImagePartToChatPart(part: any): any | null {
+  if (part?.type !== "input_image") return null;
+  let url =
+    typeof part.image_url === "string"
+      ? part.image_url
+      : part.image_url?.url;
+  if ((!url || typeof url !== "string") && typeof part.data === "string") {
+    const mimeType =
+      typeof part.mime_type === "string" && part.mime_type.trim()
+        ? part.mime_type.trim()
+        : "image/png";
+    url = `data:${mimeType};base64,${part.data}`;
+  }
+  if (typeof url !== "string" || !url.trim()) return null;
+
+  const imageUrl: any = { url };
+  const detail =
+    typeof part.detail === "string"
+      ? part.detail
+      : typeof part.image_url?.detail === "string"
+        ? part.image_url.detail
+        : undefined;
+  if (detail) imageUrl.detail = detail;
+  return { type: "image_url", image_url: imageUrl };
+}
+
 export function inspectAssistantPayload(payload: any): {
   assistantEmptyOutput?: boolean;
   assistantFinishReason?: string;
@@ -227,6 +253,12 @@ export function responsesToChatCompletionsPayload(body: any) {
   }
 
   for (const item of input) {
+    if (item?.type === "input_image") {
+      const imagePart = responseImagePartToChatPart(item);
+      if (imagePart) messages.push({ role: "user", content: [imagePart] });
+      continue;
+    }
+
     if (item?.type === "function_call") {
       messages.push({
         role: "assistant",
@@ -269,13 +301,12 @@ export function responsesToChatCompletionsPayload(body: any) {
           : "user";
     const content = Array.isArray(item?.content)
       ? item.content
-          .map((part: any) =>
-            typeof part === "string"
-              ? { type: "text", text: part }
-              : typeof part?.text === "string"
-              ? { type: "text", text: part.text }
-              : null,
-          )
+          .map((part: any) => {
+            if (typeof part === "string") return { type: "text", text: part };
+            if (typeof part?.text === "string") return { type: "text", text: part.text };
+            if (part?.type === "input_image") return responseImagePartToChatPart(part);
+            return null;
+          })
           .filter(Boolean)
       : typeof item?.content === "string"
         ? item.content
