@@ -489,14 +489,6 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     });
   });
 
-  router.get("/traces/:id", async (req, res) => {
-    const trace = await readTraceById(req.params.id);
-    if (!trace || isHiddenTraceRoute(trace.route)) {
-      return res.status(404).json({ error: "not found" });
-    }
-    res.json({ trace });
-  });
-
   router.get("/traces/export.zip", async (req, res) => {
     const { sinceMs, untilMs } = parseTraceWindowBounds(
       req.query as Record<string, unknown>,
@@ -542,6 +534,14 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     );
     res.setHeader("content-length", String(zip.length));
     res.send(zip);
+  });
+
+  router.get("/traces/:id", async (req, res) => {
+    const trace = await readTraceById(req.params.id);
+    if (!trace || isHiddenTraceRoute(trace.route)) {
+      return res.status(404).json({ error: "not found" });
+    }
+    res.json({ trace });
   });
 
   router.get("/stats/usage", async (req, res) => {
