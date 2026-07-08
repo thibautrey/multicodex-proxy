@@ -17,6 +17,7 @@ export type TraceEntry = {
   stream: boolean;
   latencyMs: number;
   tokensInput?: number;
+  tokensInputCached?: number;
   tokensOutput?: number;
   tokensTotal?: number;
   costUsd?: number;
@@ -40,6 +41,7 @@ export type TraceTotals = {
   errors: number;
   errorRate: number;
   tokensInput: number;
+  tokensInputCached: number;
   tokensOutput: number;
   tokensTotal: number;
   costUsd: number;
@@ -51,6 +53,7 @@ export type TraceModelStats = {
   count: number;
   okCount: number;
   tokensInput: number;
+  tokensInputCached: number;
   tokensOutput: number;
   tokensTotal: number;
   costUsd: number;
@@ -61,6 +64,7 @@ export type TraceTimeseriesBucket = {
   requests: number;
   errors: number;
   tokensInput: number;
+  tokensInputCached: number;
   tokensOutput: number;
   tokensTotal: number;
   costUsd: number;
@@ -108,6 +112,7 @@ type TraceBucketAggregate = {
   requests: number;
   errors: number;
   tokensInput: number;
+  tokensInputCached: number;
   tokensOutput: number;
   tokensTotal: number;
   costUsd: number;
@@ -133,7 +138,7 @@ function safeNumber(value: unknown): number | undefined {
 
 function normalizeTokenFields(
   usage: any,
-  fallback?: { input?: number; output?: number; total?: number },
+  fallback?: { input?: number; cachedInput?: number; output?: number; total?: number },
 ) {
   const input =
     safeNumber(usage?.input_tokens) ??
@@ -147,8 +152,18 @@ function normalizeTokenFields(
     safeNumber(usage?.total_tokens) ??
     fallback?.total ??
     (input ?? 0) + (output ?? 0);
+  const cachedInput =
+    safeNumber(usage?.input_tokens_details?.cached_tokens) ??
+    safeNumber(usage?.prompt_tokens_details?.cached_tokens) ??
+    safeNumber(usage?.cached_input_tokens) ??
+    safeNumber(usage?.input_cached_tokens) ??
+    safeNumber(usage?.prompt_cached_tokens) ??
+    safeNumber((usage as any)?.cached_tokens) ??
+    fallback?.cachedInput ??
+    0;
   return {
     tokensInput: input,
+    tokensInputCached: cachedInput,
     tokensOutput: output,
     tokensTotal: total,
   };
@@ -178,6 +193,7 @@ function normalizeTrace(raw: any): TraceEntry | null {
       : fallbackModel;
   const normalizedTokens = normalizeTokenFields(raw.usage, {
     input: safeNumber(raw.tokensInput),
+    cachedInput: safeNumber(raw.tokensInputCached),
     output: safeNumber(raw.tokensOutput),
     total: safeNumber(raw.tokensTotal),
   });
@@ -185,6 +201,7 @@ function normalizeTrace(raw: any): TraceEntry | null {
     model,
     normalizedTokens.tokensInput ?? 0,
     normalizedTokens.tokensOutput ?? 0,
+    normalizedTokens.tokensInputCached ?? 0,
   );
 
   return {
@@ -207,6 +224,7 @@ function normalizeTrace(raw: any): TraceEntry | null {
     stream: Boolean(raw.stream),
     latencyMs,
     tokensInput: normalizedTokens.tokensInput,
+    tokensInputCached: normalizedTokens.tokensInputCached,
     tokensOutput: normalizedTokens.tokensOutput,
     tokensTotal: normalizedTokens.tokensTotal,
     costUsd,
@@ -340,6 +358,10 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
   const requests = traces.length;
   const errors = traces.filter((t) => t.isError).length;
   const tokensInput = traces.reduce((sum, t) => sum + (t.tokensInput ?? 0), 0);
+  const tokensInputCached = traces.reduce(
+    (sum, t) => sum + (t.tokensInputCached ?? 0),
+    0,
+  );
   const tokensOutput = traces.reduce(
     (sum, t) => sum + (t.tokensOutput ?? 0),
     0,
@@ -353,7 +375,12 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
     if (typeof t.costUsd === "number") return sum + t.costUsd;
     return (
       sum +
-      (estimateCostUsd(t.model, t.tokensInput ?? 0, t.tokensOutput ?? 0) ?? 0)
+      (estimateCostUsd(
+        t.model,
+        t.tokensInput ?? 0,
+        t.tokensOutput ?? 0,
+        t.tokensInputCached ?? 0,
+      ) ?? 0)
     );
   }, 0);
   const latencyAvgMs = requests
@@ -372,6 +399,7 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
             trace.model,
             trace.tokensInput ?? 0,
             trace.tokensOutput ?? 0,
+            trace.tokensInputCached ?? 0,
           ) ?? 0);
     if (!existing) {
       modelMap.set(key, {
@@ -379,6 +407,7 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
         count: 1,
         okCount: trace.isError ? 0 : 1,
         tokensInput: trace.tokensInput ?? 0,
+        tokensInputCached: trace.tokensInputCached ?? 0,
         tokensOutput: trace.tokensOutput ?? 0,
         tokensTotal: trace.tokensTotal ?? 0,
         costUsd: traceCost,
@@ -387,6 +416,7 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
       existing.count += 1;
       if (!trace.isError) existing.okCount += 1;
       existing.tokensInput += trace.tokensInput ?? 0;
+      existing.tokensInputCached += trace.tokensInputCached ?? 0;
       existing.tokensOutput += trace.tokensOutput ?? 0;
       existing.tokensTotal += trace.tokensTotal ?? 0;
       existing.costUsd += traceCost;
@@ -402,6 +432,7 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
       requests: number;
       errors: number;
       tokensInput: number;
+      tokensInputCached: number;
       tokensOutput: number;
       tokensTotal: number;
       costUsd: number;
@@ -414,6 +445,7 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
       requests: 0,
       errors: 0,
       tokensInput: 0,
+      tokensInputCached: 0,
       tokensOutput: 0,
       tokensTotal: 0,
       costUsd: 0,
@@ -422,6 +454,7 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
     bucket.requests += 1;
     if (trace.isError) bucket.errors += 1;
     bucket.tokensInput += trace.tokensInput ?? 0;
+    bucket.tokensInputCached += trace.tokensInputCached ?? 0;
     bucket.tokensOutput += trace.tokensOutput ?? 0;
     bucket.tokensTotal += trace.tokensTotal ?? 0;
     bucket.costUsd +=
@@ -431,6 +464,7 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
             trace.model,
             trace.tokensInput ?? 0,
             trace.tokensOutput ?? 0,
+            trace.tokensInputCached ?? 0,
           ) ?? 0);
     bucket.latencies.push(trace.latencyMs);
     bucketMap.set(bucketAt, bucket);
@@ -442,6 +476,7 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
       requests: bucket.requests,
       errors: bucket.errors,
       tokensInput: bucket.tokensInput,
+      tokensInputCached: bucket.tokensInputCached,
       tokensOutput: bucket.tokensOutput,
       tokensTotal: bucket.tokensTotal,
       costUsd: bucket.costUsd,
@@ -455,6 +490,7 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
       errors,
       errorRate,
       tokensInput,
+      tokensInputCached,
       tokensOutput,
       tokensTotal,
       costUsd,
@@ -471,6 +507,7 @@ function createEmptyBucket(at: number): TraceBucketAggregate {
     requests: 0,
     errors: 0,
     tokensInput: 0,
+    tokensInputCached: 0,
     tokensOutput: 0,
     tokensTotal: 0,
     costUsd: 0,
@@ -503,6 +540,7 @@ function addTraceToBucket(bucket: TraceBucketAggregate, trace: TraceEntry) {
           trace.model,
           trace.tokensInput ?? 0,
           trace.tokensOutput ?? 0,
+          trace.tokensInputCached ?? 0,
         ) ?? 0);
   const traceTokensTotal =
     trace.tokensTotal ?? (trace.tokensInput ?? 0) + (trace.tokensOutput ?? 0);
@@ -510,6 +548,7 @@ function addTraceToBucket(bucket: TraceBucketAggregate, trace: TraceEntry) {
   bucket.requests += 1;
   if (trace.isError) bucket.errors += 1;
   bucket.tokensInput += trace.tokensInput ?? 0;
+  bucket.tokensInputCached += trace.tokensInputCached ?? 0;
   bucket.tokensOutput += trace.tokensOutput ?? 0;
   bucket.tokensTotal += traceTokensTotal;
   bucket.costUsd += traceCost;
@@ -521,6 +560,7 @@ function addTraceToBucket(bucket: TraceBucketAggregate, trace: TraceEntry) {
     existing.count += 1;
     if (!trace.isError) existing.okCount += 1;
     existing.tokensInput += trace.tokensInput ?? 0;
+    existing.tokensInputCached += trace.tokensInputCached ?? 0;
     existing.tokensOutput += trace.tokensOutput ?? 0;
     existing.tokensTotal += traceTokensTotal;
     existing.costUsd += traceCost;
@@ -532,6 +572,7 @@ function addTraceToBucket(bucket: TraceBucketAggregate, trace: TraceEntry) {
     count: 1,
     okCount: trace.isError ? 0 : 1,
     tokensInput: trace.tokensInput ?? 0,
+    tokensInputCached: trace.tokensInputCached ?? 0,
     tokensOutput: trace.tokensOutput ?? 0,
     tokensTotal: traceTokensTotal,
     costUsd: traceCost,
@@ -827,6 +868,7 @@ export function createTraceManager(config: TraceManagerConfig) {
     let requests = 0;
     let errors = 0;
     let tokensInput = 0;
+    let tokensInputCached = 0;
     let tokensOutput = 0;
     let tokensTotal = 0;
     let costUsd = 0;
@@ -836,6 +878,7 @@ export function createTraceManager(config: TraceManagerConfig) {
       requests += bucket.requests;
       errors += bucket.errors;
       tokensInput += bucket.tokensInput;
+      tokensInputCached += bucket.tokensInputCached;
       tokensOutput += bucket.tokensOutput;
       tokensTotal += bucket.tokensTotal;
       costUsd += bucket.costUsd;
@@ -847,6 +890,7 @@ export function createTraceManager(config: TraceManagerConfig) {
           existing.count += model.count;
           existing.okCount += model.okCount;
           existing.tokensInput += model.tokensInput;
+          existing.tokensInputCached += model.tokensInputCached;
           existing.tokensOutput += model.tokensOutput;
           existing.tokensTotal += model.tokensTotal;
           existing.costUsd += model.costUsd;
@@ -860,6 +904,7 @@ export function createTraceManager(config: TraceManagerConfig) {
         requests: bucket.requests,
         errors: bucket.errors,
         tokensInput: bucket.tokensInput,
+        tokensInputCached: bucket.tokensInputCached,
         tokensOutput: bucket.tokensOutput,
         tokensTotal: bucket.tokensTotal,
         costUsd: bucket.costUsd,
@@ -877,6 +922,7 @@ export function createTraceManager(config: TraceManagerConfig) {
           errors,
           errorRate: requests ? errors / requests : 0,
           tokensInput,
+          tokensInputCached,
           tokensOutput,
           tokensTotal,
           costUsd,
@@ -891,7 +937,7 @@ export function createTraceManager(config: TraceManagerConfig) {
   async function appendTrace(
     entry: Omit<
       TraceEntry,
-      "id" | "isError" | "tokensInput" | "tokensOutput" | "tokensTotal"
+      "id" | "isError" | "tokensInput" | "tokensInputCached" | "tokensOutput" | "tokensTotal"
     >,
   ) {
     const normalizedTokens = normalizeTokenFields(entry.usage);
@@ -900,12 +946,14 @@ export function createTraceManager(config: TraceManagerConfig) {
       id: randomUUID(),
       isError: entry.status >= 400,
       tokensInput: normalizedTokens.tokensInput,
+      tokensInputCached: normalizedTokens.tokensInputCached,
       tokensOutput: normalizedTokens.tokensOutput,
       tokensTotal: normalizedTokens.tokensTotal,
       costUsd: estimateCostUsd(
         entry.model,
         normalizedTokens.tokensInput ?? 0,
         normalizedTokens.tokensOutput ?? 0,
+        normalizedTokens.tokensInputCached ?? 0,
       ),
     };
 
@@ -936,7 +984,7 @@ export function createTraceManager(config: TraceManagerConfig) {
   function recordTrace(
     entry: Omit<
       TraceEntry,
-      "id" | "isError" | "tokensInput" | "tokensOutput" | "tokensTotal"
+      "id" | "isError" | "tokensInput" | "tokensInputCached" | "tokensOutput" | "tokensTotal"
     >,
   ) {
     void appendTrace(entry).catch((err) => {

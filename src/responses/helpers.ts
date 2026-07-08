@@ -97,6 +97,20 @@ export function toUpstreamInputContent(content: any, role: "user" | "assistant")
         typeof part?.text === "string"
       ) {
         out.push({ type: textType, text: part.text });
+      } else if (role === "user" && part?.type === "image_url") {
+        const imageUrl = part.image_url;
+        const url = typeof imageUrl === "string" ? imageUrl : imageUrl?.url;
+        if (typeof url === "string" && url.trim()) {
+          const inputImage: any = { type: "input_image", image_url: url };
+          const detail =
+            typeof part.detail === "string"
+              ? part.detail
+              : typeof imageUrl?.detail === "string"
+                ? imageUrl.detail
+                : undefined;
+          if (detail) inputImage.detail = detail;
+          out.push(inputImage);
+        }
       }
     }
     return out.length ? out : [{ type: textType, text: JSON.stringify(content) }];

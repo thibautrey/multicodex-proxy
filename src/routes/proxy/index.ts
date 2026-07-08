@@ -195,16 +195,27 @@ function describeImageUrl(value: any): ImageTracePart["imageUrl"] {
   return imageUrl;
 }
 
+function imageUrlDetail(value: any, fallback: any): string | undefined {
+  return typeof value?.detail === "string"
+    ? value.detail
+    : typeof fallback === "string"
+      ? fallback
+      : undefined;
+}
+
 function inspectContentPartForImages(part: any, path: string): ImageTracePart | null {
   const type = typeof part?.type === "string" ? part.type : undefined;
   const keys = objectKeysForTrace(part);
 
   if (type === "image_url") {
+    const imageUrl = describeImageUrl(part?.image_url);
+    const detail = imageUrlDetail(part?.image_url, part?.detail);
+    if (imageUrl && detail) imageUrl.detail = detail;
     return {
       path,
       type,
       keys,
-      imageUrl: describeImageUrl(part?.image_url),
+      imageUrl,
     };
   }
 

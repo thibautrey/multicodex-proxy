@@ -127,7 +127,7 @@ export default function App() {
   const totalTraceCostFromRows = useMemo(
     () =>
       traces.reduce(
-        (sum, t) => sum + (typeof t.costUsd === "number" ? t.costUsd : (estimateCostUsd(t.model, t.tokensInput ?? 0, t.tokensOutput ?? 0) ?? 0)),
+        (sum, t) => sum + (typeof t.costUsd === "number" ? t.costUsd : (estimateCostUsd(t.model, t.tokensInput ?? 0, t.tokensOutput ?? 0, t.tokensInputCached ?? 0) ?? 0)),
         0,
       ),
     [traces],

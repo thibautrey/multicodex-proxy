@@ -270,7 +270,7 @@ export function TracingTab(props: Props) {
             <tbody>
               {traces.map((t) => {
                 const isExpanded = expandedTraceId === t.id;
-                const rowCost = typeof t.costUsd === "number" ? t.costUsd : (estimateCostUsd(t.model, t.tokensInput ?? 0, t.tokensOutput ?? 0) ?? 0);
+                const rowCost = typeof t.costUsd === "number" ? t.costUsd : (estimateCostUsd(t.model, t.tokensInput ?? 0, t.tokensOutput ?? 0, t.tokensInputCached ?? 0) ?? 0);
                 const provider = t.accountId ? accountProviderById.get(t.accountId) : undefined;
                 const accountLabel = sanitized
                   ? maskEmail(t.accountEmail) || maskId(t.accountId)

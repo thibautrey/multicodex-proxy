@@ -9,6 +9,7 @@ export const EMPTY_TRACE_STATS: TraceStats = {
     errors: 0,
     errorRate: 0,
     tokensInput: 0,
+    tokensInputCached: 0,
     tokensOutput: 0,
     tokensTotal: 0,
     costUsd: 0,

@@ -36,6 +36,7 @@ export type Trace = {
   stream: boolean;
   latencyMs: number;
   tokensInput?: number;
+  tokensInputCached?: number;
   tokensOutput?: number;
   tokensTotal?: number;
   costUsd?: number;
@@ -51,6 +52,7 @@ export type TraceStats = {
     errors: number;
     errorRate: number;
     tokensInput: number;
+    tokensInputCached: number;
     tokensOutput: number;
     tokensTotal: number;
     costUsd: number;
@@ -61,6 +63,7 @@ export type TraceStats = {
     count: number;
     okCount: number;
     tokensInput: number;
+    tokensInputCached: number;
     tokensOutput: number;
     tokensTotal: number;
     costUsd: number;
@@ -70,6 +73,7 @@ export type TraceStats = {
     requests: number;
     errors: number;
     tokensInput: number;
+    tokensInputCached: number;
     tokensOutput: number;
     tokensTotal: number;
     costUsd: number;
