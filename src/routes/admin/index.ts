@@ -15,6 +15,8 @@ import {
   exchangeCodeForToken,
   mergeTokenIntoAccount,
   parseAuthorizationInput,
+  pollDeviceCode,
+  requestDeviceCode,
   type OAuthConfig,
 } from "../../oauth.js";
 import { ensureValidToken } from "../../account-utils.js";
@@ -761,9 +763,55 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     res.json({ ok: true, accounts: refreshed.map(redact) });
   });
 
+  async function completeOpenAiOAuthFlow(
+    flow: NonNullable<Awaited<ReturnType<OAuthStateStore["get"]>>>,
+    code: string,
+    codeVerifier: string,
+    redirectUri?: string,
+  ) {
+    const tokenData = await exchangeCodeForToken(
+      oauthConfig,
+      code,
+      codeVerifier,
+      redirectUri,
+    );
+    let account: Account;
+    if (flow.targetAccountId) {
+      const existing = (await store.listAccounts()).find((a) => a.id === flow.targetAccountId);
+      if (!existing) {
+        throw new Error("target account not found for reauth");
+      }
+      account = mergeTokenIntoAccount(existing, tokenData);
+    } else {
+      account = accountFromOAuth(flow, tokenData);
+    }
+    account = await refreshUsageIfNeeded(account, openaiBaseUrl, true);
+    await store.upsertAccount(account);
+    await oauthStore.update(flow.id, {
+      status: "success",
+      completedAt: Date.now(),
+      accountId: account.id,
+    });
+    return account;
+  }
+
+  function deviceExpiresAt(device: { expires_at?: number | string; expires_in?: number | string }) {
+    if (device.expires_at !== undefined) {
+      const raw = device.expires_at;
+      const numeric = Number(raw);
+      if (Number.isFinite(numeric)) {
+        return numeric > 10_000_000_000 ? numeric : numeric * 1000;
+      }
+      const parsed = Date.parse(String(raw));
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return Date.now() + (Number(device.expires_in ?? 900) || 900) * 1000;
+  }
+
   router.post("/oauth/start", async (req, res) => {
     const email = String(req.body?.email ?? "").trim();
     const targetAccountId = String(req.body?.accountId ?? "").trim() || undefined;
+    const method = req.body?.method === "device" ? "device" : "browser";
     if (!email) return res.status(400).json({ error: "email required" });
     if (targetAccountId) {
       const account = (await store.listAccounts()).find((a) => a.id === targetAccountId);
@@ -772,12 +820,46 @@ export function createAdminRouter(options: AdminRoutesOptions) {
         return res.status(400).json({ error: "oauth reauth is only supported for OpenAI accounts" });
       }
     }
-    const flow = createOAuthState(email, targetAccountId);
+    const flow = createOAuthState(email, targetAccountId, method);
+    if (method === "device") {
+      try {
+        const device = await requestDeviceCode(oauthConfig);
+        const intervalSeconds = Number(device.interval ?? 5) || 5;
+        const expiresAt = deviceExpiresAt(device);
+        const verificationUrl =
+          device.verification_url ??
+          device.verification_uri ??
+          oauthConfig.deviceVerificationUrl;
+        await oauthStore.create({
+          ...flow,
+          deviceAuthId: device.device_auth_id,
+          userCode: device.user_code,
+          verificationUrl,
+          intervalSeconds,
+          expiresAt,
+        });
+        return res.json({
+          ok: true,
+          flowId: flow.id,
+          method,
+          userCode: device.user_code,
+          verificationUrl,
+          intervalSeconds,
+          expiresAt,
+        });
+      } catch (err: any) {
+        return res.status(500).json({
+          error: `Device authorization failed: ${err?.message ?? String(err)}`,
+        });
+      }
+    }
+
     await oauthStore.create(flow);
     const authorizeUrl = buildAuthorizationUrl(oauthConfig, flow);
     res.json({
       ok: true,
       flowId: flow.id,
+      method,
       authorizeUrl,
       expectedRedirectUri: oauthConfig.redirectUri,
     });
@@ -807,28 +889,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       return res.status(400).json({ error: "state mismatch" });
 
     try {
-      const tokenData = await exchangeCodeForToken(
-        oauthConfig,
-        parsed.code,
-        flow.codeVerifier,
-      );
-      let account: Account;
-      if (flow.targetAccountId) {
-        const existing = (await store.listAccounts()).find((a) => a.id === flow.targetAccountId);
-        if (!existing) {
-          throw new Error("target account not found for reauth");
-        }
-        account = mergeTokenIntoAccount(existing, tokenData);
-      } else {
-        account = accountFromOAuth(flow, tokenData);
-      }
-      account = await refreshUsageIfNeeded(account, openaiBaseUrl, true);
-      await store.upsertAccount(account);
-      await oauthStore.update(flow.id, {
-        status: "success",
-        completedAt: Date.now(),
-        accountId: account.id,
-      });
+      const account = await completeOpenAiOAuthFlow(flow, parsed.code, flow.codeVerifier);
       return res.json({ ok: true, account: redact(account) });
     } catch (err: any) {
       const message = err?.message ?? String(err);
@@ -840,6 +901,72 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       return res
         .status(500)
         .json({ error: `OAuth exchange failed: ${message}` });
+    }
+  });
+
+  router.post("/oauth/device/poll", async (req, res) => {
+    const flowId = String(req.body?.flowId ?? "").trim();
+    if (!flowId) return res.status(400).json({ error: "flowId is required" });
+
+    const flow = await oauthStore.get(flowId);
+    if (!flow) return res.status(404).json({ error: "flow not found" });
+    if (flow.method !== "device") {
+      return res.status(400).json({ error: "flow is not a device authorization flow" });
+    }
+    if (flow.expiresAt && flow.expiresAt < Date.now()) {
+      await oauthStore.update(flow.id, {
+        status: "error",
+        error: "device code expired",
+        completedAt: Date.now(),
+      });
+      return res.status(410).json({ error: "device code expired" });
+    }
+
+    try {
+      console.log("[oauth-device] polling OpenAI", {
+        flowId: flow.id,
+        userCode: flow.userCode,
+      });
+      const codeData = await pollDeviceCode(oauthConfig, flow);
+      console.log("[oauth-device] OpenAI approved", { flowId: flow.id });
+      if (!codeData.code_verifier) {
+        throw new Error("device authorization response missing code_verifier");
+      }
+      const account = await completeOpenAiOAuthFlow(
+        flow,
+        codeData.authorization_code,
+        codeData.code_verifier,
+        oauthConfig.deviceRedirectUri,
+      );
+      return res.json({ ok: true, status: "success", account: redact(account) });
+    } catch (err: any) {
+      const message = err?.message ?? String(err);
+      const pendingErrors = new Set([
+        "authorization_pending",
+        "deviceauth_authorization_pending",
+        "deviceauth_authorization_unknown",
+      ]);
+      if (pendingErrors.has(message)) {
+        console.log("[oauth-device] OpenAI pending", {
+          flowId: flow.id,
+          status: message,
+        });
+        return res.json({
+          ok: true,
+          status: "pending",
+          intervalSeconds: flow.intervalSeconds ?? 5,
+        });
+      }
+      await oauthStore.update(flow.id, {
+        status: "error",
+        error: message,
+        completedAt: Date.now(),
+      });
+      console.error("[oauth-device] OpenAI poll failed", {
+        flowId: flow.id,
+        error: message,
+      });
+      return res.status(500).json({ error: `Device authorization failed: ${message}` });
     }
   });
 
