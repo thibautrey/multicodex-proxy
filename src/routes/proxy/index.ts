@@ -21,6 +21,7 @@ import {
   getZaiBlockDuration,
   isQuotaErrorText,
   markEmptyResponseError,
+  markModelNotFound,
   markQuotaHit,
   normalizeProvider,
   parseZaiErrorCode,
@@ -1300,6 +1301,15 @@ function isRetryableUpstreamError(status: number, errorText: string): boolean {
     return true;
   return /rate.?limit|overloaded|service.?unavailable|upstream.?connect|connection.?refused/i.test(
     errorText,
+  );
+}
+
+function isModelNotFoundError(status: number, errorText: string): boolean {
+  return (
+    (status === 400 || status === 404) &&
+    /\bmodel(?:\s+['"`]?[^'"`\s]+['"`]?)?\s+not\s+found\b|\bmodel_not_found\b/i.test(
+      errorText,
+    )
   );
 }
 
@@ -2634,6 +2644,16 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               upstreamContentType: contentType,
               upstreamEmptyBody,
             });
+            continue;
+          }
+
+          if (isModelNotFoundError(upstream.status, text)) {
+            markModelNotFound(
+              selected,
+              blockModel,
+              `model unavailable: ${text.slice(0, 200)}`,
+            );
+            await store.upsertAccount(selected);
             continue;
           }
 

@@ -3,6 +3,7 @@ import {
   EMPTY_RESPONSE_BLOCK_THRESHOLD,
   EMPTY_RESPONSE_BLOCK_DURATION_MS,
   EMPTY_RESPONSE_WINDOW_MS,
+  MODEL_NOT_FOUND_BLOCK_DURATION_MS,
 } from "./config.js";
 
 export const USAGE_CACHE_TTL_MS = Number(process.env.USAGE_CACHE_TTL_MS ?? 300_000);
@@ -377,6 +378,16 @@ export function markQuotaHit(account: Account, model: string, message: string) {
     ? Date.now() + RATE_LIMIT_BLOCK_MS
     : (nextResetAt(account.usage) ?? Date.now() + BLOCK_FALLBACK_MS);
   setModelBlock(account, model, until, message);
+  rememberError(account, message);
+}
+
+export function markModelNotFound(account: Account, model: string, message: string) {
+  setModelBlock(
+    account,
+    model,
+    Date.now() + MODEL_NOT_FOUND_BLOCK_DURATION_MS,
+    message,
+  );
   rememberError(account, message);
 }
 

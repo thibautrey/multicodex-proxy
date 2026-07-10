@@ -110,3 +110,8 @@ export const EMPTY_RESPONSE_WINDOW_MS = Math.max(
   60_000,
   Number(process.env.EMPTY_RESPONSE_WINDOW_MS ?? 5 * 60_000),
 );
+
+export const MODEL_NOT_FOUND_BLOCK_DURATION_MS = Math.max(
+  60_000,
+  Number(process.env.MODEL_NOT_FOUND_BLOCK_DURATION_MS ?? 60 * 60_000),
+);
