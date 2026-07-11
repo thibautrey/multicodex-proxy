@@ -1090,6 +1090,7 @@ type BufferedResponsesStreamResult = {
 function createResponseStreamDiagnostics(): ResponseStreamDiagnostics {
   return {
     eventCount: 0,
+    eventTypes: {},
     invalidDataPayloadCount: 0,
     outputTextDeltaCount: 0,
     outputTextDoneCount: 0,
@@ -1110,6 +1111,9 @@ function inspectResponseStreamEvent(
 ): void {
   diagnostics.eventCount += 1;
   const type = typeof event?.type === "string" ? event.type : "";
+  if (type) {
+    diagnostics.eventTypes[type] = (diagnostics.eventTypes[type] ?? 0) + 1;
+  }
   if (event?.object === "chat.completion.chunk") {
     diagnostics.sawChatCompletionChunk = true;
   }
@@ -1840,182 +1844,38 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 return;
               }
 
+              // Buffer converted Responses streams before responding. This preserves account
+              // rotation for empty outputs, which is impossible after SSE bytes are sent.
+              const rawText = upstream.body ? await upstream.text() : "";
               const model =
                 req.body?.model ?? payloadToUpstream?.model ?? "unknown";
-              let accumulatedUsage: any = null;
-              let streamedFallbackText = "";
+              const rendered = renderBufferedResponsesStream(rawText, model);
+              const parsedChat = parseResponsesSSEToChatCompletion(
+                rendered.body || rawText,
+                model,
+              );
+              const normalized = ensureNonEmptyChatCompletion(parsedChat);
 
-              if (!upstream.body) return res.end();
-              const reader = upstream.body.getReader();
-              const decoder = new TextDecoder();
-              let doneSent = false;
-              let sseBuffer = "";
-
-              while (true) {
-                const { value, done } = await reader.read();
-                if (done) break;
-
-                sseBuffer += decoder.decode(value, { stream: true });
-                while (true) {
-                  const next = takeNextSSEFrame(sseBuffer);
-                  if (!next) break;
-                  sseBuffer = next.rest;
-
-                  const lines = next.frame.split(/\r?\n/);
-                  for (const rawLine of lines) {
-                    const line = rawLine.trim();
-                    if (!line.startsWith("data:")) continue;
-
-                    const payload = line.slice(5).trim();
-                    if (payload && payload !== "[DONE]") {
-                      try {
-                        const event = JSON.parse(payload);
-                        if (
-                          event?.type === "response.output_text.delta" &&
-                          typeof event?.delta === "string"
-                        ) {
-                          streamedFallbackText += sanitizeAssistantTextChunk(
-                            event.delta,
-                          );
-                        } else if (
-                          event?.type === "response.output_text.done" &&
-                          !streamedFallbackText &&
-                          typeof event?.text === "string"
-                        ) {
-                          streamedFallbackText = sanitizeAssistantTextChunk(
-                            event.text,
-                          );
-                        }
-                      } catch {}
-                    }
-
-                    const converted = convertResponsesSSEToChatCompletionSSE(
-                      line,
-                      model,
-                      streamedFallbackText,
-                    );
-                    if (converted) {
-                      res.write(converted);
-                      if (converted.includes("[DONE]")) doneSent = true;
-                    } else if (line.includes('"response.reasoning')) {
-                      res.write(": keepalive\n\n");
-                    }
-
-                    if (line.includes("response.completed")) {
-                      try {
-                        const payload = JSON.parse(line.slice(5).trim());
-                        accumulatedUsage = payload?.response?.usage;
-                      } catch {}
-                    }
-                  }
-                }
+              if (upstream.ok && normalized.patched) {
+                await retryEmptyAssistantOutput(
+                  "empty assistant output in responses stream",
+                  true,
+                  {
+                    usage: rendered.usage ?? normalized.chat?.usage,
+                    upstreamContentType: contentType,
+                    upstreamEmptyBody: rendered.upstreamEmptyBody,
+                    tracePayload: rendered.tracePayload ?? normalized.chat,
+                    responseStreamDiagnostics: rendered.responseStreamDiagnostics,
+                  },
+                );
+                continue;
               }
 
-              sseBuffer += decoder.decode();
-              while (true) {
-                const next = takeNextSSEFrame(sseBuffer);
-                if (!next) break;
-                sseBuffer = next.rest;
-
-                const lines = next.frame.split(/\r?\n/);
-                for (const rawLine of lines) {
-                  const line = rawLine.trim();
-                  if (!line.startsWith("data:")) continue;
-
-                  const payload = line.slice(5).trim();
-                  if (payload && payload !== "[DONE]") {
-                    try {
-                      const event = JSON.parse(payload);
-                      if (
-                        event?.type === "response.output_text.delta" &&
-                        typeof event?.delta === "string"
-                      ) {
-                        streamedFallbackText += sanitizeAssistantTextChunk(
-                          event.delta,
-                        );
-                      } else if (
-                        event?.type === "response.output_text.done" &&
-                        !streamedFallbackText &&
-                        typeof event?.text === "string"
-                      ) {
-                        streamedFallbackText = sanitizeAssistantTextChunk(
-                          event.text,
-                        );
-                      }
-                    } catch {}
-                  }
-
-                  const converted = convertResponsesSSEToChatCompletionSSE(
-                    line,
-                    model,
-                    streamedFallbackText,
-                  );
-                  if (converted) {
-                    res.write(converted);
-                    if (converted.includes("[DONE]")) doneSent = true;
-                  } else if (line.includes('"response.reasoning')) {
-                    res.write(": keepalive\n\n");
-                  }
-
-                  if (line.includes("response.completed")) {
-                    try {
-                      const payload = JSON.parse(line.slice(5).trim());
-                      accumulatedUsage = payload?.response?.usage;
-                    } catch {}
-                  }
-                }
-              }
-              if (sseBuffer.trim()) {
-                const lines = sseBuffer.split(/\r?\n/);
-                for (const rawLine of lines) {
-                  const line = rawLine.trim();
-                  if (!line.startsWith("data:")) continue;
-
-                  const payload = line.slice(5).trim();
-                  if (payload && payload !== "[DONE]") {
-                    try {
-                      const event = JSON.parse(payload);
-                      if (
-                        event?.type === "response.output_text.delta" &&
-                        typeof event?.delta === "string"
-                      ) {
-                        streamedFallbackText += sanitizeAssistantTextChunk(
-                          event.delta,
-                        );
-                      } else if (
-                        event?.type === "response.output_text.done" &&
-                        !streamedFallbackText &&
-                        typeof event?.text === "string"
-                      ) {
-                        streamedFallbackText = sanitizeAssistantTextChunk(
-                          event.text,
-                        );
-                      }
-                    } catch {}
-                  }
-
-                  const converted = convertResponsesSSEToChatCompletionSSE(
-                    line,
-                    model,
-                    streamedFallbackText,
-                  );
-                  if (converted) {
-                    res.write(converted);
-                    if (converted.includes("[DONE]")) doneSent = true;
-                  } else if (line.includes('"response.reasoning')) {
-                    res.write(": keepalive\n\n");
-                  }
-
-                  if (line.includes("response.completed")) {
-                    try {
-                      const payload = JSON.parse(line.slice(5).trim());
-                      accumulatedUsage = payload?.response?.usage;
-                    } catch {}
-                  }
-                }
-              }
-
-              if (!doneSent) res.write("data: [DONE]\n\n");
+              res.status(upstream.ok ? 200 : upstream.status);
+              res.set("Content-Type", "text/event-stream");
+              res.set("Cache-Control", "no-cache");
+              res.set("Connection", "keep-alive");
+              res.write(chatCompletionObjectToSSE(normalized.chat));
               res.end();
 
               recordTrace({
@@ -2028,9 +1888,13 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 status: upstream.status,
                 stream: true,
                 latencyMs: Date.now() - startedAt,
-                usage: accumulatedUsage,
+                usage: rendered.usage ?? normalized.chat?.usage,
                 requestBody,
             ...traceImage,
+                upstreamContentType: contentType,
+                upstreamEmptyBody: rendered.upstreamEmptyBody,
+                responseStreamDiagnostics: rendered.responseStreamDiagnostics,
+                ...inspectAssistantPayload(normalized.chat),
               });
               return;
             }
@@ -2545,6 +2409,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 upstreamError,
                 upstreamContentType: contentType,
                 upstreamEmptyBody: rendered.upstreamEmptyBody,
+                responseStreamDiagnostics: rendered.responseStreamDiagnostics,
                 ...inspectAssistantPayload(rendered.tracePayload),
               });
               return;
