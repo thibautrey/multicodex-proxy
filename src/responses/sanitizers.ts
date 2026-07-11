@@ -55,6 +55,16 @@ export function isValidResponseFunctionCall(item: any): boolean {
   );
 }
 
+export function isValidResponseCustomToolCall(item: any): boolean {
+  if (!item || typeof item !== "object") return false;
+  return Boolean(
+    item.type === "custom_tool_call" &&
+      asNonEmptyString(item.name) &&
+      asNonEmptyString(item.call_id ?? item.id) &&
+      asNonEmptyString(item.input),
+  );
+}
+
 function normalizedToolArguments(args: any): string | undefined {
   if (typeof args === "string") return asNonEmptyString(args);
   if (args === undefined || args === null) return undefined;
@@ -69,7 +79,10 @@ export function responseHasAssistantOutput(response: any): boolean {
   if (!response || typeof response !== "object") return false;
   const output = Array.isArray(response?.output) ? response.output : [];
   for (const item of output) {
-    if (isValidResponseFunctionCall(item)) {
+    if (
+      isValidResponseFunctionCall(item) ||
+      isValidResponseCustomToolCall(item)
+    ) {
       return true;
     }
     if (item?.type !== "message" || item?.role !== "assistant") continue;
@@ -109,7 +122,9 @@ export function responseStreamHasAssistantOutput(
 ): boolean {
   let hasVisibleText = false;
   let hasOutputItemFunctionCall = false;
+  let hasOutputItemCustomToolCall = false;
   let hasCompletedFunctionCall = false;
+  let hasCompletedCustomToolCall = false;
 
   for (const rawLine of sseText.split(/\r?\n/)) {
     const line = rawLine.trim();
@@ -147,6 +162,13 @@ export function responseStreamHasAssistantOutput(
         hasOutputItemFunctionCall = true;
       }
 
+      if (
+        event?.type === "response.output_item.done" &&
+        isValidResponseCustomToolCall(event.item)
+      ) {
+        hasOutputItemCustomToolCall = true;
+      }
+
       if (event?.type === "response.completed") {
         const output = Array.isArray(event?.response?.output)
           ? event.response.output
@@ -154,6 +176,7 @@ export function responseStreamHasAssistantOutput(
         for (const item of output) {
           if (responseMessageItemHasVisibleOutput(item)) hasVisibleText = true;
           if (isValidResponseFunctionCall(item)) hasCompletedFunctionCall = true;
+          if (isValidResponseCustomToolCall(item)) hasCompletedCustomToolCall = true;
         }
       }
     } catch {}
@@ -162,7 +185,9 @@ export function responseStreamHasAssistantOutput(
   return (
     hasVisibleText ||
     hasOutputItemFunctionCall ||
-    (!options.requireFunctionCallOutputItem && hasCompletedFunctionCall)
+    hasOutputItemCustomToolCall ||
+    (!options.requireFunctionCallOutputItem &&
+      (hasCompletedFunctionCall || hasCompletedCustomToolCall))
   );
 }
 

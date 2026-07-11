@@ -293,6 +293,29 @@ export function responsesToChatCompletionsPayload(body: any) {
       continue;
     }
 
+    if (item?.type === "custom_tool_call") {
+      messages.push({
+        role: "assistant",
+        content: `Custom tool call ${item.name ?? "unknown"}: ${
+          typeof item.input === "string" ? item.input : ""
+        }`,
+      });
+      continue;
+    }
+
+    if (item?.type === "custom_tool_call_output") {
+      messages.push({
+        role: "tool",
+        tool_call_id:
+          item.call_id ?? item.id ?? `call_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
+        content:
+          typeof item.output === "string"
+            ? item.output
+            : JSON.stringify(item.output ?? ""),
+      });
+      continue;
+    }
+
     const role =
       item?.role === "assistant"
         ? "assistant"
