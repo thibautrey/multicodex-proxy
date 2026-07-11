@@ -65,7 +65,10 @@ import {
 
 import { AccountStore } from "../../store.js";
 import type { OAuthConfig } from "../../oauth.js";
-import { TraceManager } from "../../traces.js";
+import {
+  TraceManager,
+  type ResponseStreamDiagnostics,
+} from "../../traces.js";
 import { ensureValidToken } from "../../account-utils.js";
 import express from "express";
 import { randomUUID } from "node:crypto";
@@ -1072,6 +1075,7 @@ type ResponsesStreamState = {
   accumulatedUsage: any;
   streamedFallbackText: string;
   sawResponseCompleted: boolean;
+  diagnostics: ResponseStreamDiagnostics;
 };
 
 type BufferedResponsesStreamResult = {
@@ -1080,7 +1084,52 @@ type BufferedResponsesStreamResult = {
   upstreamEmptyBody: boolean;
   assistantEmptyOutput: boolean;
   tracePayload: any;
+  responseStreamDiagnostics: ResponseStreamDiagnostics;
 };
+
+function createResponseStreamDiagnostics(): ResponseStreamDiagnostics {
+  return {
+    eventCount: 0,
+    invalidDataPayloadCount: 0,
+    outputTextDeltaCount: 0,
+    outputTextDoneCount: 0,
+    reasoningEventCount: 0,
+    refusalEventCount: 0,
+    functionCallCount: 0,
+    hiddenFunctionCallCount: 0,
+    sanitizerDroppedEventCount: 0,
+    sanitizerDroppedTextEventCount: 0,
+    sawResponseCompleted: false,
+    sawChatCompletionChunk: false,
+  };
+}
+
+function inspectResponseStreamEvent(
+  event: any,
+  diagnostics: ResponseStreamDiagnostics,
+): void {
+  diagnostics.eventCount += 1;
+  const type = typeof event?.type === "string" ? event.type : "";
+  if (event?.object === "chat.completion.chunk") {
+    diagnostics.sawChatCompletionChunk = true;
+  }
+  if (type === "response.output_text.delta") diagnostics.outputTextDeltaCount += 1;
+  if (type === "response.output_text.done") diagnostics.outputTextDoneCount += 1;
+  if (type.startsWith("response.reasoning")) diagnostics.reasoningEventCount += 1;
+  if (type.startsWith("response.refusal")) diagnostics.refusalEventCount += 1;
+  if (type === "response.completed") diagnostics.sawResponseCompleted = true;
+
+  const item = event?.item;
+  if (item?.type === "function_call") {
+    diagnostics.functionCallCount += 1;
+    if (
+      typeof item.name === "string" &&
+      item.name.trim().toLowerCase().startsWith("functions.")
+    ) {
+      diagnostics.hiddenFunctionCallCount += 1;
+    }
+  }
+}
 
 function inspectResponsesDataLine(
   line: string,
@@ -1093,6 +1142,7 @@ function inspectResponsesDataLine(
 
   try {
     const event = JSON.parse(payload);
+    inspectResponseStreamEvent(event, state.diagnostics);
     if (
       event?.type === "response.output_text.delta" &&
       typeof event?.delta === "string"
@@ -1108,7 +1158,9 @@ function inspectResponsesDataLine(
       state.sawResponseCompleted = true;
       state.accumulatedUsage = event?.response?.usage ?? state.accumulatedUsage;
     }
-  } catch {}
+  } catch {
+    state.diagnostics.invalidDataPayloadCount += 1;
+  }
 }
 
 function parseSSEDataPayloads(frame: string): any[] {
@@ -1189,12 +1241,16 @@ function renderBufferedResponsesStream(
   const frames = splitSSEFrames(rawText);
   const upstreamEmptyBody = !rawText.trim();
   const sawChatCompletionStream = frames.some(isChatCompletionSSEFrame);
+  const diagnostics = createResponseStreamDiagnostics();
 
   if (sawChatCompletionStream) {
     const body: string[] = [];
     const chatStreamState = createChatStreamAccumulator(model);
 
     for (const frame of frames) {
+      for (const payload of parseSSEDataPayloads(frame)) {
+        inspectResponseStreamEvent(payload, diagnostics);
+      }
       if (isChatCompletionSSEFrame(frame)) {
         const converted = convertChatCompletionSSEToResponseSSE(
           frame,
@@ -1225,6 +1281,7 @@ function renderBufferedResponsesStream(
       upstreamEmptyBody,
       assistantEmptyOutput: !hasAssistantOutput,
       tracePayload: chat,
+      responseStreamDiagnostics: diagnostics,
     };
   }
 
@@ -1233,6 +1290,7 @@ function renderBufferedResponsesStream(
     accumulatedUsage: null,
     streamedFallbackText: "",
     sawResponseCompleted: false,
+    diagnostics,
   };
 
   for (const frame of frames) {
@@ -1240,6 +1298,16 @@ function renderBufferedResponsesStream(
       inspectResponsesDataLine(rawLine.trim(), streamState);
     }
     const filtered = sanitizeResponsesSSEFrame(frame);
+    if (filtered === null) {
+      streamState.diagnostics.sanitizerDroppedEventCount += 1;
+      const event = parseSSEDataPayloads(frame)[0];
+      if (
+        event?.type === "response.output_text.delta" ||
+        event?.type === "response.output_text.done"
+      ) {
+        streamState.diagnostics.sanitizerDroppedTextEventCount += 1;
+      }
+    }
     if (filtered !== null) appendSSEFrame(body, filtered);
   }
 
@@ -1283,6 +1351,7 @@ function renderBufferedResponsesStream(
     upstreamEmptyBody,
     assistantEmptyOutput: !hasAssistantOutput,
     tracePayload: response,
+    responseStreamDiagnostics: streamState.diagnostics,
   };
 }
 
@@ -1627,6 +1696,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             upstreamContentType?: string;
             upstreamEmptyBody?: boolean;
             tracePayload?: any;
+            responseStreamDiagnostics?: ResponseStreamDiagnostics;
           } = {},
         ) => {
           sawEmptyAssistantOutput = true;
@@ -1648,6 +1718,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             error: message,
             upstreamContentType: details.upstreamContentType,
             ...inspectAssistantPayload(details.tracePayload),
+            responseStreamDiagnostics: details.responseStreamDiagnostics,
             upstreamEmptyBody: details.upstreamEmptyBody,
             assistantEmptyOutput: true,
           });
@@ -2025,6 +2096,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                     upstreamContentType: contentType,
                     upstreamEmptyBody: rendered.upstreamEmptyBody,
                     tracePayload: rendered.tracePayload,
+                    responseStreamDiagnostics: rendered.responseStreamDiagnostics,
                   },
                 );
                 continue;
@@ -2089,6 +2161,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 upstreamContentType: contentType,
                 upstreamEmptyBody: rendered.upstreamEmptyBody,
                 assistantEmptyOutput: true,
+                responseStreamDiagnostics: rendered.responseStreamDiagnostics,
               });
               continue;
             }
@@ -2443,6 +2516,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                     upstreamContentType: contentType,
                     upstreamEmptyBody: rendered.upstreamEmptyBody,
                     tracePayload: rendered.tracePayload,
+                    responseStreamDiagnostics: rendered.responseStreamDiagnostics,
                   },
                 );
                 continue;
@@ -2534,6 +2608,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                   upstreamContentType: contentType,
                   upstreamEmptyBody: rendered.upstreamEmptyBody,
                   tracePayload: rendered.tracePayload,
+                  responseStreamDiagnostics: rendered.responseStreamDiagnostics,
                 },
               );
               continue;

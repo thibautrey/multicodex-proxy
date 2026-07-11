@@ -30,6 +30,22 @@ export type TraceEntry = {
   imageTrace?: any;
   assistantEmptyOutput?: boolean;
   assistantFinishReason?: string;
+  responseStreamDiagnostics?: ResponseStreamDiagnostics;
+};
+
+export type ResponseStreamDiagnostics = {
+  eventCount: number;
+  invalidDataPayloadCount: number;
+  outputTextDeltaCount: number;
+  outputTextDoneCount: number;
+  reasoningEventCount: number;
+  refusalEventCount: number;
+  functionCallCount: number;
+  hiddenFunctionCallCount: number;
+  sanitizerDroppedEventCount: number;
+  sanitizerDroppedTextEventCount: number;
+  sawResponseCompleted: boolean;
+  sawChatCompletionChunk: boolean;
 };
 
 export type TraceListEntry = Omit<TraceEntry, "requestBody"> & {
@@ -249,6 +265,11 @@ function normalizeTrace(raw: any): TraceEntry | null {
     assistantFinishReason:
       typeof raw.assistantFinishReason === "string"
         ? raw.assistantFinishReason
+        : undefined,
+    responseStreamDiagnostics:
+      raw.responseStreamDiagnostics &&
+      typeof raw.responseStreamDiagnostics === "object"
+        ? raw.responseStreamDiagnostics
         : undefined,
   };
 }
@@ -705,6 +726,7 @@ export function createTraceManager(config: TraceManagerConfig) {
       imageTrace: _imageTrace,
       assistantEmptyOutput: _assistantEmptyOutput,
       assistantFinishReason: _assistantFinishReason,
+      responseStreamDiagnostics: _responseStreamDiagnostics,
       ...rest
     } = entry;
     return rest;
