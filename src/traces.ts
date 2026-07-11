@@ -35,6 +35,7 @@ export type TraceEntry = {
 
 export type ResponseStreamDiagnostics = {
   eventCount: number;
+  eventTypes: Record<string, number>;
   invalidDataPayloadCount: number;
   outputTextDeltaCount: number;
   outputTextDoneCount: number;
