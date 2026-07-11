@@ -1091,6 +1091,7 @@ function createResponseStreamDiagnostics(): ResponseStreamDiagnostics {
   return {
     eventCount: 0,
     eventTypes: {},
+    customToolCalls: [],
     invalidDataPayloadCount: 0,
     outputTextDeltaCount: 0,
     outputTextDoneCount: 0,
@@ -1103,6 +1104,60 @@ function createResponseStreamDiagnostics(): ResponseStreamDiagnostics {
     sawResponseCompleted: false,
     sawChatCompletionChunk: false,
   };
+}
+
+function customToolCallKey(event: any): string | undefined {
+  const itemId = event?.item_id ?? event?.item?.id;
+  const callId = event?.call_id ?? event?.item?.call_id;
+  const key = itemId ?? callId;
+  return typeof key === "string" && key ? key : undefined;
+}
+
+function inspectCustomToolCallEvent(
+  event: any,
+  type: string,
+  diagnostics: ResponseStreamDiagnostics,
+): void {
+  const item = event?.item ?? {};
+  const isCustomToolItem = item?.type === "custom_tool_call";
+  const isCustomToolEvent = type.startsWith("response.custom_tool_call_");
+  if (!isCustomToolItem && !isCustomToolEvent) return;
+
+  const key = customToolCallKey(event);
+  let tool = key
+    ? diagnostics.customToolCalls.find((entry: any) => entry._key === key)
+    : undefined;
+  if (!tool && diagnostics.customToolCalls.length < 8) {
+    tool = {
+      itemIdPresent: typeof (event?.item_id ?? item?.id) === "string",
+      callIdPresent: typeof (event?.call_id ?? item?.call_id) === "string",
+      name:
+        typeof (event?.name ?? item?.name) === "string"
+          ? (event?.name ?? item?.name).slice(0, 120)
+          : undefined,
+      status:
+        typeof item?.status === "string" ? item.status : undefined,
+      inputDeltaCount: 0,
+      inputBytes: 0,
+      sawInputDone: false,
+      sawOutputItemAdded: false,
+      sawOutputItemDone: false,
+    };
+    Object.defineProperty(tool, "_key", {
+      value: key ?? `anonymous-${diagnostics.customToolCalls.length + 1}`,
+      enumerable: false,
+    });
+    diagnostics.customToolCalls.push(tool);
+  }
+  if (!tool) return;
+
+  if (type === "response.output_item.added") tool.sawOutputItemAdded = true;
+  if (type === "response.output_item.done") tool.sawOutputItemDone = true;
+  if (type === "response.custom_tool_call_input.delta") {
+    tool.inputDeltaCount += 1;
+    if (typeof event?.delta === "string") tool.inputBytes += Buffer.byteLength(event.delta);
+  }
+  if (type === "response.custom_tool_call_input.done") tool.sawInputDone = true;
 }
 
 function inspectResponseStreamEvent(
@@ -1122,6 +1177,7 @@ function inspectResponseStreamEvent(
   if (type.startsWith("response.reasoning")) diagnostics.reasoningEventCount += 1;
   if (type.startsWith("response.refusal")) diagnostics.refusalEventCount += 1;
   if (type === "response.completed") diagnostics.sawResponseCompleted = true;
+  inspectCustomToolCallEvent(event, type, diagnostics);
 
   const item = event?.item;
   if (item?.type === "function_call") {

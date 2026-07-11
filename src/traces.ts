@@ -36,6 +36,7 @@ export type TraceEntry = {
 export type ResponseStreamDiagnostics = {
   eventCount: number;
   eventTypes: Record<string, number>;
+  customToolCalls: CustomToolCallDiagnostic[];
   invalidDataPayloadCount: number;
   outputTextDeltaCount: number;
   outputTextDoneCount: number;
@@ -47,6 +48,19 @@ export type ResponseStreamDiagnostics = {
   sanitizerDroppedTextEventCount: number;
   sawResponseCompleted: boolean;
   sawChatCompletionChunk: boolean;
+};
+
+export type CustomToolCallDiagnostic = {
+  _key?: string;
+  itemIdPresent: boolean;
+  callIdPresent: boolean;
+  name?: string;
+  status?: string;
+  inputDeltaCount: number;
+  inputBytes: number;
+  sawInputDone: boolean;
+  sawOutputItemAdded: boolean;
+  sawOutputItemDone: boolean;
 };
 
 export type TraceListEntry = Omit<TraceEntry, "requestBody"> & {
