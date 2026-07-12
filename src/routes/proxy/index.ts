@@ -1,5 +1,7 @@
 import {
   EXCLUDED_PROVIDER_MODELS,
+  CODEX_CLI_ORIGINATOR,
+  CODEX_CLI_USER_AGENT,
   HANG_RETRY_INTERVAL_MS,
   HANG_RETRY_MAX_DURATION_MS,
   MAX_ACCOUNT_RETRY_ATTEMPTS,
@@ -168,6 +170,20 @@ type ImageTraceSummary = {
   inputItemCount?: number;
   parts: ImageTracePart[];
 };
+
+export function buildUpstreamRequestHeaders(
+  provider: ProviderId,
+  accessToken: string,
+): Record<string, string> {
+  const isOpenAI = provider === "openai";
+  return {
+    "content-type": "application/json",
+    authorization: `Bearer ${accessToken}`,
+    accept: "text/event-stream",
+    originator: isOpenAI ? CODEX_CLI_ORIGINATOR : "pi",
+    "User-Agent": isOpenAI ? CODEX_CLI_USER_AGENT : PI_USER_AGENT,
+  };
+}
 
 function truncateForTrace(value: string, max = 120): string {
   return value.length <= max ? value : `${value.slice(0, max)}...`;
@@ -1784,13 +1800,10 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           });
         };
 
-        const headers: Record<string, string> = {
-          "content-type": "application/json",
-          authorization: `Bearer ${selected.accessToken}`,
-          accept: "text/event-stream",
-          originator: "pi",
-          "User-Agent": PI_USER_AGENT,
-        };
+        const headers = buildUpstreamRequestHeaders(
+          candidate.provider,
+          selected.accessToken,
+        );
         if (candidate.provider === "openai") {
           headers["OpenAI-Beta"] = "responses=experimental";
         }

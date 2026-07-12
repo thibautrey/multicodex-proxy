@@ -4,7 +4,10 @@ import {
   chatCompletionsToResponsesPayload,
   responsesToChatCompletionsPayload,
 } from "../../responses/payloads.js";
-import { buildImageAwareRoutingCandidates } from "./index.js";
+import {
+  buildImageAwareRoutingCandidates,
+  buildUpstreamRequestHeaders,
+} from "./index.js";
 
 const discoveredModels: any[] = [
   {
@@ -207,4 +210,18 @@ test("responses top-level image inputs are converted to chat image messages", ()
       image_url: { url: "data:image/png;base64,aaa", detail: "low" },
     },
   ]);
+});
+
+test("OpenAI requests identify as Codex CLI for Luna compatibility", () => {
+  const headers = buildUpstreamRequestHeaders("openai", "test-token");
+
+  assert.equal(headers.originator, "codex_cli_rs");
+  assert.equal(headers["User-Agent"], "codex_cli_rs/0.0.0 (OpenCode)");
+});
+
+test("non-OpenAI requests retain the Pi identity", () => {
+  const headers = buildUpstreamRequestHeaders("mistral", "test-token");
+
+  assert.equal(headers.originator, "pi");
+  assert.match(headers["User-Agent"]!, /^pi \(/);
 });
