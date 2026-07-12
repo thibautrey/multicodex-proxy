@@ -216,7 +216,8 @@ test("OpenAI requests identify as Codex CLI for Luna compatibility", () => {
   const headers = buildUpstreamRequestHeaders("openai", "test-token");
 
   assert.equal(headers.originator, "codex_cli_rs");
-  assert.equal(headers["User-Agent"], "codex_cli_rs/0.0.0 (OpenCode)");
+  assert.equal(headers["User-Agent"], "codex_cli_rs/0.144.1");
+  assert.equal(headers.version, "0.144.1");
 });
 
 test("non-OpenAI requests retain the Pi identity", () => {
@@ -224,4 +225,5 @@ test("non-OpenAI requests retain the Pi identity", () => {
 
   assert.equal(headers.originator, "pi");
   assert.match(headers["User-Agent"]!, /^pi \(/);
+  assert.equal(headers.version, undefined);
 });

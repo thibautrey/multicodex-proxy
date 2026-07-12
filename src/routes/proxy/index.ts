@@ -182,6 +182,7 @@ export function buildUpstreamRequestHeaders(
     accept: "text/event-stream",
     originator: isOpenAI ? CODEX_CLI_ORIGINATOR : "pi",
     "User-Agent": isOpenAI ? CODEX_CLI_USER_AGENT : PI_USER_AGENT,
+    ...(isOpenAI ? { version: MODELS_CLIENT_VERSION } : {}),
   };
 }
 

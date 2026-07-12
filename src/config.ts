@@ -54,10 +54,12 @@ export const HANG_RETRY_MAX_DURATION_MS = Math.max(
   Number(process.env.HANG_RETRY_MAX_DURATION_MS ?? 120_000),
 );
 export const PI_USER_AGENT = `pi (${os.platform()} ${os.release()}; ${os.arch()})`;
+export const MODELS_CLIENT_VERSION =
+  process.env.MODELS_CLIENT_VERSION ?? "0.144.1";
 // Luna expects requests made with a ChatGPT OAuth token to identify as Codex.
-// Keep this aligned with the upstream workaround from OpenCode.
+// Keep the runtime and model-discovery identity on the same Codex client version.
 export const CODEX_CLI_ORIGINATOR = "codex_cli_rs";
-export const CODEX_CLI_USER_AGENT = "codex_cli_rs/0.0.0 (OpenCode)";
+export const CODEX_CLI_USER_AGENT = `codex_cli_rs/${MODELS_CLIENT_VERSION}`;
 
 export const PROXY_MODELS = (
   process.env.PROXY_MODELS ?? "gpt-5.3-codex,gpt-5.2-codex,gpt-5-codex"
@@ -65,8 +67,6 @@ export const PROXY_MODELS = (
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
-export const MODELS_CLIENT_VERSION =
-  process.env.MODELS_CLIENT_VERSION ?? "1.0.0";
 export const MODELS_CACHE_MS = Number(
   process.env.MODELS_CACHE_MS ?? 10 * 60_000,
 );
