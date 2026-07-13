@@ -8,11 +8,12 @@ export type CompatibilityMode =
 export type UsageWindow = {
   usedPercent?: number;
   resetAt?: number; // epoch ms
+  windowSeconds?: number;
 };
 
 export type UsageSnapshot = {
-  primary?: UsageWindow; // ~5h window
-  secondary?: UsageWindow; // weekly window
+  primary?: UsageWindow; // normalized ~5h window
+  secondary?: UsageWindow; // normalized weekly window
   fetchedAt: number;
 };
 
