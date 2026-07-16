@@ -47,7 +47,9 @@ import {
   convertChatCompletionSSEToResponseSSE,
   convertResponsesSSEToChatCompletionSSE,
   createChatStreamAccumulator,
+  createResponsesToChatCompletionStreamState,
   finalizeChatCompletionSSEToResponseSSE,
+  finalizeResponsesSSEToChatCompletionSSE,
   parseChatCompletionSSEToChatCompletion,
   parseChatCompletionSSEToResponseObject,
   parseResponsesSSEToChatCompletion,
@@ -1859,11 +1861,25 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
 
               if (shouldSendChatCompletions) {
                 if (!upstream.body) return res.end();
+                res.flushHeaders();
+                res.write(": connected\n\n");
                 const reader = upstream.body.getReader();
                 const decoder = new TextDecoder();
                 let sseBuffer = "";
                 let doneSent = false;
                 let accumulatedUsage: any = null;
+                let clientDisconnected = false;
+                const abortOnDisconnect = () => {
+                  clientDisconnected = !res.writableEnded;
+                  if (clientDisconnected) void reader.cancel();
+                };
+                res.once("close", abortOnDisconnect);
+                const keepaliveTimer = setInterval(() => {
+                  if (!res.writableEnded && !clientDisconnected) {
+                    res.write(": keepalive\n\n");
+                  }
+                }, 15_000);
+                keepaliveTimer.unref?.();
 
                 const forwardFrame = (frame: string) => {
                   res.write(frame.endsWith("\n\n") ? frame : `${frame}\n\n`);
@@ -1873,18 +1889,24 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                   }
                 };
 
-                while (true) {
-                  const { value, done } = await reader.read();
-                  if (done) break;
-                  sseBuffer += decoder.decode(value, { stream: true });
-                  while (true) {
-                    const next = takeNextSSEFrame(sseBuffer);
-                    if (!next) break;
-                    sseBuffer = next.rest;
-                    forwardFrame(next.frame);
+                try {
+                  while (!clientDisconnected) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    sseBuffer += decoder.decode(value, { stream: true });
+                    while (true) {
+                      const next = takeNextSSEFrame(sseBuffer);
+                      if (!next) break;
+                      sseBuffer = next.rest;
+                      forwardFrame(next.frame);
+                    }
                   }
+                } finally {
+                  clearInterval(keepaliveTimer);
+                  res.off("close", abortOnDisconnect);
                 }
 
+                if (clientDisconnected) return;
                 sseBuffer += decoder.decode();
                 while (true) {
                   const next = takeNextSSEFrame(sseBuffer);
@@ -1914,39 +1936,206 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 return;
               }
 
-              // Buffer converted Responses streams before responding. This preserves account
-              // rotation for empty outputs, which is impossible after SSE bytes are sent.
-              const rawText = upstream.body ? await upstream.text() : "";
               const model =
                 req.body?.model ?? payloadToUpstream?.model ?? "unknown";
-              const rendered = renderBufferedResponsesStream(rawText, model);
-              const parsedChat = parseResponsesSSEToChatCompletion(
-                rendered.body || rawText,
-                model,
-              );
-              const normalized = ensureNonEmptyChatCompletion(parsedChat);
-
-              if (upstream.ok && normalized.patched) {
-                await retryEmptyAssistantOutput(
-                  "empty assistant output in responses stream",
-                  true,
-                  {
-                    usage: rendered.usage ?? normalized.chat?.usage,
-                    upstreamContentType: contentType,
-                    upstreamEmptyBody: rendered.upstreamEmptyBody,
-                    tracePayload: rendered.tracePayload ?? normalized.chat,
-                    responseStreamDiagnostics: rendered.responseStreamDiagnostics,
-                  },
+              if (!upstream.body) {
+                res.status(502);
+                res.set("Content-Type", "text/event-stream");
+                res.set("Cache-Control", "no-cache");
+                res.set("Connection", "keep-alive");
+                res.flushHeaders();
+                res.write(
+                  `data: ${JSON.stringify({
+                    error: {
+                      message: "Upstream returned an empty streaming body.",
+                      type: "upstream_error",
+                      code: "empty_stream_body",
+                    },
+                  })}\n\ndata: [DONE]\n\n`,
                 );
-                continue;
+                res.end();
+                recordTrace({
+                  at: Date.now(),
+                  route: req.path,
+                  accountId: selected.id,
+                  accountEmail: selected.email,
+                  model: tracedModel,
+                  ...traceModelResolution,
+                  status: 502,
+                  stream: true,
+                  latencyMs: Date.now() - startedAt,
+                  error: "empty responses stream body",
+                  requestBody,
+                  ...traceImage,
+                  upstreamContentType: contentType,
+                  upstreamEmptyBody: true,
+                });
+                return;
               }
 
-              res.status(upstream.ok ? 200 : upstream.status);
-              res.set("Content-Type", "text/event-stream");
-              res.set("Cache-Control", "no-cache");
-              res.set("Connection", "keep-alive");
-              res.write(chatCompletionObjectToSSE(normalized.chat));
-              res.end();
+              if (!res.headersSent) {
+                res.status(upstream.ok ? 200 : upstream.status);
+                res.set("Content-Type", "text/event-stream");
+                res.set("Cache-Control", "no-cache");
+                res.set("Connection", "keep-alive");
+                res.flushHeaders();
+              }
+              res.write(": connected\n\n");
+
+              const reader = upstream.body.getReader();
+              const decoder = new TextDecoder();
+              const streamState =
+                createResponsesToChatCompletionStreamState(model);
+              let sseBuffer = "";
+              let clientDisconnected = false;
+              let streamError: Error | undefined;
+              const abortOnDisconnect = () => {
+                clientDisconnected = !res.writableEnded;
+                if (clientDisconnected) void reader.cancel();
+              };
+              res.once("close", abortOnDisconnect);
+              const keepaliveTimer = setInterval(() => {
+                if (!res.writableEnded && !clientDisconnected) {
+                  res.write(": keepalive\n\n");
+                }
+              }, 15_000);
+              keepaliveTimer.unref?.();
+
+              const forwardConvertedFrame = (frame: string) => {
+                const payloads = parseSSEDataPayloads(frame);
+                for (const payload of payloads) {
+                  inspectResponseStreamEvent(payload, streamStateDiagnostics);
+                }
+                const converted = convertResponsesSSEToChatCompletionSSE(
+                  frame,
+                  streamState,
+                );
+                if (converted && !res.writableEnded) {
+                  res.write(converted);
+                } else if (
+                  !res.writableEnded &&
+                  payloads.some((payload) =>
+                    String(payload?.type ?? "").startsWith("response.reasoning"),
+                  )
+                ) {
+                  res.write(": keepalive\n\n");
+                }
+              };
+              const streamStateDiagnostics = createResponseStreamDiagnostics();
+
+              try {
+                while (!clientDisconnected) {
+                  const { value, done } = await reader.read();
+                  if (done) break;
+                  sseBuffer += decoder.decode(value, { stream: true });
+                  while (true) {
+                    const next = takeNextSSEFrame(sseBuffer);
+                    if (!next) break;
+                    sseBuffer = next.rest;
+                    forwardConvertedFrame(next.frame);
+                  }
+                }
+
+                if (!clientDisconnected) {
+                  sseBuffer += decoder.decode();
+                  while (true) {
+                    const next = takeNextSSEFrame(sseBuffer);
+                    if (!next) break;
+                    sseBuffer = next.rest;
+                    forwardConvertedFrame(next.frame);
+                  }
+                  if (sseBuffer.trim()) forwardConvertedFrame(sseBuffer);
+                }
+              } catch (error: any) {
+                streamError =
+                  error instanceof Error ? error : new Error(String(error));
+              } finally {
+                clearInterval(keepaliveTimer);
+                res.off("close", abortOnDisconnect);
+              }
+
+              if (clientDisconnected) return;
+
+              const completed =
+                finalizeResponsesSSEToChatCompletionSSE(streamState);
+              if (completed && !res.writableEnded) res.write(completed);
+
+              if (streamError && !streamState.assistantOutputSent) {
+                rememberError(selected, streamError.message);
+                await store.upsertAccount(selected);
+                recordTrace({
+                  at: Date.now(),
+                  route: req.path,
+                  accountId: selected.id,
+                  accountEmail: selected.email,
+                  model: tracedModel,
+                  ...traceModelResolution,
+                  status: 599,
+                  stream: true,
+                  latencyMs: Date.now() - startedAt,
+                  error: streamError.message,
+                  requestBody,
+                  ...traceImage,
+                  upstreamContentType: contentType,
+                  responseStreamDiagnostics: streamStateDiagnostics,
+                });
+                if (!res.writableEnded) {
+                  res.write(
+                    `data: ${JSON.stringify({
+                      error: {
+                        message: streamError.message,
+                        type: "upstream_error",
+                        code: "stream_interrupted",
+                      },
+                    })}\n\ndata: [DONE]\n\n`,
+                  );
+                  res.end();
+                }
+                return;
+              }
+
+              if (!streamState.assistantOutputSent && upstream.ok) {
+                markEmptyResponseError(
+                  selected,
+                  blockModel,
+                  "empty assistant output in responses stream",
+                );
+                await store.upsertAccount(selected);
+                if (!res.writableEnded) {
+                  res.write(
+                    `data: ${JSON.stringify({
+                      error: {
+                        message: "Upstream returned no assistant output.",
+                        type: "upstream_error",
+                        code: "empty_assistant_output",
+                      },
+                    })}\n\ndata: [DONE]\n\n`,
+                  );
+                  res.end();
+                }
+                recordTrace({
+                  at: Date.now(),
+                  route: req.path,
+                  accountId: selected.id,
+                  accountEmail: selected.email,
+                  model: tracedModel,
+                  ...traceModelResolution,
+                  status: 502,
+                  stream: true,
+                  latencyMs: Date.now() - startedAt,
+                  usage: streamState.usage,
+                  requestBody,
+                  ...traceImage,
+                  error: "empty assistant output in responses stream",
+                  upstreamContentType: contentType,
+                  upstreamEmptyBody: false,
+                  assistantEmptyOutput: true,
+                  responseStreamDiagnostics: streamStateDiagnostics,
+                });
+                return;
+              }
+
+              if (!res.writableEnded) res.end();
 
               recordTrace({
                 at: Date.now(),
@@ -1958,13 +2147,13 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 status: upstream.status,
                 stream: true,
                 latencyMs: Date.now() - startedAt,
-                usage: rendered.usage ?? normalized.chat?.usage,
+                usage: streamState.usage,
                 requestBody,
             ...traceImage,
                 upstreamContentType: contentType,
-                upstreamEmptyBody: rendered.upstreamEmptyBody,
-                responseStreamDiagnostics: rendered.responseStreamDiagnostics,
-                ...inspectAssistantPayload(normalized.chat),
+                upstreamEmptyBody: false,
+                responseStreamDiagnostics: streamStateDiagnostics,
+                error: streamError?.message,
               });
               return;
             }

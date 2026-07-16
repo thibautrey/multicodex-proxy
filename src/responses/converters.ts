@@ -30,6 +30,30 @@ export type ChatStreamAccumulator = {
   completedSent: boolean;
 };
 
+type ResponsesToChatToolState = {
+  index: number;
+  outputIndex?: number;
+  itemId?: string;
+  callId: string;
+  name: string;
+  arguments: string;
+  emittedArgumentLength: number;
+  introduced: boolean;
+};
+
+export type ResponsesToChatCompletionStreamState = {
+  id: string;
+  model: string;
+  created: number;
+  content: string;
+  tools: ResponsesToChatToolState[];
+  usage: any;
+  roleSent: boolean;
+  assistantOutputSent: boolean;
+  completedReceived: boolean;
+  finalized: boolean;
+};
+
 function usageChatToResponses(usage: any) {
   if (!usage || typeof usage !== "object") return undefined;
   const input = usage.prompt_tokens ?? usage.input_tokens ?? 0;
@@ -566,6 +590,309 @@ export function chatCompletionObjectToSSE(chatObj: any): string {
   );
 }
 
+export function createResponsesToChatCompletionStreamState(
+  model: string,
+): ResponsesToChatCompletionStreamState {
+  return {
+    id: `chatcmpl_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
+    model,
+    created: Math.floor(Date.now() / 1000),
+    content: "",
+    tools: [],
+    usage: undefined,
+    roleSent: false,
+    assistantOutputSent: false,
+    completedReceived: false,
+    finalized: false,
+  };
+}
+
+function responsesChatChunk(
+  state: ResponsesToChatCompletionStreamState,
+  delta: any,
+  finishReason: string | null = null,
+  usage?: any,
+): string {
+  const nextDelta = state.roleSent ? delta : { role: "assistant", ...delta };
+  state.roleSent = true;
+  const chunk: any = {
+    id: state.id,
+    object: "chat.completion.chunk",
+    created: state.created,
+    model: state.model,
+    choices: [{ index: 0, delta: nextDelta, finish_reason: finishReason }],
+  };
+  if (usage !== undefined) chunk.usage = usageResponsesToChat(usage);
+  return `data: ${JSON.stringify(chunk)}\n\n`;
+}
+
+function responseToolKey(value: any): string | undefined {
+  return typeof value === "string" && value ? value : undefined;
+}
+
+function findResponseTool(
+  state: ResponsesToChatCompletionStreamState,
+  event: any,
+): ResponsesToChatToolState | undefined {
+  const itemId = responseToolKey(event?.item_id ?? event?.item?.id);
+  const callId = responseToolKey(event?.call_id ?? event?.item?.call_id);
+  const outputIndex =
+    typeof event?.output_index === "number" ? event.output_index : undefined;
+  return state.tools.find(
+    (tool) =>
+      (itemId && tool.itemId === itemId) ||
+      (callId && tool.callId === callId) ||
+      (outputIndex !== undefined && tool.outputIndex === outputIndex),
+  );
+}
+
+function getOrCreateResponseTool(
+  state: ResponsesToChatCompletionStreamState,
+  event: any,
+): ResponsesToChatToolState {
+  const existing = findResponseTool(state, event);
+  if (existing) return existing;
+  const item = event?.item ?? event;
+  const itemId = responseToolKey(event?.item_id ?? item?.id);
+  const callId =
+    responseToolKey(event?.call_id ?? item?.call_id ?? item?.id) ??
+    `call_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
+  const tool: ResponsesToChatToolState = {
+    index: state.tools.length,
+    outputIndex:
+      typeof event?.output_index === "number" ? event.output_index : undefined,
+    itemId,
+    callId,
+    name: typeof item?.name === "string" ? item.name : "",
+    arguments: "",
+    emittedArgumentLength: 0,
+    introduced: false,
+  };
+  state.tools.push(tool);
+  return tool;
+}
+
+function introduceResponseTool(
+  state: ResponsesToChatCompletionStreamState,
+  tool: ResponsesToChatToolState,
+): string {
+  if (
+    tool.introduced ||
+    !tool.name ||
+    !shouldExposeFunctionCallName(tool.name)
+  ) {
+    return "";
+  }
+  tool.introduced = true;
+  state.assistantOutputSent = true;
+  return responsesChatChunk(state, {
+    tool_calls: [
+      {
+        index: tool.index,
+        id: tool.callId,
+        type: "function",
+        function: { name: tool.name, arguments: "" },
+      },
+    ],
+  });
+}
+
+function emitResponseToolArguments(
+  state: ResponsesToChatCompletionStreamState,
+  tool: ResponsesToChatToolState,
+): string {
+  if (!tool.introduced || tool.emittedArgumentLength >= tool.arguments.length) {
+    return "";
+  }
+  const delta = tool.arguments.slice(tool.emittedArgumentLength);
+  tool.emittedArgumentLength = tool.arguments.length;
+  state.assistantOutputSent = true;
+  return responsesChatChunk(state, {
+    tool_calls: [
+      {
+        index: tool.index,
+        function: { arguments: delta },
+      },
+    ],
+  });
+}
+
+function appendResponseToolArguments(
+  tool: ResponsesToChatToolState,
+  value: any,
+  complete: boolean,
+): void {
+  if (typeof value !== "string") return;
+  if (!complete) {
+    tool.arguments += value;
+    return;
+  }
+  if (!tool.arguments) {
+    tool.arguments = value;
+  } else if (value.startsWith(tool.arguments)) {
+    tool.arguments = value;
+  }
+}
+
+function emitResponseText(
+  state: ResponsesToChatCompletionStreamState,
+  value: any,
+  complete: boolean,
+): string {
+  if (typeof value !== "string") return "";
+  const sanitized = sanitizeAssistantTextChunk(value);
+  if (!sanitized) return "";
+  let delta = sanitized;
+  if (complete && state.content) {
+    if (!sanitized.startsWith(state.content)) return "";
+    delta = sanitized.slice(state.content.length);
+  }
+  if (!delta) return "";
+  state.content += delta;
+  state.assistantOutputSent = true;
+  return responsesChatChunk(state, { content: delta });
+}
+
+function hydrateResponsesCompletion(
+  state: ResponsesToChatCompletionStreamState,
+  response: any,
+): string {
+  const out: string[] = [];
+  if (typeof response?.model === "string" && response.model) {
+    state.model = response.model;
+  }
+  if (typeof response?.created_at === "number") {
+    state.created = response.created_at;
+  }
+  state.usage = response?.usage ?? state.usage;
+  const output = Array.isArray(response?.output) ? response.output : [];
+  for (const item of output) {
+    if (item?.type === "message") {
+      const text = (Array.isArray(item?.content) ? item.content : [])
+        .map((part: any) =>
+          part?.type === "output_text"
+            ? part?.text
+            : part?.type === "refusal"
+              ? part?.refusal
+              : "",
+        )
+        .filter((part: any) => typeof part === "string")
+        .join("");
+      const converted = emitResponseText(state, text, true);
+      if (converted) out.push(converted);
+      continue;
+    }
+    if (item?.type !== "function_call") continue;
+    const tool = getOrCreateResponseTool(state, { item });
+    if (typeof item?.name === "string") tool.name = item.name;
+    appendResponseToolArguments(tool, item?.arguments, true);
+    const introduced = introduceResponseTool(state, tool);
+    if (introduced) out.push(introduced);
+    const args = emitResponseToolArguments(state, tool);
+    if (args) out.push(args);
+  }
+  return out.join("");
+}
+
+export function finalizeResponsesSSEToChatCompletionSSE(
+  state: ResponsesToChatCompletionStreamState,
+): string | null {
+  if (state.finalized || !state.assistantOutputSent) return null;
+  state.finalized = true;
+  const finishReason = state.tools.some((tool) => tool.introduced)
+    ? "tool_calls"
+    : "stop";
+  return `${responsesChatChunk(state, {}, finishReason, state.usage)}data: [DONE]\n\n`;
+}
+
+export function convertResponsesSSEToChatCompletionSSE(
+  frame: string,
+  state: ResponsesToChatCompletionStreamState,
+): string | null {
+  const out: string[] = [];
+  const dataLines = frame
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("data:"));
+
+  for (const line of dataLines) {
+    const payload = line.slice(5).trim();
+    if (!payload || payload === "[DONE]") continue;
+    let rawEvent: any;
+    try {
+      rawEvent = JSON.parse(payload);
+    } catch {
+      continue;
+    }
+    const sanitized = sanitizeResponsesEvent(rawEvent);
+    if (sanitized.drop) continue;
+    const event = sanitized.event;
+    const type = event?.type;
+
+    if (type === "response.created") {
+      const response = event?.response;
+      if (typeof response?.model === "string" && response.model) {
+        state.model = response.model;
+      }
+      if (typeof response?.created_at === "number") {
+        state.created = response.created_at;
+      }
+      continue;
+    }
+    if (type === "response.output_text.delta") {
+      const converted = emitResponseText(state, event?.delta, false);
+      if (converted) out.push(converted);
+      continue;
+    }
+    if (type === "response.output_text.done") {
+      const converted = emitResponseText(state, event?.text, true);
+      if (converted) out.push(converted);
+      continue;
+    }
+    if (
+      (type === "response.output_item.added" ||
+        type === "response.output_item.done") &&
+      event?.item?.type === "function_call"
+    ) {
+      const tool = getOrCreateResponseTool(state, event);
+      if (typeof event.item?.name === "string") tool.name = event.item.name;
+      appendResponseToolArguments(
+        tool,
+        event.item?.arguments,
+        type === "response.output_item.done",
+      );
+      const introduced = introduceResponseTool(state, tool);
+      if (introduced) out.push(introduced);
+      const args = emitResponseToolArguments(state, tool);
+      if (args) out.push(args);
+      continue;
+    }
+    if (type === "response.function_call_arguments.delta") {
+      const tool = getOrCreateResponseTool(state, event);
+      appendResponseToolArguments(tool, event?.delta, false);
+      const args = emitResponseToolArguments(state, tool);
+      if (args) out.push(args);
+      continue;
+    }
+    if (type === "response.function_call_arguments.done") {
+      const tool = getOrCreateResponseTool(state, event);
+      appendResponseToolArguments(tool, event?.arguments, true);
+      const args = emitResponseToolArguments(state, tool);
+      if (args) out.push(args);
+      continue;
+    }
+    if (type === "response.completed") {
+      state.completedReceived = true;
+      const converted = hydrateResponsesCompletion(state, event?.response);
+      if (converted) out.push(converted);
+      const completed = finalizeResponsesSSEToChatCompletionSSE(state);
+      if (completed) out.push(completed);
+    }
+  }
+
+  return out.length ? out.join("") : null;
+}
+
 export function responseObjectToSSE(respObj: any): string {
   if (!respObj || typeof respObj !== "object") return "";
   const sanitized = stripReasoningFromResponseObject(respObj);
@@ -740,41 +1067,4 @@ export function parseResponsesSSEToChatCompletion(
       total_tokens: total,
     },
   };
-}
-
-export function convertResponsesSSEToChatCompletionSSE(
-  upstreamLine: string,
-  model: string,
-  fallbackText = "",
-): string | null {
-  if (!upstreamLine.startsWith("data:")) return null;
-  const payload = upstreamLine.slice(5).trim();
-  if (!payload || payload === "[DONE]")
-    return payload === "[DONE]" ? "data: [DONE]\n" : null;
-
-  try {
-    const obj = JSON.parse(payload);
-    const sanitized = sanitizeResponsesEvent(obj);
-    if (sanitized.drop) return null;
-    const event = sanitized.event;
-
-    if (
-      event?.type === "response.output_text.delta" ||
-      event?.type === "response.output_text.done" ||
-      event?.type === "response.refusal.delta"
-    ) {
-      return null;
-    }
-
-    if (event?.type === "response.completed") {
-      const converted = responseObjectToChatCompletion(event?.response, model);
-      return chatCompletionObjectToSSE(
-        withFallbackAssistantContent(converted, fallbackText),
-      );
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
 }
