@@ -107,35 +107,43 @@ async function rateLimitResetCreditRequest(
   openaiBaseUrl: string,
   consume: boolean,
 ): Promise<unknown> {
-  const path = consume
-    ? "/backend-api/api/codex/rate-limit-reset-credits/consume"
-    : "/backend-api/api/codex/rate-limit-reset-credits";
-  const response = await fetch(`${openaiBaseUrl.replace(/\/+$/, "")}${path}`, {
-    method: consume ? "POST" : "GET",
-    headers: openAiAccountHeaders(account),
-    // The backend picks the next available credit when creditId is omitted.
-    // It still requires an idempotency key so a retry cannot spend two credits.
-    ...(consume ? { body: JSON.stringify({ idempotencyKey: randomUUID() }) } : {}),
-  });
-  const text = await response.text();
-  let data: unknown = {};
-  if (text) {
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = { message: text };
+  const suffix = consume ? "/consume" : "";
+  const paths = [
+    `/backend-api/api/codex/rate-limit-reset-credits${suffix}`,
+    `/backend-api/wham/rate-limit-reset-credits${suffix}`,
+  ];
+  let lastFailure = "";
+
+  for (const path of paths) {
+    const response = await fetch(`${openaiBaseUrl.replace(/\/+$/, "")}${path}`, {
+      method: consume ? "POST" : "GET",
+      headers: openAiAccountHeaders(account),
+      // The backend picks the next available credit when creditId is omitted.
+      // It still requires an idempotency key so a retry cannot spend two credits.
+      ...(consume ? { body: JSON.stringify({ idempotencyKey: randomUUID() }) } : {}),
+    });
+    const text = await response.text();
+    let data: unknown = {};
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = { message: text };
+      }
     }
-  }
-  if (!response.ok) {
+
+    if (response.ok) return data;
     const detail =
       data && typeof data === "object" && "message" in data
         ? String((data as { message?: unknown }).message ?? "")
         : text;
-    throw new Error(
-      `rate-limit reset credit request failed ${response.status}${detail ? `: ${detail}` : ""}`,
-    );
+    lastFailure = `${response.status}${detail ? `: ${detail}` : ""}`;
+    // Only route mismatches should fall back. Authentication and quota errors
+    // must remain visible rather than trying a second write endpoint.
+    if (response.status !== 404) break;
   }
-  return data;
+
+  throw new Error(`rate-limit reset credit request failed ${lastFailure}`);
 }
 
 function sanitizeAliasId(value: unknown): string {
