@@ -412,16 +412,37 @@ export default function App() {
       const availability = await api(
         `/admin/accounts/${id}/rate-limit-reset-credit`,
       );
-      const credit = availability?.credit ?? {};
-      const amount =
-        credit?.available ??
-        credit?.amount ??
-        credit?.remaining ??
-        credit?.balance;
-      const description =
-        amount === undefined
-          ? JSON.stringify(credit)
-          : `${amount} reset credit${Number(amount) === 1 ? "" : "s"} available`;
+      const credit = availability?.credit;
+      const findAvailableCount = (value: unknown): number | undefined => {
+        if (!value || typeof value !== "object") return undefined;
+        const record = value as Record<string, unknown>;
+        for (const key of [
+          "availableCount",
+          "available_count",
+          "available",
+          "amount",
+          "remaining",
+          "balance",
+        ]) {
+          const candidate = record[key];
+          if (typeof candidate === "number" && Number.isFinite(candidate)) {
+            return candidate;
+          }
+        }
+        for (const child of Object.values(record)) {
+          const count = findAvailableCount(child);
+          if (count !== undefined) return count;
+        }
+        return undefined;
+      };
+      const amount = findAvailableCount(credit);
+      if (amount === undefined) {
+        throw new Error("OpenAI did not report an available reset-credit count.");
+      }
+      if (amount < 1) {
+        throw new Error("No rate-limit reset credits are available for this account.");
+      }
+      const description = `${amount} reset credit${amount === 1 ? "" : "s"} available`;
       if (!confirm(`${description}. Consume one now?`)) return;
       await api(`/admin/accounts/${id}/rate-limit-reset-credit/consume`, {
         method: "POST",
