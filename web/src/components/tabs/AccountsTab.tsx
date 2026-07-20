@@ -14,6 +14,7 @@ type Props = {
   del: (id: string) => Promise<void>;
   unblock: (id: string) => Promise<void>;
   refreshUsage: (id: string) => Promise<void>;
+  consumeRateLimitResetCredit: (id: string) => Promise<void>;
   createAccount: (body: any) => Promise<void>;
   patchSettings: (body: Partial<StoreSettings>) => Promise<void>;
   startOAuth: (
@@ -97,6 +98,7 @@ export function AccountsTab(props: Props) {
     del,
     unblock,
     refreshUsage,
+    consumeRateLimitResetCredit,
     createAccount,
     patchSettings,
     startOAuth,
@@ -828,6 +830,17 @@ export function AccountsTab(props: Props) {
                             >
                               Refresh usage
                             </button>
+                            {a.provider === "openai" && (
+                              <button
+                                className="account-action-item"
+                                onClick={() => {
+                                  setOpenMenu(null);
+                                  void consumeRateLimitResetCredit(a.id);
+                                }}
+                              >
+                                Use rate-limit reset credit
+                              </button>
+                            )}
                             {a.provider === "openai" ? (
                               <>
                                 <button
