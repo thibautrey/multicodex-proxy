@@ -108,12 +108,14 @@ async function rateLimitResetCreditRequest(
   consume: boolean,
 ): Promise<unknown> {
   const path = consume
-    ? "/backend-api/codex/account/rateLimitResetCredit/consume"
-    : "/backend-api/codex/account/rateLimitResetCredit";
+    ? "/backend-api/api/codex/rate-limit-reset-credits/consume"
+    : "/backend-api/api/codex/rate-limit-reset-credits";
   const response = await fetch(`${openaiBaseUrl.replace(/\/+$/, "")}${path}`, {
     method: consume ? "POST" : "GET",
     headers: openAiAccountHeaders(account),
-    ...(consume ? { body: "{}" } : {}),
+    // The backend picks the next available credit when creditId is omitted.
+    // It still requires an idempotency key so a retry cannot spend two credits.
+    ...(consume ? { body: JSON.stringify({ idempotencyKey: randomUUID() }) } : {}),
   });
   const text = await response.text();
   let data: unknown = {};
