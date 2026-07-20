@@ -82,6 +82,52 @@ function redact(account: Account) {
   };
 }
 
+function openAiAccountHeaders(account: Account): Record<string, string> {
+  const headers: Record<string, string> = {
+    authorization: `Bearer ${account.accessToken}`,
+    accept: "application/json",
+    "content-type": "application/json",
+  };
+  if (account.chatgptAccountId) {
+    headers["ChatGPT-Account-Id"] = account.chatgptAccountId;
+  }
+  return headers;
+}
+
+async function rateLimitResetCreditRequest(
+  account: Account,
+  openaiBaseUrl: string,
+  consume: boolean,
+): Promise<unknown> {
+  const path = consume
+    ? "/backend-api/codex/account/rateLimitResetCredit/consume"
+    : "/backend-api/codex/account/rateLimitResetCredit";
+  const response = await fetch(`${openaiBaseUrl.replace(/\/+$/, "")}${path}`, {
+    method: consume ? "POST" : "GET",
+    headers: openAiAccountHeaders(account),
+    ...(consume ? { body: "{}" } : {}),
+  });
+  const text = await response.text();
+  let data: unknown = {};
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { message: text };
+    }
+  }
+  if (!response.ok) {
+    const detail =
+      data && typeof data === "object" && "message" in data
+        ? String((data as { message?: unknown }).message ?? "")
+        : text;
+    throw new Error(
+      `rate-limit reset credit request failed ${response.status}${detail ? `: ${detail}` : ""}`,
+    );
+  }
+  return data;
+}
+
 function sanitizeAliasId(value: unknown): string {
   return String(value ?? "")
     .trim()
@@ -744,6 +790,44 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     await refreshUsageIfNeeded(account, usageBaseUrl, true);
     await store.upsertAccount(account);
     res.json({ ok: true, account: redact(account) });
+  });
+
+  router.get("/accounts/:id/rate-limit-reset-credit", async (req, res) => {
+    let account = (await store.listAccounts()).find(
+      (candidate) => candidate.id === req.params.id,
+    );
+    if (!account) return res.status(404).json({ error: "not found" });
+    if (normalizeProvider(account) !== "openai") {
+      return res.status(400).json({ error: "only OpenAI accounts support reset credits" });
+    }
+    account = await ensureValidToken(account, oauthConfig);
+    await store.upsertAccount(account);
+    try {
+      const credit = await rateLimitResetCreditRequest(account, openaiBaseUrl, false);
+      res.json({ ok: true, credit });
+    } catch (error: any) {
+      res.status(502).json({ error: error?.message ?? String(error) });
+    }
+  });
+
+  router.post("/accounts/:id/rate-limit-reset-credit/consume", async (req, res) => {
+    let account = (await store.listAccounts()).find(
+      (candidate) => candidate.id === req.params.id,
+    );
+    if (!account) return res.status(404).json({ error: "not found" });
+    if (normalizeProvider(account) !== "openai") {
+      return res.status(400).json({ error: "only OpenAI accounts support reset credits" });
+    }
+    account = await ensureValidToken(account, oauthConfig);
+    await store.upsertAccount(account);
+    try {
+      const result = await rateLimitResetCreditRequest(account, openaiBaseUrl, true);
+      await refreshUsageIfNeeded(account, openaiBaseUrl, true);
+      await store.upsertAccount(account);
+      res.json({ ok: true, result, account: redact(account) });
+    } catch (error: any) {
+      res.status(502).json({ error: error?.message ?? String(error) });
+    }
   });
 
   router.post("/usage/refresh", async (_req, res) => {

@@ -407,6 +407,31 @@ export default function App() {
     await loadBase();
   };
 
+  const consumeRateLimitResetCredit = async (id: string) => {
+    try {
+      const availability = await api(
+        `/admin/accounts/${id}/rate-limit-reset-credit`,
+      );
+      const credit = availability?.credit ?? {};
+      const amount =
+        credit?.available ??
+        credit?.amount ??
+        credit?.remaining ??
+        credit?.balance;
+      const description =
+        amount === undefined
+          ? JSON.stringify(credit)
+          : `${amount} reset credit${Number(amount) === 1 ? "" : "s"} available`;
+      if (!confirm(`${description}. Consume one now?`)) return;
+      await api(`/admin/accounts/${id}/rate-limit-reset-credit/consume`, {
+        method: "POST",
+      });
+      await loadBase();
+    } catch (error) {
+      handleError(error);
+    }
+  };
+
   const createAccount = async (body: any) => {
     await api("/admin/accounts", { method: "POST", body: JSON.stringify(body) });
     await loadBase();
@@ -649,6 +674,7 @@ export default function App() {
             del={del}
             unblock={unblock}
             refreshUsage={refreshUsage}
+            consumeRateLimitResetCredit={consumeRateLimitResetCredit}
             createAccount={createAccount}
             patchSettings={patchSettings}
             startOAuth={startOAuth}
