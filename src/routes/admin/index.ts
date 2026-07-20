@@ -20,6 +20,11 @@ import {
   type OAuthConfig,
 } from "../../oauth.js";
 import { ensureValidToken } from "../../account-utils.js";
+import {
+  CODEX_CLI_ORIGINATOR,
+  CODEX_CLI_USER_AGENT,
+  MODELS_CLIENT_VERSION,
+} from "../../config.js";
 import type { TraceManager } from "../../traces.js";
 import { discoverModels } from "../proxy/index.js";
 
@@ -87,6 +92,9 @@ function openAiAccountHeaders(account: Account): Record<string, string> {
     authorization: `Bearer ${account.accessToken}`,
     accept: "application/json",
     "content-type": "application/json",
+    originator: CODEX_CLI_ORIGINATOR,
+    "User-Agent": CODEX_CLI_USER_AGENT,
+    version: MODELS_CLIENT_VERSION,
   };
   if (account.chatgptAccountId) {
     headers["ChatGPT-Account-Id"] = account.chatgptAccountId;
