@@ -820,6 +820,13 @@ tbody tr:last-child td {
   gap: 8px;
 }
 
+.reset-quota-btn {
+  justify-self: start;
+  padding: 7px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+
 .account-actions-cell {
   position: relative;
   display: flex;

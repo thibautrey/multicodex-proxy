@@ -82,6 +82,12 @@ function providerLabel(provider?: string) {
   return "OpenAI";
 }
 
+function isOpenAiAccount(account: Account) {
+  // OpenAI was the only provider before provider was persisted, so legacy
+  // account records correctly default to OpenAI on the server as well.
+  return (account.provider ?? "openai") === "openai";
+}
+
 function activeModelBlocks(account: Account) {
   return Object.entries(account.state?.modelBlocks ?? {}).filter(
     ([, block]) => block.until > Date.now(),
@@ -726,6 +732,16 @@ export function AccountsTab(props: Props) {
                           upstream: {a.upstreamMode}
                         </span>
                       )}
+                      {isOpenAiAccount(a) && (
+                        <button
+                          className="btn secondary reset-quota-btn"
+                          onClick={() =>
+                            void consumeRateLimitResetCredit(a.id)
+                          }
+                        >
+                          Reset quota
+                        </button>
+                      )}
                     </div>
                   </td>
                   <td>
@@ -830,7 +846,7 @@ export function AccountsTab(props: Props) {
                             >
                               Refresh usage
                             </button>
-                            {a.provider === "openai" && (
+                            {isOpenAiAccount(a) && (
                               <button
                                 className="account-action-item"
                                 onClick={() => {
@@ -841,7 +857,7 @@ export function AccountsTab(props: Props) {
                                 Use rate-limit reset credit
                               </button>
                             )}
-                            {a.provider === "openai" ? (
+                            {isOpenAiAccount(a) ? (
                               <>
                                 <button
                                   className="account-action-item"
