@@ -10,6 +10,8 @@ export const USAGE_CACHE_TTL_MS = Number(process.env.USAGE_CACHE_TTL_MS ?? 300_0
 const USAGE_TIMEOUT_MS = Number(process.env.USAGE_TIMEOUT_MS ?? 10_000);
 const BLOCK_FALLBACK_MS = Number(process.env.BLOCK_FALLBACK_MS ?? 30 * 60_000);
 const DEFAULT_ROUTING_WINDOW_MS = Number(process.env.ROUTING_WINDOW_MS ?? 5 * 60 * 1000);
+const FIVE_HOUR_WINDOW_SECONDS = 5 * 60 * 60;
+const WEEKLY_WINDOW_SECONDS = 7 * 24 * 60 * 60;
 
 type RouteCache = {
   bucket: number;
@@ -44,16 +46,37 @@ function scoreAccount(account: Account): number {
 }
 
 function parseUsage(data: any): UsageSnapshot {
-  const primary = data?.rate_limit?.primary_window;
-  const secondary = data?.rate_limit?.secondary_window;
+  const upstreamPrimary = data?.rate_limit?.primary_window;
+  const upstreamSecondary = data?.rate_limit?.secondary_window;
   const toWindow = (w: any) =>
     w
       ? {
           usedPercent: typeof w.used_percent === "number" ? Math.max(0, Math.min(100, w.used_percent)) : undefined,
           resetAt: typeof w.reset_at === "number" ? w.reset_at * 1000 : undefined,
+          windowSeconds:
+            typeof w.limit_window_seconds === "number" && Number.isFinite(w.limit_window_seconds)
+              ? w.limit_window_seconds
+              : undefined,
         }
       : undefined;
-  return { primary: toWindow(primary), secondary: toWindow(secondary), fetchedAt: Date.now() };
+
+  const positionalPrimary = toWindow(upstreamPrimary);
+  const positionalSecondary = toWindow(upstreamSecondary);
+  const windows = [positionalPrimary, positionalSecondary].filter(
+    (window): window is NonNullable<typeof window> => Boolean(window),
+  );
+
+  // OpenAI's field names describe upstream priority, not a stable duration.
+  // In particular, accounts with only a weekly limit now return that seven-day
+  // window as `primary_window` and leave `secondary_window` null.
+  const primary =
+    windows.find((window) => window.windowSeconds === FIVE_HOUR_WINDOW_SECONDS) ??
+    (positionalPrimary?.windowSeconds === undefined ? positionalPrimary : undefined);
+  const secondary =
+    windows.find((window) => window.windowSeconds === WEEKLY_WINDOW_SECONDS) ??
+    (positionalSecondary?.windowSeconds === undefined ? positionalSecondary : undefined);
+
+  return { primary, secondary, fetchedAt: Date.now() };
 }
 
 function parseOpenAIUsage(data: any): UsageSnapshot {
