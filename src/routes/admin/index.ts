@@ -108,19 +108,24 @@ async function rateLimitResetCreditRequest(
   consume: boolean,
 ): Promise<unknown> {
   const suffix = consume ? "/consume" : "";
-  const paths = [
-    `/backend-api/api/codex/rate-limit-reset-credits${suffix}`,
-    `/backend-api/wham/rate-limit-reset-credits${suffix}`,
+  const endpoints = [
+    {
+      path: `/backend-api/api/codex/rate-limit-reset-credits${suffix}`,
+      body: consume ? { idempotencyKey: randomUUID() } : undefined,
+    },
+    {
+      path: `/backend-api/wham/rate-limit-reset-credits${suffix}`,
+      // WHAM names the replay-safe request identifier differently.
+      body: consume ? { redeem_request_id: randomUUID() } : undefined,
+    },
   ];
   let lastFailure = "";
 
-  for (const path of paths) {
-    const response = await fetch(`${openaiBaseUrl.replace(/\/+$/, "")}${path}`, {
+  for (const endpoint of endpoints) {
+    const response = await fetch(`${openaiBaseUrl.replace(/\/+$/, "")}${endpoint.path}`, {
       method: consume ? "POST" : "GET",
       headers: openAiAccountHeaders(account),
-      // The backend picks the next available credit when creditId is omitted.
-      // It still requires an idempotency key so a retry cannot spend two credits.
-      ...(consume ? { body: JSON.stringify({ idempotencyKey: randomUUID() }) } : {}),
+      ...(endpoint.body ? { body: JSON.stringify(endpoint.body) } : {}),
     });
     const text = await response.text();
     let data: unknown = {};
