@@ -1472,6 +1472,29 @@ export function isStreamingUpstreamResponse(
   );
 }
 
+export function classifyNativeStreamCompletion(
+  clientDisconnected: boolean,
+  sawResponseCompleted: boolean,
+  streamError?: Error,
+) {
+  const interrupted =
+    Boolean(streamError) ||
+    (clientDisconnected && !sawResponseCompleted);
+  return {
+    interrupted,
+    status: streamError
+      ? 599
+      : clientDisconnected && !sawResponseCompleted
+        ? 499
+        : 200,
+    clientDisconnected:
+      clientDisconnected && !sawResponseCompleted ? true : undefined,
+    error: clientDisconnected && !sawResponseCompleted
+      ? "client disconnected before stream completion"
+      : streamError?.message,
+  };
+}
+
 function isModelNotFoundError(status: number, errorText: string): boolean {
   return (
     (status === 400 || status === 404) &&
@@ -1955,7 +1978,11 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 res.off("close", abortOnDisconnect);
               }
 
-              const interrupted = clientDisconnected || Boolean(streamError);
+              const classification = classifyNativeStreamCompletion(
+                clientDisconnected,
+                diagnostics.sawResponseCompleted,
+                streamError,
+              );
               if (!clientDisconnected && !res.writableEnded) res.end();
               await completeTrace(streamTraceId, {
                 at: Date.now(),
@@ -1965,19 +1992,22 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 accountEmail: selected.email,
                 model: tracedModel,
                 ...traceModelResolution,
-                status: clientDisconnected ? 499 : streamError ? 599 : upstream.status,
+                status:
+                  classification.status === 200
+                    ? upstream.status
+                    : classification.status,
                 stream: true,
                 latencyMs: Date.now() - startedAt,
                 usage,
                 requestBody,
                 ...traceImage,
-                error: clientDisconnected
-                  ? "client disconnected before stream completion"
-                  : streamError?.message,
+                error: classification.error,
                 upstreamContentType: contentType,
                 responseStreamDiagnostics: diagnostics,
-                clientDisconnected: clientDisconnected || undefined,
-                lifecycleState: interrupted ? "interrupted" : "completed",
+                clientDisconnected: classification.clientDisconnected,
+                lifecycleState: classification.interrupted
+                  ? "interrupted"
+                  : "completed",
               });
               return;
             }
