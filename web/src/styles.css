@@ -827,6 +827,17 @@ tbody tr:last-child td {
   font-size: 12px;
 }
 
+.reset-quota-actions {
+  display: grid;
+  justify-items: start;
+  gap: 7px;
+}
+
+.reset-quota-error {
+  max-width: 260px;
+  color: var(--danger);
+}
+
 .account-actions-cell {
   position: relative;
   display: flex;

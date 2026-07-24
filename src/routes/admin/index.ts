@@ -20,13 +20,14 @@ import {
   type OAuthConfig,
 } from "../../oauth.js";
 import { ensureValidToken } from "../../account-utils.js";
-import {
-  CODEX_CLI_ORIGINATOR,
-  CODEX_CLI_USER_AGENT,
-  MODELS_CLIENT_VERSION,
-} from "../../config.js";
 import type { TraceManager } from "../../traces.js";
 import { discoverModels } from "../proxy/index.js";
+import {
+  findAvailableResetCreditCount,
+  maybeConsumeScheduledWeeklyReset,
+  rateLimitResetCreditRequest,
+  WEEKLY_RESET_REMAINING_THRESHOLD_PERCENT,
+} from "../../rate-limit-reset.js";
 
 type StoragePaths = {
   accountsPath: string;
@@ -85,70 +86,6 @@ function redact(account: Account) {
       ? `${account.refreshToken.slice(0, 8)}...`
       : undefined,
   };
-}
-
-function openAiAccountHeaders(account: Account): Record<string, string> {
-  const headers: Record<string, string> = {
-    authorization: `Bearer ${account.accessToken}`,
-    accept: "application/json",
-    "content-type": "application/json",
-    originator: CODEX_CLI_ORIGINATOR,
-    "User-Agent": CODEX_CLI_USER_AGENT,
-    version: MODELS_CLIENT_VERSION,
-  };
-  if (account.chatgptAccountId) {
-    headers["ChatGPT-Account-Id"] = account.chatgptAccountId;
-  }
-  return headers;
-}
-
-async function rateLimitResetCreditRequest(
-  account: Account,
-  openaiBaseUrl: string,
-  consume: boolean,
-): Promise<unknown> {
-  const suffix = consume ? "/consume" : "";
-  const endpoints = [
-    {
-      path: `/backend-api/api/codex/rate-limit-reset-credits${suffix}`,
-      body: consume ? { idempotencyKey: randomUUID() } : undefined,
-    },
-    {
-      path: `/backend-api/wham/rate-limit-reset-credits${suffix}`,
-      // WHAM names the replay-safe request identifier differently.
-      body: consume ? { redeem_request_id: randomUUID() } : undefined,
-    },
-  ];
-  let lastFailure = "";
-
-  for (const endpoint of endpoints) {
-    const response = await fetch(`${openaiBaseUrl.replace(/\/+$/, "")}${endpoint.path}`, {
-      method: consume ? "POST" : "GET",
-      headers: openAiAccountHeaders(account),
-      ...(endpoint.body ? { body: JSON.stringify(endpoint.body) } : {}),
-    });
-    const text = await response.text();
-    let data: unknown = {};
-    if (text) {
-      try {
-        data = JSON.parse(text);
-      } catch {
-        data = { message: text };
-      }
-    }
-
-    if (response.ok) return data;
-    const detail =
-      data && typeof data === "object" && "message" in data
-        ? String((data as { message?: unknown }).message ?? "")
-        : text;
-    lastFailure = `${response.status}${detail ? `: ${detail}` : ""}`;
-    // Only route mismatches should fall back. Authentication and quota errors
-    // must remain visible rather than trying a second write endpoint.
-    if (response.status !== 404) break;
-  }
-
-  throw new Error(`rate-limit reset credit request failed ${lastFailure}`);
 }
 
 function sanitizeAliasId(value: unknown): string {
@@ -812,6 +749,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     else if (provider === "zai") usageBaseUrl = zaiBaseUrl;
     await refreshUsageIfNeeded(account, usageBaseUrl, true);
     await store.upsertAccount(account);
+    await maybeConsumeScheduledWeeklyReset(account.id, store, openaiBaseUrl);
     res.json({ ok: true, account: redact(account) });
   });
 
@@ -853,6 +791,72 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     }
   });
 
+  router.post("/accounts/:id/rate-limit-reset-credit/schedule", async (req, res) => {
+    let account = (await store.listAccounts()).find(
+      (candidate) => candidate.id === req.params.id,
+    );
+    if (!account) return res.status(404).json({ error: "not found" });
+    if (normalizeProvider(account) !== "openai") {
+      return res.status(400).json({ error: "only OpenAI accounts support reset credits" });
+    }
+    if (account.state?.scheduledWeeklyReset) {
+      return res.status(409).json({ error: "an automatic weekly reset is already scheduled" });
+    }
+
+    account = await ensureValidToken(account, oauthConfig);
+    try {
+      const credit = await rateLimitResetCreditRequest(account, openaiBaseUrl, false);
+      const available = findAvailableResetCreditCount(credit);
+      if (available === undefined) {
+        return res.status(502).json({
+          error: "OpenAI did not report an available reset-credit count",
+        });
+      }
+      if (available < 1) {
+        return res.status(409).json({
+          error: "no rate-limit reset credits are available for this account",
+        });
+      }
+
+      await refreshUsageIfNeeded(account, openaiBaseUrl, true);
+      account.state = {
+        ...account.state,
+        scheduledWeeklyReset: {
+          scheduledAt: Date.now(),
+          idempotencyKey: randomUUID(),
+          thresholdRemainingPercent:
+            WEEKLY_RESET_REMAINING_THRESHOLD_PERCENT,
+        },
+      };
+      await store.addOrUpdate(account);
+      const trigger = account.state?.lastError
+        ? { status: "threshold-not-reached" as const }
+        : await maybeConsumeScheduledWeeklyReset(
+            account.id,
+            store,
+            openaiBaseUrl,
+          );
+      const updated = store
+        .getCachedAccounts()
+        .find((candidate) => candidate.id === account.id) ?? account;
+      res.json({ ok: true, trigger, account: redact(updated) });
+    } catch (error: any) {
+      res.status(502).json({ error: error?.message ?? String(error) });
+    }
+  });
+
+  router.delete("/accounts/:id/rate-limit-reset-credit/schedule", async (req, res) => {
+    const account = (await store.listAccounts()).find(
+      (candidate) => candidate.id === req.params.id,
+    );
+    if (!account) return res.status(404).json({ error: "not found" });
+    const { scheduledWeeklyReset: _cancelled, ...remainingState } =
+      account.state ?? {};
+    account.state = remainingState;
+    await store.addOrUpdate(account);
+    res.json({ ok: true, account: redact(account) });
+  });
+
   router.post("/usage/refresh", async (_req, res) => {
     const refreshed = await Promise.all(
       (await store.listAccounts()).map(async (account) => {
@@ -867,7 +871,17 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       }),
     );
     await Promise.all(refreshed.map((account) => store.upsertAccount(account)));
-    res.json({ ok: true, accounts: refreshed.map(redact) });
+    await Promise.all(
+      refreshed
+        .filter((account) => normalizeProvider(account) === "openai")
+        .map((account) =>
+          maybeConsumeScheduledWeeklyReset(account.id, store, openaiBaseUrl),
+        ),
+    );
+    res.json({
+      ok: true,
+      accounts: store.getCachedAccounts().map(redact),
+    });
   });
 
   async function completeOpenAiOAuthFlow(

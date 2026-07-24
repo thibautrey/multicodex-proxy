@@ -453,6 +453,28 @@ export default function App() {
     }
   };
 
+  const scheduleRateLimitResetCredit = async (id: string) => {
+    try {
+      await api(`/admin/accounts/${id}/rate-limit-reset-credit/schedule`, {
+        method: "POST",
+      });
+      await loadBase();
+    } catch (error) {
+      handleError(error);
+    }
+  };
+
+  const cancelScheduledRateLimitResetCredit = async (id: string) => {
+    try {
+      await api(`/admin/accounts/${id}/rate-limit-reset-credit/schedule`, {
+        method: "DELETE",
+      });
+      await loadBase();
+    } catch (error) {
+      handleError(error);
+    }
+  };
+
   const createAccount = async (body: any) => {
     await api("/admin/accounts", { method: "POST", body: JSON.stringify(body) });
     await loadBase();
@@ -696,6 +718,10 @@ export default function App() {
             unblock={unblock}
             refreshUsage={refreshUsage}
             consumeRateLimitResetCredit={consumeRateLimitResetCredit}
+            scheduleRateLimitResetCredit={scheduleRateLimitResetCredit}
+            cancelScheduledRateLimitResetCredit={
+              cancelScheduledRateLimitResetCredit
+            }
             createAccount={createAccount}
             patchSettings={patchSettings}
             startOAuth={startOAuth}

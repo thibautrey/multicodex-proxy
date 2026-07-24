@@ -15,6 +15,8 @@ type Props = {
   unblock: (id: string) => Promise<void>;
   refreshUsage: (id: string) => Promise<void>;
   consumeRateLimitResetCredit: (id: string) => Promise<void>;
+  scheduleRateLimitResetCredit: (id: string) => Promise<void>;
+  cancelScheduledRateLimitResetCredit: (id: string) => Promise<void>;
   createAccount: (body: any) => Promise<void>;
   patchSettings: (body: Partial<StoreSettings>) => Promise<void>;
   startOAuth: (
@@ -105,6 +107,8 @@ export function AccountsTab(props: Props) {
     unblock,
     refreshUsage,
     consumeRateLimitResetCredit,
+    scheduleRateLimitResetCredit,
+    cancelScheduledRateLimitResetCredit,
     createAccount,
     patchSettings,
     startOAuth,
@@ -733,14 +737,46 @@ export function AccountsTab(props: Props) {
                         </span>
                       )}
                       {isOpenAiAccount(a) && (
-                        <button
-                          className="btn secondary reset-quota-btn"
-                          onClick={() =>
-                            void consumeRateLimitResetCredit(a.id)
-                          }
-                        >
-                          Reset quota
-                        </button>
+                        <div className="reset-quota-actions">
+                          <button
+                            className="btn secondary reset-quota-btn"
+                            onClick={() =>
+                              void consumeRateLimitResetCredit(a.id)
+                            }
+                          >
+                            Reset quota now
+                          </button>
+                          {a.state?.scheduledWeeklyReset ? (
+                            <>
+                              <span className="badge badge-live">
+                                Auto-reset scheduled at 0.5% remaining
+                              </span>
+                              {a.state.scheduledWeeklyReset.lastError && (
+                                <small className="reset-quota-error">
+                                  Last attempt failed:{" "}
+                                  {a.state.scheduledWeeklyReset.lastError}
+                                </small>
+                              )}
+                              <button
+                                className="btn secondary reset-quota-btn"
+                                onClick={() =>
+                                  void cancelScheduledRateLimitResetCredit(a.id)
+                                }
+                              >
+                                Cancel auto-reset
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              className="btn secondary reset-quota-btn"
+                              onClick={() =>
+                                void scheduleRateLimitResetCredit(a.id)
+                              }
+                            >
+                              Auto-reset at 0.5% remaining
+                            </button>
+                          )}
+                        </div>
                       )}
                     </div>
                   </td>

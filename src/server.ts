@@ -31,6 +31,7 @@ import {
 } from "./config.js";
 import { createBodyParserMiddleware } from "./middleware/decompression.js";
 import http from "node:http";
+import { startScheduledWeeklyResetMonitor } from "./rate-limit-reset.js";
 
 const app = express();
 app.use(createBodyParserMiddleware());
@@ -58,6 +59,11 @@ const store = new AccountStore(STORE_PATH);
 const oauthStore = new OAuthStateStore(OAUTH_STATE_PATH);
 await store.init();
 await oauthStore.init();
+startScheduledWeeklyResetMonitor({
+  store,
+  oauthConfig,
+  openaiBaseUrl: CHATGPT_BASE_URL,
+});
 await fs.mkdir(path.dirname(TRACE_FILE_PATH), { recursive: true });
 
 const traceManager = createTraceManager({

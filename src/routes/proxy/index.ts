@@ -80,6 +80,7 @@ import {
 import { ensureValidToken } from "../../account-utils.js";
 import express from "express";
 import { randomUUID } from "node:crypto";
+import { maybeConsumeScheduledWeeklyReset } from "../../rate-limit-reset.js";
 
 type ProxyRoutesOptions = {
   store: AccountStore;
@@ -1755,6 +1756,13 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           zaiBaseUrl,
         );
         await refreshUsageIfNeeded(valid, usageBaseUrl);
+        if (normalizeProvider(valid) === "openai") {
+          await maybeConsumeScheduledWeeklyReset(
+            valid.id,
+            store,
+            openaiBaseUrl,
+          );
+        }
         return valid;
       }),
     );

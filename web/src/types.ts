@@ -19,6 +19,13 @@ export type Account = {
     recentEmptyResponses?: Array<{ at: number; message: string }>;
     needsTokenRefresh?: boolean;
     lastUsageRefreshAt?: number;
+    scheduledWeeklyReset?: {
+      scheduledAt: number;
+      idempotencyKey: string;
+      thresholdRemainingPercent: number;
+      lastAttemptAt?: number;
+      lastError?: string;
+    };
   };
 };
 
