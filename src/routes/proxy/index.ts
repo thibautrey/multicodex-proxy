@@ -1526,7 +1526,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     zaiCompactUpstreamPath,
     oauthConfig,
   } = options;
-  const { recordTrace } = traceManager;
+  const { recordTrace, beginTrace, completeTrace } = traceManager;
   const router = express.Router();
 
   function rejectNonPost(routeLabel: string): express.RequestHandler {
@@ -1861,6 +1861,21 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
 
               if (shouldSendChatCompletions) {
                 if (!upstream.body) return res.end();
+                const streamTraceId = await beginTrace({
+                  at: startedAt,
+                  startedAt,
+                  route: req.path,
+                  accountId: selected.id,
+                  accountEmail: selected.email,
+                  model: tracedModel,
+                  ...traceModelResolution,
+                  status: 102,
+                  stream: true,
+                  latencyMs: 0,
+                  requestBody,
+                  ...traceImage,
+                  upstreamContentType: contentType,
+                });
                 res.flushHeaders();
                 res.write(": connected\n\n");
                 const reader = upstream.body.getReader();
@@ -1906,7 +1921,28 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                   res.off("close", abortOnDisconnect);
                 }
 
-                if (clientDisconnected) return;
+                if (clientDisconnected) {
+                  await completeTrace(streamTraceId, {
+                    at: Date.now(),
+                    startedAt,
+                    route: req.path,
+                    accountId: selected.id,
+                    accountEmail: selected.email,
+                    model: tracedModel,
+                    ...traceModelResolution,
+                    status: 499,
+                    stream: true,
+                    latencyMs: Date.now() - startedAt,
+                    usage: accumulatedUsage,
+                    requestBody,
+                    ...traceImage,
+                    error: "client disconnected before stream completion",
+                    upstreamContentType: contentType,
+                    clientDisconnected: true,
+                    lifecycleState: "interrupted",
+                  });
+                  return;
+                }
                 sseBuffer += decoder.decode();
                 while (true) {
                   const next = takeNextSSEFrame(sseBuffer);
@@ -1918,7 +1954,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 if (!doneSent) res.write("data: [DONE]\n\n");
                 res.end();
 
-                recordTrace({
+                await completeTrace(streamTraceId, {
                   at: Date.now(),
                   route: req.path,
                   accountId: selected.id,
@@ -1983,6 +2019,21 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               res.write(": connected\n\n");
 
               const reader = upstream.body.getReader();
+              const streamTraceId = await beginTrace({
+                at: startedAt,
+                startedAt,
+                route: req.path,
+                accountId: selected.id,
+                accountEmail: selected.email,
+                model: tracedModel,
+                ...traceModelResolution,
+                status: 102,
+                stream: true,
+                latencyMs: 0,
+                requestBody,
+                ...traceImage,
+                upstreamContentType: contentType,
+              });
               const decoder = new TextDecoder();
               const streamState =
                 createResponsesToChatCompletionStreamState(model);
@@ -2054,7 +2105,29 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 res.off("close", abortOnDisconnect);
               }
 
-              if (clientDisconnected) return;
+              if (clientDisconnected) {
+                await completeTrace(streamTraceId, {
+                  at: Date.now(),
+                  startedAt,
+                  route: req.path,
+                  accountId: selected.id,
+                  accountEmail: selected.email,
+                  model: tracedModel,
+                  ...traceModelResolution,
+                  status: 499,
+                  stream: true,
+                  latencyMs: Date.now() - startedAt,
+                  usage: streamState.usage,
+                  requestBody,
+                  ...traceImage,
+                  error: "client disconnected before stream completion",
+                  upstreamContentType: contentType,
+                  responseStreamDiagnostics: streamStateDiagnostics,
+                  clientDisconnected: true,
+                  lifecycleState: "interrupted",
+                });
+                return;
+              }
 
               const completed =
                 finalizeResponsesSSEToChatCompletionSSE(streamState);
@@ -2063,7 +2136,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               if (streamError && !streamState.assistantOutputSent) {
                 rememberError(selected, streamError.message);
                 await store.upsertAccount(selected);
-                recordTrace({
+                await completeTrace(streamTraceId, {
                   at: Date.now(),
                   route: req.path,
                   accountId: selected.id,
@@ -2113,7 +2186,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                   );
                   res.end();
                 }
-                recordTrace({
+                await completeTrace(streamTraceId, {
                   at: Date.now(),
                   route: req.path,
                   accountId: selected.id,
@@ -2137,7 +2210,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
 
               if (!res.writableEnded) res.end();
 
-              recordTrace({
+              await completeTrace(streamTraceId, {
                 at: Date.now(),
                 route: req.path,
                 accountId: selected.id,
