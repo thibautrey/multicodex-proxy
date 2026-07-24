@@ -8,6 +8,7 @@ import {
   buildImageAwareRoutingCandidates,
   buildUpstreamRequestHeaders,
   classifyNativeStreamCompletion,
+  isModelAllowedByKeys,
   isStreamingUpstreamResponse,
 } from "./index.js";
 
@@ -258,4 +259,16 @@ test("client close after response.completed is classified as success", () => {
     clientDisconnected: true,
     error: "client disconnected before stream completion",
   });
+});
+
+test("model validation fails open until discovery has populated the cache", () => {
+  assert.equal(isModelAllowedByKeys("gpt-test", new Set()), true);
+  assert.equal(
+    isModelAllowedByKeys("gpt-test", new Set(["gpt-test"])),
+    true,
+  );
+  assert.equal(
+    isModelAllowedByKeys("missing-model", new Set(["gpt-test"])),
+    false,
+  );
 });
