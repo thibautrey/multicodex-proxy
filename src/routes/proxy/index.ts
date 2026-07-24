@@ -1620,6 +1620,8 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       (req.originalUrl || "").includes("responses/compact");
     const clientRequestedStream = Boolean(req.body?.stream);
     const sessionId = getSessionId(req);
+    let nativeStreamTraceId: string | undefined;
+    let nativeStreamKeepalive: ReturnType<typeof setInterval> | undefined;
 
     let accounts = store.getCachedAccounts();
     if (!accounts.length)
@@ -1884,6 +1886,36 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               ? zaiCompactUpstreamPath
               : zaiUpstreamPath;
           }
+          if (
+            !shouldReturnChatCompletions &&
+            clientRequestedStream &&
+            !nativeStreamTraceId
+          ) {
+            nativeStreamTraceId = await beginTrace({
+              at: startedAt,
+              startedAt,
+              route: req.path,
+              accountId: selected.id,
+              accountEmail: selected.email,
+              model: tracedModel,
+              ...traceModelResolution,
+              status: 102,
+              stream: true,
+              latencyMs: 0,
+              requestBody,
+              ...traceImage,
+            });
+            res.status(200);
+            res.set("Content-Type", "text/event-stream");
+            res.set("Cache-Control", "no-cache");
+            res.set("Connection", "keep-alive");
+            res.flushHeaders();
+            res.write(": connected\n\n");
+            nativeStreamKeepalive = setInterval(() => {
+              if (!res.writableEnded) res.write(": keepalive\n\n");
+            }, 5_000);
+            nativeStreamKeepalive.unref?.();
+          }
           const upstream = await fetchCodexWithRetry(
             `${upstreamBaseUrl}${upstreamPath}`,
             {
@@ -1904,27 +1936,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
 
           if (isStream) {
             if (!shouldReturnChatCompletions && clientRequestedStream && upstream.body) {
-              const streamTraceId = await beginTrace({
-                at: startedAt,
-                startedAt,
-                route: req.path,
-                accountId: selected.id,
-                accountEmail: selected.email,
-                model: tracedModel,
-                ...traceModelResolution,
-                status: 102,
-                stream: true,
-                latencyMs: 0,
-                requestBody,
-                ...traceImage,
-                upstreamContentType: contentType,
-              });
-              res.status(upstream.status);
-              res.set("Content-Type", "text/event-stream");
-              res.set("Cache-Control", "no-cache");
-              res.set("Connection", "keep-alive");
-              res.flushHeaders();
-              res.write(": connected\n\n");
+              const streamTraceId = nativeStreamTraceId!;
 
               const reader = upstream.body.getReader();
               const decoder = new TextDecoder();
@@ -1976,6 +1988,10 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 streamError = error instanceof Error ? error : new Error(String(error));
               } finally {
                 res.off("close", abortOnDisconnect);
+                if (nativeStreamKeepalive) {
+                  clearInterval(nativeStreamKeepalive);
+                  nativeStreamKeepalive = undefined;
+                }
               }
 
               const classification = classifyNativeStreamCompletion(
@@ -3148,7 +3164,28 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           const msg = err?.message ?? String(err);
           rememberError(selected, msg);
           await store.upsertAccount(selected);
-          recordTrace({
+          if (nativeStreamKeepalive) {
+            clearInterval(nativeStreamKeepalive);
+            nativeStreamKeepalive = undefined;
+          }
+          if (nativeStreamTraceId) {
+            await completeTrace(nativeStreamTraceId, {
+              at: Date.now(),
+              startedAt,
+              route: req.path,
+              accountId: selected.id,
+              accountEmail: selected.email,
+              model: tracedModel,
+              ...traceModelResolution,
+              status: 599,
+              stream: true,
+              latencyMs: Date.now() - startedAt,
+              error: msg,
+              requestBody,
+              ...traceImage,
+              lifecycleState: "interrupted",
+            });
+          } else recordTrace({
             at: Date.now(),
             route: req.path,
             accountId: selected.id,
