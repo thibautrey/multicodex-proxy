@@ -1880,6 +1880,108 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           );
 
           if (isStream) {
+            if (!shouldReturnChatCompletions && clientRequestedStream && upstream.body) {
+              const streamTraceId = await beginTrace({
+                at: startedAt,
+                startedAt,
+                route: req.path,
+                accountId: selected.id,
+                accountEmail: selected.email,
+                model: tracedModel,
+                ...traceModelResolution,
+                status: 102,
+                stream: true,
+                latencyMs: 0,
+                requestBody,
+                ...traceImage,
+                upstreamContentType: contentType,
+              });
+              res.status(upstream.status);
+              res.set("Content-Type", "text/event-stream");
+              res.set("Cache-Control", "no-cache");
+              res.set("Connection", "keep-alive");
+              res.flushHeaders();
+              res.write(": connected\n\n");
+
+              const reader = upstream.body.getReader();
+              const decoder = new TextDecoder();
+              const diagnostics = createResponseStreamDiagnostics();
+              let buffer = "";
+              let usage: any = undefined;
+              let clientDisconnected = false;
+              let streamError: Error | undefined;
+              const abortOnDisconnect = () => {
+                clientDisconnected = !res.writableEnded;
+                if (clientDisconnected) void reader.cancel();
+              };
+              res.once("close", abortOnDisconnect);
+
+              const forwardFrame = (frame: string) => {
+                for (const payload of parseSSEDataPayloads(frame)) {
+                  inspectResponseStreamEvent(payload, diagnostics);
+                  if (payload?.response?.usage) usage = payload.response.usage;
+                  else if (payload?.usage) usage = payload.usage;
+                }
+                if (!res.writableEnded) {
+                  res.write(frame.endsWith("\n\n") ? frame : `${frame}\n\n`);
+                }
+              };
+
+              try {
+                while (!clientDisconnected) {
+                  const { value, done } = await reader.read();
+                  if (done) break;
+                  buffer += decoder.decode(value, { stream: true });
+                  while (true) {
+                    const next = takeNextSSEFrame(buffer);
+                    if (!next) break;
+                    buffer = next.rest;
+                    forwardFrame(next.frame);
+                  }
+                }
+                if (!clientDisconnected) {
+                  buffer += decoder.decode();
+                  while (true) {
+                    const next = takeNextSSEFrame(buffer);
+                    if (!next) break;
+                    buffer = next.rest;
+                    forwardFrame(next.frame);
+                  }
+                  if (buffer.trim()) forwardFrame(buffer);
+                }
+              } catch (error: any) {
+                streamError = error instanceof Error ? error : new Error(String(error));
+              } finally {
+                res.off("close", abortOnDisconnect);
+              }
+
+              const interrupted = clientDisconnected || Boolean(streamError);
+              if (!clientDisconnected && !res.writableEnded) res.end();
+              await completeTrace(streamTraceId, {
+                at: Date.now(),
+                startedAt,
+                route: req.path,
+                accountId: selected.id,
+                accountEmail: selected.email,
+                model: tracedModel,
+                ...traceModelResolution,
+                status: clientDisconnected ? 499 : streamError ? 599 : upstream.status,
+                stream: true,
+                latencyMs: Date.now() - startedAt,
+                usage,
+                requestBody,
+                ...traceImage,
+                error: clientDisconnected
+                  ? "client disconnected before stream completion"
+                  : streamError?.message,
+                upstreamContentType: contentType,
+                responseStreamDiagnostics: diagnostics,
+                clientDisconnected: clientDisconnected || undefined,
+                lifecycleState: interrupted ? "interrupted" : "completed",
+              });
+              return;
+            }
+
             if (shouldReturnChatCompletions && clientRequestedStream) {
               res.set("Content-Type", "text/event-stream");
               res.set("Cache-Control", "no-cache");
