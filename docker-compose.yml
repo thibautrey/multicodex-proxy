@@ -10,6 +10,7 @@ services:
       - STORE_PATH=/data/accounts.json
       - OAUTH_STATE_PATH=/data/oauth-state.json
       - TRACE_FILE_PATH=/data/requests-trace.jsonl
+      - REQUEST_BODY_LIMIT=${REQUEST_BODY_LIMIT:-500mb}
       - CHATGPT_BASE_URL=https://chatgpt.com
       - UPSTREAM_PATH=/backend-api/codex/responses
       - PROXY_MODELS=gpt-5.3-codex,gpt-5.2-codex,gpt-5-codex
