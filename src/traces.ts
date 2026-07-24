@@ -31,6 +31,10 @@ export type TraceEntry = {
   assistantEmptyOutput?: boolean;
   assistantFinishReason?: string;
   responseStreamDiagnostics?: ResponseStreamDiagnostics;
+  lifecycleState?: "started" | "completed" | "interrupted";
+  startedAt?: number;
+  completedAt?: number;
+  clientDisconnected?: boolean;
 };
 
 export type ResponseStreamDiagnostics = {
@@ -285,6 +289,18 @@ function normalizeTrace(raw: any): TraceEntry | null {
       raw.responseStreamDiagnostics &&
       typeof raw.responseStreamDiagnostics === "object"
         ? raw.responseStreamDiagnostics
+        : undefined,
+    lifecycleState:
+      raw.lifecycleState === "started" ||
+      raw.lifecycleState === "completed" ||
+      raw.lifecycleState === "interrupted"
+        ? raw.lifecycleState
+        : undefined,
+    startedAt: safeNumber(raw.startedAt),
+    completedAt: safeNumber(raw.completedAt),
+    clientDisconnected:
+      typeof raw.clientDisconnected === "boolean"
+        ? raw.clientDisconnected
         : undefined,
   };
 }
@@ -1018,6 +1034,73 @@ export function createTraceManager(config: TraceManagerConfig) {
     void appendStatsHistory(finalEntry).catch(() => undefined);
   }
 
+  type TraceInput = Omit<
+    TraceEntry,
+    "id" | "isError" | "tokensInput" | "tokensInputCached" | "tokensOutput" | "tokensTotal"
+  >;
+
+  function materializeTrace(entry: TraceInput, id: string = randomUUID()): TraceEntry {
+    const normalizedTokens = normalizeTokenFields(entry.usage);
+    return {
+      ...entry,
+      id,
+      isError: entry.status >= 400,
+      tokensInput: normalizedTokens.tokensInput,
+      tokensInputCached: normalizedTokens.tokensInputCached,
+      tokensOutput: normalizedTokens.tokensOutput,
+      tokensTotal: normalizedTokens.tokensTotal,
+      costUsd: estimateCostUsd(
+        entry.model,
+        normalizedTokens.tokensInput ?? 0,
+        normalizedTokens.tokensOutput ?? 0,
+        normalizedTokens.tokensInputCached ?? 0,
+      ),
+    };
+  }
+
+  async function beginTrace(entry: TraceInput): Promise<string> {
+    const initial = materializeTrace({
+      ...entry,
+      lifecycleState: "started",
+      startedAt: entry.startedAt ?? entry.at,
+    });
+    const line = `${JSON.stringify(initial)}\n`;
+    const run = traceWriteQueue.then(async () => {
+      await ensureCacheReady();
+      traceCache.push(initial);
+      if (traceCache.length > retentionMax) {
+        traceCache.splice(0, traceCache.length - retentionMax);
+      }
+      await ensureParentDir(filePath);
+      await fs.appendFile(filePath, line, "utf8");
+    });
+    traceWriteQueue = run.catch(() => undefined);
+    await run;
+    return initial.id;
+  }
+
+  async function completeTrace(id: string, entry: TraceInput): Promise<void> {
+    const finalEntry = materializeTrace(
+      {
+        ...entry,
+        lifecycleState:
+          entry.lifecycleState ?? (entry.clientDisconnected ? "interrupted" : "completed"),
+        completedAt: entry.completedAt ?? Date.now(),
+      },
+      id,
+    );
+    const run = traceWriteQueue.then(async () => {
+      await ensureCacheReady();
+      const index = traceCache.findIndex((trace) => trace.id === id);
+      if (index >= 0) traceCache[index] = finalEntry;
+      else traceCache.push(finalEntry);
+      await writeTraceWindow(traceCache);
+    });
+    traceWriteQueue = run.catch(() => undefined);
+    await run;
+    await appendStatsHistory(finalEntry);
+  }
+
   function recordTrace(
     entry: Omit<
       TraceEntry,
@@ -1049,6 +1132,8 @@ export function createTraceManager(config: TraceManagerConfig) {
     getTraceStats,
     appendTrace,
     recordTrace,
+    beginTrace,
+    completeTrace,
     readTracesLegacy,
     buildTraceStats,
     createUsageAggregate,
