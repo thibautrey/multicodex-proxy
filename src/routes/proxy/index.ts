@@ -1620,8 +1620,35 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       (req.originalUrl || "").includes("responses/compact");
     const clientRequestedStream = Boolean(req.body?.stream);
     const sessionId = getSessionId(req);
+    const isNativeResponsesStream =
+      clientRequestedStream && !isChatCompletionsPath;
     let nativeStreamTraceId: string | undefined;
+    let nativeStreamTracePromise: Promise<string> | undefined;
     let nativeStreamKeepalive: ReturnType<typeof setInterval> | undefined;
+
+    if (isNativeResponsesStream) {
+      res.status(200);
+      res.set("Content-Type", "text/event-stream");
+      res.set("Cache-Control", "no-cache");
+      res.set("Connection", "keep-alive");
+      res.flushHeaders();
+      res.write(": connected\n\n");
+      nativeStreamKeepalive = setInterval(() => {
+        if (!res.writableEnded) res.write(": keepalive\n\n");
+      }, 5_000);
+      nativeStreamKeepalive.unref?.();
+      nativeStreamTracePromise = beginTrace({
+        at: startedAt,
+        startedAt,
+        route: req.path,
+        model:
+          typeof req.body?.model === "string" ? req.body.model : undefined,
+        status: 102,
+        stream: true,
+        latencyMs: 0,
+        requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
+      });
+    }
 
     let accounts = store.getCachedAccounts();
     if (!accounts.length)
@@ -1891,30 +1918,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             clientRequestedStream &&
             !nativeStreamTraceId
           ) {
-            nativeStreamTraceId = await beginTrace({
-              at: startedAt,
-              startedAt,
-              route: req.path,
-              accountId: selected.id,
-              accountEmail: selected.email,
-              model: tracedModel,
-              ...traceModelResolution,
-              status: 102,
-              stream: true,
-              latencyMs: 0,
-              requestBody,
-              ...traceImage,
-            });
-            res.status(200);
-            res.set("Content-Type", "text/event-stream");
-            res.set("Cache-Control", "no-cache");
-            res.set("Connection", "keep-alive");
-            res.flushHeaders();
-            res.write(": connected\n\n");
-            nativeStreamKeepalive = setInterval(() => {
-              if (!res.writableEnded) res.write(": keepalive\n\n");
-            }, 5_000);
-            nativeStreamKeepalive.unref?.();
+            nativeStreamTraceId = await nativeStreamTracePromise!;
           }
           const upstream = await fetchCodexWithRetry(
             `${upstreamBaseUrl}${upstreamPath}`,
