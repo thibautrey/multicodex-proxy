@@ -7,6 +7,7 @@ import {
 import {
   buildImageAwareRoutingCandidates,
   buildUpstreamRequestHeaders,
+  classifyNativeStreamCompletion,
   isStreamingUpstreamResponse,
 } from "./index.js";
 
@@ -242,4 +243,19 @@ test("OpenAI Responses streams without a content-type header are relayed live", 
     isStreamingUpstreamResponse("application/json", true, true, "mistral", true),
     false,
   );
+});
+
+test("client close after response.completed is classified as success", () => {
+  assert.deepEqual(classifyNativeStreamCompletion(true, true), {
+    interrupted: false,
+    status: 200,
+    clientDisconnected: undefined,
+    error: undefined,
+  });
+  assert.deepEqual(classifyNativeStreamCompletion(true, false), {
+    interrupted: true,
+    status: 499,
+    clientDisconnected: true,
+    error: "client disconnected before stream completion",
+  });
 });
