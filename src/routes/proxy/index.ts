@@ -15,6 +15,10 @@ import {
   UPSTREAM_COMPACT_PATH,
   UPSTREAM_PATH,
 } from "../../config.js";
+import {
+  buildModelsListResponse,
+  toOpenAiModelShape,
+} from "./models-response.js";
 import type { ModelAlias, ProviderId, UpstreamMode } from "../../types.js";
 import {
   accountUsable,
@@ -126,6 +130,8 @@ type ExposedModel = {
   object: "model";
   created: number;
   owned_by: string;
+  /** Native Codex `/models` entry, retained for Codex CLI compatibility. */
+  codexModelInfo?: Record<string, unknown>;
   metadata: {
     provider: ProviderId;
     provider_candidates?: ProviderId[];
@@ -412,6 +418,11 @@ function modelObject(
     object: "model",
     created: Math.floor(Date.now() / 1000),
     owned_by: provider,
+    ...(provider === "openai" &&
+    typeof upstreamObject.slug === "string" &&
+    upstreamObject.slug.trim()
+      ? { codexModelInfo: { ...upstreamObject } }
+      : {}),
     metadata: {
       provider,
       context_window: contextWindow,
@@ -486,6 +497,7 @@ function mergeModelAvailability(
 
   return {
     ...(current ?? nextModel),
+    codexModelInfo: current?.codexModelInfo ?? nextModel.codexModelInfo,
     metadata: {
       ...(current?.metadata ?? nextModel.metadata),
       provider: current?.metadata.provider ?? nextModel.metadata.provider,
@@ -767,6 +779,11 @@ export async function discoverModels(
       .filter((a) => a.enabled && a.targets.length > 0);
     for (const alias of aliases) {
       const firstTarget = alias.targets[0];
+      const aliasTarget = Array.from(byId.values()).find(
+        (model) =>
+          normalizeModelLookupKey(model.id) ===
+          normalizeModelLookupKey(firstTarget),
+      );
       const providers = providersForModel(
         firstTarget,
         Array.from(byId.values()),
@@ -776,6 +793,17 @@ export async function discoverModels(
         inferProviderFromModel(firstTarget, Array.from(byId.values()));
       byId.set(alias.id, {
         ...modelObject(alias.id, provider),
+        ...(aliasTarget?.codexModelInfo
+          ? {
+              codexModelInfo: {
+                ...aliasTarget.codexModelInfo,
+                slug: alias.id,
+                display_name: alias.id,
+                description: `Alias for ${firstTarget}`,
+                visibility: "list",
+              },
+            }
+          : {}),
         metadata: {
           ...modelObject(alias.id, provider).metadata,
           provider_candidates: providers,
@@ -3425,17 +3453,13 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     proxyWithRotation(req, res).catch(next);
   });
 
-  function toOpenAiModelShape(model: ExposedModel) {
-    return model;
-  }
-
   async function listExposedModels() {
     return discoverModels(store, openaiBaseUrl, mistralBaseUrl, zaiBaseUrl);
   }
 
   router.get(["/models", "/api/v1/models"], async (_req, res) => {
     const models = await listExposedModels();
-    res.json({ object: "list", data: models.map(toOpenAiModelShape) });
+    res.json(buildModelsListResponse(models));
   });
 
   router.get(["/models/:id", "/api/v1/models/:id"], async (req, res) => {
