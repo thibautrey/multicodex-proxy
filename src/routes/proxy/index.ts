@@ -1452,6 +1452,26 @@ function isRetryableUpstreamError(status: number, errorText: string): boolean {
   );
 }
 
+export function isStreamingUpstreamResponse(
+  contentType: string,
+  clientRequestedStream: boolean,
+  upstreamOk: boolean,
+  provider: string,
+  hasBody: boolean,
+): boolean {
+  if (contentType.includes("text/event-stream")) return true;
+  // ChatGPT's Responses endpoint currently streams SSE without consistently
+  // returning a Content-Type header. A successful OpenAI response to an
+  // explicitly streamed request must therefore be relayed as a stream rather
+  // than buffered before tracing and delivery.
+  return (
+    clientRequestedStream &&
+    upstreamOk &&
+    provider === "openai" &&
+    hasBody
+  );
+}
+
 function isModelNotFoundError(status: number, errorText: string): boolean {
   return (
     (status === 400 || status === 404) &&
@@ -1851,7 +1871,13 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           );
 
           const contentType = upstream.headers.get("content-type") ?? "";
-          const isStream = contentType.includes("text/event-stream");
+          const isStream = isStreamingUpstreamResponse(
+            contentType,
+            clientRequestedStream,
+            upstream.ok,
+            candidate.provider,
+            Boolean(upstream.body),
+          );
 
           if (isStream) {
             if (shouldReturnChatCompletions && clientRequestedStream) {

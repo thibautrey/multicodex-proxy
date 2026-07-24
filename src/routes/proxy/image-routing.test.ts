@@ -7,6 +7,7 @@ import {
 import {
   buildImageAwareRoutingCandidates,
   buildUpstreamRequestHeaders,
+  isStreamingUpstreamResponse,
 } from "./index.js";
 
 const discoveredModels: any[] = [
@@ -226,4 +227,19 @@ test("non-OpenAI requests retain the Pi identity", () => {
   assert.equal(headers.originator, "pi");
   assert.match(headers["User-Agent"]!, /^pi \(/);
   assert.equal(headers.version, undefined);
+});
+
+test("OpenAI Responses streams without a content-type header are relayed live", () => {
+  assert.equal(
+    isStreamingUpstreamResponse("", true, true, "openai", true),
+    true,
+  );
+  assert.equal(
+    isStreamingUpstreamResponse("application/json", true, false, "openai", true),
+    false,
+  );
+  assert.equal(
+    isStreamingUpstreamResponse("application/json", true, true, "mistral", true),
+    false,
+  );
 });
