@@ -42,22 +42,23 @@ export async function rateLimitResetCreditRequest(
   openaiBaseUrl: string,
   consume: boolean,
   idempotencyKey: string = randomUUID(),
+  fetchImpl: typeof fetch = fetch,
 ): Promise<unknown> {
   const suffix = consume ? "/consume" : "";
   const endpoints = [
     {
-      path: `/backend-api/api/codex/rate-limit-reset-credits${suffix}`,
-      body: consume ? { idempotencyKey } : undefined,
-    },
-    {
       path: `/backend-api/wham/rate-limit-reset-credits${suffix}`,
       body: consume ? { redeem_request_id: idempotencyKey } : undefined,
+    },
+    {
+      path: `/backend-api/api/codex/rate-limit-reset-credits${suffix}`,
+      body: consume ? { idempotencyKey } : undefined,
     },
   ];
   let lastFailure = "";
 
   for (const endpoint of endpoints) {
-    const response = await fetch(
+    const response = await fetchImpl(
       `${openaiBaseUrl.replace(/\/+$/, "")}${endpoint.path}`,
       {
         method: consume ? "POST" : "GET",
@@ -76,12 +77,24 @@ export async function rateLimitResetCreditRequest(
     }
 
     if (response.ok) return data;
-    const detail =
+    const isHtmlChallenge =
+      response.status === 403 &&
+      (response.headers.get("content-type")?.includes("text/html") ||
+        /cdn-cgi\/challenge-platform|challenge-error-text|Enable JavaScript and cookies/i.test(
+          text,
+        ));
+    const rawDetail =
       data && typeof data === "object" && "message" in data
         ? String((data as { message?: unknown }).message ?? "")
         : text;
+    const detail = isHtmlChallenge
+      ? "upstream returned a browser challenge"
+      : rawDetail.replace(/\s+/g, " ").trim().slice(0, 500);
     lastFailure = `${response.status}${detail ? `: ${detail}` : ""}`;
-    if (response.status !== 404) break;
+    // A route mismatch or an HTML-only Cloudflare challenge may be specific
+    // to one backend namespace. Real JSON authentication/permission failures
+    // remain final and visible.
+    if (response.status !== 404 && !isHtmlChallenge) break;
   }
 
   throw new Error(`rate-limit reset credit request failed ${lastFailure}`);

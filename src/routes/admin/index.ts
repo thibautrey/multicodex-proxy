@@ -23,7 +23,6 @@ import { ensureValidToken } from "../../account-utils.js";
 import type { TraceManager } from "../../traces.js";
 import { discoverModels } from "../proxy/index.js";
 import {
-  findAvailableResetCreditCount,
   maybeConsumeScheduledWeeklyReset,
   rateLimitResetCreditRequest,
   WEEKLY_RESET_REMAINING_THRESHOLD_PERCENT,
@@ -803,46 +802,20 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       return res.status(409).json({ error: "an automatic weekly reset is already scheduled" });
     }
 
-    account = await ensureValidToken(account, oauthConfig);
-    try {
-      const credit = await rateLimitResetCreditRequest(account, openaiBaseUrl, false);
-      const available = findAvailableResetCreditCount(credit);
-      if (available === undefined) {
-        return res.status(502).json({
-          error: "OpenAI did not report an available reset-credit count",
-        });
-      }
-      if (available < 1) {
-        return res.status(409).json({
-          error: "no rate-limit reset credits are available for this account",
-        });
-      }
-
-      await refreshUsageIfNeeded(account, openaiBaseUrl, true);
-      account.state = {
-        ...account.state,
-        scheduledWeeklyReset: {
-          scheduledAt: Date.now(),
-          idempotencyKey: randomUUID(),
-          thresholdRemainingPercent:
-            WEEKLY_RESET_REMAINING_THRESHOLD_PERCENT,
-        },
-      };
-      await store.addOrUpdate(account);
-      const trigger = account.state?.lastError
-        ? { status: "threshold-not-reached" as const }
-        : await maybeConsumeScheduledWeeklyReset(
-            account.id,
-            store,
-            openaiBaseUrl,
-          );
-      const updated = store
-        .getCachedAccounts()
-        .find((candidate) => candidate.id === account.id) ?? account;
-      res.json({ ok: true, trigger, account: redact(updated) });
-    } catch (error: any) {
-      res.status(502).json({ error: error?.message ?? String(error) });
-    }
+    // Scheduling is a local, persisted operation. Do not refresh usage,
+    // refresh authentication, check credit availability, or contact the reset
+    // endpoint until the monitor observes the configured quota threshold.
+    account.state = {
+      ...account.state,
+      scheduledWeeklyReset: {
+        scheduledAt: Date.now(),
+        idempotencyKey: randomUUID(),
+        thresholdRemainingPercent:
+          WEEKLY_RESET_REMAINING_THRESHOLD_PERCENT,
+      },
+    };
+    await store.addOrUpdate(account);
+    res.json({ ok: true, account: redact(account) });
   });
 
   router.delete("/accounts/:id/rate-limit-reset-credit/schedule", async (req, res) => {
