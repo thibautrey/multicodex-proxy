@@ -845,10 +845,23 @@ function updateValidationCache(models: ExposedModel[]): void {
   modelsValidationCache.validModelKeys = validModelKeys;
 }
 
-function isModelAllowed(model: string | undefined): boolean {
+export function isModelAllowedByKeys(
+  model: string | undefined,
+  validModelKeys: ReadonlySet<string>,
+): boolean {
   if (!model) return true; // No model specified, let it pass
+  // The asynchronous discovery cache is empty briefly after startup. Failing
+  // open avoids rejecting valid requests before the first refresh completes.
+  if (validModelKeys.size === 0) return true;
   const key = normalizeModelLookupKey(model);
-  return modelsValidationCache.validModelKeys.has(key);
+  return validModelKeys.has(key);
+}
+
+function isModelAllowed(model: string | undefined): boolean {
+  return isModelAllowedByKeys(
+    model,
+    modelsValidationCache.validModelKeys,
+  );
 }
 
 function startBackgroundModelRefresh(
@@ -1678,9 +1691,54 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       });
     }
 
+    const sendPreparationError = async (
+      status: number,
+      error: string | Record<string, unknown>,
+    ) => {
+      const payload = { error };
+      const errorMessage =
+        typeof error === "string"
+          ? error
+          : typeof error.message === "string"
+            ? error.message
+            : JSON.stringify(error);
+
+      if (isNativeResponsesStream && res.headersSent) {
+        if (nativeStreamKeepalive) {
+          clearInterval(nativeStreamKeepalive);
+          nativeStreamKeepalive = undefined;
+        }
+        if (!res.writableEnded) {
+          res.write(`event: error\ndata: ${JSON.stringify(payload)}\n\n`);
+          res.end();
+        }
+        if (nativeStreamTracePromise) {
+          const traceId = await nativeStreamTracePromise;
+          await completeTrace(traceId, {
+            at: Date.now(),
+            startedAt,
+            route: req.path,
+            model:
+              typeof req.body?.model === "string"
+                ? req.body.model
+                : undefined,
+            status,
+            stream: true,
+            latencyMs: Date.now() - startedAt,
+            requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
+            error: errorMessage,
+            lifecycleState: "completed",
+          });
+        }
+        return;
+      }
+
+      res.status(status).json(payload);
+    };
+
     let accounts = store.getCachedAccounts();
     if (!accounts.length)
-      return res.status(503).json({ error: "no accounts configured" });
+      return sendPreparationError(503, "no accounts configured");
 
     // Only refresh tokens/usage for enabled accounts. Skipping disabled
     // accounts avoids wasting API calls and prevents a race where stale
@@ -1724,12 +1782,10 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
 
     // Fast O(1) validation against cached model set
     if (!isModelAllowed(requestModel)) {
-      return res.status(400).json({
-        error: {
+      return sendPreparationError(400, {
           message: `Model '${requestModel}' is not supported. Use /v1/models to list available models.`,
           type: "invalid_request_error",
           code: "model_not_found",
-        },
       });
     }
 
@@ -3239,11 +3295,12 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       }
     }
     if (!providerTried) {
-      return res
-        .status(503)
-        .json({ error: "no provider accounts configured for requested model" });
+      return sendPreparationError(
+        503,
+        "no provider accounts configured for requested model",
+      );
     }
-    if (res.headersSent) return;
+    if (res.headersSent && !isNativeResponsesStream) return;
 
     const elapsed = Date.now() - hangStart;
     if (elapsed >= HANG_RETRY_MAX_DURATION_MS) break; // fall through to final error response
@@ -3256,20 +3313,15 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     }
 
     // Max hang duration exceeded — all accounts still exhausted
-    if (!res.headersSent) {
-      if (sawEmptyAssistantOutput) {
-        res.status(502).json({
-          error: {
-            message:
-              "Upstream returned no assistant output after retrying all eligible accounts.",
-            type: "upstream_error",
-            code: "empty_assistant_output",
-          },
-        });
-        return;
-      }
-      res.status(429).json({ error: "all accounts exhausted or unavailable" });
+    if (sawEmptyAssistantOutput) {
+      return sendPreparationError(502, {
+        message:
+          "Upstream returned no assistant output after retrying all eligible accounts.",
+        type: "upstream_error",
+        code: "empty_assistant_output",
+      });
     }
+    return sendPreparationError(429, "all accounts exhausted or unavailable");
   }
   function setForwardHeaders(from: Response, to: express.Response) {
     for (const [k, v] of from.headers.entries())
