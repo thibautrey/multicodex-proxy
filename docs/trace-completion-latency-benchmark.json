@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-30T08:45:32.088Z",
+  "benchmark": "synthetic_concurrent_trace_completion",
+  "retention": 1000,
+  "concurrentCompletions": 64,
+  "payloadBytes": 512,
+  "runs": 7,
+  "baseline": {
+    "strategy": "rewrite_retained_window_per_completion",
+    "medianBatchMs": 47.66641599999997,
+    "p95BatchMs": 50.20458299999996,
+    "medianPerCompletionMs": 0.7447877499999995,
+    "medianTraceFileBytes": 717854
+  },
+  "candidate": {
+    "strategy": "append_final_record_and_compact_by_physical_line_count",
+    "medianBatchMs": 6.462541999999985,
+    "p95BatchMs": 6.848332999999997,
+    "medianPerCompletionMs": 0.10097721874999976,
+    "medianTraceFileBytes": 790916
+  },
+  "medianCompletionImprovementRatio": 0.8644214828318539,
+  "note": "This isolates local trace and stats-history persistence with concurrent completions; it does not include proxy routing, network, provider, or model latency."
+}

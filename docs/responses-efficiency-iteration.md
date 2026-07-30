@@ -109,3 +109,8 @@ L'itération suivante supprime la préparation asynchrone et les mutations du
 store pour les comptes dont le token et l'usage sont déjà frais. Elle est
 documentée dans
 [`account-preparation-latency-iteration.md`](account-preparation-latency-iteration.md).
+
+L'itération suivante remplace la réécriture de la fenêtre des traces à chaque
+fin de stream par un journal append-only compacté périodiquement. Elle est
+documentée dans
+[`trace-completion-latency-iteration.md`](trace-completion-latency-iteration.md).

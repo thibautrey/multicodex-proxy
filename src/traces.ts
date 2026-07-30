@@ -185,6 +185,7 @@ const DEFAULT_PAGE_SIZE_MAX = 100;
 const DEFAULT_LEGACY_LIMIT_MAX = 2000;
 const HOUR_MS = 3_600_000;
 const MAX_LATENCY_SAMPLES_PER_BUCKET = 2000;
+const TRACE_COMPACTION_RATIO = 1.5;
 
 function safeNumber(value: unknown): number | undefined {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -748,26 +749,71 @@ export function createTraceManager(config: TraceManagerConfig) {
   const traceCache: TraceEntry[] = [];
   const statsBuckets = new Map<number, TraceBucketAggregate>();
   let totalStored = 0;
+  let physicalTraceLineCount = 0;
+  let traceCompactionQueued = false;
   let cacheInit: Promise<void> | null = null;
+  const traceCompactionThreshold = Math.max(
+    retentionMax + 1,
+    Math.ceil(retentionMax * TRACE_COMPACTION_RATIO),
+  );
 
   async function ensureParentDir(file: string) {
     await fs.mkdir(path.dirname(file), { recursive: true });
   }
 
-  async function readTraceFileFromDisk(): Promise<TraceEntry[]> {
+  function trimTraceCache() {
+    if (traceCache.length <= retentionMax) return;
+
+    const completedSlots = Math.max(
+      0,
+      retentionMax -
+        traceCache.reduce(
+          (count, trace) =>
+            count + (trace.lifecycleState === "started" ? 1 : 0),
+          0,
+        ),
+    );
+    let completedToKeep = completedSlots;
+    const keep = new Array<boolean>(traceCache.length).fill(false);
+    for (let i = traceCache.length - 1; i >= 0; i -= 1) {
+      if (traceCache[i].lifecycleState === "started") {
+        keep[i] = true;
+      } else if (completedToKeep > 0) {
+        keep[i] = true;
+        completedToKeep -= 1;
+      }
+    }
+    const trimmed = traceCache.filter((_trace, index) => keep[index]);
+    traceCache.splice(0, traceCache.length, ...trimmed);
+  }
+
+  async function readTraceFileFromDisk(): Promise<{
+    traces: TraceEntry[];
+    physicalLineCount: number;
+  }> {
     try {
       const raw = await fs.readFile(filePath, "utf8");
-      const parsed: TraceEntry[] = [];
+      const latestById = new Map<string, TraceEntry>();
+      let physicalLineCount = 0;
       for (const line of raw.split("\n")) {
         if (!line.trim()) continue;
+        physicalLineCount += 1;
         try {
           const normalized = normalizeTrace(JSON.parse(line));
-          if (normalized) parsed.push(normalized);
+          if (!normalized) continue;
+          // A completed lifecycle trace is appended with the same id as its
+          // durable "started" record. Delete first so Map iteration reflects
+          // the position of the latest physical record.
+          latestById.delete(normalized.id);
+          latestById.set(normalized.id, normalized);
         } catch {}
       }
-      return parsed.slice(-retentionMax);
+      return {
+        traces: Array.from(latestById.values()),
+        physicalLineCount,
+      };
     } catch {
-      return [];
+      return { traces: [], physicalLineCount: 0 };
     }
   }
 
@@ -812,8 +858,10 @@ export function createTraceManager(config: TraceManagerConfig) {
     }
     cacheInit = (async () => {
       await Promise.all([ensureParentDir(filePath), ensureParentDir(historyFilePath)]);
-      const traces = await readTraceFileFromDisk();
-      traceCache.splice(0, traceCache.length, ...traces.slice(-retentionMax));
+      const { traces, physicalLineCount } = await readTraceFileFromDisk();
+      traceCache.splice(0, traceCache.length, ...traces);
+      trimTraceCache();
+      physicalTraceLineCount = physicalLineCount;
       await scanStatsHistory(ingestStatsTrace);
     })();
     await cacheInit;
@@ -824,6 +872,7 @@ export function createTraceManager(config: TraceManagerConfig) {
     const BATCH_SIZE = 1000;
     const MAX_ENTRY_SIZE = 1024 * 1024; // 1MB per entry max
     const fileHandle = await fs.open(tmp, 'w');
+    let writtenEntries = 0;
     try {
       for (let i = 0; i < entries.length; i += BATCH_SIZE) {
         const batch = entries.slice(i, i + BATCH_SIZE);
@@ -835,6 +884,7 @@ export function createTraceManager(config: TraceManagerConfig) {
             continue;
           }
           batchLines.push(json);
+          writtenEntries += 1;
         }
         if (batchLines.length > 0) {
           const batchContent = batchLines.join('\n') + '\n';
@@ -845,6 +895,46 @@ export function createTraceManager(config: TraceManagerConfig) {
       await fileHandle.close();
     }
     await fs.rename(tmp, filePath);
+    physicalTraceLineCount = writtenEntries;
+  }
+
+  function queueTraceWrite(operation: () => Promise<void>): Promise<void> {
+    const run = traceWriteQueue.then(operation);
+    traceWriteQueue = run.catch(() => undefined);
+    return run;
+  }
+
+  async function appendTraceRecord(entry: TraceEntry): Promise<void> {
+    const index = traceCache.findIndex((trace) => trace.id === entry.id);
+    if (index >= 0) traceCache.splice(index, 1);
+    traceCache.push(entry);
+    trimTraceCache();
+    await ensureParentDir(filePath);
+    await fs.appendFile(filePath, `${JSON.stringify(entry)}\n`, "utf8");
+    physicalTraceLineCount += 1;
+  }
+
+  function queueTraceCompactionIfNeeded() {
+    if (
+      traceCompactionQueued ||
+      physicalTraceLineCount <= traceCompactionThreshold
+    ) {
+      return;
+    }
+
+    traceCompactionQueued = true;
+    const run = queueTraceWrite(async () => {
+      try {
+        if (physicalTraceLineCount > traceCompactionThreshold) {
+          await writeTraceWindow(traceCache);
+        }
+      } finally {
+        traceCompactionQueued = false;
+      }
+    });
+    void run.catch((err) => {
+      console.error("trace compaction failed", err);
+    });
   }
 
   function toStatsHistoryEntry(entry: TraceEntry): TraceEntry {
@@ -983,14 +1073,13 @@ export function createTraceManager(config: TraceManagerConfig) {
 
   async function compactTraceStorageIfNeeded() {
     await ensureCacheReady();
-    // Triage: if cache exceeds retention limit, rewrite the trace file
-    // to only keep the last retentionMax entries. History file already
-    // contains metadata for all entries via appendStatsHistory().
-    if (traceCache.length > retentionMax) {
-      const trimmed = traceCache.slice(-retentionMax);
-      traceCache.splice(0, traceCache.length, ...trimmed);
-      await writeTraceWindow(traceCache);
-    }
+    if (physicalTraceLineCount <= traceCompactionThreshold) return;
+    await queueTraceWrite(async () => {
+      if (physicalTraceLineCount > traceCompactionThreshold) {
+        trimTraceCache();
+        await writeTraceWindow(traceCache);
+      }
+    });
   }
 
   async function getTraceStats(
@@ -1121,26 +1210,13 @@ export function createTraceManager(config: TraceManagerConfig) {
       ),
     };
 
-    const line = `${JSON.stringify(finalEntry)}\n`;
-    
     // Fire trace file write asynchronously - don't block on this
-    traceWriteQueue = traceWriteQueue.then(async () => {
+    const run = queueTraceWrite(async () => {
       await ensureCacheReady();
-      traceCache.push(finalEntry);
-      // Triage: periodically compact the trace file to only keep last retentionMax entries
-      // History file retains metadata for all entries for stats purposes
-      const shouldCompact = traceCache.length > retentionMax * 1.5; // Compact at 150% of limit to avoid frequent rewrites
-      if (traceCache.length > retentionMax) {
-        traceCache.splice(0, traceCache.length - retentionMax);
-      }
-      await ensureParentDir(filePath);
-      await fs.appendFile(filePath, line, "utf8");
-      // Compact trace file asynchronously to avoid blocking
-      if (shouldCompact) {
-        void compactTraceStorageIfNeeded();
-      }
-    }).catch(() => undefined);
-    
+      await appendTraceRecord(finalEntry);
+    });
+    void run.then(queueTraceCompactionIfNeeded).catch(() => undefined);
+
     // Fire history write asynchronously - completely independent from trace write
     void appendStatsHistory(finalEntry).catch(() => undefined);
   }
@@ -1185,18 +1261,12 @@ export function createTraceManager(config: TraceManagerConfig) {
       lifecycleState: "started",
       startedAt: entry.startedAt ?? entry.at,
     });
-    const line = `${JSON.stringify(initial)}\n`;
-    const run = traceWriteQueue.then(async () => {
+    const run = queueTraceWrite(async () => {
       await ensureCacheReady();
-      traceCache.push(initial);
-      if (traceCache.length > retentionMax) {
-        traceCache.splice(0, traceCache.length - retentionMax);
-      }
-      await ensureParentDir(filePath);
-      await fs.appendFile(filePath, line, "utf8");
+      await appendTraceRecord(initial);
     });
-    traceWriteQueue = run.catch(() => undefined);
     await run;
+    queueTraceCompactionIfNeeded();
     return initial.id;
   }
 
@@ -1210,15 +1280,12 @@ export function createTraceManager(config: TraceManagerConfig) {
       },
       id,
     );
-    const run = traceWriteQueue.then(async () => {
+    const run = queueTraceWrite(async () => {
       await ensureCacheReady();
-      const index = traceCache.findIndex((trace) => trace.id === id);
-      if (index >= 0) traceCache[index] = finalEntry;
-      else traceCache.push(finalEntry);
-      await writeTraceWindow(traceCache);
+      await appendTraceRecord(finalEntry);
     });
-    traceWriteQueue = run.catch(() => undefined);
     await run;
+    queueTraceCompactionIfNeeded();
     await appendStatsHistory(finalEntry);
   }
 
