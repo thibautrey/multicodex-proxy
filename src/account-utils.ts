@@ -1,16 +1,43 @@
 import { OAuthConfig } from "./oauth.js";
 import { mergeTokenIntoAccount, refreshAccessToken } from "./oauth.js";
-import { normalizeProvider, rememberError } from "./quota.js";
+import {
+  isUsageRefreshNeeded,
+  normalizeProvider,
+  rememberError,
+} from "./quota.js";
 import type { Account } from "./types.js";
+
+export function isTokenRefreshNeeded(
+  account: Account,
+  now = Date.now(),
+): account is Account & { expiresAt: number; refreshToken: string } {
+  return (
+    (account.provider ?? "openai") === "openai" &&
+    typeof account.expiresAt === "number" &&
+    account.expiresAt > 0 &&
+    now >= account.expiresAt - 5 * 60_000 &&
+    Boolean(account.refreshToken)
+  );
+}
+
+export function accountNeedsRequestPreparation(
+  account: Account,
+  now = Date.now(),
+): boolean {
+  if (!account.enabled) return false;
+  return (
+    isTokenRefreshNeeded(account, now) ||
+    isUsageRefreshNeeded(account) ||
+    (normalizeProvider(account) === "openai" &&
+      Boolean(account.state?.scheduledWeeklyReset))
+  );
+}
 
 export async function ensureValidToken(
   account: Account,
   oauthConfig: OAuthConfig,
 ): Promise<Account> {
-  if ((account.provider ?? "openai") !== "openai") return account;
-  if (!account.expiresAt || Date.now() < account.expiresAt - 5 * 60_000)
-    return account;
-  if (!account.refreshToken) return account;
+  if (!isTokenRefreshNeeded(account)) return account;
 
   try {
     const refreshed = await refreshAccessToken(
@@ -24,14 +51,15 @@ export async function ensureValidToken(
     };
     return merged;
   } catch (err: any) {
+    const failed = { ...account };
     rememberError(
-      account,
+      failed,
       `refresh token failed: ${err?.message ?? String(err)}`,
     );
-    account.state = {
-      ...account.state,
+    failed.state = {
+      ...failed.state,
       needsTokenRefresh: true,
     };
-    return account;
+    return failed;
   }
 }

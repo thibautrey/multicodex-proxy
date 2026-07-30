@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-30T08:34:20.998Z",
+  "benchmark": "synthetic_fresh_account_preparation",
+  "samples": 5000,
+  "accountCount": 64,
+  "baseline": {
+    "medianMs": 0.020791999999971722,
+    "p95Ms": 0.028416999999990367,
+    "mutationsPerRequest": 128
+  },
+  "candidate": {
+    "medianMs": 0.0052090000000362124,
+    "p95Ms": 0.005625000000009095,
+    "mutationsPerRequest": 0
+  },
+  "medianPreparationImprovementRatio": 0.7494709503634428,
+  "note": "This isolates unchanged-account store churn; it does not include token refresh, usage refresh, account selection, or upstream latency."
+}

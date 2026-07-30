@@ -23,7 +23,12 @@ import {
   buildModelsListResponse,
   toOpenAiModelShape,
 } from "./models-response.js";
-import type { ModelAlias, ProviderId, UpstreamMode } from "../../types.js";
+import type {
+  Account,
+  ModelAlias,
+  ProviderId,
+  UpstreamMode,
+} from "../../types.js";
 import {
   accountUsable,
   chooseAccountForProvider,
@@ -80,7 +85,10 @@ import {
   TraceManager,
   type ResponseStreamDiagnostics,
 } from "../../traces.js";
-import { ensureValidToken } from "../../account-utils.js";
+import {
+  accountNeedsRequestPreparation,
+  ensureValidToken,
+} from "../../account-utils.js";
 import express from "express";
 import { randomUUID } from "node:crypto";
 import { maybeConsumeScheduledWeeklyReset } from "../../rate-limit-reset.js";
@@ -1733,6 +1741,10 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       blocking: 0,
       shared: 0,
     };
+    const accountPreparationTrace = {
+      skipped: 0,
+      asynchronous: 0,
+    };
     const isChatCompletionsPath =
       (req.path || "").includes("chat/completions") ||
       (req.originalUrl || "").includes("chat/completions");
@@ -1826,56 +1838,75 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     // accounts avoids wasting API calls and prevents a race where stale
     // account objects overwrite admin changes (e.g. re-enabling a disabled
     // account).
-    accounts = await Promise.all(
-      accounts.map(async (account) => {
-        if (!account.enabled) return account;
-        const valid = await ensureValidToken(account, oauthConfig);
-        // Persist token refreshes before a background usage probe can complete.
-        // The probe itself only patches the usage field, so it cannot overwrite
-        // newer admin or routing state.
+    const prepareAccount = async (account: Account): Promise<Account> => {
+      const valid = await ensureValidToken(account, oauthConfig);
+      // Persist token refreshes before a background usage probe can complete.
+      // The probe itself only patches the usage field, so it cannot overwrite
+      // newer admin or routing state.
+      if (valid !== account) {
         store.markAccountModified(valid.id, valid);
-        const usageBaseUrl = accountBaseUrl(
-          valid,
-          openaiBaseUrl,
-          mistralBaseUrl,
-          zaiBaseUrl,
-        );
-        const prepared = await usageRefreshCoordinator.prepare(
-          valid,
-          usageBaseUrl,
-          {
-            staleWhileRevalidate:
-              USAGE_STALE_WHILE_REVALIDATE &&
-              !valid.state?.scheduledWeeklyReset,
-            maxStaleAgeMs: USAGE_STALE_MAX_AGE_MS,
-            onBackgroundUpdate: async (updated) => {
-              if (updated.usage) {
-                await store.patchAccount(updated.id, {
-                  usage: updated.usage,
-                });
-              }
-            },
+      }
+      const usageBaseUrl = accountBaseUrl(
+        valid,
+        openaiBaseUrl,
+        mistralBaseUrl,
+        zaiBaseUrl,
+      );
+      const prepared = await usageRefreshCoordinator.prepare(
+        valid,
+        usageBaseUrl,
+        {
+          staleWhileRevalidate:
+            USAGE_STALE_WHILE_REVALIDATE &&
+            !valid.state?.scheduledWeeklyReset,
+          maxStaleAgeMs: USAGE_STALE_MAX_AGE_MS,
+          onBackgroundUpdate: async (updated) => {
+            if (updated.usage) {
+              await store.patchAccount(updated.id, {
+                usage: updated.usage,
+              });
+            }
           },
+        },
+      );
+      if (prepared.mode === "background") {
+        usageRefreshTrace.background += 1;
+      } else if (prepared.mode === "blocking") {
+        usageRefreshTrace.blocking += 1;
+      }
+      if (prepared.shared) usageRefreshTrace.shared += 1;
+      if (prepared.mode === "blocking" && prepared.account !== valid) {
+        store.markAccountModified(prepared.account.id, prepared.account);
+      }
+      if (
+        normalizeProvider(prepared.account) === "openai" &&
+        prepared.account.state?.scheduledWeeklyReset
+      ) {
+        await maybeConsumeScheduledWeeklyReset(
+          prepared.account.id,
+          store,
+          openaiBaseUrl,
         );
-        if (prepared.mode === "background") {
-          usageRefreshTrace.background += 1;
-        } else if (prepared.mode === "blocking") {
-          usageRefreshTrace.blocking += 1;
+      }
+      return prepared.account;
+    };
+    const accountPreparations: Array<Account | Promise<Account>> = accounts.map(
+      (account) => {
+        if (accountNeedsRequestPreparation(account)) {
+          accountPreparationTrace.asynchronous += 1;
+          return prepareAccount(account);
         }
-        if (prepared.shared) usageRefreshTrace.shared += 1;
-        if (prepared.mode !== "background") {
-          store.markAccountModified(prepared.account.id, prepared.account);
-        }
-        if (normalizeProvider(prepared.account) === "openai") {
-          await maybeConsumeScheduledWeeklyReset(
-            prepared.account.id,
-            store,
-            openaiBaseUrl,
-          );
-        }
-        return prepared.account;
-      }),
+        accountPreparationTrace.skipped += 1;
+        return account;
+      },
     );
+    const hasAsyncPreparation = accountPreparations.some(
+      (account): account is Promise<Account> =>
+        typeof (account as Promise<Account>)?.then === "function",
+    );
+    accounts = hasAsyncPreparation
+      ? await Promise.all(accountPreparations)
+      : (accountPreparations as Account[]);
 
     const requestModel =
       typeof req.body?.model === "string" && req.body.model.trim()
@@ -2064,6 +2095,10 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           modelCatalogRefreshTrace.blocking ||
           modelCatalogRefreshTrace.shared
             ? { modelCatalogRefresh: modelCatalogRefreshTrace }
+            : {}),
+          ...(accountPreparationTrace.skipped ||
+          accountPreparationTrace.asynchronous
+            ? { accountPreparation: accountPreparationTrace }
             : {}),
           ...(compactionItemCount
             ? {

@@ -44,6 +44,10 @@ export type TraceEntry = {
     blocking: number;
     shared: number;
   };
+  accountPreparation?: {
+    skipped: number;
+    asynchronous: number;
+  };
   inputContext?: {
     compactionItemCount: number;
     itemsBeforeLatestCompaction: number;
@@ -349,6 +353,15 @@ function normalizeTrace(raw: any): TraceEntry | null {
             background: safeNumber(raw.modelCatalogRefresh.background) ?? 0,
             blocking: safeNumber(raw.modelCatalogRefresh.blocking) ?? 0,
             shared: safeNumber(raw.modelCatalogRefresh.shared) ?? 0,
+          }
+        : undefined,
+    accountPreparation:
+      raw.accountPreparation &&
+      typeof raw.accountPreparation === "object"
+        ? {
+            skipped: safeNumber(raw.accountPreparation.skipped) ?? 0,
+            asynchronous:
+              safeNumber(raw.accountPreparation.asynchronous) ?? 0,
           }
         : undefined,
     inputContext:

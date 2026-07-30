@@ -58,6 +58,10 @@ test("stream traces are durable at start and finalized without duplicate stats",
       blocking: 0,
       shared: 1,
     },
+    accountPreparation: {
+      skipped: 3,
+      asynchronous: 1,
+    },
     inputContext: {
       compactionItemCount: 1,
       itemsBeforeLatestCompaction: 8,
@@ -88,6 +92,10 @@ test("stream traces are durable at start and finalized without duplicate stats",
     background: 1,
     blocking: 0,
     shared: 1,
+  });
+  assert.deepEqual(traces[0].accountPreparation, {
+    skipped: 3,
+    asynchronous: 1,
   });
   assert.deepEqual(traces[0].inputContext, {
     compactionItemCount: 1,
