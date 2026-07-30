@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-30T09:06:15.583Z",
+  "benchmark": "deterministic_sse_rate_limit_rotation",
+  "baseline": {
+    "finalStatus": 429,
+    "successfulAccount": null,
+    "attemptedAccounts": [
+      "account-one"
+    ],
+    "outcome": "error_stream_forwarded_to_client"
+  },
+  "candidate": {
+    "finalStatus": 200,
+    "successfulAccount": "account-two",
+    "attemptedAccounts": [
+      "account-one",
+      "account-two"
+    ],
+    "outcome": "success"
+  },
+  "note": "The scenario fixes the first account to an HTTP 429 SSE error and the second to a successful JSON response. It measures routing outcome and attempts, not network latency."
+}

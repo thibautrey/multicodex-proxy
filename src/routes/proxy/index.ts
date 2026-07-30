@@ -949,7 +949,7 @@ function startBackgroundModelRefresh(
   zaiBaseUrl: string,
 ): void {
   // Refresh validation cache every 60 seconds asynchronously
-  setInterval(async () => {
+  const interval = setInterval(async () => {
     try {
       const models = await discoverModels(
         store,
@@ -964,9 +964,10 @@ function startBackgroundModelRefresh(
       console.error("[model-cache] Background refresh failed:", err);
     }
   }, MODELS_VALIDATION_CACHE_MS);
+  interval.unref?.();
 
   // Initial sync refresh after a short delay to populate cache on startup
-  setTimeout(async () => {
+  const initialRefresh = setTimeout(async () => {
     try {
       const models = await discoverModels(
         store,
@@ -981,6 +982,7 @@ function startBackgroundModelRefresh(
       console.error("[model-cache] Initial refresh failed:", err);
     }
   }, 1000);
+  initialRefresh.unref?.();
 }
 
 const EFFORT_TIERS = ["minimal", "low", "medium", "high", "xhigh"] as const;
@@ -1564,6 +1566,9 @@ export function isStreamingUpstreamResponse(
   provider: string,
   hasBody: boolean,
 ): boolean {
+  // Error streams must be buffered first so quota/model routing can inspect
+  // their payload and rotate accounts before anything is sent to the client.
+  if (!upstreamOk) return false;
   if (contentType.includes("text/event-stream")) return true;
   // ChatGPT's Responses endpoint currently streams SSE without consistently
   // returning a Content-Type header. A successful OpenAI response to an

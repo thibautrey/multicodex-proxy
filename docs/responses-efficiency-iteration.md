@@ -119,3 +119,7 @@ L'itération suivante supprime les backoffs sur le même compte après un rate
 limit afin de rendre la rotation immédiatement effective. Elle est documentée
 dans
 [`upstream-retry-policy-iteration.md`](upstream-retry-policy-iteration.md).
+
+L'itération suivante couvre également les rate limits renvoyés sous forme SSE,
+qui étaient auparavant relayés avant la rotation. Elle est documentée dans
+[`stream-rate-limit-rotation-iteration.md`](stream-rate-limit-rotation-iteration.md).
