@@ -80,10 +80,10 @@ sélection, seulement trois tâches éligibles existaient entre 64k et 96k, mêm
 après extension de la recherche à quatre-vingt-dix jours. La distribution
 utilisée est donc 3/5/2 et cet écart est désormais signalé explicitement.
 
-Lors du dry-run final, une nouvelle tâche locale terminée est devenue éligible :
-l'outil a alors produit la répartition cible 4/4/2 sur trente jours. Elle n'a
-pas été substituée a posteriori dans le corpus gelé, car cela aurait invalidé
-les résultats déjà produits et dépassé le plafond de 60 appels.
+Le dry-run final, en excluant explicitement la tâche courante, reproduit la
+sélection de dix cas sur quatre-vingt-dix jours avec la répartition 3/5/2.
+La cible 4/4/2 reste donc impossible avec les traces locales actuellement
+éligibles.
 
 Une première reconstruction a révélé que les fenêtres remplacées par un
 événement `compacted` devaient être instantanées plutôt que concaténées.
