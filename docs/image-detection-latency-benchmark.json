@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-30T08:24:37.215Z",
+  "benchmark": "synthetic_text_only_image_detection",
+  "samples": 200,
+  "inputItems": 10000,
+  "baselineScansPerRequest": 3,
+  "candidateScansPerRequest": 1,
+  "baseline": {
+    "medianMs": 3.698479000000134,
+    "p95Ms": 8.030082999999877
+  },
+  "candidate": {
+    "medianMs": 0.15695800000003146,
+    "p95Ms": 0.1706250000002001
+  },
+  "medianPreparationImprovementRatio": 0.9575614732434534,
+  "note": "This isolates text-only image detection and detailed trace allocation; it is not an end-to-end proxy benchmark."
+}

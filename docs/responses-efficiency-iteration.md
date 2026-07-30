@@ -100,3 +100,7 @@ breakpoint automatique n'a donc été ajouté sans A/B upstream.
 L'itération suivante supprime l'attente d'un catalogue de modèles expiré du
 chemin critique des requêtes. Elle est documentée dans
 [`model-catalog-latency-iteration.md`](model-catalog-latency-iteration.md).
+
+L'itération suivante réduit à un scan sans allocation la détection d'images des
+longues requêtes textuelles. Elle est documentée dans
+[`image-detection-latency-iteration.md`](image-detection-latency-iteration.md).

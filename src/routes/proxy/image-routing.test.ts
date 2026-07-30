@@ -10,6 +10,7 @@ import {
   classifyNativeStreamCompletion,
   isModelAllowedByKeys,
   isStreamingUpstreamResponse,
+  payloadHasImage,
 } from "./index.js";
 
 const discoveredModels: any[] = [
@@ -43,6 +44,40 @@ const aliases: any[] = [
     targets: ["alias-model"],
   },
 ];
+
+test("detects images without building a detailed payload summary", () => {
+  assert.equal(
+    payloadHasImage({
+      input: [
+        {
+          role: "user",
+          content: [
+            { type: "input_text", text: "hello" },
+            { type: "input_image", image_url: "data:image/png;base64,aaa" },
+          ],
+        },
+      ],
+    }),
+    true,
+  );
+  assert.equal(
+    payloadHasImage({
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: "hello" }],
+        },
+      ],
+    }),
+    false,
+  );
+  assert.equal(
+    payloadHasImage({
+      input: [{ type: "computer_screenshot_image", data: "aaa" }],
+    }),
+    true,
+  );
+});
 
 test("responses image request uses configured override", () => {
   const candidates = buildImageAwareRoutingCandidates(

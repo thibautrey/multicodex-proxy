@@ -299,6 +299,30 @@ function inspectContentPartForImages(part: any, path: string): ImageTracePart | 
   return null;
 }
 
+export function payloadHasImage(payload: any): boolean {
+  const messages = Array.isArray(payload?.messages) ? payload.messages : [];
+  for (const message of messages) {
+    const content = Array.isArray(message?.content) ? message.content : [];
+    for (const part of content) {
+      const type = typeof part?.type === "string" ? part.type : "";
+      if (type.includes("image")) return true;
+    }
+  }
+
+  const input = Array.isArray(payload?.input) ? payload.input : [];
+  for (const item of input) {
+    const itemType = typeof item?.type === "string" ? item.type : "";
+    if (itemType.includes("image")) return true;
+    const content = Array.isArray(item?.content) ? item.content : [];
+    for (const part of content) {
+      const type = typeof part?.type === "string" ? part.type : "";
+      if (type.includes("image")) return true;
+    }
+  }
+
+  return false;
+}
+
 function summarizeImagePayload(payload: any): ImageTraceSummary {
   const messages = Array.isArray(payload?.messages) ? payload.messages : undefined;
   const input = Array.isArray(payload?.input) ? payload.input : undefined;
@@ -365,10 +389,14 @@ function summarizeImagePayload(payload: any): ImageTraceSummary {
   return summary;
 }
 
-function buildImagePayloadTrace(incomingPayload: any, upstreamPayload: any): ImagePayloadTrace | undefined {
+function buildImagePayloadTrace(
+  incomingPayload: any,
+  upstreamPayload: any,
+  incomingHasImage = payloadHasImage(incomingPayload),
+): ImagePayloadTrace | undefined {
+  if (!incomingHasImage) return undefined;
   const incoming = summarizeImagePayload(incomingPayload);
   const upstream = summarizeImagePayload(upstreamPayload);
-  if (!incoming.hasImage && !upstream.hasImage) return undefined;
   return {
     incoming,
     upstream,
@@ -1119,12 +1147,12 @@ export function buildImageAwareRoutingCandidates(
   aliases: ModelAlias[],
   imageRequestModelOverride?: string,
   requestEffort?: EffortTier,
+  requestHasImage = payloadHasImage(requestBody),
 ): RoutingCandidate[] {
   const requestModel =
     typeof requestBody?.model === "string" && requestBody.model.trim()
       ? requestBody.model.trim()
       : undefined;
-  const requestHasImage = summarizeImagePayload(requestBody).hasImage;
   const validOverride = imageRequestModelOverride
     ? discoveredModels.some(
         (model) =>
@@ -1894,12 +1922,14 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     );
     const modelAliases = store.getCachedModelAliases();
     const imageRequestModelOverride = store.getCachedSettings().imageRequestModelOverride;
+    const requestHasImage = payloadHasImage(req.body);
     const routingCandidates = buildImageAwareRoutingCandidates(
       req.body,
       discoveredModels,
       modelAliases,
       imageRequestModelOverride,
       requestEffort,
+      requestHasImage,
     );
     const maxAttempts = Math.min(accounts.length, MAX_ACCOUNT_RETRY_ATTEMPTS);
     let sawEmptyAssistantOutput = false;
@@ -1984,7 +2014,11 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           candidate.resolvedModel,
           discoveredModels,
         );
-        const imageTrace = buildImagePayloadTrace(req.body, payloadToUpstream);
+        const imageTrace = buildImagePayloadTrace(
+          req.body,
+          payloadToUpstream,
+          requestHasImage,
+        );
         if (imageTrace) {
           console.info(
             "[proxy:image-trace]",
