@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-30T09:28:30.153Z",
+  "benchmark": "synthetic_native_responses_sse_chunk_forwarding",
+  "samples": 1000,
+  "frameCount": 1282,
+  "chunkCount": 9,
+  "chunkBytes": 16384,
+  "streamBytes": 133426,
+  "calibration": "The 1,024 text-delta scale approximates the observed local /responses output p95 of 1,064 tokens. Upstream chunk size is synthetic.",
+  "baseline": {
+    "medianMs": 0.8380624999999782,
+    "p95Ms": 0.958084000000099,
+    "writeCount": 1282
+  },
+  "candidate": {
+    "medianMs": 0.739832999999976,
+    "p95Ms": 0.8547499999999673,
+    "writeCount": 9
+  },
+  "medianImprovementRatio": 0.11721023193378144,
+  "diagnosticsEquivalent": true,
+  "outputEquivalent": true,
+  "tokenImpact": "none",
+  "note": "This isolates decoding, frame inspection, and downstream write scheduling. It excludes Express, sockets, provider, and model latency."
+}

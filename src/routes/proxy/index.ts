@@ -102,6 +102,7 @@ import {
   inspectResponseStreamEvent,
   inspectResponseStreamFrame,
 } from "../../responses/stream-diagnostics.js";
+import { createSSEStreamTap } from "../../responses/sse-stream-tap.js";
 
 type ProxyRoutesOptions = {
   store: AccountStore;
@@ -2072,9 +2073,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               const streamTraceId = nativeStreamTraceId!;
 
               const reader = upstream.body.getReader();
-              const decoder = new TextDecoder();
               const diagnostics = createResponseStreamDiagnostics();
-              let buffer = "";
               let usage: any = undefined;
               let clientDisconnected = false;
               let streamError: Error | undefined;
@@ -2083,36 +2082,23 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 if (clientDisconnected) void reader.cancel();
               };
               res.once("close", abortOnDisconnect);
-
-              const forwardFrame = (frame: string) => {
+              const streamTap = createSSEStreamTap((frame) => {
                 usage =
                   inspectResponseStreamFrame(frame, diagnostics) ?? usage;
-                if (!res.writableEnded) {
-                  res.write(frame.endsWith("\n\n") ? frame : `${frame}\n\n`);
-                }
-              };
+              });
 
               try {
                 while (!clientDisconnected) {
                   const { value, done } = await reader.read();
                   if (done) break;
-                  buffer += decoder.decode(value, { stream: true });
-                  while (true) {
-                    const next = takeNextSSEFrame(buffer);
-                    if (!next) break;
-                    buffer = next.rest;
-                    forwardFrame(next.frame);
-                  }
+                  if (!res.writableEnded) res.write(value);
+                  streamTap.push(value);
                 }
                 if (!clientDisconnected) {
-                  buffer += decoder.decode();
-                  while (true) {
-                    const next = takeNextSSEFrame(buffer);
-                    if (!next) break;
-                    buffer = next.rest;
-                    forwardFrame(next.frame);
+                  const { unterminatedFrame } = streamTap.finish();
+                  if (unterminatedFrame && !res.writableEnded) {
+                    res.write("\n\n");
                   }
-                  if (buffer.trim()) forwardFrame(buffer);
                 }
               } catch (error: any) {
                 streamError = error instanceof Error ? error : new Error(String(error));
