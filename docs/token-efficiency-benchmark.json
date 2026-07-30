@@ -1,0 +1,605 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-30T06:33:37.337Z",
+  "status": "completed",
+  "earlyStopReason": null,
+  "model": "gpt-5.6-sol",
+  "callsUsed": 58,
+  "maxCalls": 60,
+  "discardedHarnessCalls": 22,
+  "chosenThreshold": null,
+  "source": {
+    "type": "local_codex_rollouts",
+    "selectedCases": 6,
+    "completedCases": 6,
+    "corpusDistribution": {
+      "64k-96k": 3,
+      "96k-128k": 5,
+      "128k+": 2
+    },
+    "benchmarkDistribution": {
+      "64k-96k": 0,
+      "96k-128k": 4,
+      "128k+": 2
+    },
+    "distributionTargetMet": false,
+    "selectionLimitation": "Only three eligible 64k-96k sessions were available after extending selection to 90 days.",
+    "rawContentCommitted": false
+  },
+  "totals": {
+    "medianSavingsRatio": -0.120310595595565,
+    "p10SavingsRatio": -0.48764619608138093,
+    "p90SavingsRatio": 0.16792890472873911,
+    "positiveCases": 2,
+    "checkpointsJudged": 12,
+    "equivalentOrBetter": 10,
+    "criticalErrors": 0,
+    "meanQualityDelta": 0.16666666666666666
+  },
+  "criteria": {
+    "medianSavingsAtLeast20Percent": false,
+    "positiveInAtLeastEightCases": false,
+    "noCriticalErrors": true,
+    "equivalentOrBetterAtLeast90Percent": false,
+    "meanQualityDropAtMostPoint25": true
+  },
+  "recommendation": "do_not_enable_automatic_compaction",
+  "thresholdSimulations": [
+    {
+      "threshold": 64000,
+      "calls": 141,
+      "compactions": 41,
+      "callsPerCompaction": 3.4390243902439024,
+      "eligibleWindows": 102,
+      "positiveTwoTurnWindows": 101,
+      "projectedSavingsRatio": 0.36902930281080826,
+      "eligible": false
+    },
+    {
+      "threshold": 80000,
+      "calls": 141,
+      "compactions": 38,
+      "callsPerCompaction": 3.710526315789474,
+      "eligibleWindows": 102,
+      "positiveTwoTurnWindows": 101,
+      "projectedSavingsRatio": 0.36902930281080826,
+      "eligible": false
+    },
+    {
+      "threshold": 96000,
+      "calls": 141,
+      "compactions": 37,
+      "callsPerCompaction": 3.810810810810811,
+      "eligibleWindows": 90,
+      "positiveTwoTurnWindows": 89,
+      "projectedSavingsRatio": 0.36537306671897696,
+      "eligible": false
+    },
+    {
+      "threshold": 112000,
+      "calls": 141,
+      "compactions": 34,
+      "callsPerCompaction": 4.147058823529412,
+      "eligibleWindows": 77,
+      "positiveTwoTurnWindows": 76,
+      "projectedSavingsRatio": 0.3625714370834363,
+      "eligible": false
+    },
+    {
+      "threshold": 128000,
+      "calls": 141,
+      "compactions": 20,
+      "callsPerCompaction": 7.05,
+      "eligibleWindows": 60,
+      "positiveTwoTurnWindows": 59,
+      "projectedSavingsRatio": 0.3827677718631768,
+      "eligible": false
+    }
+  ],
+  "cases": [
+    {
+      "caseId": "4693d1c3e58cc102",
+      "bucket": "96k-128k",
+      "baselineRawTokens": 478119,
+      "candidateRawTokens": 397829,
+      "compactRawTokens": 121150,
+      "savingsRatio": 0.16792890472873911,
+      "quality": [
+        {
+          "checkpoint": 1,
+          "baselineScore": 1,
+          "candidateScore": 3,
+          "baselineCriticalError": false,
+          "candidateCriticalError": false,
+          "introducedCriticalError": false,
+          "qualityDelta": 2,
+          "preferred": "candidate"
+        },
+        {
+          "checkpoint": 2,
+          "baselineScore": 1,
+          "candidateScore": 1,
+          "baselineCriticalError": true,
+          "candidateCriticalError": true,
+          "introducedCriticalError": false,
+          "qualityDelta": 0,
+          "preferred": "tie"
+        }
+      ],
+      "tokenDetails": {
+        "baseline": [
+          {
+            "inputTokens": 116864,
+            "cachedTokens": 0,
+            "cacheWriteTokens": 0,
+            "outputTokens": 773,
+            "reasoningTokens": 8,
+            "rawTokens": 117637
+          },
+          {
+            "inputTokens": 359066,
+            "cachedTokens": 0,
+            "cacheWriteTokens": 0,
+            "outputTokens": 1416,
+            "reasoningTokens": 66,
+            "rawTokens": 360482
+          }
+        ],
+        "candidate": [
+          {
+            "inputTokens": 15387,
+            "cachedTokens": 0,
+            "cacheWriteTokens": 0,
+            "outputTokens": 2529,
+            "reasoningTokens": 9,
+            "rawTokens": 17916
+          },
+          {
+            "inputTokens": 257589,
+            "cachedTokens": 15104,
+            "cacheWriteTokens": 0,
+            "outputTokens": 1174,
+            "reasoningTokens": 95,
+            "rawTokens": 258763
+          }
+        ],
+        "compact": {
+          "inputTokens": 116882,
+          "cachedTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 4268,
+          "reasoningTokens": 0,
+          "rawTokens": 121150
+        },
+        "judge": {
+          "inputTokens": 9880,
+          "cachedTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 345,
+          "reasoningTokens": 273,
+          "rawTokens": 10225
+        }
+      }
+    },
+    {
+      "caseId": "9df8d59f150b99f6",
+      "bucket": "96k-128k",
+      "baselineRawTokens": 26591,
+      "candidateRawTokens": 39558,
+      "compactRawTokens": 11587,
+      "savingsRatio": -0.48764619608138093,
+      "quality": [
+        {
+          "checkpoint": 1,
+          "baselineScore": 1,
+          "candidateScore": 0,
+          "baselineCriticalError": true,
+          "candidateCriticalError": true,
+          "introducedCriticalError": false,
+          "qualityDelta": -1,
+          "preferred": "baseline"
+        },
+        {
+          "checkpoint": 2,
+          "baselineScore": 0,
+          "candidateScore": 0,
+          "baselineCriticalError": true,
+          "candidateCriticalError": true,
+          "introducedCriticalError": false,
+          "qualityDelta": 0,
+          "preferred": "tie"
+        }
+      ],
+      "tokenDetails": {
+        "baseline": [
+          {
+            "inputTokens": 10710,
+            "cachedTokens": 0,
+            "cacheWriteTokens": 0,
+            "outputTokens": 268,
+            "reasoningTokens": 63,
+            "rawTokens": 10978
+          },
+          {
+            "inputTokens": 15133,
+            "cachedTokens": 0,
+            "cacheWriteTokens": 0,
+            "outputTokens": 480,
+            "reasoningTokens": 149,
+            "rawTokens": 15613
+          }
+        ],
+        "candidate": [
+          {
+            "inputTokens": 11571,
+            "cachedTokens": 0,
+            "cacheWriteTokens": 0,
+            "outputTokens": 54,
+            "reasoningTokens": 9,
+            "rawTokens": 11625
+          },
+          {
+            "inputTokens": 15994,
+            "cachedTokens": 0,
+            "cacheWriteTokens": 0,
+            "outputTokens": 352,
+            "reasoningTokens": 46,
+            "rawTokens": 16346
+          }
+        ],
+        "compact": {
+          "inputTokens": 10728,
+          "cachedTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 859,
+          "reasoningTokens": 0,
+          "rawTokens": 11587
+        },
+        "judge": {
+          "inputTokens": 4535,
+          "cachedTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 174,
+          "reasoningTokens": 102,
+          "rawTokens": 4709
+        }
+      }
+    },
+    {
+      "caseId": "dfaa3ef458fb3218",
+      "bucket": "96k-128k",
+      "baselineRawTokens": 140426,
+      "candidateRawTokens": 154914,
+      "compactRawTokens": 11927,
+      "savingsRatio": -0.10317177730619687,
+      "quality": [
+        {
+          "checkpoint": 1,
+          "baselineScore": 0,
+          "candidateScore": 1,
+          "baselineCriticalError": true,
+          "candidateCriticalError": true,
+          "introducedCriticalError": false,
+          "qualityDelta": 1,
+          "preferred": "candidate"
+        },
+        {
+          "checkpoint": 2,
+          "baselineScore": 2,
+          "candidateScore": 2,
+          "baselineCriticalError": true,
+          "candidateCriticalError": true,
+          "introducedCriticalError": false,
+          "qualityDelta": 0,
+          "preferred": "candidate"
+        }
+      ],
+      "tokenDetails": {
+        "baseline": [
+          {
+            "inputTokens": 10710,
+            "cachedTokens": 0,
+            "cacheWriteTokens": 0,
+            "outputTokens": 118,
+            "reasoningTokens": 31,
+            "rawTokens": 10828
+          },
+          {
+            "inputTokens": 128619,
+            "cachedTokens": 0,
+            "cacheWriteTokens": 0,
+            "outputTokens": 979,
+            "reasoningTokens": 9,
+            "rawTokens": 129598
+          }
+        ],
+        "candidate": [
+          {
+            "inputTokens": 11911,
+            "cachedTokens": 0,
+            "cacheWriteTokens": 0,
+            "outputTokens": 230,
+            "reasoningTokens": 47,
+            "rawTokens": 12141
+          },
+          {
+            "inputTokens": 129820,
+            "cachedTokens": 0,
+            "cacheWriteTokens": 0,
+            "outputTokens": 1026,
+            "reasoningTokens": 47,
+            "rawTokens": 130846
+          }
+        ],
+        "compact": {
+          "inputTokens": 10728,
+          "cachedTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 1199,
+          "reasoningTokens": 0,
+          "rawTokens": 11927
+        },
+        "judge": {
+          "inputTokens": 5316,
+          "cachedTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 272,
+          "reasoningTokens": 200,
+          "rawTokens": 5588
+        }
+      }
+    },
+    {
+      "caseId": "10cb31b104eb584f",
+      "bucket": "96k-128k",
+      "baselineRawTokens": 27375,
+      "candidateRawTokens": 39053,
+      "compactRawTokens": 11185,
+      "savingsRatio": -0.426593607305936,
+      "quality": [
+        {
+          "checkpoint": 1,
+          "baselineScore": 1,
+          "candidateScore": 1,
+          "baselineCriticalError": true,
+          "candidateCriticalError": true,
+          "introducedCriticalError": false,
+          "qualityDelta": 0,
+          "preferred": "baseline"
+        },
+        {
+          "checkpoint": 2,
+          "baselineScore": 0,
+          "candidateScore": 0,
+          "baselineCriticalError": true,
+          "candidateCriticalError": true,
+          "introducedCriticalError": false,
+          "qualityDelta": 0,
+          "preferred": "tie"
+        }
+      ],
+      "tokenDetails": {
+        "baseline": [
+          {
+            "inputTokens": 10710,
+            "cachedTokens": 0,
+            "cacheWriteTokens": 0,
+            "outputTokens": 1156,
+            "reasoningTokens": 338,
+            "rawTokens": 11866
+          },
+          {
+            "inputTokens": 15133,
+            "cachedTokens": 0,
+            "cacheWriteTokens": 0,
+            "outputTokens": 376,
+            "reasoningTokens": 146,
+            "rawTokens": 15509
+          }
+        ],
+        "candidate": [
+          {
+            "inputTokens": 11169,
+            "cachedTokens": 0,
+            "cacheWriteTokens": 0,
+            "outputTokens": 632,
+            "reasoningTokens": 139,
+            "rawTokens": 11801
+          },
+          {
+            "inputTokens": 15592,
+            "cachedTokens": 0,
+            "cacheWriteTokens": 0,
+            "outputTokens": 475,
+            "reasoningTokens": 187,
+            "rawTokens": 16067
+          }
+        ],
+        "compact": {
+          "inputTokens": 10728,
+          "cachedTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 457,
+          "reasoningTokens": 0,
+          "rawTokens": 11185
+        },
+        "judge": {
+          "inputTokens": 5552,
+          "cachedTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 279,
+          "reasoningTokens": 207,
+          "rawTokens": 5831
+        }
+      }
+    },
+    {
+      "caseId": "17f436dc16c3c2a3",
+      "bucket": "128k+",
+      "baselineRawTokens": 124293,
+      "candidateRawTokens": 141377,
+      "compactRawTokens": 14345,
+      "savingsRatio": -0.13744941388493315,
+      "quality": [
+        {
+          "checkpoint": 1,
+          "baselineScore": 2,
+          "candidateScore": 2,
+          "baselineCriticalError": true,
+          "candidateCriticalError": true,
+          "introducedCriticalError": false,
+          "qualityDelta": 0,
+          "preferred": "candidate"
+        },
+        {
+          "checkpoint": 2,
+          "baselineScore": 2,
+          "candidateScore": 1,
+          "baselineCriticalError": true,
+          "candidateCriticalError": true,
+          "introducedCriticalError": false,
+          "qualityDelta": -1,
+          "preferred": "baseline"
+        }
+      ],
+      "tokenDetails": {
+        "baseline": [
+          {
+            "inputTokens": 12852,
+            "cachedTokens": 0,
+            "cacheWriteTokens": 0,
+            "outputTokens": 951,
+            "reasoningTokens": 155,
+            "rawTokens": 13803
+          },
+          {
+            "inputTokens": 109730,
+            "cachedTokens": 12032,
+            "cacheWriteTokens": 0,
+            "outputTokens": 760,
+            "reasoningTokens": 319,
+            "rawTokens": 110490
+          }
+        ],
+        "candidate": [
+          {
+            "inputTokens": 14329,
+            "cachedTokens": 0,
+            "cacheWriteTokens": 0,
+            "outputTokens": 1285,
+            "reasoningTokens": 288,
+            "rawTokens": 15614
+          },
+          {
+            "inputTokens": 111207,
+            "cachedTokens": 0,
+            "cacheWriteTokens": 0,
+            "outputTokens": 211,
+            "reasoningTokens": 0,
+            "rawTokens": 111418
+          }
+        ],
+        "compact": {
+          "inputTokens": 12870,
+          "cachedTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 1475,
+          "reasoningTokens": 0,
+          "rawTokens": 14345
+        },
+        "judge": {
+          "inputTokens": 3937,
+          "cachedTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 342,
+          "reasoningTokens": 270,
+          "rawTokens": 4279
+        }
+      }
+    },
+    {
+      "caseId": "fd0e00984c044017",
+      "bucket": "128k+",
+      "baselineRawTokens": 514900,
+      "candidateRawTokens": 312284,
+      "compactRawTokens": 239316,
+      "savingsRatio": 0.3935055350553506,
+      "quality": [
+        {
+          "checkpoint": 1,
+          "baselineScore": 1,
+          "candidateScore": 2,
+          "baselineCriticalError": true,
+          "candidateCriticalError": true,
+          "introducedCriticalError": false,
+          "qualityDelta": 1,
+          "preferred": "candidate"
+        },
+        {
+          "checkpoint": 2,
+          "baselineScore": 4,
+          "candidateScore": 4,
+          "baselineCriticalError": false,
+          "candidateCriticalError": false,
+          "introducedCriticalError": false,
+          "qualityDelta": 0,
+          "preferred": "tie"
+        }
+      ],
+      "tokenDetails": {
+        "baseline": [
+          {
+            "inputTokens": 236731,
+            "cachedTokens": 0,
+            "cacheWriteTokens": 0,
+            "outputTokens": 1944,
+            "reasoningTokens": 15,
+            "rawTokens": 238675
+          },
+          {
+            "inputTokens": 275838,
+            "cachedTokens": 0,
+            "cacheWriteTokens": 0,
+            "outputTokens": 387,
+            "reasoningTokens": 0,
+            "rawTokens": 276225
+          }
+        ],
+        "candidate": [
+          {
+            "inputTokens": 15907,
+            "cachedTokens": 0,
+            "cacheWriteTokens": 0,
+            "outputTokens": 1642,
+            "reasoningTokens": 0,
+            "rawTokens": 17549
+          },
+          {
+            "inputTokens": 55014,
+            "cachedTokens": 0,
+            "cacheWriteTokens": 0,
+            "outputTokens": 405,
+            "reasoningTokens": 0,
+            "rawTokens": 55419
+          }
+        ],
+        "compact": {
+          "inputTokens": 236749,
+          "cachedTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 2567,
+          "reasoningTokens": 0,
+          "rawTokens": 239316
+        },
+        "judge": {
+          "inputTokens": 6108,
+          "cachedTokens": 0,
+          "cacheWriteTokens": 0,
+          "outputTokens": 588,
+          "reasoningTokens": 516,
+          "rawTokens": 6696
+        }
+      }
+    }
+  ]
+}
