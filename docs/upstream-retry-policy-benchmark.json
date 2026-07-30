@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-30T08:57:18.854Z",
+  "benchmark": "deterministic_upstream_retry_policy",
+  "maxRetries": 5,
+  "baseDelayMs": 2000,
+  "jitterMs": 0,
+  "results": [
+    {
+      "scenario": "http_429",
+      "baseline": {
+        "finalStatus": 429,
+        "attempts": 6,
+        "minimumBackoffMs": 62000
+      },
+      "candidate": {
+        "finalStatus": 429,
+        "attempts": 1,
+        "minimumBackoffMs": 0
+      }
+    },
+    {
+      "scenario": "rate_limit_business_error",
+      "baseline": {
+        "finalStatus": 400,
+        "attempts": 6,
+        "minimumBackoffMs": 62000
+      },
+      "candidate": {
+        "finalStatus": 400,
+        "attempts": 1,
+        "minimumBackoffMs": 0
+      }
+    },
+    {
+      "scenario": "transient_503_then_success",
+      "baseline": {
+        "finalStatus": 200,
+        "attempts": 2,
+        "minimumBackoffMs": 2000
+      },
+      "candidate": {
+        "finalStatus": 200,
+        "attempts": 2,
+        "minimumBackoffMs": 2000
+      }
+    },
+    {
+      "scenario": "persistent_503",
+      "baseline": {
+        "finalStatus": 503,
+        "attempts": 6,
+        "minimumBackoffMs": 62000
+      },
+      "candidate": {
+        "finalStatus": 503,
+        "attempts": 6,
+        "minimumBackoffMs": 62000
+      }
+    }
+  ],
+  "quotaFailoverMinimumDelaySavedMs": [
+    62000,
+    62000
+  ],
+  "note": "The benchmark computes the minimum configured backoff before account rotation. It performs no network calls and excludes random jitter; transient 5xx retries remain unchanged."
+}

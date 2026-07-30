@@ -114,3 +114,8 @@ L'itération suivante remplace la réécriture de la fenêtre des traces à chaq
 fin de stream par un journal append-only compacté périodiquement. Elle est
 documentée dans
 [`trace-completion-latency-iteration.md`](trace-completion-latency-iteration.md).
+
+L'itération suivante supprime les backoffs sur le même compte après un rate
+limit afin de rendre la rotation immédiatement effective. Elle est documentée
+dans
+[`upstream-retry-policy-iteration.md`](upstream-retry-policy-iteration.md).

@@ -5,7 +5,6 @@ import {
   HANG_RETRY_INTERVAL_MS,
   HANG_RETRY_MAX_DURATION_MS,
   MAX_ACCOUNT_RETRY_ATTEMPTS,
-  MAX_UPSTREAM_RETRIES,
   MODELS_CACHE_MS,
   MODELS_CLIENT_VERSION,
   MODELS_STALE_MAX_AGE_MS,
@@ -13,7 +12,6 @@ import {
   PI_USER_AGENT,
   PROXY_MODELS,
   TRACE_INCLUDE_BODY,
-  UPSTREAM_BASE_DELAY_MS,
   UPSTREAM_COMPACT_PATH,
   UPSTREAM_PATH,
   USAGE_STALE_MAX_AGE_MS,
@@ -97,6 +95,7 @@ import {
   AsyncRefreshCoordinator,
   canServeStaleSnapshot,
 } from "../../async-refresh.js";
+import { fetchUpstreamWithRetry } from "../../upstream-retry.js";
 
 type ProxyRoutesOptions = {
   store: AccountStore;
@@ -1558,20 +1557,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function isRetryableUpstreamError(status: number, errorText: string): boolean {
-  if (
-    status === 429 ||
-    status === 500 ||
-    status === 502 ||
-    status === 503 ||
-    status === 504
-  )
-    return true;
-  return /rate.?limit|overloaded|service.?unavailable|upstream.?connect|connection.?refused/i.test(
-    errorText,
-  );
-}
-
 export function isStreamingUpstreamResponse(
   contentType: string,
   clientRequestedStream: boolean,
@@ -1622,58 +1607,6 @@ function isModelNotFoundError(status: number, errorText: string): boolean {
       errorText,
     )
   );
-}
-
-function parseRetryAfter(response: Response): number | undefined {
-  const raw = response.headers.get("retry-after");
-  if (!raw) return undefined;
-  const seconds = Number(raw);
-  if (Number.isFinite(seconds)) return seconds * 1000;
-  const date = Date.parse(raw);
-  if (Number.isFinite(date)) return Math.max(0, date - Date.now());
-  return undefined;
-}
-
-async function fetchCodexWithRetry(
-  url: string,
-  init: RequestInit,
-): Promise<Response> {
-  let lastError: Error | undefined;
-  for (let attempt = 0; attempt <= MAX_UPSTREAM_RETRIES; attempt++) {
-    try {
-      const response = await fetch(url, init);
-      if (response.ok) return response;
-      const errorText = await response
-        .clone()
-        .text()
-        .catch(() => "");
-      if (
-        attempt < MAX_UPSTREAM_RETRIES &&
-        isRetryableUpstreamError(response.status, errorText)
-      ) {
-        const retryAfter = parseRetryAfter(response);
-        const backoff = UPSTREAM_BASE_DELAY_MS * 2 ** attempt;
-        const jitter = Math.random() * 500;
-        const delay = Math.max(retryAfter ?? 0, backoff) + jitter;
-        await sleep(delay);
-        continue;
-      }
-      return response;
-    } catch (error: any) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-      if (
-        attempt < MAX_UPSTREAM_RETRIES &&
-        !lastError.message.includes("usage limit")
-      ) {
-        const backoff = UPSTREAM_BASE_DELAY_MS * 2 ** attempt;
-        const jitter = Math.random() * 500;
-        await sleep(backoff + jitter);
-        continue;
-      }
-      throw lastError;
-    }
-  }
-  throw lastError ?? new Error("failed after retries");
 }
 
 export function createProxyRouter(options: ProxyRoutesOptions) {
@@ -2207,7 +2140,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           }
           const upstreamStartedAt = Date.now();
           latencyBreakdown.preparationMs = upstreamStartedAt - startedAt;
-          const upstream = await fetchCodexWithRetry(
+          const upstream = await fetchUpstreamWithRetry(
             `${upstreamBaseUrl}${upstreamPath}`,
             {
               method: "POST",
@@ -3396,10 +3329,6 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             continue;
           }
 
-          res.status(upstream.status);
-          setForwardHeaders(upstream, res);
-          res.type(contentType || "application/json").send(text);
-
           const usage = extractUsageFromPayload(parsed);
 
           recordTrace({
@@ -3421,7 +3350,12 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             ...inspectAssistantPayload(parsed),
           });
 
-          if (upstream.ok) return;
+          if (upstream.ok) {
+            res.status(upstream.status);
+            setForwardHeaders(upstream, res);
+            res.type(contentType || "application/json").send(text);
+            return;
+          }
 
           // Handle z.ai specific business error codes
           const zaiErrorCode =
@@ -3447,6 +3381,9 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             continue;
           }
 
+          res.status(upstream.status);
+          setForwardHeaders(upstream, res);
+          res.type(contentType || "application/json").send(text);
           rememberError(
             selected,
             `upstream ${upstream.status}: ${text.slice(0, 200)}`,
