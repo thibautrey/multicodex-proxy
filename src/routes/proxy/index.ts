@@ -14,6 +14,8 @@ import {
   UPSTREAM_BASE_DELAY_MS,
   UPSTREAM_COMPACT_PATH,
   UPSTREAM_PATH,
+  USAGE_STALE_MAX_AGE_MS,
+  USAGE_STALE_WHILE_REVALIDATE,
 } from "../../config.js";
 import {
   buildModelsListResponse,
@@ -31,7 +33,6 @@ import {
   markQuotaHit,
   normalizeProvider,
   parseZaiErrorCode,
-  refreshUsageIfNeeded,
   rememberError,
   shouldBlockAccountForZaiError,
 } from "../../quota.js";
@@ -81,6 +82,7 @@ import { ensureValidToken } from "../../account-utils.js";
 import express from "express";
 import { randomUUID } from "node:crypto";
 import { maybeConsumeScheduledWeeklyReset } from "../../rate-limit-reset.js";
+import { UsageRefreshCoordinator } from "../../usage-refresh.js";
 
 type ProxyRoutesOptions = {
   store: AccountStore;
@@ -1613,6 +1615,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
   } = options;
   const { recordTrace, beginTrace, completeTrace } = traceManager;
   const router = express.Router();
+  const usageRefreshCoordinator = new UsageRefreshCoordinator();
 
   function rejectNonPost(routeLabel: string): express.RequestHandler {
     return (req, res, next) => {
@@ -1652,6 +1655,11 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     res: express.Response,
   ) {
     const startedAt = Date.now();
+    const usageRefreshTrace = {
+      background: 0,
+      blocking: 0,
+      shared: 0,
+    };
     const isChatCompletionsPath =
       (req.path || "").includes("chat/completions") ||
       (req.originalUrl || "").includes("chat/completions");
@@ -1749,28 +1757,52 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       accounts.map(async (account) => {
         if (!account.enabled) return account;
         const valid = await ensureValidToken(account, oauthConfig);
+        // Persist token refreshes before a background usage probe can complete.
+        // The probe itself only patches the usage field, so it cannot overwrite
+        // newer admin or routing state.
+        store.markAccountModified(valid.id, valid);
         const usageBaseUrl = accountBaseUrl(
           valid,
           openaiBaseUrl,
           mistralBaseUrl,
           zaiBaseUrl,
         );
-        await refreshUsageIfNeeded(valid, usageBaseUrl);
-        if (normalizeProvider(valid) === "openai") {
+        const prepared = await usageRefreshCoordinator.prepare(
+          valid,
+          usageBaseUrl,
+          {
+            staleWhileRevalidate:
+              USAGE_STALE_WHILE_REVALIDATE &&
+              !valid.state?.scheduledWeeklyReset,
+            maxStaleAgeMs: USAGE_STALE_MAX_AGE_MS,
+            onBackgroundUpdate: async (updated) => {
+              if (updated.usage) {
+                await store.patchAccount(updated.id, {
+                  usage: updated.usage,
+                });
+              }
+            },
+          },
+        );
+        if (prepared.mode === "background") {
+          usageRefreshTrace.background += 1;
+        } else if (prepared.mode === "blocking") {
+          usageRefreshTrace.blocking += 1;
+        }
+        if (prepared.shared) usageRefreshTrace.shared += 1;
+        if (prepared.mode !== "background") {
+          store.markAccountModified(prepared.account.id, prepared.account);
+        }
+        if (normalizeProvider(prepared.account) === "openai") {
           await maybeConsumeScheduledWeeklyReset(
-            valid.id,
+            prepared.account.id,
             store,
             openaiBaseUrl,
           );
         }
-        return valid;
+        return prepared.account;
       }),
     );
-    for (const account of accounts) {
-      if (account.enabled) {
-        store.markAccountModified(account.id, account);
-      }
-    }
 
     const requestModel =
       typeof req.body?.model === "string" && req.body.model.trim()
@@ -1915,7 +1947,37 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           );
         }
         const requestBody = TRACE_INCLUDE_BODY ? req.body : undefined;
-        const traceImage = imageTrace ? { imageTrace } : {};
+        const latencyBreakdown = {
+          preparationMs: 0,
+          upstreamHeadersMs: 0,
+        };
+        const input = Array.isArray(payloadToUpstream?.input)
+          ? payloadToUpstream.input
+          : [];
+        let compactionItemCount = 0;
+        let latestCompactionIndex = -1;
+        for (let index = 0; index < input.length; index += 1) {
+          if (input[index]?.type !== "compaction") continue;
+          compactionItemCount += 1;
+          latestCompactionIndex = index;
+        }
+        const traceImage = {
+          ...(imageTrace ? { imageTrace } : {}),
+          latencyBreakdown,
+          ...(usageRefreshTrace.background ||
+          usageRefreshTrace.blocking ||
+          usageRefreshTrace.shared
+            ? { usageRefresh: usageRefreshTrace }
+            : {}),
+          ...(compactionItemCount
+            ? {
+                inputContext: {
+                  compactionItemCount,
+                  itemsBeforeLatestCompaction: latestCompactionIndex,
+                },
+              }
+            : {}),
+        };
         const tracedModel =
           requestModel ??
           (typeof payloadToUpstream?.model === "string" &&
@@ -2012,6 +2074,8 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           ) {
             nativeStreamTraceId = await nativeStreamTracePromise!;
           }
+          const upstreamStartedAt = Date.now();
+          latencyBreakdown.preparationMs = upstreamStartedAt - startedAt;
           const upstream = await fetchCodexWithRetry(
             `${upstreamBaseUrl}${upstreamPath}`,
             {
@@ -2020,6 +2084,8 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               body: JSON.stringify(payloadToUpstream),
             },
           );
+          latencyBreakdown.upstreamHeadersMs =
+            Date.now() - upstreamStartedAt;
 
           const contentType = upstream.headers.get("content-type") ?? "";
           const isStream = isStreamingUpstreamResponse(

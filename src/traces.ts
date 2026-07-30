@@ -18,7 +18,9 @@ export type TraceEntry = {
   latencyMs: number;
   tokensInput?: number;
   tokensInputCached?: number;
+  tokensInputCacheWrite?: number;
   tokensOutput?: number;
+  tokensReasoning?: number;
   tokensTotal?: number;
   costUsd?: number;
   usage?: any;
@@ -28,6 +30,19 @@ export type TraceEntry = {
   upstreamContentType?: string;
   upstreamEmptyBody?: boolean;
   imageTrace?: any;
+  latencyBreakdown?: {
+    preparationMs: number;
+    upstreamHeadersMs: number;
+  };
+  usageRefresh?: {
+    background: number;
+    blocking: number;
+    shared: number;
+  };
+  inputContext?: {
+    compactionItemCount: number;
+    itemsBeforeLatestCompaction: number;
+  };
   assistantEmptyOutput?: boolean;
   assistantFinishReason?: string;
   responseStreamDiagnostics?: ResponseStreamDiagnostics;
@@ -173,7 +188,14 @@ function safeNumber(value: unknown): number | undefined {
 
 function normalizeTokenFields(
   usage: any,
-  fallback?: { input?: number; cachedInput?: number; output?: number; total?: number },
+  fallback?: {
+    input?: number;
+    cachedInput?: number;
+    cacheWriteInput?: number;
+    output?: number;
+    reasoning?: number;
+    total?: number;
+  },
 ) {
   const input =
     safeNumber(usage?.input_tokens) ??
@@ -196,10 +218,24 @@ function normalizeTokenFields(
     safeNumber((usage as any)?.cached_tokens) ??
     fallback?.cachedInput ??
     0;
+  const cacheWriteInput =
+    safeNumber(usage?.input_tokens_details?.cache_write_tokens) ??
+    safeNumber(usage?.prompt_tokens_details?.cache_write_tokens) ??
+    safeNumber((usage as any)?.cache_write_tokens) ??
+    fallback?.cacheWriteInput ??
+    0;
+  const reasoning =
+    safeNumber(usage?.output_tokens_details?.reasoning_tokens) ??
+    safeNumber(usage?.completion_tokens_details?.reasoning_tokens) ??
+    safeNumber((usage as any)?.reasoning_tokens) ??
+    fallback?.reasoning ??
+    0;
   return {
     tokensInput: input,
     tokensInputCached: cachedInput,
+    tokensInputCacheWrite: cacheWriteInput,
     tokensOutput: output,
+    tokensReasoning: reasoning,
     tokensTotal: total,
   };
 }
@@ -229,7 +265,9 @@ function normalizeTrace(raw: any): TraceEntry | null {
   const normalizedTokens = normalizeTokenFields(raw.usage, {
     input: safeNumber(raw.tokensInput),
     cachedInput: safeNumber(raw.tokensInputCached),
+    cacheWriteInput: safeNumber(raw.tokensInputCacheWrite),
     output: safeNumber(raw.tokensOutput),
+    reasoning: safeNumber(raw.tokensReasoning),
     total: safeNumber(raw.tokensTotal),
   });
   const costUsd = estimateCostUsd(
@@ -237,6 +275,7 @@ function normalizeTrace(raw: any): TraceEntry | null {
     normalizedTokens.tokensInput ?? 0,
     normalizedTokens.tokensOutput ?? 0,
     normalizedTokens.tokensInputCached ?? 0,
+    normalizedTokens.tokensInputCacheWrite ?? 0,
   );
 
   return {
@@ -260,7 +299,9 @@ function normalizeTrace(raw: any): TraceEntry | null {
     latencyMs,
     tokensInput: normalizedTokens.tokensInput,
     tokensInputCached: normalizedTokens.tokensInputCached,
+    tokensInputCacheWrite: normalizedTokens.tokensInputCacheWrite,
     tokensOutput: normalizedTokens.tokensOutput,
+    tokensReasoning: normalizedTokens.tokensReasoning,
     tokensTotal: normalizedTokens.tokensTotal,
     costUsd,
     usage: raw.usage,
@@ -277,6 +318,35 @@ function normalizeTrace(raw: any): TraceEntry | null {
         ? raw.upstreamEmptyBody
         : undefined,
     imageTrace: raw.imageTrace,
+    latencyBreakdown:
+      raw.latencyBreakdown &&
+      typeof raw.latencyBreakdown === "object"
+        ? {
+            preparationMs:
+              safeNumber(raw.latencyBreakdown.preparationMs) ?? 0,
+            upstreamHeadersMs:
+              safeNumber(raw.latencyBreakdown.upstreamHeadersMs) ?? 0,
+          }
+        : undefined,
+    usageRefresh:
+      raw.usageRefresh &&
+      typeof raw.usageRefresh === "object"
+        ? {
+            background: safeNumber(raw.usageRefresh.background) ?? 0,
+            blocking: safeNumber(raw.usageRefresh.blocking) ?? 0,
+            shared: safeNumber(raw.usageRefresh.shared) ?? 0,
+          }
+        : undefined,
+    inputContext:
+      raw.inputContext &&
+      typeof raw.inputContext === "object"
+        ? {
+            compactionItemCount:
+              safeNumber(raw.inputContext.compactionItemCount) ?? 0,
+            itemsBeforeLatestCompaction:
+              safeNumber(raw.inputContext.itemsBeforeLatestCompaction) ?? 0,
+          }
+        : undefined,
     assistantEmptyOutput:
       typeof raw.assistantEmptyOutput === "boolean"
         ? raw.assistantEmptyOutput
@@ -432,6 +502,7 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
         t.tokensInput ?? 0,
         t.tokensOutput ?? 0,
         t.tokensInputCached ?? 0,
+        t.tokensInputCacheWrite ?? 0,
       ) ?? 0)
     );
   }, 0);
@@ -452,6 +523,7 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
             trace.tokensInput ?? 0,
             trace.tokensOutput ?? 0,
             trace.tokensInputCached ?? 0,
+            trace.tokensInputCacheWrite ?? 0,
           ) ?? 0);
     if (!existing) {
       modelMap.set(key, {
@@ -517,6 +589,7 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
             trace.tokensInput ?? 0,
             trace.tokensOutput ?? 0,
             trace.tokensInputCached ?? 0,
+            trace.tokensInputCacheWrite ?? 0,
           ) ?? 0);
     bucket.latencies.push(trace.latencyMs);
     bucketMap.set(bucketAt, bucket);
@@ -593,6 +666,7 @@ function addTraceToBucket(bucket: TraceBucketAggregate, trace: TraceEntry) {
           trace.tokensInput ?? 0,
           trace.tokensOutput ?? 0,
           trace.tokensInputCached ?? 0,
+          trace.tokensInputCacheWrite ?? 0,
         ) ?? 0);
   const traceTokensTotal =
     trace.tokensTotal ?? (trace.tokensInput ?? 0) + (trace.tokensOutput ?? 0);
@@ -990,7 +1064,14 @@ export function createTraceManager(config: TraceManagerConfig) {
   async function appendTrace(
     entry: Omit<
       TraceEntry,
-      "id" | "isError" | "tokensInput" | "tokensInputCached" | "tokensOutput" | "tokensTotal"
+      | "id"
+      | "isError"
+      | "tokensInput"
+      | "tokensInputCached"
+      | "tokensInputCacheWrite"
+      | "tokensOutput"
+      | "tokensReasoning"
+      | "tokensTotal"
     >,
   ) {
     const normalizedTokens = normalizeTokenFields(entry.usage);
@@ -1000,13 +1081,16 @@ export function createTraceManager(config: TraceManagerConfig) {
       isError: entry.status >= 400,
       tokensInput: normalizedTokens.tokensInput,
       tokensInputCached: normalizedTokens.tokensInputCached,
+      tokensInputCacheWrite: normalizedTokens.tokensInputCacheWrite,
       tokensOutput: normalizedTokens.tokensOutput,
+      tokensReasoning: normalizedTokens.tokensReasoning,
       tokensTotal: normalizedTokens.tokensTotal,
       costUsd: estimateCostUsd(
         entry.model,
         normalizedTokens.tokensInput ?? 0,
         normalizedTokens.tokensOutput ?? 0,
         normalizedTokens.tokensInputCached ?? 0,
+        normalizedTokens.tokensInputCacheWrite ?? 0,
       ),
     };
 
@@ -1036,7 +1120,14 @@ export function createTraceManager(config: TraceManagerConfig) {
 
   type TraceInput = Omit<
     TraceEntry,
-    "id" | "isError" | "tokensInput" | "tokensInputCached" | "tokensOutput" | "tokensTotal"
+    | "id"
+    | "isError"
+    | "tokensInput"
+    | "tokensInputCached"
+    | "tokensInputCacheWrite"
+    | "tokensOutput"
+    | "tokensReasoning"
+    | "tokensTotal"
   >;
 
   function materializeTrace(entry: TraceInput, id: string = randomUUID()): TraceEntry {
@@ -1047,13 +1138,16 @@ export function createTraceManager(config: TraceManagerConfig) {
       isError: entry.status >= 400,
       tokensInput: normalizedTokens.tokensInput,
       tokensInputCached: normalizedTokens.tokensInputCached,
+      tokensInputCacheWrite: normalizedTokens.tokensInputCacheWrite,
       tokensOutput: normalizedTokens.tokensOutput,
+      tokensReasoning: normalizedTokens.tokensReasoning,
       tokensTotal: normalizedTokens.tokensTotal,
       costUsd: estimateCostUsd(
         entry.model,
         normalizedTokens.tokensInput ?? 0,
         normalizedTokens.tokensOutput ?? 0,
         normalizedTokens.tokensInputCached ?? 0,
+        normalizedTokens.tokensInputCacheWrite ?? 0,
       ),
     };
   }
@@ -1104,7 +1198,14 @@ export function createTraceManager(config: TraceManagerConfig) {
   function recordTrace(
     entry: Omit<
       TraceEntry,
-      "id" | "isError" | "tokensInput" | "tokensInputCached" | "tokensOutput" | "tokensTotal"
+      | "id"
+      | "isError"
+      | "tokensInput"
+      | "tokensInputCached"
+      | "tokensInputCacheWrite"
+      | "tokensOutput"
+      | "tokensReasoning"
+      | "tokensTotal"
     >,
   ) {
     void appendTrace(entry).catch((err) => {

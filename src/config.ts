@@ -10,6 +10,12 @@ export const TRACE_STATS_HISTORY_PATH =
   process.env.TRACE_STATS_HISTORY_PATH ?? "/data/requests-stats-history.jsonl";
 export const TRACE_INCLUDE_BODY =
   (process.env.TRACE_INCLUDE_BODY ?? "false") === "true"; // disabling the body trace by default keeps disk writes smaller
+export const USAGE_STALE_WHILE_REVALIDATE =
+  (process.env.USAGE_STALE_WHILE_REVALIDATE ?? "true") !== "false";
+export const USAGE_STALE_MAX_AGE_MS = Math.max(
+  0,
+  Number(process.env.USAGE_STALE_MAX_AGE_MS ?? 30 * 60_000),
+);
 export const REQUEST_BODY_LIMIT = process.env.REQUEST_BODY_LIMIT ?? "100mb";
 export const TRACE_RETENTION_MAX = Math.max(
   100,

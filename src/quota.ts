@@ -342,8 +342,18 @@ export function chooseAccountForProvider(
   return chooseAccount(accounts.filter((a) => normalizeProvider(a) === provider));
 }
 
+export function isUsageRefreshNeeded(
+  account: Account,
+  now = Date.now(),
+): boolean {
+  return (
+    !account.usage ||
+    now - account.usage.fetchedAt >= USAGE_CACHE_TTL_MS
+  );
+}
+
 export async function refreshUsageIfNeeded(account: Account, chatgptBaseUrl: string, force = false): Promise<Account> {
-  if (!force && account.usage && Date.now() - account.usage.fetchedAt < USAGE_CACHE_TTL_MS) return account;
+  if (!force && !isUsageRefreshNeeded(account)) return account;
   const provider = normalizeProvider(account);
   const shouldUseZaiQuotaEndpoint =
     provider === "zai" || (provider === "openai-compatible" && isZaiQuotaBaseUrl(chatgptBaseUrl));

@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { estimateCostUsd, getModelPricing } from "./model-pricing.js";
 
-const expected: Record<string, [number, number, number]> = {
-  "gpt-5.6-sol": [5, 0.5, 30],
-  "gpt-5.6-terra": [2.5, 0.25, 15],
-  "gpt-5.6-luna": [1, 0.1, 6],
+const expected: Record<string, [number, number, number, number?]> = {
+  "gpt-5.6-sol": [5, 0.5, 30, 6.25],
+  "gpt-5.6-terra": [2.5, 0.25, 15, 3.125],
+  "gpt-5.6-luna": [1, 0.1, 6, 1.25],
   "gpt-5.5": [5, 0.5, 30],
   "gpt-5.4": [2.5, 0.25, 15],
   "gpt-5.4-mini": [0.75, 0.075, 4.5],
@@ -14,10 +14,13 @@ const expected: Record<string, [number, number, number]> = {
 };
 
 test("uses current standard API prices for the requested metered models", () => {
-  for (const [model, [inputPer1M, cachedInputPer1M, outputPer1M]] of Object.entries(expected)) {
+  for (const [model, [inputPer1M, cachedInputPer1M, outputPer1M, cacheWriteInputPer1M]] of Object.entries(expected)) {
     assert.deepEqual(getModelPricing(model), {
       inputPer1M,
       cachedInputPer1M,
+      ...(cacheWriteInputPer1M
+        ? { cacheWriteInputPer1M }
+        : {}),
       outputPer1M,
       ...(model === "gpt-5.4"
         ? { longContext: { thresholdTokens: 272_000, inputPer1M: 5, cachedInputPer1M: 0.5, outputPer1M: 22.5 } }
@@ -36,4 +39,15 @@ test("keeps plan-only and unpublished service models unpriced", () => {
 test("applies long-context prices after 272K input tokens", () => {
   assert.ok(Math.abs((estimateCostUsd("gpt-5.4", 272_001, 1_000) ?? 0) - 1.382505) < 1e-12);
   assert.ok(Math.abs((estimateCostUsd("gpt-5.5", 272_001, 1_000) ?? 0) - 2.76501) < 1e-12);
+});
+
+test("charges GPT-5.6 cache writes at 1.25x without double-counting input", () => {
+  const cost = estimateCostUsd(
+    "gpt-5.6-sol",
+    1_000_000,
+    0,
+    200_000,
+    300_000,
+  );
+  assert.equal(cost, 4.475);
 });

@@ -330,6 +330,8 @@ OAuth admin endpoints:
 | `TRACE_STATS_HISTORY_PATH`        | `/data/requests-stats-history.jsonl`      | Lightweight request history for long-term stats                     |
 | `TRACE_RETENTION_MAX`             | `1000`                                    | Number of recent full traces to retain; minimum effective value is 100 |
 | `TRACE_INCLUDE_BODY`              | `false`                                   | Persist full request payloads when explicitly enabled; trace stats still work when disabled |
+| `USAGE_STALE_WHILE_REVALIDATE`    | `true`                                    | Serve an existing stale usage snapshot while refreshing it in the background |
+| `USAGE_STALE_MAX_AGE_MS`          | `1800000`                                 | Maximum snapshot age eligible for stale-while-revalidate; older snapshots block for refresh |
 | `REQUEST_BODY_LIMIT`              | `100mb`                                   | Max accepted JSON or decompressed zstd request body size            |
 | `PROXY_MODELS`                    | `gpt-5.3-codex,gpt-5.2-codex,gpt-5-codex` | Fallback comma-separated model list for `/v1/models`                |
 | `MODELS_CLIENT_VERSION`           | `0.144.1`                                 | Codex version sent to OpenAI model discovery and runtime requests     |

@@ -1,11 +1,13 @@
 export type ModelPricing = {
   inputPer1M: number;
   cachedInputPer1M?: number;
+  cacheWriteInputPer1M?: number;
   outputPer1M: number;
   longContext?: {
     thresholdTokens: number;
     inputPer1M: number;
     cachedInputPer1M?: number;
+    cacheWriteInputPer1M?: number;
     outputPer1M: number;
   };
 };
@@ -45,13 +47,13 @@ const EXACT_PRICING: Record<string, ModelPricing> = {
     outputPer1M: 30.0,
     longContext: { thresholdTokens: 272_000, inputPer1M: 10.0, cachedInputPer1M: 1.0, outputPer1M: 45.0 },
   },
-  "gpt-5.6-sol": { inputPer1M: 5.0, cachedInputPer1M: 0.5, outputPer1M: 30.0 },
-  "gpt-5.6-terra": { inputPer1M: 2.5, cachedInputPer1M: 0.25, outputPer1M: 15.0 },
-  "gpt-5.6-luna": { inputPer1M: 1.0, cachedInputPer1M: 0.1, outputPer1M: 6.0 },
+  "gpt-5.6-sol": { inputPer1M: 5.0, cachedInputPer1M: 0.5, cacheWriteInputPer1M: 6.25, outputPer1M: 30.0 },
+  "gpt-5.6-terra": { inputPer1M: 2.5, cachedInputPer1M: 0.25, cacheWriteInputPer1M: 3.125, outputPer1M: 15.0 },
+  "gpt-5.6-luna": { inputPer1M: 1.0, cachedInputPer1M: 0.1, cacheWriteInputPer1M: 1.25, outputPer1M: 6.0 },
   // Legacy names retained for historical trace estimates.
-  "gpt-5.6": { inputPer1M: 5.0, cachedInputPer1M: 0.5, outputPer1M: 30.0 },
-  "gpt-5.6-mini": { inputPer1M: 2.5, cachedInputPer1M: 0.25, outputPer1M: 15.0 },
-  "gpt-5.6-nano": { inputPer1M: 1.0, cachedInputPer1M: 0.1, outputPer1M: 6.0 },
+  "gpt-5.6": { inputPer1M: 5.0, cachedInputPer1M: 0.5, cacheWriteInputPer1M: 6.25, outputPer1M: 30.0 },
+  "gpt-5.6-mini": { inputPer1M: 2.5, cachedInputPer1M: 0.25, cacheWriteInputPer1M: 3.125, outputPer1M: 15.0 },
+  "gpt-5.6-nano": { inputPer1M: 1.0, cachedInputPer1M: 0.1, cacheWriteInputPer1M: 1.25, outputPer1M: 6.0 },
   "deepseek-v4-flash": { inputPer1M: 0.14, outputPer1M: 0.28 },
   "deepseek-v4-pro": { inputPer1M: 0.435, outputPer1M: 0.87 },
   "deepseek-chat": { inputPer1M: 0.14, outputPer1M: 0.28 },
@@ -102,6 +104,7 @@ export function estimateCostUsd(
   tokensInput = 0,
   tokensOutput = 0,
   tokensInputCached = 0,
+  tokensInputCacheWrite = 0,
 ): number | undefined {
   const pricing = getModelPricing(model);
   if (!pricing) return undefined;
@@ -110,9 +113,18 @@ export function estimateCostUsd(
     ? pricing.longContext
     : pricing;
   const cachedInput = Math.min(input, Math.max(0, tokensInputCached));
-  const uncachedInput = input - cachedInput;
+  const cacheWriteInput = Math.min(
+    input - cachedInput,
+    Math.max(0, tokensInputCacheWrite),
+  );
+  const uncachedInput = input - cachedInput - cacheWriteInput;
   const cachedInputRate = rate.cachedInputPer1M ?? rate.inputPer1M;
-  const inCost = (uncachedInput / 1_000_000) * rate.inputPer1M + (cachedInput / 1_000_000) * cachedInputRate;
+  const cacheWriteInputRate =
+    rate.cacheWriteInputPer1M ?? rate.inputPer1M;
+  const inCost =
+    (uncachedInput / 1_000_000) * rate.inputPer1M +
+    (cachedInput / 1_000_000) * cachedInputRate +
+    (cacheWriteInput / 1_000_000) * cacheWriteInputRate;
   const outCost = (Math.max(0, tokensOutput) / 1_000_000) * rate.outputPer1M;
   return inCost + outCost;
 }

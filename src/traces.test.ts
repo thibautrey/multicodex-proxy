@@ -34,6 +34,29 @@ test("stream traces are durable at start and finalized without duplicate stats",
     stream: true,
     latencyMs: 25,
     model: "test-model",
+    usage: {
+      input_tokens: 120,
+      input_tokens_details: {
+        cached_tokens: 80,
+        cache_write_tokens: 32,
+      },
+      output_tokens: 15,
+      output_tokens_details: { reasoning_tokens: 6 },
+      total_tokens: 135,
+    },
+    latencyBreakdown: {
+      preparationMs: 4,
+      upstreamHeadersMs: 18,
+    },
+    usageRefresh: {
+      background: 2,
+      blocking: 0,
+      shared: 1,
+    },
+    inputContext: {
+      compactionItemCount: 1,
+      itemsBeforeLatestCompaction: 8,
+    },
     error: "client disconnected before stream completion",
     clientDisconnected: true,
   });
@@ -44,6 +67,22 @@ test("stream traces are durable at start and finalized without duplicate stats",
   assert.equal(traces[0].lifecycleState, "interrupted");
   assert.equal(traces[0].clientDisconnected, true);
   assert.equal(traces[0].status, 499);
+  assert.equal(traces[0].tokensInputCached, 80);
+  assert.equal(traces[0].tokensInputCacheWrite, 32);
+  assert.equal(traces[0].tokensReasoning, 6);
+  assert.deepEqual(traces[0].latencyBreakdown, {
+    preparationMs: 4,
+    upstreamHeadersMs: 18,
+  });
+  assert.deepEqual(traces[0].usageRefresh, {
+    background: 2,
+    blocking: 0,
+    shared: 1,
+  });
+  assert.deepEqual(traces[0].inputContext, {
+    compactionItemCount: 1,
+    itemsBeforeLatestCompaction: 8,
+  });
 
   const historyLines = (await fs.readFile(historyFilePath, "utf8"))
     .trim()

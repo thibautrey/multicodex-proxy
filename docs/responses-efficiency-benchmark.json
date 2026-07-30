@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-30T07:48:49.084Z",
+  "benchmark": "synthetic_usage_refresh_preparation",
+  "samples": 20,
+  "accountCount": 4,
+  "simulatedUsageProbeMs": 50,
+  "baseline": {
+    "medianMs": 52.10089599999998,
+    "p95Ms": 52.1372080000001
+  },
+  "candidate": {
+    "medianMs": 0.0447919999998021,
+    "p95Ms": 0.06995900000003985
+  },
+  "medianPreparationImprovementRatio": 0.999140283499159,
+  "liveBenchmark": {
+    "completed": false,
+    "reason": "private environment host unreachable from the development machine"
+  },
+  "rawContentCommitted": false
+}
