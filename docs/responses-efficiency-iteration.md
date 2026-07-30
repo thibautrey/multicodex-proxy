@@ -91,3 +91,8 @@ node --import tsx scripts/benchmark-usage-refresh.mjs \
 Référence officielle :
 
 - [Compaction](https://developers.openai.com/api/docs/guides/compaction)
+
+L'analyse suivante des breakpoints explicites GPT-5.6 est documentée dans
+[`prompt-cache-breakpoint-audit.md`](prompt-cache-breakpoint-audit.md). Les
+traces locales montrent que le cache implicite est déjà très efficace ; aucun
+breakpoint automatique n'a donc été ajouté sans A/B upstream.
