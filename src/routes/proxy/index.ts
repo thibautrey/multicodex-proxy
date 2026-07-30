@@ -313,28 +313,50 @@ function inspectContentPartForImages(part: any, path: string): ImageTracePart | 
   return null;
 }
 
-export function payloadHasImage(payload: any): boolean {
+export type PayloadContextInspection = {
+  hasImage: boolean;
+  compactionItemCount: number;
+  latestCompactionIndex: number;
+};
+
+export function inspectPayloadContext(payload: any): PayloadContextInspection {
+  let hasImage = false;
+  let compactionItemCount = 0;
+  let latestCompactionIndex = -1;
   const messages = Array.isArray(payload?.messages) ? payload.messages : [];
   for (const message of messages) {
     const content = Array.isArray(message?.content) ? message.content : [];
     for (const part of content) {
       const type = typeof part?.type === "string" ? part.type : "";
-      if (type.includes("image")) return true;
+      if (type.includes("image")) hasImage = true;
     }
   }
 
   const input = Array.isArray(payload?.input) ? payload.input : [];
-  for (const item of input) {
+  for (let index = 0; index < input.length; index += 1) {
+    const item = input[index];
     const itemType = typeof item?.type === "string" ? item.type : "";
-    if (itemType.includes("image")) return true;
+    if (itemType.includes("image")) hasImage = true;
+    if (itemType === "compaction") {
+      compactionItemCount += 1;
+      latestCompactionIndex = index;
+    }
     const content = Array.isArray(item?.content) ? item.content : [];
     for (const part of content) {
       const type = typeof part?.type === "string" ? part.type : "";
-      if (type.includes("image")) return true;
+      if (type.includes("image")) hasImage = true;
     }
   }
 
-  return false;
+  return {
+    hasImage,
+    compactionItemCount,
+    latestCompactionIndex,
+  };
+}
+
+export function payloadHasImage(payload: any): boolean {
+  return inspectPayloadContext(payload).hasImage;
 }
 
 function summarizeImagePayload(payload: any): ImageTraceSummary {
@@ -1794,7 +1816,8 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     );
     const modelAliases = store.getCachedModelAliases();
     const imageRequestModelOverride = store.getCachedSettings().imageRequestModelOverride;
-    const requestHasImage = payloadHasImage(req.body);
+    const incomingContextInspection = inspectPayloadContext(req.body);
+    const requestHasImage = incomingContextInspection.hasImage;
     const routingCandidates = buildImageAwareRoutingCandidates(
       req.body,
       discoveredModels,
@@ -1914,16 +1937,14 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           preparationMs: 0,
           upstreamHeadersMs: 0,
         };
-        const input = Array.isArray(payloadToUpstream?.input)
-          ? payloadToUpstream.input
-          : [];
-        let compactionItemCount = 0;
-        let latestCompactionIndex = -1;
-        for (let index = 0; index < input.length; index += 1) {
-          if (input[index]?.type !== "compaction") continue;
-          compactionItemCount += 1;
-          latestCompactionIndex = index;
-        }
+        const upstreamContextInspection =
+          payloadToUpstream?.input === req.body?.input
+            ? incomingContextInspection
+            : inspectPayloadContext(payloadToUpstream);
+        const {
+          compactionItemCount,
+          latestCompactionIndex,
+        } = upstreamContextInspection;
         const traceImage = {
           ...(imageTrace ? { imageTrace } : {}),
           latencyBreakdown,

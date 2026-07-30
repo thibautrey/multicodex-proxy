@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-30T09:37:33.262Z",
+  "benchmark": "synthetic_responses_payload_context_inspection",
+  "samples": 1000,
+  "inputItems": 10000,
+  "compactionItems": 1,
+  "baseline": {
+    "traversals": 2,
+    "medianMs": 0.1972080000000176,
+    "p95Ms": 0.28195800000003146
+  },
+  "candidate": {
+    "traversals": 1,
+    "medianMs": 0.173041000000012,
+    "p95Ms": 0.25737500000002456
+  },
+  "medianImprovementRatio": 0.12254573850961137,
+  "equivalent": true,
+  "tokenImpact": "none",
+  "note": "This isolates image and compaction inspection for a long Responses input. It excludes serialization, routing, network, provider, and model latency."
+}
