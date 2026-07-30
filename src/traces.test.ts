@@ -53,6 +53,11 @@ test("stream traces are durable at start and finalized without duplicate stats",
       blocking: 0,
       shared: 1,
     },
+    modelCatalogRefresh: {
+      background: 1,
+      blocking: 0,
+      shared: 1,
+    },
     inputContext: {
       compactionItemCount: 1,
       itemsBeforeLatestCompaction: 8,
@@ -76,6 +81,11 @@ test("stream traces are durable at start and finalized without duplicate stats",
   });
   assert.deepEqual(traces[0].usageRefresh, {
     background: 2,
+    blocking: 0,
+    shared: 1,
+  });
+  assert.deepEqual(traces[0].modelCatalogRefresh, {
+    background: 1,
     blocking: 0,
     shared: 1,
   });

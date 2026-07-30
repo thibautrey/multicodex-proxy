@@ -96,3 +96,7 @@ L'analyse suivante des breakpoints explicites GPT-5.6 est documentée dans
 [`prompt-cache-breakpoint-audit.md`](prompt-cache-breakpoint-audit.md). Les
 traces locales montrent que le cache implicite est déjà très efficace ; aucun
 breakpoint automatique n'a donc été ajouté sans A/B upstream.
+
+L'itération suivante supprime l'attente d'un catalogue de modèles expiré du
+chemin critique des requêtes. Elle est documentée dans
+[`model-catalog-latency-iteration.md`](model-catalog-latency-iteration.md).

@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-30T08:13:32.610Z",
+  "benchmark": "synthetic_model_catalog_refresh_preparation",
+  "samples": 50,
+  "concurrentRequests": 8,
+  "simulatedCatalogProbeMs": 50,
+  "baseline": {
+    "medianMs": 52.05814549999991,
+    "p95Ms": 52.10012499999999
+  },
+  "candidate": {
+    "medianMs": 0.01954150000028676,
+    "p95Ms": 0.033332999999970525,
+    "refreshes": 50,
+    "expectedRefreshes": 50
+  },
+  "medianPreparationImprovementRatio": 0.9996246216646291,
+  "note": "This isolates an expired model-catalog refresh; it is not an end-to-end upstream latency benchmark."
+}

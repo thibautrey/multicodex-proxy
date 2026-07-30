@@ -8,6 +8,8 @@ import {
   MAX_UPSTREAM_RETRIES,
   MODELS_CACHE_MS,
   MODELS_CLIENT_VERSION,
+  MODELS_STALE_MAX_AGE_MS,
+  MODELS_STALE_WHILE_REVALIDATE,
   PI_USER_AGENT,
   PROXY_MODELS,
   TRACE_INCLUDE_BODY,
@@ -83,6 +85,10 @@ import express from "express";
 import { randomUUID } from "node:crypto";
 import { maybeConsumeScheduledWeeklyReset } from "../../rate-limit-reset.js";
 import { UsageRefreshCoordinator } from "../../usage-refresh.js";
+import {
+  AsyncRefreshCoordinator,
+  canServeStaleSnapshot,
+} from "../../async-refresh.js";
 
 type ProxyRoutesOptions = {
   store: AccountStore;
@@ -101,6 +107,8 @@ const modelsCache: { at: number; models: ExposedModel[] } = {
   at: 0,
   models: [],
 };
+const modelsRefreshCoordinator =
+  new AsyncRefreshCoordinator<ExposedModel[]>();
 
 // Separate cache for fast O(1) model validation using Set
 const modelsValidationCache: {
@@ -682,18 +690,12 @@ function filterUnsupportedTools(
   }
 }
 
-export async function discoverModels(
+async function refreshModels(
   store: AccountStore,
   openaiBaseUrl: string,
   mistralBaseUrl: string,
   zaiBaseUrl: string,
 ): Promise<ExposedModel[]> {
-  if (
-    Date.now() - modelsCache.at < MODELS_CACHE_MS &&
-    modelsCache.models.length
-  )
-    return modelsCache.models;
-
   try {
     const accounts = await store.listAccounts();
     const byId = new Map<string, ExposedModel>();
@@ -831,6 +833,44 @@ export async function discoverModels(
     updateValidationCache(fallback);
     return fallback;
   }
+}
+
+type DiscoverModelsOptions = {
+  staleWhileRevalidate?: boolean;
+  maxStaleAgeMs?: number;
+  onPrepared?: (
+    mode: "fresh" | "background" | "blocking",
+    shared: boolean,
+  ) => void;
+};
+
+export async function discoverModels(
+  store: AccountStore,
+  openaiBaseUrl: string,
+  mistralBaseUrl: string,
+  zaiBaseUrl: string,
+  options: DiscoverModelsOptions = {},
+): Promise<ExposedModel[]> {
+  const cacheAgeMs = Math.max(0, Date.now() - modelsCache.at);
+  if (cacheAgeMs < MODELS_CACHE_MS && modelsCache.models.length) {
+    options.onPrepared?.("fresh", false);
+    return modelsCache.models;
+  }
+
+  const canUseStale = canServeStaleSnapshot({
+    enabled: Boolean(options.staleWhileRevalidate),
+    hasSnapshot: modelsCache.models.length > 0,
+    ageMs: cacheAgeMs,
+    maxAgeMs: options.maxStaleAgeMs ?? Infinity,
+  });
+  const prepared = await modelsRefreshCoordinator.prepare({
+    staleValue: canUseStale ? modelsCache.models : undefined,
+    staleWhileRevalidate: canUseStale,
+    refresh: () =>
+      refreshModels(store, openaiBaseUrl, mistralBaseUrl, zaiBaseUrl),
+  });
+  options.onPrepared?.(prepared.mode, prepared.shared);
+  return prepared.value;
 }
 
 function updateValidationCache(models: ExposedModel[]): void {
@@ -1660,6 +1700,11 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       blocking: 0,
       shared: 0,
     };
+    const modelCatalogRefreshTrace = {
+      background: 0,
+      blocking: 0,
+      shared: 0,
+    };
     const isChatCompletionsPath =
       (req.path || "").includes("chat/completions") ||
       (req.originalUrl || "").includes("chat/completions");
@@ -1834,6 +1879,18 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       openaiBaseUrl,
       mistralBaseUrl,
       zaiBaseUrl,
+      {
+        staleWhileRevalidate: MODELS_STALE_WHILE_REVALIDATE,
+        maxStaleAgeMs: MODELS_STALE_MAX_AGE_MS,
+        onPrepared: (mode, shared) => {
+          if (mode === "background") {
+            modelCatalogRefreshTrace.background += 1;
+          } else if (mode === "blocking") {
+            modelCatalogRefreshTrace.blocking += 1;
+          }
+          if (shared) modelCatalogRefreshTrace.shared += 1;
+        },
+      },
     );
     const modelAliases = store.getCachedModelAliases();
     const imageRequestModelOverride = store.getCachedSettings().imageRequestModelOverride;
@@ -1968,6 +2025,11 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           usageRefreshTrace.blocking ||
           usageRefreshTrace.shared
             ? { usageRefresh: usageRefreshTrace }
+            : {}),
+          ...(modelCatalogRefreshTrace.background ||
+          modelCatalogRefreshTrace.blocking ||
+          modelCatalogRefreshTrace.shared
+            ? { modelCatalogRefresh: modelCatalogRefreshTrace }
             : {}),
           ...(compactionItemCount
             ? {

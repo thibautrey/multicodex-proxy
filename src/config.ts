@@ -16,6 +16,12 @@ export const USAGE_STALE_MAX_AGE_MS = Math.max(
   0,
   Number(process.env.USAGE_STALE_MAX_AGE_MS ?? 30 * 60_000),
 );
+export const MODELS_STALE_WHILE_REVALIDATE =
+  (process.env.MODELS_STALE_WHILE_REVALIDATE ?? "true") !== "false";
+export const MODELS_STALE_MAX_AGE_MS = Math.max(
+  0,
+  Number(process.env.MODELS_STALE_MAX_AGE_MS ?? 30 * 60_000),
+);
 export const REQUEST_BODY_LIMIT = process.env.REQUEST_BODY_LIMIT ?? "100mb";
 export const TRACE_RETENTION_MAX = Math.max(
   100,

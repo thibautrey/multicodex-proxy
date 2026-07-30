@@ -336,6 +336,8 @@ OAuth admin endpoints:
 | `PROXY_MODELS`                    | `gpt-5.3-codex,gpt-5.2-codex,gpt-5-codex` | Fallback comma-separated model list for `/v1/models`                |
 | `MODELS_CLIENT_VERSION`           | `0.144.1`                                 | Codex version sent to OpenAI model discovery and runtime requests     |
 | `MODELS_CACHE_MS`                 | `600000`                                  | Model discovery cache duration (ms)                                 |
+| `MODELS_STALE_WHILE_REVALIDATE`   | `true`                                    | Serve a bounded stale model catalog while refreshing it in the background |
+| `MODELS_STALE_MAX_AGE_MS`         | `1800000`                                 | Maximum model-catalog age eligible for stale-while-revalidate       |
 | `ADMIN_TOKEN`                     | empty                                     | Admin endpoints auth token; empty disables the admin-token check    |
 | `CHATGPT_BASE_URL`                | `https://chatgpt.com`                     | OpenAI/ChatGPT upstream base URL                                    |
 | `UPSTREAM_PATH`                   | `/backend-api/codex/responses`            | OpenAI upstream request path                                        |
