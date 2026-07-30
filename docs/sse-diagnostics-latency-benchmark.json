@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-30T09:15:40.101Z",
+  "benchmark": "synthetic_native_responses_sse_diagnostics",
+  "samples": 500,
+  "frameCount": 1283,
+  "textDeltaFrames": 1024,
+  "reasoningFrames": 256,
+  "calibration": "The 1,024 text-delta scale approximates the observed local /responses output p95 of 1,064 tokens; event count is a stress proxy, not a measured token-to-frame ratio.",
+  "responsesDiagnostics": {
+    "baseline": {
+      "medianMs": 0.6036665000000312,
+      "p95Ms": 0.6779999999999973
+    },
+    "candidate": {
+      "medianMs": 0.40487499999994725,
+      "p95Ms": 0.47249999999996817
+    },
+    "medianImprovementRatio": 0.3293068275282357,
+    "equivalent": true
+  },
+  "chatUsageExtraction": {
+    "frameCount": 1026,
+    "baseline": {
+      "medianMs": 0.5749794999999551,
+      "p95Ms": 0.6443329999999605
+    },
+    "candidate": {
+      "medianMs": 0.08054149999998117,
+      "p95Ms": 0.09491700000000947
+    },
+    "medianImprovementRatio": 0.8599228320314247,
+    "equivalent": true
+  },
+  "note": "This isolates local diagnostics inspection before frame forwarding. It excludes decoding, Express writes, network, provider, and model latency."
+}

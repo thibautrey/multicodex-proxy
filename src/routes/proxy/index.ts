@@ -96,6 +96,12 @@ import {
   canServeStaleSnapshot,
 } from "../../async-refresh.js";
 import { fetchUpstreamWithRetry } from "../../upstream-retry.js";
+import {
+  createResponseStreamDiagnostics,
+  extractSSEFrameUsage,
+  inspectResponseStreamEvent,
+  inspectResponseStreamFrame,
+} from "../../responses/stream-diagnostics.js";
 
 type ProxyRoutesOptions = {
   store: AccountStore;
@@ -1227,110 +1233,6 @@ type BufferedResponsesStreamResult = {
   responseStreamDiagnostics: ResponseStreamDiagnostics;
 };
 
-function createResponseStreamDiagnostics(): ResponseStreamDiagnostics {
-  return {
-    eventCount: 0,
-    eventTypes: {},
-    customToolCalls: [],
-    invalidDataPayloadCount: 0,
-    outputTextDeltaCount: 0,
-    outputTextDoneCount: 0,
-    reasoningEventCount: 0,
-    refusalEventCount: 0,
-    functionCallCount: 0,
-    hiddenFunctionCallCount: 0,
-    sanitizerDroppedEventCount: 0,
-    sanitizerDroppedTextEventCount: 0,
-    sawResponseCompleted: false,
-    sawChatCompletionChunk: false,
-  };
-}
-
-function customToolCallKey(event: any): string | undefined {
-  const itemId = event?.item_id ?? event?.item?.id;
-  const callId = event?.call_id ?? event?.item?.call_id;
-  const key = itemId ?? callId;
-  return typeof key === "string" && key ? key : undefined;
-}
-
-function inspectCustomToolCallEvent(
-  event: any,
-  type: string,
-  diagnostics: ResponseStreamDiagnostics,
-): void {
-  const item = event?.item ?? {};
-  const isCustomToolItem = item?.type === "custom_tool_call";
-  const isCustomToolEvent = type.startsWith("response.custom_tool_call_");
-  if (!isCustomToolItem && !isCustomToolEvent) return;
-
-  const key = customToolCallKey(event);
-  let tool = key
-    ? diagnostics.customToolCalls.find((entry: any) => entry._key === key)
-    : undefined;
-  if (!tool && diagnostics.customToolCalls.length < 8) {
-    tool = {
-      itemIdPresent: typeof (event?.item_id ?? item?.id) === "string",
-      callIdPresent: typeof (event?.call_id ?? item?.call_id) === "string",
-      name:
-        typeof (event?.name ?? item?.name) === "string"
-          ? (event?.name ?? item?.name).slice(0, 120)
-          : undefined,
-      status:
-        typeof item?.status === "string" ? item.status : undefined,
-      inputDeltaCount: 0,
-      inputBytes: 0,
-      sawInputDone: false,
-      sawOutputItemAdded: false,
-      sawOutputItemDone: false,
-    };
-    Object.defineProperty(tool, "_key", {
-      value: key ?? `anonymous-${diagnostics.customToolCalls.length + 1}`,
-      enumerable: false,
-    });
-    diagnostics.customToolCalls.push(tool);
-  }
-  if (!tool) return;
-
-  if (type === "response.output_item.added") tool.sawOutputItemAdded = true;
-  if (type === "response.output_item.done") tool.sawOutputItemDone = true;
-  if (type === "response.custom_tool_call_input.delta") {
-    tool.inputDeltaCount += 1;
-    if (typeof event?.delta === "string") tool.inputBytes += Buffer.byteLength(event.delta);
-  }
-  if (type === "response.custom_tool_call_input.done") tool.sawInputDone = true;
-}
-
-function inspectResponseStreamEvent(
-  event: any,
-  diagnostics: ResponseStreamDiagnostics,
-): void {
-  diagnostics.eventCount += 1;
-  const type = typeof event?.type === "string" ? event.type : "";
-  if (type) {
-    diagnostics.eventTypes[type] = (diagnostics.eventTypes[type] ?? 0) + 1;
-  }
-  if (event?.object === "chat.completion.chunk") {
-    diagnostics.sawChatCompletionChunk = true;
-  }
-  if (type === "response.output_text.delta") diagnostics.outputTextDeltaCount += 1;
-  if (type === "response.output_text.done") diagnostics.outputTextDoneCount += 1;
-  if (type.startsWith("response.reasoning")) diagnostics.reasoningEventCount += 1;
-  if (type.startsWith("response.refusal")) diagnostics.refusalEventCount += 1;
-  if (type === "response.completed") diagnostics.sawResponseCompleted = true;
-  inspectCustomToolCallEvent(event, type, diagnostics);
-
-  const item = event?.item;
-  if (item?.type === "function_call") {
-    diagnostics.functionCallCount += 1;
-    if (
-      typeof item.name === "string" &&
-      item.name.trim().toLowerCase().startsWith("functions.")
-    ) {
-      diagnostics.hiddenFunctionCallCount += 1;
-    }
-  }
-}
-
 function inspectResponsesDataLine(
   line: string,
   state: ResponsesStreamState,
@@ -2183,11 +2085,8 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               res.once("close", abortOnDisconnect);
 
               const forwardFrame = (frame: string) => {
-                for (const payload of parseSSEDataPayloads(frame)) {
-                  inspectResponseStreamEvent(payload, diagnostics);
-                  if (payload?.response?.usage) usage = payload.response.usage;
-                  else if (payload?.usage) usage = payload.usage;
-                }
+                usage =
+                  inspectResponseStreamFrame(frame, diagnostics) ?? usage;
                 if (!res.writableEnded) {
                   res.write(frame.endsWith("\n\n") ? frame : `${frame}\n\n`);
                 }
@@ -2304,9 +2203,8 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 const forwardFrame = (frame: string) => {
                   res.write(frame.endsWith("\n\n") ? frame : `${frame}\n\n`);
                   if (frame.includes("[DONE]")) doneSent = true;
-                  for (const payload of parseSSEDataPayloads(frame)) {
-                    if (payload?.usage) accumulatedUsage = payload.usage;
-                  }
+                  accumulatedUsage =
+                    extractSSEFrameUsage(frame) ?? accumulatedUsage;
                 };
 
                 try {

@@ -123,3 +123,7 @@ dans
 L'itération suivante couvre également les rate limits renvoyés sous forme SSE,
 qui étaient auparavant relayés avant la rotation. Elle est documentée dans
 [`stream-rate-limit-rotation-iteration.md`](stream-rate-limit-rotation-iteration.md).
+
+L'itération suivante évite les parses JSON inutiles sur les deltas SSE tout en
+conservant les diagnostics et l'usage. Elle est documentée dans
+[`sse-diagnostics-latency-iteration.md`](sse-diagnostics-latency-iteration.md).
