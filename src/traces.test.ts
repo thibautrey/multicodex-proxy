@@ -5,6 +5,28 @@ import path from "node:path";
 import test from "node:test";
 import { createTraceManager } from "./traces.js";
 
+test("trace initialization warms the cache before the first durable stream", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-traces-"));
+  const filePath = path.join(directory, "nested", "traces.jsonl");
+  const historyFilePath = path.join(directory, "nested", "history.jsonl");
+  const manager = createTraceManager({ filePath, historyFilePath });
+
+  await manager.initialize();
+  const id = await manager.beginTrace({
+    at: Date.now(),
+    route: "/responses",
+    status: 102,
+    stream: true,
+    latencyMs: 0,
+  });
+
+  const diskEntry = JSON.parse((await fs.readFile(filePath, "utf8")).trim());
+  assert.equal(diskEntry.id, id);
+  assert.equal(diskEntry.lifecycleState, "started");
+
+  await fs.rm(directory, { recursive: true, force: true });
+});
+
 test("stream traces are durable at start and finalized without duplicate stats", async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-traces-"));
   const filePath = path.join(directory, "traces.jsonl");

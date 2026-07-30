@@ -858,13 +858,19 @@ export function createTraceManager(config: TraceManagerConfig) {
     }
     cacheInit = (async () => {
       await Promise.all([ensureParentDir(filePath), ensureParentDir(historyFilePath)]);
-      const { traces, physicalLineCount } = await readTraceFileFromDisk();
+      const [{ traces, physicalLineCount }] = await Promise.all([
+        readTraceFileFromDisk(),
+        scanStatsHistory(ingestStatsTrace),
+      ]);
       traceCache.splice(0, traceCache.length, ...traces);
       trimTraceCache();
       physicalTraceLineCount = physicalLineCount;
-      await scanStatsHistory(ingestStatsTrace);
     })();
     await cacheInit;
+  }
+
+  async function initialize(): Promise<void> {
+    await ensureCacheReady();
   }
 
   async function writeTraceWindow(entries: TraceEntry[]): Promise<void> {
@@ -1316,6 +1322,7 @@ export function createTraceManager(config: TraceManagerConfig) {
   }
 
   return {
+    initialize,
     readTraceWindow,
     readTraceById,
     readTraceListWindow,

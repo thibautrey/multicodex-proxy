@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-30T09:51:42.179Z",
+  "benchmark": "synthetic_first_stream_trace_warmup",
+  "runs": 20,
+  "traceLines": 1000,
+  "historyLines": 20000,
+  "baseline": {
+    "strategy": "lazy_initialize_on_first_begin_trace",
+    "firstStreamMedianMs": 13.12522899999999,
+    "firstStreamP95Ms": 16.62929200000002
+  },
+  "candidate": {
+    "strategy": "initialize_before_listen",
+    "startupWarmupMedianMs": 12.438624499999946,
+    "startupWarmupP95Ms": 14.23808299999996,
+    "firstStreamMedianMs": 0.3078124999999545,
+    "firstStreamP95Ms": 0.7330829999999651
+  },
+  "medianFirstStreamImprovementRatio": 0.9765480282286919,
+  "durableStartEquivalent": true,
+  "tokenImpact": "none",
+  "note": "This isolates trace cache initialization and the first durable stream append. It excludes account initialization, routing, fetch, network, provider, and model latency."
+}

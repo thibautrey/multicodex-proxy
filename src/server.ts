@@ -1,6 +1,5 @@
 import express from "express";
 import path from "node:path";
-import fs from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import * as Sentry from "@sentry/node";
 import crypto from "node:crypto";
@@ -57,19 +56,20 @@ await cleanupOrphanedTmpFiles(dataDir);
 
 const store = new AccountStore(STORE_PATH);
 const oauthStore = new OAuthStateStore(OAUTH_STATE_PATH);
-await store.init();
-await oauthStore.init();
-startScheduledWeeklyResetMonitor({
-  store,
-  oauthConfig,
-  openaiBaseUrl: CHATGPT_BASE_URL,
-});
-await fs.mkdir(path.dirname(TRACE_FILE_PATH), { recursive: true });
-
 const traceManager = createTraceManager({
   filePath: TRACE_FILE_PATH,
   historyFilePath: TRACE_STATS_HISTORY_PATH,
   retentionMax: TRACE_RETENTION_MAX,
+});
+await Promise.all([
+  store.init(),
+  oauthStore.init(),
+  traceManager.initialize(),
+]);
+startScheduledWeeklyResetMonitor({
+  store,
+  oauthConfig,
+  openaiBaseUrl: CHATGPT_BASE_URL,
 });
 
 // Catch-all request tracing — records every request even if it doesn't hit an official endpoint.
