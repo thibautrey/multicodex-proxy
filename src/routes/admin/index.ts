@@ -27,6 +27,18 @@ import {
   rateLimitResetCreditRequest,
   WEEKLY_RESET_REMAINING_THRESHOLD_PERCENT,
 } from "../../rate-limit-reset.js";
+import {
+  XAI_AUTH_PATH,
+  XAI_BASE_URL,
+  XAI_OAUTH_CLIENT_ID,
+  XAI_OAUTH_ISSUER,
+} from "../../config.js";
+import {
+  accountFromXaiOAuth,
+  loadXaiAuthFile,
+  pollXaiDeviceCode,
+  requestXaiDeviceCode,
+} from "../../xai.js";
 
 type StoragePaths = {
   accountsPath: string;
@@ -307,6 +319,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     res.json({
       ok: true,
       oauthRedirectUri: oauthConfig.redirectUri,
+      xaiAuthPath: XAI_AUTH_PATH,
       storage: {
         accountsPath: storagePaths.accountsPath,
         oauthStatePath: storagePaths.oauthStatePath,
@@ -322,6 +335,56 @@ export function createAdminRouter(options: AdminRoutesOptions) {
   router.get("/accounts", async (_req, res) =>
     res.json({ accounts: (await store.listAccounts()).map(redact) }),
   );
+
+  router.post("/grok/import", async (_req, res) => {
+    try {
+      const credentials = await loadXaiAuthFile();
+      const existingAccounts = await store.listAccounts();
+      const imported: Account[] = [];
+      for (const credential of credentials) {
+        const existing = existingAccounts.find(
+          (account) =>
+            normalizeProvider(account) === "xai" &&
+            account.xaiAuthScope === credential.scope &&
+            (!credential.userId || account.xaiUserId === credential.userId),
+        );
+        const account: Account = {
+          ...existing,
+          id: existing?.id ?? randomUUID(),
+          provider: "xai",
+          upstreamMode: existing?.upstreamMode ?? "responses",
+          email: credential.email ?? existing?.email,
+          accessToken: credential.accessToken,
+          refreshToken: credential.refreshToken ?? existing?.refreshToken,
+          expiresAt: credential.expiresAt ?? existing?.expiresAt,
+          xaiUserId: credential.userId ?? existing?.xaiUserId,
+          xaiAuthScope: credential.scope,
+          oidcIssuer: credential.oidcIssuer,
+          oidcClientId: credential.oidcClientId,
+          enabled: existing?.enabled ?? true,
+          priority: existing?.priority ?? 0,
+          state: {
+            ...existing?.state,
+            needsTokenRefresh: false,
+            authBlockedUntil: undefined,
+            lastError: undefined,
+          },
+        };
+        await store.upsertAccount(account);
+        imported.push(account);
+      }
+      await store.flushIfDirty();
+      return res.json({
+        ok: true,
+        imported: imported.length,
+        accounts: imported.map(redact),
+      });
+    } catch (err: any) {
+      return res.status(400).json({
+        error: `Grok auth import failed: ${err?.message ?? String(err)}`,
+      });
+    }
+  });
 
   router.get("/settings", async (_req, res) =>
     res.json({ ok: true, settings: await store.getSettings() }),
@@ -655,6 +718,8 @@ export function createAdminRouter(options: AdminRoutesOptions) {
         ? "mistral"
         : body.provider === "zai"
           ? "zai"
+          : body.provider === "xai"
+            ? "xai"
           : body.provider === "openai-compatible"
             ? "openai-compatible"
             : "openai";
@@ -676,6 +741,20 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       refreshToken: body.refreshToken,
       expiresAt: body.expiresAt,
       chatgptAccountId: body.chatgptAccountId,
+      xaiUserId: body.xaiUserId,
+      xaiAuthScope:
+        provider === "xai"
+          ? body.xaiAuthScope ??
+            `${XAI_OAUTH_ISSUER}::${XAI_OAUTH_CLIENT_ID}`
+          : undefined,
+      oidcIssuer:
+        provider === "xai"
+          ? body.oidcIssuer ?? XAI_OAUTH_ISSUER
+          : body.oidcIssuer,
+      oidcClientId:
+        provider === "xai"
+          ? body.oidcClientId ?? XAI_OAUTH_CLIENT_ID
+          : body.oidcClientId,
       baseUrl,
       enabled: body.enabled ?? true,
       priority: body.priority ?? 0,
@@ -746,6 +825,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     if (provider === "openai-compatible") usageBaseUrl = account.baseUrl ?? "";
     else if (provider === "mistral") usageBaseUrl = mistralBaseUrl;
     else if (provider === "zai") usageBaseUrl = zaiBaseUrl;
+    else if (provider === "xai") usageBaseUrl = account.baseUrl ?? XAI_BASE_URL;
     await refreshUsageIfNeeded(account, usageBaseUrl, true);
     await store.upsertAccount(account);
     await maybeConsumeScheduledWeeklyReset(account.id, store, openaiBaseUrl);
@@ -839,6 +919,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
         if (provider === "openai-compatible") usageBaseUrl = valid.baseUrl ?? "";
         else if (provider === "mistral") usageBaseUrl = mistralBaseUrl;
         else if (provider === "zai") usageBaseUrl = zaiBaseUrl;
+        else if (provider === "xai") usageBaseUrl = valid.baseUrl ?? XAI_BASE_URL;
         await refreshUsageIfNeeded(valid, usageBaseUrl, true);
         return valid;
       }),
@@ -905,18 +986,49 @@ export function createAdminRouter(options: AdminRoutesOptions) {
   router.post("/oauth/start", async (req, res) => {
     const email = String(req.body?.email ?? "").trim();
     const targetAccountId = String(req.body?.accountId ?? "").trim() || undefined;
-    const method = req.body?.method === "device" ? "device" : "browser";
-    if (!email) return res.status(400).json({ error: "email required" });
+    const provider = req.body?.provider === "xai" ? "xai" : "openai";
+    const method =
+      provider === "xai" || req.body?.method === "device"
+        ? "device"
+        : "browser";
+    if (provider === "openai" && !email) {
+      return res.status(400).json({ error: "email required" });
+    }
     if (targetAccountId) {
       const account = (await store.listAccounts()).find((a) => a.id === targetAccountId);
       if (!account) return res.status(404).json({ error: "account not found" });
-      if ((account.provider ?? "openai") !== "openai") {
-        return res.status(400).json({ error: "oauth reauth is only supported for OpenAI accounts" });
+      if (normalizeProvider(account) !== provider) {
+        return res.status(400).json({
+          error: `oauth reauth target must be a ${provider} account`,
+        });
       }
     }
-    const flow = createOAuthState(email, targetAccountId, method);
+    const flow = createOAuthState(email, targetAccountId, method, provider);
     if (method === "device") {
       try {
+        if (provider === "xai") {
+          const device = await requestXaiDeviceCode();
+          await oauthStore.create({
+            ...flow,
+            deviceAuthId: device.deviceCode,
+            userCode: device.userCode,
+            verificationUrl:
+              device.verificationUrlComplete ?? device.verificationUrl,
+            intervalSeconds: device.intervalSeconds,
+            expiresAt: device.expiresAt,
+          });
+          return res.json({
+            ok: true,
+            flowId: flow.id,
+            provider,
+            method,
+            userCode: device.userCode,
+            verificationUrl:
+              device.verificationUrlComplete ?? device.verificationUrl,
+            intervalSeconds: device.intervalSeconds,
+            expiresAt: device.expiresAt,
+          });
+        }
         const device = await requestDeviceCode(oauthConfig);
         const intervalSeconds = Number(device.interval ?? 5) || 5;
         const expiresAt = deviceExpiresAt(device);
@@ -962,7 +1074,14 @@ export function createAdminRouter(options: AdminRoutesOptions) {
   router.get("/oauth/status/:flowId", async (req, res) => {
     const flow = await oauthStore.get(req.params.flowId);
     if (!flow) return res.status(404).json({ error: "not found" });
-    res.json({ ok: true, flow: { ...flow, codeVerifier: undefined } });
+    res.json({
+      ok: true,
+      flow: {
+        ...flow,
+        codeVerifier: undefined,
+        deviceAuthId: undefined,
+      },
+    });
   });
 
   router.post("/oauth/complete", async (req, res) => {
@@ -975,6 +1094,11 @@ export function createAdminRouter(options: AdminRoutesOptions) {
 
     const flow = await oauthStore.get(flowId);
     if (!flow) return res.status(404).json({ error: "flow not found" });
+    if (flow.provider === "xai") {
+      return res.status(400).json({
+        error: "Grok Build OAuth uses the device-code completion endpoint",
+      });
+    }
 
     const parsed = parseAuthorizationInput(input);
     if (!parsed.code)
@@ -1017,6 +1141,50 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     }
 
     try {
+      if (flow.provider === "xai") {
+        if (!flow.deviceAuthId) {
+          throw new Error("xAI device authorization is missing its device code");
+        }
+        const result = await pollXaiDeviceCode(
+          flow.deviceAuthId,
+          flow.intervalSeconds,
+        );
+        if (result.status === "pending") {
+          await oauthStore.update(flow.id, {
+            intervalSeconds: result.intervalSeconds,
+          });
+          return res.json({
+            ok: true,
+            status: "pending",
+            intervalSeconds: result.intervalSeconds,
+          });
+        }
+        const existing = flow.targetAccountId
+          ? (await store.listAccounts()).find(
+              (account) => account.id === flow.targetAccountId,
+            )
+          : undefined;
+        if (flow.targetAccountId && !existing) {
+          throw new Error("target xAI account not found for reauth");
+        }
+        const account = accountFromXaiOAuth(flow, result.token, existing);
+        await refreshUsageIfNeeded(
+          account,
+          account.baseUrl ?? XAI_BASE_URL,
+          true,
+        );
+        await store.upsertAccount(account);
+        await oauthStore.update(flow.id, {
+          status: "success",
+          completedAt: Date.now(),
+          accountId: account.id,
+        });
+        return res.json({
+          ok: true,
+          status: "success",
+          account: redact(account),
+        });
+      }
       console.log("[oauth-device] polling OpenAI", {
         flowId: flow.id,
         userCode: flow.userCode,

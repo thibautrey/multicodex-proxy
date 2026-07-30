@@ -16,6 +16,10 @@ import {
   UPSTREAM_PATH,
   USAGE_STALE_MAX_AGE_MS,
   USAGE_STALE_WHILE_REVALIDATE,
+  XAI_BASE_URL,
+  XAI_CHAT_COMPLETIONS_PATH,
+  XAI_MODELS_PATH,
+  XAI_RESPONSES_PATH,
 } from "../../config.js";
 import {
   buildModelsListResponse,
@@ -104,6 +108,7 @@ import {
 } from "../../responses/stream-diagnostics.js";
 import { createSSEStreamTap } from "../../responses/sse-stream-tap.js";
 import { createUpstreamPayloadSerializer } from "../../responses/upstream-payload-serializer.js";
+import { buildXaiUpstreamHeaders } from "../../xai.js";
 
 type ProxyRoutesOptions = {
   store: AccountStore;
@@ -208,7 +213,14 @@ type ImageTraceSummary = {
 export function buildUpstreamRequestHeaders(
   provider: ProviderId,
   accessToken: string,
+  options: {
+    model?: string;
+    conversationId?: string;
+  } = {},
 ): Record<string, string> {
+  if (provider === "xai") {
+    return buildXaiUpstreamHeaders(accessToken, options);
+  }
   const isOpenAI = provider === "openai";
   return {
     "content-type": "application/json",
@@ -476,6 +488,7 @@ function modelObject(
   const maxOutputTokens = firstKnownNumber(upstreamObject, [
     "max_output_tokens",
     "maxOutputTokens",
+    "max_completion_tokens",
   ]);
   const toolTypesRaw = upstreamObject.tool_types;
   const supportedToolTypes = Array.isArray(toolTypesRaw)
@@ -487,6 +500,8 @@ function modelObject(
   const supportsReasoning =
     typeof upstreamObject.supports_reasoning === "boolean"
       ? upstreamObject.supports_reasoning
+      : typeof upstreamObject.supports_reasoning_effort === "boolean"
+        ? upstreamObject.supports_reasoning_effort
       : id.includes("gpt-5") || id.includes("codex");
 
   return {
@@ -530,6 +545,9 @@ function accountBaseUrl(
   }
   if (provider === "mistral") return mistralBaseUrl;
   if (provider === "zai") return zaiBaseUrl;
+  if (provider === "xai") {
+    return trimTrailingSlash(account.baseUrl ?? XAI_BASE_URL);
+  }
   return openaiBaseUrl;
 }
 
@@ -599,6 +617,16 @@ function isModelExcludedFromProvider(model: string | undefined, provider: Provid
   return excluded ? excluded.has(key) : false;
 }
 
+function xaiModelEntries(payload: any): any[] {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.data)) return payload.data;
+  if (!payload?.models || typeof payload.models !== "object") return [];
+  return Object.entries(payload.models).map(([id, value]: [string, any]) => ({
+    id,
+    ...(value?.info && typeof value.info === "object" ? value.info : value),
+  }));
+}
+
 function inferProviderFromModel(
   model: string | undefined,
   discoveredModels: ExposedModel[],
@@ -646,6 +674,10 @@ function inferProviderFromModel(
     key.startsWith("codegeex")
   ) {
     return "zai";
+  }
+
+  if (key.startsWith("grok-") || key === "grok") {
+    return "xai";
   }
 
   return "openai";
@@ -769,10 +801,15 @@ async function refreshModels(
     for (const account of activeAccounts) {
       const provider = normalizeProvider(account);
       try {
-        const headers: Record<string, string> = {
-          authorization: `Bearer ${account.accessToken}`,
-          accept: "application/json",
-        };
+        const headers: Record<string, string> =
+          provider === "xai"
+            ? buildXaiUpstreamHeaders(account.accessToken, {
+                accept: "application/json",
+              })
+            : {
+                authorization: `Bearer ${account.accessToken}`,
+                accept: "application/json",
+              };
         let url = "";
 
         if (provider === "openai") {
@@ -782,6 +819,15 @@ async function refreshModels(
           url = `${accountBaseUrl(account, openaiBaseUrl, mistralBaseUrl, zaiBaseUrl)}/backend-api/codex/models?client_version=${encodeURIComponent(
             MODELS_CLIENT_VERSION,
           )}`;
+        } else if (provider === "xai") {
+          const baseUrl = accountBaseUrl(
+            account,
+            openaiBaseUrl,
+            mistralBaseUrl,
+            zaiBaseUrl,
+          );
+          if (!baseUrl) continue;
+          url = `${baseUrl}${XAI_MODELS_PATH}`;
         } else {
           const baseUrl = accountBaseUrl(
             account,
@@ -819,7 +865,12 @@ async function refreshModels(
           continue;
         }
 
-        const upstream = Array.isArray(json?.data) ? json.data : [];
+        const upstream =
+          provider === "xai"
+            ? xaiModelEntries(json)
+            : Array.isArray(json?.data)
+              ? json.data
+              : [];
         for (const entry of upstream) {
           const id =
             typeof entry?.id === "string" && entry.id.trim()
@@ -1149,7 +1200,13 @@ function buildRoutingCandidates(
   const fallbackProvider = inferProviderFromModel(requestModel, discoveredModels);
   if (isModelExcludedFromProvider(requestModel, fallbackProvider)) {
     // Try providers in order until we find a non-excluded one
-    const tryProviders: ProviderId[] = ["openai", "openai-compatible", "mistral", "zai"];
+    const tryProviders: ProviderId[] = [
+      "openai",
+      "openai-compatible",
+      "mistral",
+      "zai",
+      "xai",
+    ];
     for (const p of tryProviders) {
       if (!isModelExcludedFromProvider(requestModel, p)) {
         return [
@@ -1495,6 +1552,11 @@ export function isStreamingUpstreamResponse(
     clientRequestedStream &&
     upstreamOk &&
     provider === "openai" &&
+    hasBody
+  ) || (
+    clientRequestedStream &&
+    upstreamOk &&
+    provider === "xai" &&
     hasBody
   );
 }
@@ -2018,6 +2080,10 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         const headers = buildUpstreamRequestHeaders(
           candidate.provider,
           selected.accessToken,
+          {
+            model: candidate.resolvedModel,
+            conversationId: sessionId,
+          },
         );
         if (candidate.provider === "openai") {
           headers["OpenAI-Beta"] = "responses=experimental";
@@ -2047,6 +2113,10 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             upstreamPath = shouldSendChatCompletions
               ? "/v1/chat/completions"
               : "/v1/responses";
+          } else if (candidate.provider === "xai") {
+            upstreamPath = shouldSendChatCompletions
+              ? XAI_CHAT_COMPLETIONS_PATH
+              : XAI_RESPONSES_PATH;
           } else if (candidate.provider === "zai") {
             upstreamBaseUrl = zaiBaseUrl;
             upstreamPath = isResponsesCompactPath
@@ -3260,6 +3330,33 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             return;
           }
 
+          if (upstream.status === 401 && candidate.provider === "xai") {
+            const staleToken = selected.accessToken;
+            const expired: Account = {
+              ...selected,
+              expiresAt: 1,
+              state: {
+                ...selected.state,
+                needsTokenRefresh: true,
+              },
+            };
+            const refreshed = await ensureValidToken(expired, oauthConfig);
+            Object.assign(selected, refreshed);
+            await store.upsertAccount(selected);
+            if (refreshed.accessToken !== staleToken) {
+              tried.delete(selected.id);
+              i -= 1;
+              continue;
+            }
+            selected.state = {
+              ...selected.state,
+              authBlockedUntil: Date.now() + 60_000,
+            };
+            rememberError(selected, "xAI rejected the subscription credential");
+            await store.upsertAccount(selected);
+            continue;
+          }
+
           // Handle z.ai specific business error codes
           const zaiErrorCode =
             candidate.provider === "zai" ? parseZaiErrorCode(text) : null;
@@ -3278,7 +3375,11 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             continue;
           }
 
-          if (upstream.status === 429 || isQuotaErrorText(text)) {
+          if (
+            upstream.status === 402 ||
+            upstream.status === 429 ||
+            isQuotaErrorText(text)
+          ) {
             markQuotaHit(selected, blockModel, `quota/rate-limit: ${upstream.status}`);
             await store.upsertAccount(selected);
             continue;

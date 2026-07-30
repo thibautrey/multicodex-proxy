@@ -50,6 +50,7 @@ export function createOAuthState(
   email: string,
   targetAccountId?: string,
   method: "browser" | "device" = "browser",
+  provider: "openai" | "xai" = "openai",
 ): OAuthFlowState {
   return {
     id: randomUUID(),
@@ -57,6 +58,7 @@ export function createOAuthState(
     codeVerifier: base64url(randomBytes(32)),
     createdAt: Date.now(),
     method,
+    provider,
     targetAccountId,
     status: "pending",
   };

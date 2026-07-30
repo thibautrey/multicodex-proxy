@@ -480,6 +480,12 @@ export default function App() {
     await loadBase();
   };
 
+  const importGrokAuth = async () => {
+    const result = await api("/admin/grok/import", { method: "POST" });
+    await loadBase();
+    return result;
+  };
+
   const patchSettings = async (body: Partial<StoreSettings>) => {
     await api("/admin/settings", { method: "PATCH", body: JSON.stringify(body) });
     await loadBase();
@@ -489,10 +495,11 @@ export default function App() {
     email: string,
     accountId?: string,
     method: "browser" | "device" = "browser",
+    provider: "openai" | "xai" = "openai",
   ) => {
     return api("/admin/oauth/start", {
       method: "POST",
-      body: JSON.stringify({ email, accountId, method }),
+      body: JSON.stringify({ email, accountId, method, provider }),
     });
   };
 
@@ -723,6 +730,7 @@ export default function App() {
               cancelScheduledRateLimitResetCredit
             }
             createAccount={createAccount}
+            importGrokAuth={importGrokAuth}
             patchSettings={patchSettings}
             startOAuth={startOAuth}
             pollDeviceOAuth={pollDeviceOAuth}

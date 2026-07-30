@@ -17,6 +17,7 @@ services:
       - MODELS_CLIENT_VERSION=1.0.0
       - MODELS_CACHE_MS=600000
       - ADMIN_TOKEN=change-me
+      - PROXY_API_KEY=${PROXY_API_KEY:-}
       - OAUTH_CLIENT_ID=app_EMoamEEZ73f0CkXaXp7hrann
       - OAUTH_AUTHORIZATION_URL=https://auth.openai.com/oauth/authorize
       - OAUTH_TOKEN_URL=https://auth.openai.com/oauth/token

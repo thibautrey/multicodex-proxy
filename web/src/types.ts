@@ -1,6 +1,6 @@
 export type Account = {
   id: string;
-  provider?: "openai" | "openai-compatible" | "mistral" | "zai";
+  provider?: "openai" | "openai-compatible" | "mistral" | "zai" | "xai";
   upstreamMode?: "responses" | "chat/completions";
   compatibilityMode?: "auto" | "responses" | "chat-completions-bridge";
   email?: string;
@@ -8,6 +8,10 @@ export type Account = {
   accessToken?: string;
   refreshToken?: string;
   chatgptAccountId?: string;
+  xaiUserId?: string;
+  xaiAuthScope?: string;
+  oidcIssuer?: string;
+  oidcClientId?: string;
   baseUrl?: string;
   priority?: number;
   usage?: any;
@@ -18,6 +22,7 @@ export type Account = {
     recentErrors?: Array<{ at: number; message: string }>;
     recentEmptyResponses?: Array<{ at: number; message: string }>;
     needsTokenRefresh?: boolean;
+    authBlockedUntil?: number;
     lastUsageRefreshAt?: number;
     scheduledWeeklyReset?: {
       scheduledAt: number;
@@ -112,8 +117,10 @@ export type ExposedModel = {
   id: string;
   owned_by?: string;
   metadata?: {
-    provider?: "openai" | "openai-compatible" | "mistral" | "zai";
-    provider_candidates?: Array<"openai" | "openai-compatible" | "mistral" | "zai">;
+    provider?: "openai" | "openai-compatible" | "mistral" | "zai" | "xai";
+    provider_candidates?: Array<
+      "openai" | "openai-compatible" | "mistral" | "zai" | "xai"
+    >;
     is_alias?: boolean;
     alias_targets?: string[];
   };

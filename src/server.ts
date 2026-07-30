@@ -18,6 +18,8 @@ import {
   ZAI_BASE_URL,
   ZAI_UPSTREAM_PATH,
   ZAI_COMPACT_UPSTREAM_PATH,
+  XAI_BASE_URL,
+  XAI_RESPONSES_PATH,
   STORE_PATH,
   TRACE_FILE_PATH,
   TRACE_STATS_HISTORY_PATH,
@@ -26,6 +28,7 @@ import {
   UPSTREAM_PATH,
   OAUTH_STATE_PATH,
   PORT,
+  PROXY_API_KEY,
   REQUEST_BODY_LIMIT,
 } from "./config.js";
 import { createBodyParserMiddleware } from "./middleware/decompression.js";
@@ -202,6 +205,75 @@ function adminGuard(
   next();
 }
 
+function proxyApiKeyFromHeaders(
+  headers: http.IncomingHttpHeaders,
+): string | undefined {
+  const direct = headers["x-api-key"];
+  if (typeof direct === "string") return direct;
+  if (Array.isArray(direct)) return direct[0];
+  const authorization = headers.authorization;
+  if (typeof authorization !== "string") return undefined;
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  return match?.[1];
+}
+
+function hasProxyApiKey(headers: http.IncomingHttpHeaders): boolean {
+  if (!PROXY_API_KEY) return true;
+  const token = proxyApiKeyFromHeaders(headers);
+  return Boolean(token && safeEqual(token, PROXY_API_KEY));
+}
+
+function proxyGuard(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+) {
+  if (!PROXY_API_KEY || hasAdminSession(req) || hasProxyApiKey(req.headers)) {
+    return next();
+  }
+  return res.status(401).json({
+    error: {
+      message: "Invalid or missing proxy API key",
+      type: "authentication_error",
+      code: "invalid_api_key",
+    },
+  });
+}
+
+function rootProxyGuard(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+) {
+  const pathOrUrl = req.path || "/";
+  const accepts = String(req.header("accept") ?? "").toLowerCase();
+  const isKnownProxyEndpoint =
+    pathOrUrl === "/chat/completions" ||
+    pathOrUrl === "/responses" ||
+    pathOrUrl === "/responses/compact" ||
+    pathOrUrl === "/models" ||
+    pathOrUrl.startsWith("/models/") ||
+    pathOrUrl === "/api/v1/models" ||
+    pathOrUrl.startsWith("/api/v1/models/") ||
+    pathOrUrl === "/api/tags" ||
+    pathOrUrl === "/version" ||
+    pathOrUrl === "/props" ||
+    pathOrUrl === "/v1/props";
+  if (
+    pathOrUrl === "/" ||
+    pathOrUrl === "/health" ||
+    pathOrUrl === "/favicon.ico" ||
+    pathOrUrl.startsWith("/admin") ||
+    pathOrUrl.startsWith("/assets") ||
+    (req.method === "GET" &&
+      accepts.includes("text/html") &&
+      !isKnownProxyEndpoint)
+  ) {
+    return next();
+  }
+  return proxyGuard(req, res, next);
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const webDist = path.resolve(__dirname, "../web-dist");
 
@@ -233,8 +305,8 @@ app.delete("/admin/session", (req, res) => {
 });
 
 app.use("/admin", adminGuard, adminRouter);
-app.use("/v1", proxyRouter);
-app.use("/", proxyRouter);
+app.use("/v1", proxyGuard, proxyRouter);
+app.use("/", rootProxyGuard, proxyRouter);
 
 app.use(express.static(webDist));
 app.get("*", (req, res, next) => {
@@ -262,11 +334,12 @@ const server = http.createServer(app);
 installResponsesWebsocketProxy({
   server,
   port: PORT,
+  authorize: (req) => hasProxyApiKey(req.headers),
 });
 
 server.listen(PORT, () => {
   console.log(`multivibe listening on :${PORT}`);
   console.log(
-    `store=${STORE_PATH} oauth=${OAUTH_STATE_PATH} trace=${TRACE_FILE_PATH} traceStats=${TRACE_STATS_HISTORY_PATH} redirect=${oauthConfig.redirectUri} openaiUpstream=${CHATGPT_BASE_URL}${UPSTREAM_PATH} mistralUpstream=${MISTRAL_BASE_URL}${MISTRAL_UPSTREAM_PATH} zaiUpstream=${ZAI_BASE_URL}${ZAI_UPSTREAM_PATH}`,
+    `store=${STORE_PATH} oauth=${OAUTH_STATE_PATH} trace=${TRACE_FILE_PATH} traceStats=${TRACE_STATS_HISTORY_PATH} redirect=${oauthConfig.redirectUri} openaiUpstream=${CHATGPT_BASE_URL}${UPSTREAM_PATH} mistralUpstream=${MISTRAL_BASE_URL}${MISTRAL_UPSTREAM_PATH} zaiUpstream=${ZAI_BASE_URL}${ZAI_UPSTREAM_PATH} xaiUpstream=${XAI_BASE_URL}${XAI_RESPONSES_PATH}`,
   );
 });

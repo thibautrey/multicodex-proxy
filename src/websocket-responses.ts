@@ -6,6 +6,7 @@ import { createWebsocketSSEMessageRelay } from "./responses/websocket-sse-relay.
 type InstallResponsesWebsocketProxyOptions = {
   server: http.Server;
   port: number;
+  authorize?: (req: http.IncomingMessage) => boolean;
 };
 
 type FunctionCallRecord = {
@@ -175,10 +176,7 @@ function makeWarmupResponse(frame: ResponseCreateFrame) {
 }
 
 function isValidAuthorizationHeader(value: string): boolean {
-  const BearerPattern = /^Bearer\s+/i;
-  if (!BearerPattern.test(value)) return false;
-  const token = value.replace(BearerPattern, "");
-  return token.length > 0 && /^[A-Za-z0-9_.-]+$/.test(token);
+  return /^Bearer\s+\S+$/i.test(value);
 }
 
 async function relaySseAsWebsocket(
@@ -309,6 +307,13 @@ async function forwardFrame(
     }
     headers.set("authorization", authHeader);
   }
+  const xApiKeyHeader =
+    typeof req.headers["x-api-key"] === "string"
+      ? req.headers["x-api-key"]
+      : Array.isArray(req.headers["x-api-key"])
+        ? req.headers["x-api-key"][0]
+        : "";
+  if (xApiKeyHeader) headers.set("x-api-key", xApiKeyHeader);
   headers.set("content-type", "application/json");
   headers.set("accept", "text/event-stream");
 
@@ -384,12 +389,20 @@ async function forwardFrame(
 export function installResponsesWebsocketProxy({
   server,
   port,
+  authorize,
 }: InstallResponsesWebsocketProxyOptions) {
   const wss = new WebSocketServer({ noServer: true });
 
   server.on("upgrade", (req, socket, head) => {
     const url = req.url ? new URL(req.url, `http://${req.headers.host ?? "localhost"}`) : null;
     if (!url || (url.pathname !== "/v1/responses" && url.pathname !== "/responses")) {
+      socket.destroy();
+      return;
+    }
+    if (authorize && !authorize(req)) {
+      socket.write(
+        "HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+      );
       socket.destroy();
       return;
     }

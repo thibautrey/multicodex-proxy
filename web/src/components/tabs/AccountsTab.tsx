@@ -18,18 +18,25 @@ type Props = {
   scheduleRateLimitResetCredit: (id: string) => Promise<void>;
   cancelScheduledRateLimitResetCredit: (id: string) => Promise<void>;
   createAccount: (body: any) => Promise<void>;
+  importGrokAuth: () => Promise<any>;
   patchSettings: (body: Partial<StoreSettings>) => Promise<void>;
   startOAuth: (
     email: string,
     accountId?: string,
     method?: OAuthMethod,
+    provider?: "openai" | "xai",
   ) => Promise<any>;
   pollDeviceOAuth: (flowId: string) => Promise<any>;
   completeOAuth: (flowId: string, input: string) => Promise<any>;
   oauthRedirectUri: string;
 };
 
-type AccountProvider = "openai" | "openai-compatible" | "mistral" | "zai";
+type AccountProvider =
+  | "openai"
+  | "openai-compatible"
+  | "mistral"
+  | "zai"
+  | "xai";
 type OAuthMethod = "browser" | "device";
 
 type EditAccountState = {
@@ -61,10 +68,11 @@ type OAuthDialogState = {
   accountId?: string;
   pendingPriority?: number;
   pendingEnabled?: boolean;
+  provider: "openai" | "xai";
 };
 
 function isOAuthProvider(provider: AccountProvider) {
-  return provider === "openai";
+  return provider === "openai" || provider === "xai";
 }
 
 function isManualTokenProvider(provider: AccountProvider) {
@@ -74,6 +82,7 @@ function isManualTokenProvider(provider: AccountProvider) {
 function providerFavicon(provider?: string) {
   if (provider === "mistral") return "https://mistral.ai/favicon.ico";
   if (provider === "zai") return "https://z.ai/favicon.ico";
+  if (provider === "xai") return "https://grok.com/favicon.ico";
   return "https://openai.com/favicon.ico";
 }
 
@@ -81,6 +90,7 @@ function providerLabel(provider?: string) {
   if (provider === "mistral") return "Mistral";
   if (provider === "openai-compatible") return "OpenAI-compatible";
   if (provider === "zai") return "z.ai";
+  if (provider === "xai") return "Grok Build";
   return "OpenAI";
 }
 
@@ -110,6 +120,7 @@ export function AccountsTab(props: Props) {
     scheduleRateLimitResetCredit,
     cancelScheduledRateLimitResetCredit,
     createAccount,
+    importGrokAuth,
     patchSettings,
     startOAuth,
     pollDeviceOAuth,
@@ -307,6 +318,7 @@ export function AccountsTab(props: Props) {
   const openOAuthDialog = async (options: {
     email: string;
     method: OAuthMethod;
+    provider: "openai" | "xai";
     mode: "create" | "reauth";
     accountId?: string;
     pendingPriority?: number;
@@ -316,6 +328,7 @@ export function AccountsTab(props: Props) {
       options.email,
       options.accountId,
       options.method,
+      options.provider,
     );
     const flowId = result?.flowId as string | undefined;
     if (!flowId) throw new Error("Missing OAuth flow details from start response");
@@ -349,6 +362,7 @@ export function AccountsTab(props: Props) {
       accountId: options.accountId,
       pendingPriority: options.pendingPriority,
       pendingEnabled: options.pendingEnabled,
+      provider: options.provider,
     });
     sessionStorage.setItem(
       "multivibe-oauth-pending",
@@ -359,6 +373,7 @@ export function AccountsTab(props: Props) {
         accountId: options.accountId,
         pendingPriority: options.pendingPriority,
         pendingEnabled: options.pendingEnabled,
+        provider: options.provider,
         timestamp: Date.now(),
       }),
     );
@@ -371,12 +386,13 @@ export function AccountsTab(props: Props) {
 
   const submitManualAccount = async () => {
     if (isOAuthProvider(provider)) {
-      if (!manualEmail.trim()) return;
+      if (provider === "openai" && !manualEmail.trim()) return;
       setIsSubmitting(true);
       try {
         await openOAuthDialog({
           email: manualEmail.trim(),
-          method: manualOAuthMethod,
+          method: provider === "xai" ? "device" : manualOAuthMethod,
+          provider,
           mode: "create",
           pendingPriority: Number(manualPriority) || 0,
           pendingEnabled: manualEnabled,
@@ -415,6 +431,8 @@ export function AccountsTab(props: Props) {
         ? "mistral"
         : account.provider === "zai"
           ? "zai"
+        : account.provider === "xai"
+          ? "xai"
         : account.provider === "openai-compatible"
           ? "openai-compatible"
           : "openai";
@@ -430,18 +448,26 @@ export function AccountsTab(props: Props) {
       priority: String(account.priority ?? 0),
       enabled: account.enabled,
     });
+    setEditOAuthMethod(nextProvider === "xai" ? "device" : "browser");
   };
 
   const saveEditedAccount = async () => {
     if (!editingAccount) return;
     if (isOAuthProvider(editingAccount.provider)) {
-      if (!editingAccount.email.trim()) return;
+      if (
+        editingAccount.provider === "openai" &&
+        !editingAccount.email.trim()
+      ) {
+        return;
+      }
       setIsSavingEdit(true);
       try {
         closeEditModal();
         await openOAuthDialog({
           email: editingAccount.email.trim(),
-          method: editOAuthMethod,
+          method:
+            editingAccount.provider === "xai" ? "device" : editOAuthMethod,
+          provider: editingAccount.provider,
           mode: "reauth",
           accountId: editingAccount.id,
         });
@@ -521,9 +547,10 @@ export function AccountsTab(props: Props) {
     }
     setOauthBusyId(account.id);
     try {
-      await openOAuthDialog({
-        email: account.email.trim(),
-        method: "browser",
+        await openOAuthDialog({
+          email: account.email.trim(),
+          method: "browser",
+          provider: "openai",
         mode: "reauth",
         accountId: account.id,
       });
@@ -543,9 +570,10 @@ export function AccountsTab(props: Props) {
     }
     setOauthBusyId(account.id);
     try {
-      await openOAuthDialog({
-        email: account.email.trim(),
-        method: "device",
+        await openOAuthDialog({
+          email: account.email.trim(),
+          method: "device",
+          provider: "openai",
         mode: "reauth",
         accountId: account.id,
       });
@@ -571,6 +599,9 @@ export function AccountsTab(props: Props) {
   ).length;
   const zaiCount = accounts.filter(
     (account) => account.provider === "zai",
+  ).length;
+  const xaiCount = accounts.filter(
+    (account) => account.provider === "xai",
   ).length;
   const blockedCount = accounts.filter(
     (account) => activeModelBlocks(account).length > 0,
@@ -687,6 +718,7 @@ export function AccountsTab(props: Props) {
             </span>
             <span className="badge">{mistralCount} Mistral</span>
             <span className="badge">{zaiCount} z.ai</span>
+            <span className="badge">{xaiCount} Grok Build</span>
             <button className="btn" onClick={() => setShowAddAccount(true)}>
               Add account
             </button>
@@ -943,7 +975,7 @@ export function AccountsTab(props: Props) {
                 <tr>
                   <td colSpan={7} className="muted empty-row">
                     No accounts configured yet. Add an OpenAI,
-                    OpenAI-compatible, Mistral, or z.ai account to expose models and
+                    OpenAI-compatible, Mistral, z.ai, or Grok Build account to expose models and
                     enable routing.
                   </td>
                 </tr>
@@ -967,14 +999,17 @@ export function AccountsTab(props: Props) {
                 Provider
                 <select
                   value={provider}
-                  onChange={(e) =>
-                    setProvider(e.target.value as AccountProvider)
-                  }
+                  onChange={(e) => {
+                    const next = e.target.value as AccountProvider;
+                    setProvider(next);
+                    if (next === "xai") setManualOAuthMethod("device");
+                  }}
                 >
                   <option value="openai">OpenAI</option>
                   <option value="openai-compatible">OpenAI-compatible</option>
                   <option value="mistral">Mistral</option>
                   <option value="zai">z.ai</option>
+                  <option value="xai">Grok Build (subscription)</option>
                 </select>
               </label>
               <label>
@@ -987,14 +1022,19 @@ export function AccountsTab(props: Props) {
               </label>
               {isOAuthProvider(provider) && (
                 <label>
-                  OpenAI login method
+                  {provider === "xai"
+                    ? "Grok Build login method"
+                    : "OpenAI login method"}
                   <select
                     value={manualOAuthMethod}
+                    disabled={provider === "xai"}
                     onChange={(e) =>
                       setManualOAuthMethod(e.target.value as OAuthMethod)
                     }
                   >
-                    <option value="browser">Browser callback</option>
+                    {provider === "openai" && (
+                      <option value="browser">Browser callback</option>
+                    )}
                     <option value="device">Device code</option>
                   </select>
                 </label>
@@ -1047,9 +1087,9 @@ export function AccountsTab(props: Props) {
                 </>
               ) : (
                 <div className="muted">
-                  OpenAI onboarding uses OAuth. Browser callback opens the
-                  login page and asks for the callback URL. Device code shows a
-                  one-time code and completes automatically after approval.
+                  {provider === "xai"
+                    ? "Grok Build uses xAI device OAuth and the SuperGrok / X Premium+ subscription quota."
+                    : "OpenAI onboarding uses OAuth. Browser callback opens the login page and asks for the callback URL. Device code shows a one-time code and completes automatically after approval."}
                 </div>
               )}
               <label>
@@ -1075,7 +1115,7 @@ export function AccountsTab(props: Props) {
                 disabled={
                   isSubmitting ||
                   (isOAuthProvider(provider)
-                    ? !manualEmail.trim()
+                    ? provider === "openai" && !manualEmail.trim()
                     : !manualAccessToken.trim() ||
                       (provider === "openai-compatible" &&
                         !manualBaseUrl.trim()))
@@ -1087,9 +1127,32 @@ export function AccountsTab(props: Props) {
                     ? "Starting OAuth..."
                     : "Creating..."
                   : isOAuthProvider(provider)
-                    ? "Start OAuth"
+                    ? provider === "xai"
+                      ? "Start Grok device login"
+                      : "Start OAuth"
                     : "Create account"}
               </button>
+              {provider === "xai" && (
+                <button
+                  className="btn ghost"
+                  disabled={isSubmitting}
+                  onClick={() => {
+                    setIsSubmitting(true);
+                    void importGrokAuth()
+                      .then(() => closeModal())
+                      .catch((error) => {
+                        window.alert(
+                          error instanceof Error
+                            ? error.message
+                            : String(error),
+                        );
+                      })
+                      .finally(() => setIsSubmitting(false));
+                  }}
+                >
+                  Import configured auth.json
+                </button>
+              )}
               <button className="btn ghost" onClick={closeModal}>
                 Cancel
               </button>
@@ -1122,14 +1185,19 @@ export function AccountsTab(props: Props) {
               </label>
               {isOAuthProvider(editingAccount.provider) && (
                 <label>
-                  OpenAI reauth method
+                  {editingAccount.provider === "xai"
+                    ? "Grok Build reauth method"
+                    : "OpenAI reauth method"}
                   <select
                     value={editOAuthMethod}
+                    disabled={editingAccount.provider === "xai"}
                     onChange={(e) =>
                       setEditOAuthMethod(e.target.value as OAuthMethod)
                     }
                   >
-                    <option value="browser">Browser callback</option>
+                    {editingAccount.provider === "openai" && (
+                      <option value="browser">Browser callback</option>
+                    )}
                     <option value="device">Device code</option>
                   </select>
                 </label>
@@ -1208,9 +1276,9 @@ export function AccountsTab(props: Props) {
                 </>
               ) : (
                 <div className="muted">
-                  OpenAI reauth uses OAuth. Save changes to open the login flow,
-                  then paste the full callback URL instead of editing tokens
-                  manually.
+                  {editingAccount.provider === "xai"
+                    ? "Grok Build reauth uses xAI device OAuth. Save changes, then approve the one-time code."
+                    : "OpenAI reauth uses OAuth. Save changes to open the login flow, then paste the full callback URL instead of editing tokens manually."}
                 </div>
               )}
               <label>
@@ -1248,7 +1316,8 @@ export function AccountsTab(props: Props) {
                 disabled={
                   isSavingEdit ||
                   (isOAuthProvider(editingAccount.provider)
-                    ? !editingAccount.email.trim()
+                    ? editingAccount.provider === "openai" &&
+                      !editingAccount.email.trim()
                     : !editingAccount.accessToken.trim() ||
                       (editingAccount.provider === "openai-compatible" &&
                         !editingAccount.baseUrl.trim()))
@@ -1260,7 +1329,9 @@ export function AccountsTab(props: Props) {
                     ? "Starting OAuth..."
                     : "Saving..."
                   : isOAuthProvider(editingAccount.provider)
-                    ? "Start reauth"
+                    ? editingAccount.provider === "xai"
+                      ? "Start Grok reauth"
+                      : "Start reauth"
                     : "Save changes"}
               </button>
               <button className="btn ghost" onClick={closeEditModal}>
@@ -1277,8 +1348,12 @@ export function AccountsTab(props: Props) {
             <div className="inline wrap row-between">
               <h2>
                 {oauthDialog.mode === "create"
-                  ? "Complete OpenAI OAuth"
-                  : "Complete OpenAI reauth"}
+                  ? `Complete ${
+                      oauthDialog.provider === "xai" ? "Grok Build" : "OpenAI"
+                    } OAuth`
+                  : `Complete ${
+                      oauthDialog.provider === "xai" ? "Grok Build" : "OpenAI"
+                    } reauth`}
               </h2>
               <button className="btn ghost" onClick={closeOauthDialog}>
                 Close
@@ -1286,7 +1361,7 @@ export function AccountsTab(props: Props) {
             </div>
             <div className="grid modal-grid">
               <label>
-                Email
+                Email {oauthDialog.provider === "xai" ? "(from xAI after approval)" : ""}
                 <input value={oauthDialog.email} disabled />
               </label>
               {oauthDialog.method === "device" ? (
@@ -1330,7 +1405,9 @@ export function AccountsTab(props: Props) {
             </div>
             <div className="muted">
               {oauthDialog.method === "device"
-                ? "Open the verification URL, enter the one-time code, and approve the OpenAI login. This dialog will complete automatically after approval. Do not share this code."
+                ? `Open the verification URL, enter the one-time code, and approve the ${
+                    oauthDialog.provider === "xai" ? "xAI" : "OpenAI"
+                  } login. This dialog will complete automatically after approval. Do not share this code.`
                 : "Complete the OpenAI login in the opened browser tab. When the browser reaches the callback page, copy the full URL and paste it here. Do not paste access or refresh tokens."}
             </div>
             <div className="inline wrap">

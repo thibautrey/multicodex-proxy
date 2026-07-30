@@ -30,11 +30,12 @@ MultiVibe acts as an OpenAI-compatible gateway that lets you route requests acro
   - HTTP response stream is `text/event-stream`
   - `/v1/responses` also accepts `ws://` / `wss://` and Codex-style JSON `response.create` frames
   - `/v1/chat/completions` and `/v1/responses/compact` remain HTTP-only
-- **Multi-account routing** with quota-aware failover across OpenAI, OpenAI-compatible, Mistral, and z.ai accounts
+- **Multi-account routing** with quota-aware failover across OpenAI, OpenAI-compatible, Mistral, z.ai, and Grok Build subscription accounts
 - **Model aliases** (for example `small`) with ordered fallback across providers/models, including optional effort-qualified targets like `high:gpt-5.3-codex`
 - **Image-aware routing override** that can route image-bearing requests to a chosen exposed model or alias while preserving the originally requested model in traces
-- **OAuth onboarding** from dashboard with browser callback or device-code flow
+- **OAuth onboarding** from dashboard with browser callback or device-code flow, including xAI device OAuth for SuperGrok / X Premium+
 - **Manual OpenAI-compatible connections** with custom `baseUrl` + API key
+- **Optional local proxy API key** for HTTP and WebSocket clients via `PROXY_API_KEY`
 - **Default OpenAI passthrough account** for root-path requests that are not handled by the OpenAI-compatible endpoints
 - **Persistent account storage** across container restarts
 - **Request tracing v2** (configurable recent-trace retention, server pagination, trace export, tokens/model/error/latency stats, optional full payload, and image payload diagnostics)
@@ -131,7 +132,35 @@ For headless or remote setups, choose **Device code** instead. The dashboard ope
 the verification page, shows a one-time code, and completes automatically after
 you approve the login.
 
-Mistral, z.ai, and generic OpenAI-compatible accounts use manual token/API-key entry in the dashboard. Generic OpenAI-compatible accounts also require a `baseUrl`.
+For Grok Build, choose **Grok Build (subscription)** and start the device login.
+The proxy sends the resulting subscription bearer to
+`https://cli-chat-proxy.grok.com/v1`, together with the same client headers as
+the official Grok Build CLI. It does not use `XAI_API_KEY` and therefore does
+not switch the account to pay-per-token API billing.
+
+An existing official CLI session can instead be imported with **Import
+configured auth.json**. The server reads `XAI_AUTH_PATH` (default
+`~/.grok/auth.json`) and ignores `xai::api_key` entries. In Docker, mount the
+file read-only and point `XAI_AUTH_PATH` at the container path. Deprecated
+pre-OIDC `web_login` entries are also rejected because the current Grok CLI no
+longer treats them as a reliable sampling credential:
+
+```yaml
+services:
+  multivibe:
+    environment:
+      - XAI_AUTH_PATH=/run/secrets/grok-auth.json
+    volumes:
+      - ${HOME}/.grok/auth.json:/run/secrets/grok-auth.json:ro
+```
+
+Device OAuth is preferred when the CLI and proxy may run concurrently. Refresh
+tokens rotate; importing the same session into independent stores can make one
+consumer stale after the other refreshes it.
+
+Mistral, z.ai, and generic OpenAI-compatible accounts use manual token/API-key
+entry in the dashboard. Generic OpenAI-compatible accounts also require a
+`baseUrl`.
 
 Default expected redirect URI:
 
@@ -147,6 +176,16 @@ http://localhost:1455/auth/callback
 
 ```bash
 curl http://localhost:1455/v1/models
+```
+
+When `PROXY_API_KEY` is set, send it as either a Bearer token or `x-api-key`.
+An authenticated dashboard session can still use the API. Configure
+`ADMIN_TOKEN` as well when using the dashboard so it can establish that
+session:
+
+```bash
+curl -H "Authorization: Bearer $PROXY_API_KEY" \
+  http://localhost:1455/v1/models
 ```
 
 Example model object returned:
@@ -316,6 +355,11 @@ OAuth admin endpoints:
 - `GET /admin/oauth/status/:flowId`
 - `POST /admin/oauth/complete`
 - `POST /admin/oauth/device/poll`
+- `POST /admin/grok/import`
+
+To start Grok Build device OAuth, call `POST /admin/oauth/start` with
+`{"provider":"xai","method":"device"}`. Poll the returned `flowId` through the
+same `/admin/oauth/device/poll` endpoint used by OpenAI device OAuth.
 
 ---
 
@@ -339,6 +383,7 @@ OAuth admin endpoints:
 | `MODELS_STALE_WHILE_REVALIDATE`   | `true`                                    | Serve a bounded stale model catalog while refreshing it in the background |
 | `MODELS_STALE_MAX_AGE_MS`         | `1800000`                                 | Maximum model-catalog age eligible for stale-while-revalidate       |
 | `ADMIN_TOKEN`                     | empty                                     | Admin endpoints auth token; empty disables the admin-token check    |
+| `PROXY_API_KEY`                   | empty                                     | Optional Bearer or `x-api-key` required by HTTP and WebSocket proxy endpoints |
 | `CHATGPT_BASE_URL`                | `https://chatgpt.com`                     | OpenAI/ChatGPT upstream base URL                                    |
 | `UPSTREAM_PATH`                   | `/backend-api/codex/responses`            | OpenAI upstream request path                                        |
 | `UPSTREAM_COMPACT_PATH`           | `/backend-api/codex/responses/compact`    | OpenAI upstream path for `/v1/responses/compact`                    |
@@ -348,6 +393,18 @@ OAuth admin endpoints:
 | `ZAI_BASE_URL`                    | `https://api.z.ai`                        | z.ai upstream base URL                                              |
 | `ZAI_UPSTREAM_PATH`               | `/v1/chat/completions`                    | z.ai upstream path for responses routed through chat completions    |
 | `ZAI_COMPACT_UPSTREAM_PATH`       | `/v1/chat/completions`                    | z.ai upstream path for compact responses                            |
+| `XAI_BASE_URL`                    | `https://cli-chat-proxy.grok.com/v1`      | Grok Build subscription upstream base URL                           |
+| `XAI_RESPONSES_PATH`              | `/responses`                              | Grok Build Responses upstream path                                  |
+| `XAI_CHAT_COMPLETIONS_PATH`       | `/chat/completions`                       | Grok Build Chat Completions upstream path                           |
+| `XAI_MODELS_PATH`                 | `/models`                                 | Grok Build model-discovery path                                     |
+| `XAI_AUTH_PATH`                   | `~/.grok/auth.json`                       | Official Grok CLI credential file read by the import action         |
+| `XAI_OAUTH_ISSUER`                | `https://auth.x.ai`                       | Trusted xAI OAuth issuer                                            |
+| `XAI_OAUTH_CLIENT_ID`             | official Grok Build client id             | OAuth client used for device login and refresh                      |
+| `XAI_OAUTH_SCOPES`                | official Grok Build scope set             | Comma- or space-separated xAI OAuth scopes                          |
+| `XAI_CLIENT_VERSION`              | `0.2.114`                                 | Grok CLI version header sent to subscription endpoints              |
+| `XAI_CLIENT_IDENTIFIER`           | `grok-pager`                              | Grok CLI client identifier header                                   |
+| `XAI_TOKEN_AUTH`                  | `xai-grok-cli`                            | xAI subscription token-auth selector                                |
+| `XAI_USER_AGENT`                  | generated Grok CLI user agent             | User-Agent sent to Grok Build endpoints                             |
 | `OAUTH_CLIENT_ID`                 | `app_EMoamEEZ73f0CkXaXp7hrann`            | OpenAI OAuth client id                                              |
 | `OAUTH_AUTHORIZATION_URL`         | `https://auth.openai.com/oauth/authorize` | OAuth authorize endpoint                                            |
 | `OAUTH_TOKEN_URL`                 | `https://auth.openai.com/oauth/token`     | OAuth token endpoint                                                |
@@ -373,6 +430,12 @@ OAuth admin endpoints:
 | `SENTRY_DSN`                      | empty                                     | Optional Sentry DSN; unset disables Sentry                          |
 | `SENTRY_ENVIRONMENT`              | `NODE_ENV` or `production`                | Sentry environment                                                  |
 | `SENTRY_TRACES_SAMPLE_RATE`       | `0.1`                                     | Sentry performance sampling rate                                    |
+
+---
+
+Grok Build subscription access is intended for the account owner or another
+trusted operator. Do not expose a subscription-backed instance as a public
+multi-tenant service, and review the current xAI terms before deployment.
 
 ---
 

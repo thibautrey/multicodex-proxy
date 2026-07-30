@@ -69,6 +69,8 @@ export function TracingTab(props: Props) {
       ? "https://mistral.ai/favicon.ico"
       : provider === "zai"
         ? "https://z.ai/favicon.ico"
+        : provider === "xai"
+          ? "https://grok.com/favicon.ico"
         : "https://openai.com/favicon.ico";
 
   const providerLabel = (provider?: string) =>
@@ -78,6 +80,8 @@ export function TracingTab(props: Props) {
         ? "OpenAI-compatible"
         : provider === "zai"
           ? "z.ai"
+          : provider === "xai"
+            ? "Grok Build"
           : "OpenAI";
 
   const formatTokenChartValue = (value: number | string | undefined) => formatTokenCount(Number(value ?? 0));

@@ -1,4 +1,9 @@
-export type ProviderId = "openai" | "openai-compatible" | "mistral" | "zai";
+export type ProviderId =
+  | "openai"
+  | "openai-compatible"
+  | "mistral"
+  | "zai"
+  | "xai";
 export type UpstreamMode = "responses" | "chat/completions";
 export type CompatibilityMode =
   | "auto"
@@ -29,6 +34,7 @@ export type AccountState = {
   recentErrors?: AccountError[];
   recentEmptyResponses?: AccountError[];
   needsTokenRefresh?: boolean;
+  authBlockedUntil?: number;
   lastUsageRefreshAt?: number;
   scheduledWeeklyReset?: {
     scheduledAt: number;
@@ -49,6 +55,10 @@ export type Account = {
   refreshToken?: string;
   expiresAt?: number;
   chatgptAccountId?: string;
+  xaiUserId?: string;
+  xaiAuthScope?: string;
+  oidcIssuer?: string;
+  oidcClientId?: string;
   baseUrl?: string;
   enabled: boolean;
   priority?: number;
@@ -80,6 +90,7 @@ export type OAuthFlowState = {
   codeVerifier: string;
   createdAt: number;
   method?: "browser" | "device";
+  provider?: "openai" | "xai";
   targetAccountId?: string;
   status: "pending" | "success" | "error";
   error?: string;

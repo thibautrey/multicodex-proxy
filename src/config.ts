@@ -44,7 +44,49 @@ export const ZAI_UPSTREAM_PATH =
   process.env.ZAI_UPSTREAM_PATH ?? "/v1/chat/completions";
 export const ZAI_COMPACT_UPSTREAM_PATH =
   process.env.ZAI_COMPACT_UPSTREAM_PATH ?? "/v1/chat/completions";
+export const XAI_BASE_URL =
+  process.env.XAI_BASE_URL ?? "https://cli-chat-proxy.grok.com/v1";
+export const XAI_RESPONSES_PATH =
+  process.env.XAI_RESPONSES_PATH ?? "/responses";
+export const XAI_CHAT_COMPLETIONS_PATH =
+  process.env.XAI_CHAT_COMPLETIONS_PATH ?? "/chat/completions";
+export const XAI_MODELS_PATH = process.env.XAI_MODELS_PATH ?? "/models";
+export const XAI_OAUTH_ISSUER =
+  process.env.XAI_OAUTH_ISSUER ?? "https://auth.x.ai";
+export const XAI_OAUTH_CLIENT_ID =
+  process.env.XAI_OAUTH_CLIENT_ID ??
+  "b1a00492-073a-47ea-816f-4c329264a828";
+export const XAI_OAUTH_SCOPES = (
+  process.env.XAI_OAUTH_SCOPES ??
+  [
+    "openid",
+    "profile",
+    "email",
+    "offline_access",
+    "grok-cli:access",
+    "api:access",
+    "conversations:read",
+    "conversations:write",
+    "workspaces:read",
+    "workspaces:write",
+  ].join(" ")
+)
+  .split(/[,\s]+/)
+  .map((scope) => scope.trim())
+  .filter(Boolean);
+export const XAI_CLIENT_VERSION =
+  process.env.XAI_CLIENT_VERSION ?? "0.2.114";
+export const XAI_CLIENT_IDENTIFIER =
+  process.env.XAI_CLIENT_IDENTIFIER ?? "grok-pager";
+export const XAI_TOKEN_AUTH =
+  process.env.XAI_TOKEN_AUTH ?? "xai-grok-cli";
+export const XAI_USER_AGENT =
+  process.env.XAI_USER_AGENT ??
+  `grok-pager/${XAI_CLIENT_VERSION} grok-shell/${XAI_CLIENT_VERSION} (${os.platform()}; ${os.arch()})`;
+export const XAI_AUTH_PATH =
+  process.env.XAI_AUTH_PATH ?? `${os.homedir()}/.grok/auth.json`;
 export const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
+export const PROXY_API_KEY = process.env.PROXY_API_KEY ?? "";
 export const MAX_ACCOUNT_RETRY_ATTEMPTS = Math.max(
   1,
   Number(process.env.MAX_ACCOUNT_RETRY_ATTEMPTS ?? 10),

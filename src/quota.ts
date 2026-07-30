@@ -24,6 +24,7 @@ export function normalizeProvider(account?: Pick<Account, "provider">): Provider
   if (account?.provider === "openai-compatible") return "openai-compatible";
   if (account?.provider === "mistral") return "mistral";
   if (account?.provider === "zai") return "zai";
+  if (account?.provider === "xai") return "xai";
   return "openai";
 }
 
@@ -265,6 +266,12 @@ export function isQuotaErrorText(s: string): boolean {
 
 export function accountUsable(a: Account, model?: string): boolean {
   if (!a.enabled) return false;
+  if (
+    typeof a.state?.authBlockedUntil === "number" &&
+    a.state.authBlockedUntil > Date.now()
+  ) {
+    return false;
+  }
   if (!model) return true;
   const modelKey = model.toLowerCase();
   const block = a.state?.modelBlocks?.[modelKey];
@@ -358,8 +365,13 @@ export async function refreshUsageIfNeeded(account: Account, chatgptBaseUrl: str
   const shouldUseZaiQuotaEndpoint =
     provider === "zai" || (provider === "openai-compatible" && isZaiQuotaBaseUrl(chatgptBaseUrl));
 
-  // Mistral and generic OpenAI-compatible providers don't have supported usage endpoints - use internal tracking
-  if (provider === "mistral" || (provider === "openai-compatible" && !shouldUseZaiQuotaEndpoint)) {
+  // These providers don't expose a compatible usage endpoint here. Keep
+  // routing based on locally observed errors and request usage.
+  if (
+    provider === "mistral" ||
+    provider === "xai" ||
+    (provider === "openai-compatible" && !shouldUseZaiQuotaEndpoint)
+  ) {
     account.usage = {
       ...account.usage,
       fetchedAt: Date.now(),
