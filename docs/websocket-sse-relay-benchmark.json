@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-30T10:08:16.002Z",
+  "benchmark": "synthetic_responses_sse_to_websocket_relay",
+  "samples": 1000,
+  "frameCount": 1285,
+  "chunkCount": 9,
+  "chunkBytes": 16384,
+  "streamBytes": 134114,
+  "calibration": "The 1,024 text-delta scale approximates the observed local /responses output p95 of 1,064 tokens; upstream chunk size is synthetic.",
+  "equivalence": {
+    "messages": true,
+    "functionMemory": true,
+    "messageCount": 1285,
+    "messageBytes": 77326
+  },
+  "workAvoided": {
+    "baselineJsonParses": 1285,
+    "candidateInspectableParses": 3,
+    "parseReductionRatio": 0.9976653696498055
+  },
+  "baseline": {
+    "medianMs": 1.018520500000136,
+    "p95Ms": 1.1995000000000005
+  },
+  "candidate": {
+    "medianMs": 0.7284584999999879,
+    "p95Ms": 0.8147920000000113
+  },
+  "improvement": {
+    "medianRatio": 0.28478759141333865,
+    "p95Ratio": 0.32072363484784416,
+    "medianSavedMs": 0.29006200000014815,
+    "p95SavedMs": 0.38470799999998917
+  },
+  "limitations": [
+    "Synthetic SSE stream; no network, TLS, WebSocket framing, client processing, or model latency.",
+    "The proxy still emits one WebSocket message per SSE event.",
+    "Absolute timings depend on host load; equivalence and avoided work are deterministic."
+  ]
+}

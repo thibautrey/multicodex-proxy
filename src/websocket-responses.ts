@@ -1,6 +1,7 @@
 import type http from "node:http";
 import { randomUUID } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
+import { createWebsocketSSEMessageRelay } from "./responses/websocket-sse-relay.js";
 
 type InstallResponsesWebsocketProxyOptions = {
   server: http.Server;
@@ -78,6 +79,11 @@ function rememberFunctionCallsFromEvent(
 function sendJson(ws: WebSocket, payload: unknown) {
   if (ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify(payload));
+}
+
+function sendText(ws: WebSocket, payload: string) {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(payload);
 }
 
 function sendError(
@@ -168,42 +174,11 @@ function makeWarmupResponse(frame: ResponseCreateFrame) {
   };
 }
 
-function sseFrameToJson(frame: string): unknown | null {
-  const lines = frame
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const dataLines = lines.filter((line) => line.startsWith("data:"));
-  if (!dataLines.length) return null;
-
-  const payload = dataLines
-    .map((line) => line.slice(5).trim())
-    .join("\n")
-    .trim();
-  if (!payload || payload === "[DONE]") return null;
-
-  try {
-    return JSON.parse(payload);
-  } catch {
-    return null;
-  }
-}
-
 function isValidAuthorizationHeader(value: string): boolean {
   const BearerPattern = /^Bearer\s+/i;
   if (!BearerPattern.test(value)) return false;
   const token = value.replace(BearerPattern, "");
   return token.length > 0 && /^[A-Za-z0-9_.-]+$/.test(token);
-}
-
-function takeNextSSEFrame(buffer: string): { frame: string; rest: string } | null {
-  const normalized = buffer.replace(/\r\n/g, "\n");
-  const idx = normalized.indexOf("\n\n");
-  if (idx === -1) return null;
-  return {
-    frame: normalized.slice(0, idx),
-    rest: normalized.slice(idx + 2),
-  };
 }
 
 async function relaySseAsWebsocket(
@@ -213,44 +188,18 @@ async function relaySseAsWebsocket(
 ) {
   if (!response.body) return;
   const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
+  const relay = createWebsocketSSEMessageRelay({
+    onMessage: (message) => sendText(ws, message),
+    onInspectableEvent: (event) =>
+      rememberFunctionCallsFromEvent(conversationState, event),
+  });
 
   while (true) {
     const { value, done } = await reader.read();
     if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    while (true) {
-      const next = takeNextSSEFrame(buffer);
-      if (!next) break;
-      buffer = next.rest;
-      const payload = sseFrameToJson(next.frame);
-      if (payload) {
-        rememberFunctionCallsFromEvent(conversationState, payload);
-        sendJson(ws, payload);
-      }
-    }
+    relay.push(value);
   }
-
-  buffer += decoder.decode();
-  while (true) {
-    const next = takeNextSSEFrame(buffer);
-    if (!next) break;
-    buffer = next.rest;
-    const payload = sseFrameToJson(next.frame);
-    if (payload) {
-      rememberFunctionCallsFromEvent(conversationState, payload);
-      sendJson(ws, payload);
-    }
-  }
-  if (buffer.trim()) {
-    const payload = sseFrameToJson(buffer);
-    if (payload) {
-      rememberFunctionCallsFromEvent(conversationState, payload);
-      sendJson(ws, payload);
-    }
-  }
+  relay.finish();
 }
 
 async function relayJsonAsWebsocket(
