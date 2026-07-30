@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-30T09:46:22.062Z",
+  "benchmark": "synthetic_long_responses_account_rotation_serialization",
+  "samples": 500,
+  "inputItems": 10000,
+  "attempts": 3,
+  "serializedBytes": 1159229,
+  "baseline": {
+    "fullSerializations": 3,
+    "medianMs": 2.350145999999995,
+    "p95Ms": 2.625
+  },
+  "candidate": {
+    "fullSerializations": 1,
+    "variantSerializations": 3,
+    "medianMs": 0.7877080000000092,
+    "p95Ms": 0.8947080000000369
+  },
+  "medianImprovementRatio": 0.6648259299634955,
+  "equivalent": true,
+  "tokenImpact": "none",
+  "note": "This isolates request-local JSON serialization across compatible account attempts. It excludes parsing, routing, fetch, network, provider, and model latency."
+}

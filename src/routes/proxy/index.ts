@@ -103,6 +103,7 @@ import {
   inspectResponseStreamFrame,
 } from "../../responses/stream-diagnostics.js";
 import { createSSEStreamTap } from "../../responses/sse-stream-tap.js";
+import { createUpstreamPayloadSerializer } from "../../responses/upstream-payload-serializer.js";
 
 type ProxyRoutesOptions = {
   store: AccountStore;
@@ -1818,6 +1819,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     const imageRequestModelOverride = store.getCachedSettings().imageRequestModelOverride;
     const incomingContextInspection = inspectPayloadContext(req.body);
     const requestHasImage = incomingContextInspection.hasImage;
+    const serializeUpstreamPayload = createUpstreamPayloadSerializer();
     const routingCandidates = buildImageAwareRoutingCandidates(
       req.body,
       discoveredModels,
@@ -2074,7 +2076,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             {
               method: "POST",
               headers,
-              body: JSON.stringify(payloadToUpstream),
+              body: serializeUpstreamPayload(payloadToUpstream),
             },
           );
           latencyBreakdown.upstreamHeadersMs =

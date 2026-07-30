@@ -71,6 +71,7 @@ test("rotates to the next account when a 429 is returned as SSE", async (t) => {
   ];
   const traces: any[] = [];
   const upstreamTokens: string[] = [];
+  const upstreamBodies: string[] = [];
   const originalFetch = globalThis.fetch;
 
   globalThis.fetch = async (input, init) => {
@@ -90,6 +91,7 @@ test("rotates to the next account when a 429 is returned as SSE", async (t) => {
     const headers = new Headers(init?.headers);
     const token = headers.get("authorization") ?? "";
     upstreamTokens.push(token);
+    upstreamBodies.push(String(init?.body ?? ""));
     if (token === "Bearer token-one") {
       return new Response(
         [
@@ -188,7 +190,12 @@ test("rotates to the next account when a 429 is returned as SSE", async (t) => {
   const response = await postJson(address.port, "/v1/responses", {
     model: "gpt-5.6-sol",
     stream: false,
-    input: "hello",
+    input: [
+      {
+        role: "user",
+        content: [{ type: "input_text", text: "hello" }],
+      },
+    ],
   });
 
   assert.equal(response.status, 200);
@@ -197,6 +204,9 @@ test("rotates to the next account when a 429 is returned as SSE", async (t) => {
     "Bearer token-one",
     "Bearer token-two",
   ]);
+  assert.equal(upstreamBodies.length, 2);
+  assert.equal(upstreamBodies[1], upstreamBodies[0]);
+  assert.equal(JSON.parse(upstreamBodies[0]).input[0].content[0].text, "hello");
   assert.equal(
     accounts[0].state?.modelBlocks?.["gpt-5.6-sol"]?.reason,
     "quota/rate-limit: 429",
