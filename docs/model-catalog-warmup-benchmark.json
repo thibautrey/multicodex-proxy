@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-30T09:59:08.021Z",
+  "benchmark": "synthetic_initial_model_catalog_warmup",
+  "samples": 50,
+  "simulatedCatalogProbeMs": 20,
+  "firstRequestAfterStartupMs": 30,
+  "previousInitialRefreshDelayMs": 1000,
+  "baseline": {
+    "strategy": "first_request_starts_discovery_during_delay_window",
+    "firstRequestMedianMs": 21.051083000000006,
+    "firstRequestP95Ms": 21.212666999999783
+  },
+  "candidate": {
+    "strategy": "router_starts_discovery_immediately",
+    "firstRequestMedianMs": 0.00043749999997544364,
+    "firstRequestP95Ms": 0.0014999999998508429
+  },
+  "medianFirstRequestImprovementRatio": 0.9999792172212719,
+  "refreshesPerStartup": 1,
+  "tokenImpact": "none",
+  "note": "This isolates the initial catalog scheduling window. It excludes account loading, routing, request serialization, network variability, provider, and model latency."
+}

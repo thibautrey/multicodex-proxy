@@ -72,11 +72,13 @@ test("rotates to the next account when a 429 is returned as SSE", async (t) => {
   const traces: any[] = [];
   const upstreamTokens: string[] = [];
   const upstreamBodies: string[] = [];
+  let modelDiscoveryRequests = 0;
   const originalFetch = globalThis.fetch;
 
   globalThis.fetch = async (input, init) => {
     const url = String(input);
     if (url.includes("/backend-api/codex/models")) {
+      modelDiscoveryRequests += 1;
       return new Response(
         JSON.stringify({
           models: [{ slug: "gpt-5.6-sol", supported_tool_types: ["function"] }],
@@ -207,6 +209,7 @@ test("rotates to the next account when a 429 is returned as SSE", async (t) => {
   assert.equal(upstreamBodies.length, 2);
   assert.equal(upstreamBodies[1], upstreamBodies[0]);
   assert.equal(JSON.parse(upstreamBodies[0]).input[0].content[0].text, "hello");
+  assert.equal(modelDiscoveryRequests, accounts.length);
   assert.equal(
     accounts[0].state?.modelBlocks?.["gpt-5.6-sol"]?.reason,
     "quota/rate-limit: 429",

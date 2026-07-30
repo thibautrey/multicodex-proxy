@@ -978,8 +978,7 @@ function startBackgroundModelRefresh(
   mistralBaseUrl: string,
   zaiBaseUrl: string,
 ): void {
-  // Refresh validation cache every 60 seconds asynchronously
-  const interval = setInterval(async () => {
+  const refreshAndLog = async (label: "Initial" | "Background") => {
     try {
       const models = await discoverModels(
         store,
@@ -988,31 +987,23 @@ function startBackgroundModelRefresh(
         zaiBaseUrl,
       );
       console.log(
-        `[model-cache] Background refresh: ${models.length} models available`,
+        `[model-cache] ${label} refresh: ${models.length} models available`,
       );
     } catch (err) {
-      console.error("[model-cache] Background refresh failed:", err);
+      console.error(`[model-cache] ${label} refresh failed:`, err);
     }
+  };
+
+  // Begin discovery as soon as the router is created. Requests arriving while
+  // it is still running join the same coordinator instead of starting a
+  // duplicate refresh.
+  void refreshAndLog("Initial");
+
+  // Refresh validation cache every 60 seconds asynchronously
+  const interval = setInterval(() => {
+    void refreshAndLog("Background");
   }, MODELS_VALIDATION_CACHE_MS);
   interval.unref?.();
-
-  // Initial sync refresh after a short delay to populate cache on startup
-  const initialRefresh = setTimeout(async () => {
-    try {
-      const models = await discoverModels(
-        store,
-        openaiBaseUrl,
-        mistralBaseUrl,
-        zaiBaseUrl,
-      );
-      console.log(
-        `[model-cache] Initial refresh: ${models.length} models available`,
-      );
-    } catch (err) {
-      console.error("[model-cache] Initial refresh failed:", err);
-    }
-  }, 1000);
-  initialRefresh.unref?.();
 }
 
 const EFFORT_TIERS = ["minimal", "low", "medium", "high", "xhigh"] as const;

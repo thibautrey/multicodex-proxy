@@ -100,6 +100,7 @@ test("forwards native Responses chunks while preserving diagnostics", async (t) 
 
   const store = {
     getCachedAccounts: () => [account],
+    listAccounts: async () => [account],
     getCachedModelAliases: () => [],
     getCachedSettings: () => ({}),
     markAccountModified: (_id: string, updated: Account) => {
