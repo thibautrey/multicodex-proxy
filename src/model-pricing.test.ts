@@ -4,8 +4,8 @@ import { estimateCostUsd, getModelPricing } from "./model-pricing.js";
 
 const expected: Record<string, [number, number, number, number?]> = {
   "gpt-5.6-sol": [5, 0.5, 30, 6.25],
-  "gpt-5.6-terra": [2.5, 0.25, 15, 3.125],
-  "gpt-5.6-luna": [1, 0.1, 6, 1.25],
+  "gpt-5.6-terra": [2, 0.2, 12, 2.5],
+  "gpt-5.6-luna": [0.2, 0.02, 1.2, 0.25],
   "gpt-5.5": [5, 0.5, 30],
   "gpt-5.4": [2.5, 0.25, 15],
   "gpt-5.4-mini": [0.75, 0.075, 4.5],
