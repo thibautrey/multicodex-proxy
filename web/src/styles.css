@@ -617,6 +617,10 @@ button:disabled {
   grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
+.cards7 {
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
 .metric {
   min-height: 136px;
   display: grid;
@@ -1062,6 +1066,10 @@ details summary {
   .cards6 {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+
+  .cards7 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 900px) {
@@ -1081,6 +1089,7 @@ details summary {
   .cards4,
   .cards5,
   .cards6,
+  .cards7,
   .modal-grid,
   .alias-grid,
   .info-grid {

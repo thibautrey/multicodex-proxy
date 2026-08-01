@@ -15,7 +15,7 @@ import {
   YAxis,
 } from "recharts";
 import { estimateCostUsd } from "../../model-pricing";
-import { CHART_COLORS, fmt, formatTokenCount, maskEmail, maskId, pct, routeLabel, usd } from "../../lib/ui";
+import { CHART_COLORS, fmt, formatTokenCount, formatTokenRate, maskEmail, maskId, pct, routeLabel, usd } from "../../lib/ui";
 import { Metric } from "../Metric";
 import type { Account, Trace, TracePagination, TraceRangePreset, TraceStats } from "../../types";
 
@@ -115,11 +115,12 @@ export function TracingTab(props: Props) {
         </div>
       </section>
 
-      <section className="grid cards6">
+      <section className="grid cards7">
         <Metric title="Requests" value={`${traceStats.totals.requests}`} detail="Within the selected range" />
         <Metric title="Error rate" value={pct(traceStats.totals.errorRate)} detail="Share of traced failures" tone={traceStats.totals.errorRate > 0.05 ? "warning" : "default"} />
         <Metric title="Input tokens" value={formatTokenCount(traceStats.totals.tokensInput)} detail="Prompt tokens sent to providers" />
         <Metric title="Output tokens" value={formatTokenCount(traceStats.totals.tokensOutput)} detail="Generated tokens returned by providers" />
+        <Metric title="Inference speed" value={formatTokenRate(traceStats.totals.inferenceTokensPerSecond)} detail={`${traceStats.totals.inferenceRequests} measurable requests`} />
         <Metric title="Total cost" value={usd(traceStats.totals.costUsd)} detail="Estimated from model pricing" />
         <Metric title="Avg latency" value={`${Math.round(traceStats.totals.latencyAvgMs)}ms`} detail="Average end-to-end latency" />
       </section>
@@ -206,6 +207,25 @@ export function TracingTab(props: Props) {
             </ResponsiveContainer>
           </div>
         </section>
+      </section>
+
+      <section className="panel">
+        <div className="section-split-header">
+          <h2>Inference speed (hourly)</h2>
+          <span className="badge">Output tokens / full request duration</span>
+        </div>
+        <div className="chart-wrap">
+          <ResponsiveContainer width="100%" height={260}>
+            <LineChart data={tokensTimeseries}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#d6dde4" />
+              <XAxis dataKey="label" minTickGap={24} />
+              <YAxis tickFormatter={formatTokenRate} />
+              <Tooltip formatter={(value: any) => formatTokenRate(Number(value) || 0)} />
+              <Legend />
+              <Line type="monotone" dataKey="inferenceTokensPerSecond" name="tokens/s" stroke="#dc8b3f" strokeWidth={2} dot={false} connectNulls={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
       </section>
 
       <section className="panel">

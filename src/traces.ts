@@ -103,6 +103,8 @@ export type TraceTotals = {
   tokensInputCached: number;
   tokensOutput: number;
   tokensTotal: number;
+  inferenceTokensPerSecond: number;
+  inferenceRequests: number;
   costUsd: number;
   latencyAvgMs: number;
 };
@@ -126,6 +128,8 @@ export type TraceTimeseriesBucket = {
   tokensInputCached: number;
   tokensOutput: number;
   tokensTotal: number;
+  inferenceTokensPerSecond: number;
+  inferenceRequests: number;
   costUsd: number;
   latencyP50Ms: number;
   latencyP95Ms: number;
@@ -177,6 +181,7 @@ type TraceBucketAggregate = {
   costUsd: number;
   latencyMsTotal: number;
   latencies: number[];
+  inferenceSpeeds: number[];
   models: Map<string, TraceModelStats>;
 };
 
@@ -413,6 +418,54 @@ function percentile(values: number[], p: number): number {
   return sorted[idx];
 }
 
+function average(values: number[]): number {
+  return values.length
+    ? values.reduce((sum, value) => sum + value, 0) / values.length
+    : 0;
+}
+
+function traceDurationMs(
+  trace: Pick<TraceEntry, "at" | "startedAt" | "completedAt" | "latencyMs">,
+): number | undefined {
+  const startedAt = safeNumber(trace.startedAt);
+  const completedAt = safeNumber(trace.completedAt) ?? safeNumber(trace.at);
+  if (
+    typeof startedAt === "number" &&
+    typeof completedAt === "number" &&
+    completedAt > startedAt
+  ) {
+    return completedAt - startedAt;
+  }
+
+  const latencyMs = safeNumber(trace.latencyMs);
+  return typeof latencyMs === "number" && latencyMs > 0 ? latencyMs : undefined;
+}
+
+function traceInferenceTokensPerSecond(
+  trace: Pick<
+    TraceEntry,
+    | "at"
+    | "startedAt"
+    | "completedAt"
+    | "latencyMs"
+    | "tokensOutput"
+    | "lifecycleState"
+  >,
+): number | undefined {
+  if (trace.lifecycleState === "started") return undefined;
+  const outputTokens = safeNumber(trace.tokensOutput);
+  const durationMs = traceDurationMs(trace);
+  if (
+    typeof outputTokens !== "number" ||
+    outputTokens <= 0 ||
+    typeof durationMs !== "number" ||
+    durationMs <= 0
+  ) {
+    return undefined;
+  }
+  return (outputTokens * 1000) / durationMs;
+}
+
 function usageToTokens(usage: any): UsageTokenTotals {
   const promptTokens =
     safeNumber(usage?.prompt_tokens) ?? safeNumber(usage?.input_tokens) ?? 0;
@@ -521,6 +574,9 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
       sum + (t.tokensTotal ?? (t.tokensInput ?? 0) + (t.tokensOutput ?? 0)),
     0,
   );
+  const inferenceSpeeds = traces
+    .map(traceInferenceTokensPerSecond)
+    .filter((speed): speed is number => typeof speed === "number");
   const costUsd = traces.reduce((sum, t) => {
     if (typeof t.costUsd === "number") return sum + t.costUsd;
     return (
@@ -589,6 +645,7 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
       tokensTotal: number;
       costUsd: number;
       latencies: number[];
+      inferenceSpeeds: number[];
     }
   >();
   for (const trace of traces) {
@@ -602,6 +659,7 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
       tokensTotal: 0,
       costUsd: 0,
       latencies: [],
+      inferenceSpeeds: [],
     };
     bucket.requests += 1;
     if (trace.isError) bucket.errors += 1;
@@ -609,6 +667,10 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
     bucket.tokensInputCached += trace.tokensInputCached ?? 0;
     bucket.tokensOutput += trace.tokensOutput ?? 0;
     bucket.tokensTotal += trace.tokensTotal ?? 0;
+    const inferenceSpeed = traceInferenceTokensPerSecond(trace);
+    if (typeof inferenceSpeed === "number") {
+      bucket.inferenceSpeeds.push(inferenceSpeed);
+    }
     bucket.costUsd +=
       typeof trace.costUsd === "number"
         ? trace.costUsd
@@ -632,6 +694,8 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
       tokensInputCached: bucket.tokensInputCached,
       tokensOutput: bucket.tokensOutput,
       tokensTotal: bucket.tokensTotal,
+      inferenceTokensPerSecond: average(bucket.inferenceSpeeds),
+      inferenceRequests: bucket.inferenceSpeeds.length,
       costUsd: bucket.costUsd,
       latencyP50Ms: percentile(bucket.latencies, 50),
       latencyP95Ms: percentile(bucket.latencies, 95),
@@ -646,6 +710,8 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
       tokensInputCached,
       tokensOutput,
       tokensTotal,
+      inferenceTokensPerSecond: average(inferenceSpeeds),
+      inferenceRequests: inferenceSpeeds.length,
       costUsd,
       latencyAvgMs,
     },
@@ -666,6 +732,7 @@ function createEmptyBucket(at: number): TraceBucketAggregate {
     costUsd: 0,
     latencyMsTotal: 0,
     latencies: [],
+    inferenceSpeeds: [],
     models: new Map(),
   };
 }
@@ -705,6 +772,10 @@ function addTraceToBucket(bucket: TraceBucketAggregate, trace: TraceEntry) {
   bucket.tokensInputCached += trace.tokensInputCached ?? 0;
   bucket.tokensOutput += trace.tokensOutput ?? 0;
   bucket.tokensTotal += traceTokensTotal;
+  const inferenceSpeed = traceInferenceTokensPerSecond(trace);
+  if (typeof inferenceSpeed === "number") {
+    bucket.inferenceSpeeds.push(inferenceSpeed);
+  }
   bucket.costUsd += traceCost;
   bucket.latencyMsTotal += Number.isFinite(trace.latencyMs) ? trace.latencyMs : 0;
   addLatencySample(bucket, trace.latencyMs);
@@ -1120,6 +1191,8 @@ export function createTraceManager(config: TraceManagerConfig) {
     let tokensInputCached = 0;
     let tokensOutput = 0;
     let tokensTotal = 0;
+    let inferenceSpeedTotal = 0;
+    let inferenceRequests = 0;
     let costUsd = 0;
     let latencyWeightedTotal = 0;
 
@@ -1130,6 +1203,11 @@ export function createTraceManager(config: TraceManagerConfig) {
       tokensInputCached += bucket.tokensInputCached;
       tokensOutput += bucket.tokensOutput;
       tokensTotal += bucket.tokensTotal;
+      inferenceSpeedTotal += bucket.inferenceSpeeds.reduce(
+        (sum, speed) => sum + speed,
+        0,
+      );
+      inferenceRequests += bucket.inferenceSpeeds.length;
       costUsd += bucket.costUsd;
       latencyWeightedTotal += bucket.latencyMsTotal;
 
@@ -1156,6 +1234,8 @@ export function createTraceManager(config: TraceManagerConfig) {
         tokensInputCached: bucket.tokensInputCached,
         tokensOutput: bucket.tokensOutput,
         tokensTotal: bucket.tokensTotal,
+        inferenceTokensPerSecond: average(bucket.inferenceSpeeds),
+        inferenceRequests: bucket.inferenceSpeeds.length,
         costUsd: bucket.costUsd,
         latencyP50Ms: percentile(bucket.latencies, 50),
         latencyP95Ms: percentile(bucket.latencies, 95),
@@ -1174,6 +1254,10 @@ export function createTraceManager(config: TraceManagerConfig) {
           tokensInputCached,
           tokensOutput,
           tokensTotal,
+          inferenceTokensPerSecond: inferenceRequests
+            ? inferenceSpeedTotal / inferenceRequests
+            : 0,
+          inferenceRequests,
           costUsd,
           latencyAvgMs: requests ? latencyWeightedTotal / requests : 0,
         },
@@ -1196,25 +1280,7 @@ export function createTraceManager(config: TraceManagerConfig) {
       | "tokensTotal"
     >,
   ) {
-    const normalizedTokens = normalizeTokenFields(entry.usage);
-    const finalEntry: TraceEntry = {
-      ...entry,
-      id: randomUUID(),
-      isError: entry.status >= 400,
-      tokensInput: normalizedTokens.tokensInput,
-      tokensInputCached: normalizedTokens.tokensInputCached,
-      tokensInputCacheWrite: normalizedTokens.tokensInputCacheWrite,
-      tokensOutput: normalizedTokens.tokensOutput,
-      tokensReasoning: normalizedTokens.tokensReasoning,
-      tokensTotal: normalizedTokens.tokensTotal,
-      costUsd: estimateCostUsd(
-        entry.model,
-        normalizedTokens.tokensInput ?? 0,
-        normalizedTokens.tokensOutput ?? 0,
-        normalizedTokens.tokensInputCached ?? 0,
-        normalizedTokens.tokensInputCacheWrite ?? 0,
-      ),
-    };
+    const finalEntry = materializeTrace(entry);
 
     // Fire trace file write asynchronously - don't block on this
     const run = queueTraceWrite(async () => {
@@ -1241,10 +1307,20 @@ export function createTraceManager(config: TraceManagerConfig) {
 
   function materializeTrace(entry: TraceInput, id: string = randomUUID()): TraceEntry {
     const normalizedTokens = normalizeTokenFields(entry.usage);
+    const completedAt =
+      entry.completedAt ??
+      (entry.lifecycleState === "started" ? undefined : entry.at);
+    const startedAt =
+      entry.startedAt ??
+      (typeof completedAt === "number"
+        ? completedAt - Math.max(0, entry.latencyMs)
+        : undefined);
     return {
       ...entry,
       id,
       isError: entry.status >= 400,
+      startedAt,
+      completedAt,
       tokensInput: normalizedTokens.tokensInput,
       tokensInputCached: normalizedTokens.tokensInputCached,
       tokensInputCacheWrite: normalizedTokens.tokensInputCacheWrite,
@@ -1282,7 +1358,7 @@ export function createTraceManager(config: TraceManagerConfig) {
         ...entry,
         lifecycleState:
           entry.lifecycleState ?? (entry.clientDisconnected ? "interrupted" : "completed"),
-        completedAt: entry.completedAt ?? Date.now(),
+        completedAt: entry.completedAt ?? entry.at,
       },
       id,
     );

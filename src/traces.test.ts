@@ -4,6 +4,72 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createTraceManager } from "./traces.js";
+import type { TraceEntry } from "./traces.js";
+
+test("trace stats calculate inference speed from request start and end", () => {
+  const manager = createTraceManager({
+    filePath: "/tmp/multivibe-inference-speed-traces.jsonl",
+  });
+  const base = 1_728_000_000_000;
+  let traceNumber = 0;
+  const createTrace = (overrides: Partial<TraceEntry> = {}): TraceEntry => ({
+    id: `inference-speed-${traceNumber++}`,
+    at: base,
+    route: "/responses",
+    status: 200,
+    isError: false,
+    stream: false,
+    latencyMs: 1,
+    ...overrides,
+  });
+
+  const stats = manager.buildTraceStats([
+    createTrace({
+      at: base + 5_000,
+      startedAt: base + 1_000,
+      completedAt: base + 3_000,
+      latencyMs: 100,
+      tokensOutput: 40,
+      tokensTotal: 40,
+    }),
+    createTrace({
+      at: base + 3_605_000,
+      startedAt: base + 3_601_000,
+      completedAt: base + 3_605_000,
+      latencyMs: 100,
+      tokensOutput: 20,
+      tokensTotal: 20,
+    }),
+    createTrace({
+      at: base + 3_606_000,
+      latencyMs: 100,
+      tokensOutput: 0,
+      tokensTotal: 0,
+    }),
+    createTrace({
+      at: base + 3_607_000,
+      startedAt: base + 3_606_000,
+      latencyMs: 100,
+      tokensOutput: 50,
+      tokensTotal: 50,
+      lifecycleState: "started",
+    }),
+  ]);
+
+  assert.equal(stats.totals.inferenceRequests, 2);
+  assert.equal(stats.totals.inferenceTokensPerSecond, 12.5);
+  assert.deepEqual(
+    stats.timeseries.map((bucket) => ({
+      at: bucket.at,
+      speed: bucket.inferenceTokensPerSecond,
+      requests: bucket.inferenceRequests,
+    })),
+    [
+      { at: base, speed: 20, requests: 1 },
+      { at: base + 3_600_000, speed: 5, requests: 1 },
+    ],
+  );
+});
 
 test("trace initialization warms the cache before the first durable stream", async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-traces-"));

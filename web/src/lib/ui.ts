@@ -12,6 +12,8 @@ export const EMPTY_TRACE_STATS: TraceStats = {
     tokensInputCached: 0,
     tokensOutput: 0,
     tokensTotal: 0,
+    inferenceTokensPerSecond: 0,
+    inferenceRequests: 0,
     costUsd: 0,
     latencyAvgMs: 0,
   },
@@ -50,6 +52,12 @@ export function formatTokenCount(v: number): string {
   const rounded = scaled >= 100 ? Math.round(scaled) : Math.round(scaled * 10) / 10;
   const text = Number.isInteger(rounded) ? `${rounded}` : `${rounded.toFixed(1)}`;
   return `${text.replace(/\.0$/, "")}${unit.suffix}`;
+}
+
+export function formatTokenRate(v: number): string {
+  const n = Number.isFinite(v) ? Math.max(0, v) : 0;
+  if (n > 0 && n < 10) return `${n.toFixed(1)} tok/s`;
+  return `${formatTokenCount(n)} tok/s`;
 }
 
 export function routeLabel(v: string) {

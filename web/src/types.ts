@@ -47,6 +47,9 @@ export type Trace = {
   isError: boolean;
   stream: boolean;
   latencyMs: number;
+  lifecycleState?: "started" | "completed" | "interrupted";
+  startedAt?: number;
+  completedAt?: number;
   tokensInput?: number;
   tokensInputCached?: number;
   tokensOutput?: number;
@@ -67,6 +70,8 @@ export type TraceStats = {
     tokensInputCached: number;
     tokensOutput: number;
     tokensTotal: number;
+    inferenceTokensPerSecond: number;
+    inferenceRequests: number;
     costUsd: number;
     latencyAvgMs: number;
   };
@@ -88,6 +93,8 @@ export type TraceStats = {
     tokensInputCached: number;
     tokensOutput: number;
     tokensTotal: number;
+    inferenceTokensPerSecond: number;
+    inferenceRequests: number;
     costUsd: number;
     latencyP50Ms: number;
     latencyP95Ms: number;

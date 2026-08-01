@@ -145,6 +145,8 @@ export default function App() {
   const tokensTimeseries = useMemo(
     () => traceStats.timeseries.map((b) => ({
       ...b,
+      inferenceTokensPerSecond:
+        b.inferenceRequests > 0 ? b.inferenceTokensPerSecond : null,
       label: new Date(b.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     })),
     [traceStats.timeseries],
