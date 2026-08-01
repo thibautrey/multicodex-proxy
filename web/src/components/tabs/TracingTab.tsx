@@ -115,10 +115,11 @@ export function TracingTab(props: Props) {
         </div>
       </section>
 
-      <section className="grid cards5">
+      <section className="grid cards6">
         <Metric title="Requests" value={`${traceStats.totals.requests}`} detail="Within the selected range" />
         <Metric title="Error rate" value={pct(traceStats.totals.errorRate)} detail="Share of traced failures" tone={traceStats.totals.errorRate > 0.05 ? "warning" : "default"} />
-        <Metric title="Total tokens" value={formatTokenCount(traceStats.totals.tokensTotal)} detail="Input and output combined" />
+        <Metric title="Input tokens" value={formatTokenCount(traceStats.totals.tokensInput)} detail="Prompt tokens sent to providers" />
+        <Metric title="Output tokens" value={formatTokenCount(traceStats.totals.tokensOutput)} detail="Generated tokens returned by providers" />
         <Metric title="Total cost" value={usd(traceStats.totals.costUsd)} detail="Estimated from model pricing" />
         <Metric title="Avg latency" value={`${Math.round(traceStats.totals.latencyAvgMs)}ms`} detail="Average end-to-end latency" />
       </section>

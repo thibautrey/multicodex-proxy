@@ -45,9 +45,10 @@ export function OverviewTab({ stats, usageStats, traceStats, storageInfo, models
         <Metric title="Models exposed" value={`${models.length}`} detail="Discovered from provider inventory" />
       </section>
 
-      <section className="grid cards4">
+      <section className="grid cards5">
         <Metric title="Requests" value={`${traceStats.totals.requests}`} detail="For the selected trace range" />
-        <Metric title="Total tokens" value={formatTokenCount(traceStats.totals.tokensTotal)} detail="Input and output combined" />
+        <Metric title="Input tokens" value={formatTokenCount(traceStats.totals.tokensInput)} detail="Prompt tokens sent to providers" />
+        <Metric title="Output tokens" value={formatTokenCount(traceStats.totals.tokensOutput)} detail="Generated tokens returned by providers" />
         <Metric title="Estimated cost" value={usd(traceStats.totals.costUsd)} detail="Derived from model pricing" />
         <Metric title="Avg latency" value={`${Math.round(traceStats.totals.latencyAvgMs)}ms`} detail="Mean response time across traced calls" />
       </section>
