@@ -115,7 +115,9 @@ body,
 }
 
 .shell {
+  width: 100%;
   max-width: 1480px;
+  min-width: 0;
   margin: 0 auto;
 }
 
@@ -140,15 +142,18 @@ body,
   grid-template-columns: 320px minmax(0, 1fr);
   gap: 22px;
   align-items: start;
+  min-width: 0;
 }
 
 .workspace,
 .content-stack {
   display: grid;
   gap: 18px;
+  min-width: 0;
 }
 
 .panel {
+  min-width: 0;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 18px;
@@ -303,6 +308,7 @@ p {
   justify-content: space-between;
   align-items: flex-end;
   gap: 14px;
+  min-width: 0;
 }
 
 .topbar h1 {
@@ -532,6 +538,7 @@ button:disabled {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .tab {
@@ -558,6 +565,7 @@ button:disabled {
   align-items: flex-start;
   justify-content: space-between;
   gap: 14px;
+  min-width: 0;
 }
 
 .section-header {
@@ -595,6 +603,7 @@ button:disabled {
 .grid {
   display: grid;
   gap: 18px;
+  min-width: 0;
 }
 
 .cards2 {
@@ -939,6 +948,7 @@ small {
 .chart-wrap {
   width: 100%;
   min-height: 260px;
+  min-width: 0;
 }
 
 .recharts-default-tooltip {
@@ -1080,6 +1090,22 @@ details summary {
   .topbar {
     align-items: flex-start;
     flex-direction: column;
+    width: 100%;
+  }
+
+  .topbar > *,
+  .topbar-actions {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .topbar-actions {
+    justify-content: flex-start;
+  }
+
+  .tabs {
+    width: 100%;
   }
 
   .sidebar-summary,
@@ -1102,6 +1128,18 @@ details summary {
   .hero-badges {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .section-header > *,
+  .section-split-header > *,
+  .chart-header > * {
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .trace-range-controls {
+    width: 100%;
+    flex-wrap: wrap;
   }
 
   .hero-controls {
