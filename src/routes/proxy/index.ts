@@ -135,10 +135,12 @@ const modelsValidationCache: {
   at: number;
   validModels: Set<string>;
   validModelKeys: Set<string>;
+  complete: boolean;
 } = {
   at: 0,
   validModels: new Set(),
   validModelKeys: new Set(),
+  complete: false,
 };
 
 const MODELS_VALIDATION_CACHE_MS = 60_000; // Refresh every 60 seconds
@@ -797,6 +799,7 @@ async function refreshModels(
     const accounts = await store.listAccounts();
     const byId = new Map<string, ExposedModel>();
     const activeAccounts = accounts.filter((a) => a.enabled && a.accessToken);
+    let catalogComplete = activeAccounts.length > 0;
 
     for (const account of activeAccounts) {
       const provider = normalizeProvider(account);
@@ -826,7 +829,10 @@ async function refreshModels(
             mistralBaseUrl,
             zaiBaseUrl,
           );
-          if (!baseUrl) continue;
+          if (!baseUrl) {
+            catalogComplete = false;
+            continue;
+          }
           url = `${baseUrl}${XAI_MODELS_PATH}`;
         } else {
           const baseUrl = accountBaseUrl(
@@ -835,16 +841,26 @@ async function refreshModels(
             mistralBaseUrl,
             zaiBaseUrl,
           );
-          if (!baseUrl) continue;
+          if (!baseUrl) {
+            catalogComplete = false;
+            continue;
+          }
           url = `${baseUrl}/v1/models`;
         }
 
         const r = await fetch(url, { headers });
-        if (!r.ok) continue;
+        if (!r.ok) {
+          catalogComplete = false;
+          continue;
+        }
         const json: any = await r.json();
 
         if (provider === "openai") {
-          const upstream = Array.isArray(json?.models) ? json.models : [];
+          if (!Array.isArray(json?.models) || json.models.length === 0) {
+            catalogComplete = false;
+            continue;
+          }
+          const upstream = json.models;
           for (const entry of upstream) {
             const slug =
               typeof entry?.slug === "string" && entry.slug.trim()
@@ -871,6 +887,10 @@ async function refreshModels(
             : Array.isArray(json?.data)
               ? json.data
               : [];
+        if (upstream.length === 0) {
+          catalogComplete = false;
+          continue;
+        }
         for (const entry of upstream) {
           const id =
             typeof entry?.id === "string" && entry.id.trim()
@@ -888,7 +908,9 @@ async function refreshModels(
             ),
           );
         }
-      } catch {}
+      } catch {
+        catalogComplete = false;
+      }
     }
 
     for (const id of PROXY_MODELS) {
@@ -938,7 +960,7 @@ async function refreshModels(
     const merged = Array.from(byId.values());
     modelsCache.at = Date.now();
     modelsCache.models = merged;
-    updateValidationCache(merged);
+    updateValidationCache(merged, catalogComplete);
     return merged;
   } catch {
     const fallback = Array.from(new Set(PROXY_MODELS)).map((id) =>
@@ -946,7 +968,7 @@ async function refreshModels(
     );
     modelsCache.at = Date.now();
     modelsCache.models = fallback;
-    updateValidationCache(fallback);
+    updateValidationCache(fallback, false);
     return fallback;
   }
 }
@@ -989,7 +1011,10 @@ export async function discoverModels(
   return prepared.value;
 }
 
-function updateValidationCache(models: ExposedModel[]): void {
+function updateValidationCache(
+  models: ExposedModel[],
+  complete: boolean,
+): void {
   const validModels = new Set<string>();
   const validModelKeys = new Set<string>();
 
@@ -1002,16 +1027,19 @@ function updateValidationCache(models: ExposedModel[]): void {
   modelsValidationCache.at = Date.now();
   modelsValidationCache.validModels = validModels;
   modelsValidationCache.validModelKeys = validModelKeys;
+  modelsValidationCache.complete = complete;
 }
 
 export function isModelAllowedByKeys(
   model: string | undefined,
   validModelKeys: ReadonlySet<string>,
+  catalogComplete = true,
 ): boolean {
   if (!model) return true; // No model specified, let it pass
-  // The asynchronous discovery cache is empty briefly after startup. Failing
-  // open avoids rejecting valid requests before the first refresh completes.
-  if (validModelKeys.size === 0) return true;
+  // Discovery depends on every configured provider being reachable. A partial
+  // catalog must fail open or a transient provider error can make valid models
+  // disappear until the cache expires or the proxy restarts.
+  if (!catalogComplete || validModelKeys.size === 0) return true;
   const key = normalizeModelLookupKey(model);
   return validModelKeys.has(key);
 }
@@ -1020,6 +1048,7 @@ function isModelAllowed(model: string | undefined): boolean {
   return isModelAllowedByKeys(
     model,
     modelsValidationCache.validModelKeys,
+    modelsValidationCache.complete,
   );
 }
 

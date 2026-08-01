@@ -307,3 +307,14 @@ test("model validation fails open until discovery has populated the cache", () =
     false,
   );
 });
+
+test("model validation fails open when provider discovery is incomplete", () => {
+  assert.equal(
+    isModelAllowedByKeys("gpt-5.6-sol", new Set(["gpt-5.5"]), false),
+    true,
+  );
+  assert.equal(
+    isModelAllowedByKeys("gpt-5.6-sol", new Set(["gpt-5.5"]), true),
+    false,
+  );
+});
