@@ -669,11 +669,17 @@ button:disabled {
 }
 
 .metric .value {
-  font-size: clamp(1.7rem, 3vw, 3rem);
+  font-size: clamp(1.5rem, 2.6vw, 3rem);
   font-weight: 800;
   line-height: 0.95;
   letter-spacing: -0.05em;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cards7 .metric .value {
+  font-size: clamp(1.25rem, 2.1vw, 2.5rem);
 }
 
 .metric-detail {
