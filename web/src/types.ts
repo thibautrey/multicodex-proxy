@@ -52,9 +52,13 @@ export type Trace = {
   completedAt?: number;
   tokensInput?: number;
   tokensInputCached?: number;
+  tokensInputCacheWrite?: number;
   tokensOutput?: number;
   tokensTotal?: number;
   costUsd?: number;
+  pricingVersion?: string;
+  usageStatus?: "measured" | "missing";
+  costStatus?: "estimated" | "unpriced" | "unknown";
   usage?: any;
   error?: string;
   requestBody?: any;
@@ -64,6 +68,9 @@ export type Trace = {
 export type TraceStats = {
   totals: {
     requests: number;
+    requestsWithUsage: number;
+    requestsWithCost: number;
+    unpricedRequests: number;
     errors: number;
     errorRate: number;
     tokensInput: number;

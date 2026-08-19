@@ -1,4 +1,4 @@
-import { estimateCostUsd } from "./model-pricing.js";
+import { estimateCostUsd, MODEL_PRICING_VERSION } from "./model-pricing.js";
 import fs from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
@@ -23,6 +23,9 @@ export type TraceEntry = {
   tokensReasoning?: number;
   tokensTotal?: number;
   costUsd?: number;
+  pricingVersion?: string;
+  usageStatus?: "measured" | "missing";
+  costStatus?: "estimated" | "unpriced" | "unknown";
   usage?: any;
   requestBody?: any;
   error?: string;
@@ -97,6 +100,9 @@ export type TraceListEntry = Omit<TraceEntry, "requestBody"> & {
 
 export type TraceTotals = {
   requests: number;
+  requestsWithUsage: number;
+  requestsWithCost: number;
+  unpricedRequests: number;
   errors: number;
   errorRate: number;
   tokensInput: number;
@@ -173,6 +179,9 @@ export type TraceManagerConfig = {
 type TraceBucketAggregate = {
   at: number;
   requests: number;
+  requestsWithUsage: number;
+  requestsWithCost: number;
+  unpricedRequests: number;
   errors: number;
   tokensInput: number;
   tokensInputCached: number;
@@ -223,7 +232,9 @@ function normalizeTokenFields(
   const total =
     safeNumber(usage?.total_tokens) ??
     fallback?.total ??
-    (input ?? 0) + (output ?? 0);
+    (typeof input === "number" || typeof output === "number"
+      ? (input ?? 0) + (output ?? 0)
+      : undefined);
   const cachedInput =
     safeNumber(usage?.input_tokens_details?.cached_tokens) ??
     safeNumber(usage?.prompt_tokens_details?.cached_tokens) ??
@@ -285,13 +296,37 @@ function normalizeTrace(raw: any): TraceEntry | null {
     reasoning: safeNumber(raw.tokensReasoning),
     total: safeNumber(raw.tokensTotal),
   });
-  const costUsd = estimateCostUsd(
-    model,
-    normalizedTokens.tokensInput ?? 0,
-    normalizedTokens.tokensOutput ?? 0,
-    normalizedTokens.tokensInputCached ?? 0,
-    normalizedTokens.tokensInputCacheWrite ?? 0,
-  );
+  const storedCostUsd = safeNumber(raw.costUsd);
+  const legacySyntheticZero =
+    typeof raw.usageStatus !== "string" &&
+    !raw.usage &&
+    safeNumber(raw.tokensTotal) === 0 &&
+    (safeNumber(raw.tokensInput) ?? 0) === 0 &&
+    (safeNumber(raw.tokensOutput) ?? 0) === 0 &&
+    (storedCostUsd === undefined || storedCostUsd === 0);
+  const hasMeasuredTokens = [
+    normalizedTokens.tokensInput,
+    normalizedTokens.tokensOutput,
+    normalizedTokens.tokensTotal,
+  ].some((value) => typeof value === "number");
+  const usageStatus =
+    raw.usageStatus === "measured" || raw.usageStatus === "missing"
+      ? raw.usageStatus
+      : !legacySyntheticZero && (Boolean(raw.usage) || hasMeasuredTokens)
+        ? "measured"
+        : "missing";
+  const preservedCostUsd = legacySyntheticZero ? undefined : storedCostUsd;
+  const estimatedCostUsd =
+    usageStatus === "measured"
+      ? estimateCostUsd(
+          model,
+          normalizedTokens.tokensInput ?? 0,
+          normalizedTokens.tokensOutput ?? 0,
+          normalizedTokens.tokensInputCached ?? 0,
+          normalizedTokens.tokensInputCacheWrite ?? 0,
+        )
+      : undefined;
+  const costUsd = preservedCostUsd ?? estimatedCostUsd;
 
   return {
     id:
@@ -319,6 +354,25 @@ function normalizeTrace(raw: any): TraceEntry | null {
     tokensReasoning: normalizedTokens.tokensReasoning,
     tokensTotal: normalizedTokens.tokensTotal,
     costUsd,
+    pricingVersion:
+      typeof raw.pricingVersion === "string"
+        ? raw.pricingVersion
+        : preservedCostUsd !== undefined
+          ? "legacy-recorded"
+          : estimatedCostUsd !== undefined
+            ? MODEL_PRICING_VERSION
+            : undefined,
+    usageStatus,
+    costStatus:
+      raw.costStatus === "estimated" ||
+      raw.costStatus === "unpriced" ||
+      raw.costStatus === "unknown"
+        ? raw.costStatus
+        : costUsd !== undefined
+          ? "estimated"
+          : usageStatus === "measured" && model
+            ? "unpriced"
+            : "unknown",
     usage: raw.usage,
     requestBody: raw.requestBody,
     error: typeof raw.error === "string" ? raw.error : undefined,
@@ -466,15 +520,24 @@ function traceInferenceTokensPerSecond(
   return (outputTokens * 1000) / durationMs;
 }
 
-function usageToTokens(usage: any): UsageTokenTotals {
+function usageToTokens(
+  usage: any,
+  fallback?: Pick<TraceEntry, "tokensInput" | "tokensOutput" | "tokensTotal">,
+): UsageTokenTotals {
   const promptTokens =
-    safeNumber(usage?.prompt_tokens) ?? safeNumber(usage?.input_tokens) ?? 0;
+    safeNumber(usage?.prompt_tokens) ??
+    safeNumber(usage?.input_tokens) ??
+    fallback?.tokensInput ??
+    0;
   const completionTokens =
     safeNumber(usage?.completion_tokens) ??
     safeNumber(usage?.output_tokens) ??
+    fallback?.tokensOutput ??
     0;
   const totalTokens =
-    safeNumber(usage?.total_tokens) ?? promptTokens + completionTokens;
+    safeNumber(usage?.total_tokens) ??
+    fallback?.tokensTotal ??
+    promptTokens + completionTokens;
   return { promptTokens, completionTokens, totalTokens };
 }
 
@@ -496,7 +559,7 @@ function createUsageAggregate(): UsageAggregate {
 function addTraceToAggregate(agg: UsageAggregate, trace: TraceEntry) {
   const status = Number(trace.status);
   const statusKey = Number.isFinite(status) ? String(status) : "unknown";
-  const tokens = usageToTokens(trace.usage);
+  const tokens = usageToTokens(trace.usage, trace);
 
   agg.requests += 1;
   if (status >= 200 && status < 400) agg.ok += 1;
@@ -506,7 +569,7 @@ function addTraceToAggregate(agg: UsageAggregate, trace: TraceEntry) {
   agg.latencyMsTotal += Number.isFinite(trace.latencyMs) ? trace.latencyMs : 0;
   agg.statusCounts[statusKey] = (agg.statusCounts[statusKey] ?? 0) + 1;
 
-  if (trace.usage) {
+  if (trace.usageStatus === "measured" || trace.usage) {
     agg.requestsWithUsage += 1;
     agg.promptTokens += tokens.promptTokens;
     agg.completionTokens += tokens.completionTokens;
@@ -559,6 +622,15 @@ function finalizeAggregate(agg: UsageAggregate) {
 
 function buildTraceStats(traces: TraceEntry[]): TraceStats {
   const requests = traces.length;
+  const requestsWithUsage = traces.filter(
+    (trace) => trace.usageStatus === "measured" || Boolean(trace.usage),
+  ).length;
+  const requestsWithCost = traces.filter(
+    (trace) => typeof trace.costUsd === "number",
+  ).length;
+  const unpricedRequests = traces.filter(
+    (trace) => trace.costStatus === "unpriced",
+  ).length;
   const errors = traces.filter((t) => t.isError).length;
   const tokensInput = traces.reduce((sum, t) => sum + (t.tokensInput ?? 0), 0);
   const tokensInputCached = traces.reduce(
@@ -704,6 +776,9 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
   return {
     totals: {
       requests,
+      requestsWithUsage,
+      requestsWithCost,
+      unpricedRequests,
       errors,
       errorRate,
       tokensInput,
@@ -724,6 +799,9 @@ function createEmptyBucket(at: number): TraceBucketAggregate {
   return {
     at,
     requests: 0,
+    requestsWithUsage: 0,
+    requestsWithCost: 0,
+    unpricedRequests: 0,
     errors: 0,
     tokensInput: 0,
     tokensInputCached: 0,
@@ -767,6 +845,11 @@ function addTraceToBucket(bucket: TraceBucketAggregate, trace: TraceEntry) {
     trace.tokensTotal ?? (trace.tokensInput ?? 0) + (trace.tokensOutput ?? 0);
 
   bucket.requests += 1;
+  if (trace.usageStatus === "measured" || trace.usage) {
+    bucket.requestsWithUsage += 1;
+  }
+  if (typeof trace.costUsd === "number") bucket.requestsWithCost += 1;
+  if (trace.costStatus === "unpriced") bucket.unpricedRequests += 1;
   if (trace.isError) bucket.errors += 1;
   bucket.tokensInput += trace.tokensInput ?? 0;
   bucket.tokensInputCached += trace.tokensInputCached ?? 0;
@@ -806,6 +889,21 @@ function addTraceToBucket(bucket: TraceBucketAggregate, trace: TraceEntry) {
 
 export type TraceManager = ReturnType<typeof createTraceManager>;
 
+export function isHiddenTraceRoute(route: string | undefined): boolean {
+  const normalized = String(route ?? "").trim();
+  if (!normalized) return false;
+  const routeWithoutMethod = normalized.replace(/^[A-Z]+\s+/, "");
+  const [pathOnly] = routeWithoutMethod.split("?");
+  return (
+    pathOnly === "/" ||
+    pathOnly === "/favicon.ico" ||
+    pathOnly.startsWith("/admin/") ||
+    pathOnly.startsWith("/assets/") ||
+    pathOnly === "/v1/models" ||
+    /^\/v1\/models\/[^/]+$/.test(pathOnly)
+  );
+}
+
 export function createTraceManager(config: TraceManagerConfig) {
   const {
     filePath,
@@ -819,14 +917,34 @@ export function createTraceManager(config: TraceManagerConfig) {
   let historyWriteQueue: Promise<void> = Promise.resolve();
   const traceCache: TraceEntry[] = [];
   const statsBuckets = new Map<number, TraceBucketAggregate>();
+  const statsHistoryIds = new Set<string>();
   let totalStored = 0;
   let physicalTraceLineCount = 0;
   let traceCompactionQueued = false;
   let cacheInit: Promise<void> | null = null;
+  let lastWriteError: { at: number; message: string } | undefined;
   const traceCompactionThreshold = Math.max(
     retentionMax + 1,
     Math.ceil(retentionMax * TRACE_COMPACTION_RATIO),
   );
+  const trackedHistoryIdLimit = Math.max(retentionMax * 2, 2_000);
+
+  function rememberStatsHistoryId(id: string) {
+    statsHistoryIds.delete(id);
+    statsHistoryIds.add(id);
+    while (statsHistoryIds.size > trackedHistoryIdLimit) {
+      const oldest = statsHistoryIds.values().next().value;
+      if (typeof oldest !== "string") break;
+      statsHistoryIds.delete(oldest);
+    }
+  }
+
+  function setLastWriteError(error: unknown) {
+    lastWriteError = {
+      at: Date.now(),
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
 
   async function ensureParentDir(file: string) {
     await fs.mkdir(path.dirname(file), { recursive: true });
@@ -915,11 +1033,18 @@ export function createTraceManager(config: TraceManagerConfig) {
   }
 
   function ingestStatsTrace(trace: TraceEntry) {
+    if (isHiddenTraceRoute(trace.route)) return;
     totalStored += 1;
     const bucketAt = Math.floor(trace.at / HOUR_MS) * HOUR_MS;
     const bucket = statsBuckets.get(bucketAt) ?? createEmptyBucket(bucketAt);
     addTraceToBucket(bucket, trace);
     statsBuckets.set(bucketAt, bucket);
+  }
+
+  function ingestPersistedStatsTrace(trace: TraceEntry) {
+    if (statsHistoryIds.has(trace.id)) return;
+    rememberStatsHistoryId(trace.id);
+    ingestStatsTrace(trace);
   }
 
   async function ensureCacheReady() {
@@ -931,7 +1056,7 @@ export function createTraceManager(config: TraceManagerConfig) {
       await Promise.all([ensureParentDir(filePath), ensureParentDir(historyFilePath)]);
       const [{ traces, physicalLineCount }] = await Promise.all([
         readTraceFileFromDisk(),
-        scanStatsHistory(ingestStatsTrace),
+        scanStatsHistory(ingestPersistedStatsTrace),
       ]);
       traceCache.splice(0, traceCache.length, ...traces);
       trimTraceCache();
@@ -1010,6 +1135,7 @@ export function createTraceManager(config: TraceManagerConfig) {
       }
     });
     void run.catch((err) => {
+      setLastWriteError(err);
       console.error("trace compaction failed", err);
     });
   }
@@ -1038,11 +1164,15 @@ export function createTraceManager(config: TraceManagerConfig) {
   async function appendStatsHistory(entry: TraceEntry): Promise<void> {
     await ensureCacheReady();
     const normalized = toNormalizedHistoryEntry(entry);
-    if (normalized) ingestStatsTrace(normalized);
     const line = `${JSON.stringify(toStatsHistoryEntry(entry))}\n`;
     const run = historyWriteQueue.then(async () => {
+      if (normalized && statsHistoryIds.has(normalized.id)) return;
       await ensureParentDir(historyFilePath);
       await fs.appendFile(historyFilePath, line, "utf8");
+      if (normalized) {
+        rememberStatsHistoryId(normalized.id);
+        ingestStatsTrace(normalized);
+      }
     });
     historyWriteQueue = run.catch(() => undefined);
     await run;
@@ -1107,45 +1237,12 @@ export function createTraceManager(config: TraceManagerConfig) {
 
   async function seedStatsHistoryIfMissing() {
     await ensureCacheReady();
-    try {
-      const existing = await fs.readFile(historyFilePath, "utf8");
-      if (existing.trim()) return;
-    } catch {}
-    if (!traceCache.length) return;
-    
-    const BATCH_SIZE = 1000;
-    const MAX_ENTRY_SIZE = 1024 * 1024; // 1MB per entry max
-    const fileHandle = await fs.open(historyFilePath, 'w');
-    const historyEntries: TraceEntry[] = [];
-    
-    try {
-      for (let i = 0; i < traceCache.length; i += BATCH_SIZE) {
-        const batch = traceCache.slice(i, i + BATCH_SIZE);
-        const batchLines = [];
-        for (const entry of batch) {
-          const statsEntry = toStatsHistoryEntry(entry);
-          const json = JSON.stringify(statsEntry);
-          if (json.length > MAX_ENTRY_SIZE) {
-            console.warn(`Skipping oversized history entry (${json.length} bytes)`);
-            continue;
-          }
-          batchLines.push(json);
-          const normalized = toNormalizedHistoryEntry(entry);
-          if (normalized) {
-            historyEntries.push(normalized);
-          }
-        }
-        if (batchLines.length > 0) {
-          const batchContent = batchLines.join('\n') + '\n';
-          await fileHandle.writeFile(batchContent);
-        }
+    for (const entry of traceCache) {
+      if (entry.lifecycleState === "started" || statsHistoryIds.has(entry.id)) {
+        continue;
       }
-    } finally {
-      await fileHandle.close();
+      await appendStatsHistory(entry);
     }
-    totalStored = 0;
-    statsBuckets.clear();
-    for (const entry of historyEntries) ingestStatsTrace(entry);
   }
 
   async function compactTraceStorageIfNeeded() {
@@ -1186,6 +1283,9 @@ export function createTraceManager(config: TraceManagerConfig) {
 
     const modelMap = new Map<string, TraceModelStats>();
     let requests = 0;
+    let requestsWithUsage = 0;
+    let requestsWithCost = 0;
+    let unpricedRequests = 0;
     let errors = 0;
     let tokensInput = 0;
     let tokensInputCached = 0;
@@ -1198,6 +1298,9 @@ export function createTraceManager(config: TraceManagerConfig) {
 
     const timeseries = selectedBuckets.map((bucket) => {
       requests += bucket.requests;
+      requestsWithUsage += bucket.requestsWithUsage;
+      requestsWithCost += bucket.requestsWithCost;
+      unpricedRequests += bucket.unpricedRequests;
       errors += bucket.errors;
       tokensInput += bucket.tokensInput;
       tokensInputCached += bucket.tokensInputCached;
@@ -1248,6 +1351,9 @@ export function createTraceManager(config: TraceManagerConfig) {
       stats: {
         totals: {
           requests,
+          requestsWithUsage,
+          requestsWithCost,
+          unpricedRequests,
           errors,
           errorRate: requests ? errors / requests : 0,
           tokensInput,
@@ -1287,10 +1393,15 @@ export function createTraceManager(config: TraceManagerConfig) {
       await ensureCacheReady();
       await appendTraceRecord(finalEntry);
     });
-    void run.then(queueTraceCompactionIfNeeded).catch(() => undefined);
+    const traceWrite = run.then(queueTraceCompactionIfNeeded);
 
-    // Fire history write asynchronously - completely independent from trace write
-    void appendStatsHistory(finalEntry).catch(() => undefined);
+    try {
+      await Promise.all([traceWrite, appendStatsHistory(finalEntry)]);
+      lastWriteError = undefined;
+    } catch (error) {
+      setLastWriteError(error);
+      throw error;
+    }
   }
 
   type TraceInput = Omit<
@@ -1307,6 +1418,25 @@ export function createTraceManager(config: TraceManagerConfig) {
 
   function materializeTrace(entry: TraceInput, id: string = randomUUID()): TraceEntry {
     const normalizedTokens = normalizeTokenFields(entry.usage);
+    const hasMeasuredTokens = [
+      normalizedTokens.tokensInput,
+      normalizedTokens.tokensOutput,
+      normalizedTokens.tokensTotal,
+    ].some((value) => typeof value === "number");
+    const usageStatus =
+      entry.usageStatus === "measured" || hasMeasuredTokens
+        ? "measured"
+        : "missing";
+    const costUsd =
+      usageStatus === "measured"
+        ? estimateCostUsd(
+            entry.model,
+            normalizedTokens.tokensInput ?? 0,
+            normalizedTokens.tokensOutput ?? 0,
+            normalizedTokens.tokensInputCached ?? 0,
+            normalizedTokens.tokensInputCacheWrite ?? 0,
+          )
+        : undefined;
     const completedAt =
       entry.completedAt ??
       (entry.lifecycleState === "started" ? undefined : entry.at);
@@ -1327,13 +1457,15 @@ export function createTraceManager(config: TraceManagerConfig) {
       tokensOutput: normalizedTokens.tokensOutput,
       tokensReasoning: normalizedTokens.tokensReasoning,
       tokensTotal: normalizedTokens.tokensTotal,
-      costUsd: estimateCostUsd(
-        entry.model,
-        normalizedTokens.tokensInput ?? 0,
-        normalizedTokens.tokensOutput ?? 0,
-        normalizedTokens.tokensInputCached ?? 0,
-        normalizedTokens.tokensInputCacheWrite ?? 0,
-      ),
+      costUsd,
+      pricingVersion: costUsd !== undefined ? MODEL_PRICING_VERSION : undefined,
+      usageStatus,
+      costStatus:
+        costUsd !== undefined
+          ? "estimated"
+          : usageStatus === "measured" && entry.model
+            ? "unpriced"
+            : "unknown",
     };
   }
 
@@ -1347,9 +1479,15 @@ export function createTraceManager(config: TraceManagerConfig) {
       await ensureCacheReady();
       await appendTraceRecord(initial);
     });
-    await run;
-    queueTraceCompactionIfNeeded();
-    return initial.id;
+    try {
+      await run;
+      lastWriteError = undefined;
+      queueTraceCompactionIfNeeded();
+      return initial.id;
+    } catch (error) {
+      setLastWriteError(error);
+      throw error;
+    }
   }
 
   async function completeTrace(id: string, entry: TraceInput): Promise<void> {
@@ -1366,9 +1504,15 @@ export function createTraceManager(config: TraceManagerConfig) {
       await ensureCacheReady();
       await appendTraceRecord(finalEntry);
     });
-    await run;
-    queueTraceCompactionIfNeeded();
-    await appendStatsHistory(finalEntry);
+    try {
+      await run;
+      queueTraceCompactionIfNeeded();
+      await appendStatsHistory(finalEntry);
+      lastWriteError = undefined;
+    } catch (error) {
+      setLastWriteError(error);
+      throw error;
+    }
   }
 
   function recordTrace(
@@ -1387,6 +1531,19 @@ export function createTraceManager(config: TraceManagerConfig) {
     void appendTrace(entry).catch((err) => {
       console.error("trace append failed", err);
     });
+  }
+
+  async function flushPendingWrites(): Promise<void> {
+    await Promise.all([traceWriteQueue, historyWriteQueue]);
+    if (lastWriteError) {
+      throw new Error(`trace persistence failed: ${lastWriteError.message}`);
+    }
+  }
+
+  function getPersistenceStatus() {
+    return {
+      lastError: lastWriteError,
+    };
   }
 
   async function readTracesLegacy(limit = 200): Promise<TraceEntry[]> {
@@ -1412,6 +1569,8 @@ export function createTraceManager(config: TraceManagerConfig) {
     recordTrace,
     beginTrace,
     completeTrace,
+    flushPendingWrites,
+    getPersistenceStatus,
     readTracesLegacy,
     buildTraceStats,
     createUsageAggregate,

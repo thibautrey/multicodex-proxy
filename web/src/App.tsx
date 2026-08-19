@@ -154,7 +154,7 @@ export default function App() {
   const totalTraceCostFromRows = useMemo(
     () =>
       traces.reduce(
-        (sum, t) => sum + (typeof t.costUsd === "number" ? t.costUsd : (estimateCostUsd(t.model, t.tokensInput ?? 0, t.tokensOutput ?? 0, t.tokensInputCached ?? 0) ?? 0)),
+        (sum, t) => sum + (typeof t.costUsd === "number" ? t.costUsd : (estimateCostUsd(t.model, t.tokensInput ?? 0, t.tokensOutput ?? 0, t.tokensInputCached ?? 0, t.tokensInputCacheWrite ?? 0) ?? 0)),
         0,
       ),
     [traces],
@@ -205,20 +205,32 @@ export default function App() {
 
   const getRangeBounds = (range: TraceRangePreset): { sinceMs?: number; untilMs?: number } => {
     const now = Date.now();
-    if (range === "24h") return { sinceMs: now - 24 * 60 * 60 * 1000, untilMs: now };
-    if (range === "7d") return { sinceMs: now - 7 * 24 * 60 * 60 * 1000, untilMs: now };
-    if (range === "30d") return { sinceMs: now - 30 * 24 * 60 * 60 * 1000, untilMs: now };
+    const since = (durationMs: number) =>
+      Math.floor((now - durationMs) / 3_600_000) * 3_600_000;
+    if (range === "24h") return { sinceMs: since(24 * 60 * 60 * 1000), untilMs: now };
+    if (range === "7d") return { sinceMs: since(7 * 24 * 60 * 60 * 1000), untilMs: now };
+    if (range === "30d") return { sinceMs: since(30 * 24 * 60 * 60 * 1000), untilMs: now };
     return {};
+  };
+
+  const traceRangeParams = (range: TraceRangePreset) => {
+    const { sinceMs, untilMs } = getRangeBounds(range);
+    const params = new URLSearchParams();
+    if (typeof sinceMs === "number") params.set("sinceMs", String(sinceMs));
+    if (typeof untilMs === "number") params.set("untilMs", String(untilMs));
+    return params;
+  };
+
+  const loadTraceStats = async (range: TraceRangePreset = traceRange) => {
+    const statsRes = await api(`/admin/stats/traces?${traceRangeParams(range).toString()}`);
+    setTraceStats((statsRes.stats ?? EMPTY_TRACE_STATS) as TraceStats);
   };
 
   const loadTracing = async (page: number, range: TraceRangePreset = traceRange) => {
     const safePage = Math.max(1, page || 1);
-    const { sinceMs, untilMs } = getRangeBounds(range);
-    const params = new URLSearchParams();
+    const params = traceRangeParams(range);
     params.set("page", String(safePage));
     params.set("pageSize", String(TRACE_PAGE_SIZE));
-    if (typeof sinceMs === "number") params.set("sinceMs", String(sinceMs));
-    if (typeof untilMs === "number") params.set("untilMs", String(untilMs));
 
     const [tr, statsRes] = await Promise.all([
       api(`/admin/traces?${params.toString()}`),
@@ -246,6 +258,8 @@ export default function App() {
       setAuthenticated(true);
       if (tab === "tracing") {
         await loadTracing(tracePageRef.current, traceRangeRef.current);
+      } else {
+        await loadTraceStats(traceRangeRef.current);
       }
     } catch (e: any) {
       handleError(e);
@@ -263,7 +277,7 @@ export default function App() {
       });
       setLoginToken("");
       setAuthenticated(true);
-      await loadBase();
+      await Promise.all([loadBase(), loadTraceStats(traceRangeRef.current)]);
     } catch (err: any) {
       setError(err instanceof ApiError && err.status === 401 ? "Invalid admin token." : err?.message ?? String(err));
       setAuthenticated(false);
@@ -327,7 +341,7 @@ export default function App() {
         window.history.replaceState({}, "", u.toString());
         setLocationSearch(u.search);
         sessionStorage.removeItem("multivibe-oauth-pending");
-        await loadBase();
+        await Promise.all([loadBase(), loadTraceStats(traceRangeRef.current)]);
         setAuthenticated(true);
         setTab("accounts");
       } catch (e: any) {
@@ -351,7 +365,7 @@ export default function App() {
           return;
         }
         setAuthenticated(true);
-        await loadBase();
+        await Promise.all([loadBase(), loadTraceStats(traceRangeRef.current)]);
       } catch (e: any) {
         handleError(e);
       }

@@ -69,6 +69,7 @@ await Promise.all([
   oauthStore.init(),
   traceManager.initialize(),
 ]);
+await traceManager.seedStatsHistoryIfMissing();
 startScheduledWeeklyResetMonitor({
   store,
   oauthConfig,
@@ -343,3 +344,26 @@ server.listen(PORT, () => {
     `store=${STORE_PATH} oauth=${OAUTH_STATE_PATH} trace=${TRACE_FILE_PATH} traceStats=${TRACE_STATS_HISTORY_PATH} redirect=${oauthConfig.redirectUri} openaiUpstream=${CHATGPT_BASE_URL}${UPSTREAM_PATH} mistralUpstream=${MISTRAL_BASE_URL}${MISTRAL_UPSTREAM_PATH} zaiUpstream=${ZAI_BASE_URL}${ZAI_UPSTREAM_PATH} xaiUpstream=${XAI_BASE_URL}${XAI_RESPONSES_PATH}`,
   );
 });
+
+let shuttingDown = false;
+async function shutdown(signal: NodeJS.Signals) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`received ${signal}, flushing persistent state`);
+  server.close(async (error) => {
+    try {
+      await Promise.all([
+        store.flushIfDirty(),
+        traceManager.flushPendingWrites(),
+      ]);
+      if (error) throw error;
+      process.exitCode = 0;
+    } catch (shutdownError) {
+      console.error("graceful shutdown failed", shutdownError);
+      process.exitCode = 1;
+    }
+  });
+}
+
+process.once("SIGTERM", () => void shutdown("SIGTERM"));
+process.once("SIGINT", () => void shutdown("SIGINT"));

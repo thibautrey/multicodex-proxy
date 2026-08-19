@@ -21,6 +21,7 @@ import {
 } from "../../oauth.js";
 import { ensureValidToken } from "../../account-utils.js";
 import type { TraceManager } from "../../traces.js";
+import { isHiddenTraceRoute } from "../../traces.js";
 import { discoverModels } from "../proxy/index.js";
 import {
   maybeConsumeScheduledWeeklyReset,
@@ -153,23 +154,6 @@ function filterTracesByWindow<T extends { at: number }>(
     if (typeof untilMs === "number" && Number.isFinite(untilMs) && t.at > untilMs) return false;
     return true;
   });
-}
-
-function isHiddenTraceRoute(route: string | undefined): boolean {
-  const normalized = String(route ?? "").trim();
-  if (!normalized) return false;
-
-  const routeWithoutMethod = normalized.replace(/^[A-Z]+\s+/, "");
-  const [pathOnly] = routeWithoutMethod.split("?");
-
-  return (
-    pathOnly === "/" ||
-    pathOnly === "/favicon.ico" ||
-    pathOnly.startsWith("/admin/") ||
-    pathOnly.startsWith("/assets/") ||
-    pathOnly === "/v1/models" ||
-    /^\/v1\/models\/[^/]+$/.test(pathOnly)
-  );
 }
 
 function filterVisibleTraces<T extends { route?: string }>(traces: T[]): T[] {
@@ -328,6 +312,8 @@ export function createAdminRouter(options: AdminRoutesOptions) {
         persistenceLikelyEnabled:
           storagePaths.accountsPath.startsWith("/data/") ||
           storagePaths.accountsPath.startsWith("/data"),
+        accountStore: store.getPersistenceStatus(),
+        traces: traceManager.getPersistenceStatus(),
       },
     });
   });
@@ -693,18 +679,16 @@ export function createAdminRouter(options: AdminRoutesOptions) {
   router.get("/stats/traces", async (req, res) => {
     const sinceMs = parseQueryNumber(req.query.sinceMs);
     const untilMs = parseQueryNumber(req.query.untilMs);
-    const traces = filterTracesByWindow(
-      filterVisibleTraces(await readStatsHistoryRange(sinceMs, untilMs)),
+    const { totalStored, matched, stats } = await getTraceStats(
       sinceMs,
       untilMs,
     );
-    const stats = buildTraceStats(traces);
 
     res.json({
       ok: true,
       filters: { sinceMs, untilMs },
-      totalStored: traces.length,
-      matched: traces.length,
+      totalStored,
+      matched,
       stats,
     });
   });
@@ -761,7 +745,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       usage: body.usage,
       state: body.state,
     };
-    await store.upsertAccount(account);
+    await store.addOrUpdate(account);
     res.json({ ok: true, account: redact(account) });
   });
 
@@ -786,6 +770,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     }
     const updated = await store.patchAccount(req.params.id, body);
     if (!updated) return res.status(404).json({ error: "not found" });
+    await store.flushIfDirty();
     res.json({ ok: true, account: redact(updated) });
   });
 
@@ -810,7 +795,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     } else {
       account.state = { ...account.state, modelBlocks: {} };
     }
-    await store.upsertAccount(account);
+    await store.addOrUpdate(account);
     res.json({ ok: true, account: redact(account) });
   });
 
@@ -827,7 +812,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     else if (provider === "zai") usageBaseUrl = zaiBaseUrl;
     else if (provider === "xai") usageBaseUrl = account.baseUrl ?? XAI_BASE_URL;
     await refreshUsageIfNeeded(account, usageBaseUrl, true);
-    await store.upsertAccount(account);
+    await store.addOrUpdate(account);
     await maybeConsumeScheduledWeeklyReset(account.id, store, openaiBaseUrl);
     res.json({ ok: true, account: redact(account) });
   });
@@ -841,7 +826,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       return res.status(400).json({ error: "only OpenAI accounts support reset credits" });
     }
     account = await ensureValidToken(account, oauthConfig);
-    await store.upsertAccount(account);
+    await store.addOrUpdate(account);
     try {
       const credit = await rateLimitResetCreditRequest(account, openaiBaseUrl, false);
       res.json({ ok: true, credit });
@@ -859,11 +844,11 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       return res.status(400).json({ error: "only OpenAI accounts support reset credits" });
     }
     account = await ensureValidToken(account, oauthConfig);
-    await store.upsertAccount(account);
+    await store.addOrUpdate(account);
     try {
       const result = await rateLimitResetCreditRequest(account, openaiBaseUrl, true);
       await refreshUsageIfNeeded(account, openaiBaseUrl, true);
-      await store.upsertAccount(account);
+      await store.addOrUpdate(account);
       res.json({ ok: true, result, account: redact(account) });
     } catch (error: any) {
       res.status(502).json({ error: error?.message ?? String(error) });
@@ -924,7 +909,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
         return valid;
       }),
     );
-    await Promise.all(refreshed.map((account) => store.upsertAccount(account)));
+    await Promise.all(refreshed.map((account) => store.addOrUpdate(account)));
     await Promise.all(
       refreshed
         .filter((account) => normalizeProvider(account) === "openai")
@@ -951,17 +936,26 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       redirectUri,
     );
     let account: Account;
+    const accounts = await store.listAccounts();
     if (flow.targetAccountId) {
-      const existing = (await store.listAccounts()).find((a) => a.id === flow.targetAccountId);
+      const existing = accounts.find((a) => a.id === flow.targetAccountId);
       if (!existing) {
         throw new Error("target account not found for reauth");
       }
       account = mergeTokenIntoAccount(existing, tokenData);
     } else {
-      account = accountFromOAuth(flow, tokenData);
+      const created = accountFromOAuth(flow, tokenData);
+      const duplicate = created.chatgptAccountId
+        ? accounts.find((candidate) =>
+            candidate.chatgptAccountId === created.chatgptAccountId,
+          )
+        : undefined;
+      account = duplicate
+        ? mergeTokenIntoAccount(duplicate, tokenData)
+        : created;
     }
     account = await refreshUsageIfNeeded(account, openaiBaseUrl, true);
-    await store.upsertAccount(account);
+    await store.addOrUpdate(account);
     await oauthStore.update(flow.id, {
       status: "success",
       completedAt: Date.now(),
@@ -1173,7 +1167,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
           account.baseUrl ?? XAI_BASE_URL,
           true,
         );
-        await store.upsertAccount(account);
+        await store.addOrUpdate(account);
         await oauthStore.update(flow.id, {
           status: "success",
           completedAt: Date.now(),

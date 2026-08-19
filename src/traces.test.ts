@@ -93,6 +93,182 @@ test("trace initialization warms the cache before the first durable stream", asy
   await fs.rm(directory, { recursive: true, force: true });
 });
 
+test("historical traces keep their recorded cost instead of using current prices", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-traces-"));
+  const filePath = path.join(directory, "traces.jsonl");
+  const historyFilePath = path.join(directory, "history.jsonl");
+  await fs.writeFile(
+    historyFilePath,
+    `${JSON.stringify({
+      id: "historical",
+      at: Date.now(),
+      route: "/responses",
+      model: "gpt-5.6-luna",
+      status: 200,
+      stream: false,
+      latencyMs: 10,
+      tokensInput: 1_000_000,
+      tokensOutput: 0,
+      tokensTotal: 1_000_000,
+      costUsd: 42,
+    })}\n`,
+  );
+  const manager = createTraceManager({ filePath, historyFilePath });
+
+  const [trace] = await manager.readStatsHistory();
+  const stats = manager.buildTraceStats([trace]);
+
+  assert.equal(trace.costUsd, 42);
+  assert.equal(trace.pricingVersion, "legacy-recorded");
+  assert.equal(stats.totals.costUsd, 42);
+  await fs.rm(directory, { recursive: true, force: true });
+});
+
+test("usage aggregation falls back to normalized token fields from lightweight history", () => {
+  const manager = createTraceManager({
+    filePath: "/tmp/multivibe-usage-fallback-traces.jsonl",
+  });
+  const aggregate = manager.createUsageAggregate();
+
+  manager.addTraceToAggregate(aggregate, {
+    id: "trace-1",
+    at: Date.now(),
+    route: "/responses",
+    status: 200,
+    isError: false,
+    stream: false,
+    latencyMs: 10,
+    tokensInput: 12,
+    tokensOutput: 3,
+    tokensTotal: 15,
+    usageStatus: "measured",
+  });
+
+  assert.deepEqual(manager.finalizeAggregate(aggregate).tokens, {
+    prompt: 12,
+    completion: 3,
+    total: 15,
+  });
+});
+
+test("missing usage is reported as missing and excluded from cost coverage", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-traces-"));
+  const manager = createTraceManager({
+    filePath: path.join(directory, "traces.jsonl"),
+    historyFilePath: path.join(directory, "history.jsonl"),
+  });
+
+  await manager.appendTrace({
+    at: Date.now(),
+    route: "/responses",
+    model: "gpt-5.6-luna",
+    status: 200,
+    stream: false,
+    latencyMs: 10,
+  });
+  const [trace] = await manager.readTraceWindow();
+  const stats = manager.buildTraceStats([trace]);
+
+  assert.equal(trace.usageStatus, "missing");
+  assert.equal(trace.tokensTotal, undefined);
+  assert.equal(trace.costUsd, undefined);
+  assert.equal(stats.totals.requestsWithUsage, 0);
+  assert.equal(stats.totals.requestsWithCost, 0);
+  await fs.rm(directory, { recursive: true, force: true });
+});
+
+test("legacy synthetic zero usage is reported as missing", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-traces-"));
+  const historyFilePath = path.join(directory, "history.jsonl");
+  await fs.writeFile(
+    historyFilePath,
+    `${JSON.stringify({
+      id: "legacy-missing-usage",
+      at: Date.now(),
+      route: "/responses",
+      model: "gpt-5.6-luna",
+      status: 200,
+      stream: false,
+      latencyMs: 10,
+      tokensInput: 0,
+      tokensOutput: 0,
+      tokensTotal: 0,
+      costUsd: 0,
+    })}\n`,
+  );
+  const manager = createTraceManager({
+    filePath: path.join(directory, "traces.jsonl"),
+    historyFilePath,
+  });
+
+  const [trace] = await manager.readStatsHistory();
+  const { stats } = await manager.getTraceStats();
+
+  assert.equal(trace.usageStatus, "missing");
+  assert.equal(trace.costUsd, undefined);
+  assert.equal(stats.totals.requestsWithUsage, 0);
+  assert.equal(stats.totals.requestsWithCost, 0);
+  await fs.rm(directory, { recursive: true, force: true });
+});
+
+test("startup reconciliation restores completed traces missing from history", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-traces-"));
+  const filePath = path.join(directory, "traces.jsonl");
+  const historyFilePath = path.join(directory, "history.jsonl");
+  const trace = {
+    id: "completed-before-shutdown",
+    at: Date.now(),
+    route: "/responses",
+    status: 200,
+    isError: false,
+    stream: true,
+    latencyMs: 10,
+    lifecycleState: "completed",
+    usage: { input_tokens: 12, output_tokens: 3, total_tokens: 15 },
+  };
+  await fs.writeFile(filePath, `${JSON.stringify(trace)}\n`);
+  await fs.writeFile(historyFilePath, "");
+  const manager = createTraceManager({ filePath, historyFilePath });
+
+  await manager.initialize();
+  await manager.seedStatsHistoryIfMissing();
+  await manager.seedStatsHistoryIfMissing();
+  const historyLines = (await fs.readFile(historyFilePath, "utf8"))
+    .trim()
+    .split("\n");
+  const { stats } = await manager.getTraceStats();
+
+  assert.equal(historyLines.length, 1);
+  assert.equal(stats.totals.requests, 1);
+  assert.equal(stats.totals.tokensTotal, 15);
+  await fs.rm(directory, { recursive: true, force: true });
+});
+
+test("hidden routes are excluded from precomputed trace stats", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-traces-"));
+  const manager = createTraceManager({
+    filePath: path.join(directory, "traces.jsonl"),
+    historyFilePath: path.join(directory, "history.jsonl"),
+  });
+
+  for (const route of ["/admin/config", "/v1/models", "/responses"]) {
+    await manager.appendTrace({
+      at: Date.now(),
+      route,
+      status: 200,
+      stream: false,
+      latencyMs: 10,
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+    });
+  }
+  const { totalStored, stats } = await manager.getTraceStats();
+
+  assert.equal(totalStored, 1);
+  assert.equal(stats.totals.requests, 1);
+  assert.equal(stats.totals.tokensTotal, 2);
+  await fs.rm(directory, { recursive: true, force: true });
+});
+
 test("stream traces are durable at start and finalized without duplicate stats", async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-traces-"));
   const filePath = path.join(directory, "traces.jsonl");

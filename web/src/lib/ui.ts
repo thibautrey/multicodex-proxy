@@ -6,6 +6,9 @@ export const CHART_COLORS = ["#1f7a8c", "#2da4b8", "#4c956c", "#f4a259", "#e76f5
 export const EMPTY_TRACE_STATS: TraceStats = {
   totals: {
     requests: 0,
+    requestsWithUsage: 0,
+    requestsWithCost: 0,
+    unpricedRequests: 0,
     errors: 0,
     errorRate: 0,
     tokensInput: 0,

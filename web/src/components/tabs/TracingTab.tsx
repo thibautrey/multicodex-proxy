@@ -118,10 +118,10 @@ export function TracingTab(props: Props) {
       <section className="grid cards7">
         <Metric title="Requests" value={`${traceStats.totals.requests}`} detail="Within the selected range" />
         <Metric title="Error rate" value={pct(traceStats.totals.errorRate)} detail="Share of traced failures" tone={traceStats.totals.errorRate > 0.05 ? "warning" : "default"} />
-        <Metric title="Input tokens" value={formatTokenCount(traceStats.totals.tokensInput)} detail="Prompt tokens sent to providers" />
+        <Metric title="Input tokens" value={formatTokenCount(traceStats.totals.tokensInput)} detail={`${traceStats.totals.requestsWithUsage}/${traceStats.totals.requests} requests measured`} tone={traceStats.totals.requestsWithUsage < traceStats.totals.requests ? "warning" : "default"} />
         <Metric title="Output tokens" value={formatTokenCount(traceStats.totals.tokensOutput)} detail="Generated tokens returned by providers" />
         <Metric title="Inference speed" value={formatTokenRate(traceStats.totals.inferenceTokensPerSecond)} detail={`${traceStats.totals.inferenceRequests} measurable requests`} />
-        <Metric title="Total cost" value={usd(traceStats.totals.costUsd)} detail="Estimated from model pricing" />
+        <Metric title="Total cost" value={usd(traceStats.totals.costUsd)} detail={`${traceStats.totals.requestsWithCost} priced · ${traceStats.totals.unpricedRequests} unpriced`} tone={traceStats.totals.unpricedRequests > 0 ? "warning" : "default"} />
         <Metric title="Avg latency" value={`${Math.round(traceStats.totals.latencyAvgMs)}ms`} detail="Average end-to-end latency" />
       </section>
 
@@ -295,7 +295,7 @@ export function TracingTab(props: Props) {
             <tbody>
               {traces.map((t) => {
                 const isExpanded = expandedTraceId === t.id;
-                const rowCost = typeof t.costUsd === "number" ? t.costUsd : (estimateCostUsd(t.model, t.tokensInput ?? 0, t.tokensOutput ?? 0, t.tokensInputCached ?? 0) ?? 0);
+                const rowCost = typeof t.costUsd === "number" ? t.costUsd : (estimateCostUsd(t.model, t.tokensInput ?? 0, t.tokensOutput ?? 0, t.tokensInputCached ?? 0, t.tokensInputCacheWrite ?? 0) ?? 0);
                 const provider = t.accountId ? accountProviderById.get(t.accountId) : undefined;
                 const accountLabel = sanitized
                   ? maskEmail(t.accountEmail) || maskId(t.accountId)

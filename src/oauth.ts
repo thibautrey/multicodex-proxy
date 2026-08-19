@@ -226,25 +226,69 @@ function decodeJwtPayload(jwt: string | undefined): any {
   }
 }
 
-export function mergeTokenIntoAccount(account: Account, tokenData: TokenResponse): Account {
+export type OAuthTokenIdentity = {
+  chatgptAccountId?: string;
+  email?: string;
+  subject?: string;
+};
+
+export function identityFromToken(tokenData: TokenResponse): OAuthTokenIdentity {
   const idToken = decodeJwtPayload(tokenData.id_token);
+  return {
+    chatgptAccountId: tokenData.account_id ?? idToken?.account_id,
+    email: typeof idToken?.email === "string" ? idToken.email.trim() : undefined,
+    subject: typeof idToken?.sub === "string" ? idToken.sub : undefined,
+  };
+}
+
+function normalizedEmail(value: string | undefined): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  return normalized || undefined;
+}
+
+export function assertSameAccountIdentity(
+  account: Account,
+  tokenData: TokenResponse,
+): OAuthTokenIdentity {
+  const identity = identityFromToken(tokenData);
+  if (
+    account.chatgptAccountId &&
+    identity.chatgptAccountId &&
+    account.chatgptAccountId !== identity.chatgptAccountId
+  ) {
+    throw new Error(
+      `OAuth account mismatch: expected ${account.chatgptAccountId}, received ${identity.chatgptAccountId}`,
+    );
+  }
+  const expectedEmail = normalizedEmail(account.email);
+  const receivedEmail = normalizedEmail(identity.email);
+  if (!account.chatgptAccountId && expectedEmail && receivedEmail && expectedEmail !== receivedEmail) {
+    throw new Error(
+      `OAuth account mismatch: expected ${expectedEmail}, received ${receivedEmail}`,
+    );
+  }
+  return identity;
+}
+
+export function mergeTokenIntoAccount(account: Account, tokenData: TokenResponse): Account {
+  const identity = assertSameAccountIdentity(account, tokenData);
   const expiresAt = tokenData.expires_in ? Date.now() + tokenData.expires_in * 1000 : account.expiresAt;
   return {
     ...account,
     accessToken: tokenData.access_token,
     refreshToken: tokenData.refresh_token ?? account.refreshToken,
     expiresAt,
-    chatgptAccountId: tokenData.account_id ?? idToken?.account_id ?? account.chatgptAccountId,
-    email: account.email ?? idToken?.email,
+    chatgptAccountId: identity.chatgptAccountId ?? account.chatgptAccountId,
+    email: account.email ?? identity.email,
   };
 }
 
 export function accountFromOAuth(flow: OAuthFlowState, tokenData: TokenResponse): Account {
-  const idToken = decodeJwtPayload(tokenData.id_token);
-  const chatgptAccountId = tokenData.account_id ?? idToken?.account_id;
+  const identity = identityFromToken(tokenData);
+  const chatgptAccountId = identity.chatgptAccountId;
   return {
     id: chatgptAccountId || randomUUID(),
-    email: flow.email || idToken?.email,
+    email: flow.email || identity.email,
     accessToken: tokenData.access_token,
     refreshToken: tokenData.refresh_token,
     expiresAt: tokenData.expires_in ? Date.now() + tokenData.expires_in * 1000 : undefined,

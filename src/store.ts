@@ -45,6 +45,9 @@ export class AccountStore {
   private inMemorySettings: StoreSettings = {};
   private dirty = false;
   private flushTimer: NodeJS.Timeout | null = null;
+  private flushPromise: Promise<void> | null = null;
+  private revision = 0;
+  private lastFlushError: { at: number; message: string } | undefined;
 
   constructor(private filePath: string) {}
 
@@ -70,23 +73,56 @@ export class AccountStore {
   private scheduleFlush() {
     if (this.dirty && !this.flushTimer) {
       this.flushTimer = setTimeout(() => {
-        this.flushIfDirty().catch(() => undefined);
+        this.flushTimer = null;
+        this.flushIfDirty().catch((error) => {
+          console.error("account store flush failed", error);
+        });
       }, ACCOUNT_FLUSH_INTERVAL_MS);
+      this.flushTimer.unref?.();
     }
   }
 
   async flushIfDirty() {
+    if (this.flushPromise) return this.flushPromise;
     if (!this.dirty) return;
-    await writeJsonAtomic(this.filePath, {
-      accounts: this.inMemoryAccounts,
-      modelAliases: this.inMemoryModelAliases,
-      settings: this.inMemorySettings,
+
+    this.flushPromise = (async () => {
+      while (this.dirty) {
+        const revision = this.revision;
+        try {
+          await writeJsonAtomic(this.filePath, {
+            accounts: this.inMemoryAccounts,
+            modelAliases: this.inMemoryModelAliases,
+            settings: this.inMemorySettings,
+          });
+          this.lastFlushError = undefined;
+          if (this.revision === revision) this.dirty = false;
+        } catch (error: any) {
+          this.lastFlushError = {
+            at: Date.now(),
+            message: error?.message ?? String(error),
+          };
+          throw error;
+        }
+      }
+    })().finally(() => {
+      this.flushPromise = null;
+      if (this.flushTimer) {
+        clearTimeout(this.flushTimer);
+        this.flushTimer = null;
+      }
+      if (this.dirty) this.scheduleFlush();
     });
-    this.dirty = false;
-    if (this.flushTimer) {
-      clearTimeout(this.flushTimer);
-      this.flushTimer = null;
-    }
+
+    return this.flushPromise;
+  }
+
+  getPersistenceStatus() {
+    return {
+      dirty: this.dirty,
+      flushPending: Boolean(this.flushPromise || this.flushTimer),
+      lastError: this.lastFlushError,
+    };
   }
 
   getCachedAccounts(): Account[] {
@@ -117,6 +153,7 @@ export class AccountStore {
       delete this.inMemorySettings.imageRequestModelOverride;
     }
     this.dirty = true;
+    this.revision += 1;
     this.scheduleFlush();
     await this.flushIfDirty();
     return this.getCachedSettings();
@@ -130,6 +167,7 @@ export class AccountStore {
       this.inMemoryAccounts[idx] = account;
     }
     this.dirty = true;
+    this.revision += 1;
     this.scheduleFlush();
   }
 
@@ -163,6 +201,7 @@ export class AccountStore {
     this.inMemoryAccounts = this.inMemoryAccounts.filter((a) => a.id !== id);
     if (this.inMemoryAccounts.length === before) return false;
     this.dirty = true;
+    this.revision += 1;
     await this.flushIfDirty();
     return true;
   }
@@ -179,6 +218,7 @@ export class AccountStore {
       this.inMemoryModelAliases[idx] = alias;
     }
     this.dirty = true;
+    this.revision += 1;
     this.scheduleFlush();
   }
 
@@ -217,6 +257,7 @@ export class AccountStore {
     );
     if (this.inMemoryModelAliases.length === before) return false;
     this.dirty = true;
+    this.revision += 1;
     await this.flushIfDirty();
     return true;
   }

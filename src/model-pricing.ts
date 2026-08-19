@@ -12,6 +12,8 @@ export type ModelPricing = {
   };
 };
 
+export const MODEL_PRICING_VERSION = "2026-08-01";
+
 const UNPRICED_MODELS = new Set([
   // ChatGPT/Codex plan models without a published per-token API price.
   "gpt-5.3-codex-spark",
