@@ -4,9 +4,6 @@ dist
 web-dist
 .env
 web/*.tsbuildinfo
-data/accounts.json
-data/oauth-state.json
-data/requests-trace.jsonl
 data/*
 
 # CCE (code-context-engine)
@@ -14,5 +11,3 @@ data/*
 .cce/
 # Claude Code local settings
 .claude/
-data/requests-stats-history.jsonl
-data/requests-stats-history.jsonl

@@ -1,7 +1,9 @@
 import { estimateCostUsd, MODEL_PRICING_VERSION } from "./model-pricing.js";
+import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import { createInterface } from "node:readline";
 
 export type TraceEntry = {
   id: string;
@@ -1015,9 +1017,10 @@ export function createTraceManager(config: TraceManagerConfig) {
     shouldCollect?: (trace: TraceEntry) => boolean,
   ): Promise<TraceEntry[] | void> {
     try {
-      const raw = await fs.readFile(historyFilePath, "utf8");
       const collected: TraceEntry[] = [];
-      for (const line of raw.split("\n")) {
+      const input = createReadStream(historyFilePath, { encoding: "utf8" });
+      const lines = createInterface({ input, crlfDelay: Infinity });
+      for await (const line of lines) {
         if (!line.trim()) continue;
         try {
           const normalized = normalizeTrace(JSON.parse(line));
