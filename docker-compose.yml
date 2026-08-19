@@ -3,7 +3,7 @@ services:
     build: .
     container_name: multivibe
     ports:
-      - "1455:1455"
+      - "192.0.2.149:1455:1455"
     environment:
       - PORT=1455
       - PUBLIC_BASE_URL=http://localhost:1455
@@ -16,6 +16,8 @@ services:
       - PROXY_MODELS=gpt-5.3-codex,gpt-5.2-codex,gpt-5-codex
       - MODELS_CLIENT_VERSION=1.0.0
       - MODELS_CACHE_MS=600000
+      - EXCLUDED_PROVIDER_MODELS=openai-compatible:gpt-5.5,mistral:mistral-medium-latest
+      - PROXY_MODELS=gpt-5.5
       - ADMIN_TOKEN=change-me
       - PROXY_API_KEY=${PROXY_API_KEY:-}
       - OAUTH_CLIENT_ID=app_EMoamEEZ73f0CkXaXp7hrann
