@@ -283,6 +283,7 @@ export function TracingTab(props: Props) {
               <tr>
                 <th>Time</th>
                 <th>Route</th>
+                <th>Application</th>
                 <th>Model</th>
                 <th>Account</th>
                 <th>Status</th>
@@ -309,6 +310,7 @@ export function TracingTab(props: Props) {
                     <tr onClick={() => void toggleExpandedTrace(t.id)} className="trace-row">
                       <td>{fmt(t.at)}</td>
                       <td className="mono">{routeLabel(t.route)}</td>
+                      <td className="mono">{t.application ?? "-"}</td>
                       <td className="mono">{modelLabel}</td>
                       <td>
                         <span className="inline wrap">
@@ -334,7 +336,7 @@ export function TracingTab(props: Props) {
                     </tr>
                     {isExpanded && (
                       <tr>
-                        <td colSpan={9}>
+                        <td colSpan={10}>
                           <div className="expanded-trace">
                             {expandedTraceLoading && <div className="muted">Loading trace details...</div>}
                             {!expandedTraceLoading && expandedTrace && expandedTrace.id === t.id && (

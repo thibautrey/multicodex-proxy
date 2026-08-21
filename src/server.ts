@@ -29,11 +29,16 @@ import {
   OAUTH_STATE_PATH,
   PORT,
   PROXY_API_KEY,
+  PROXY_API_KEYS,
   REQUEST_BODY_LIMIT,
 } from "./config.js";
 import { createBodyParserMiddleware } from "./middleware/decompression.js";
 import http from "node:http";
 import { startScheduledWeeklyResetMonitor } from "./rate-limit-reset.js";
+import {
+  identifyProxyApplication,
+  parseProxyApiKeys,
+} from "./proxy-api-keys.js";
 
 const app = express();
 app.use(createBodyParserMiddleware());
@@ -64,6 +69,7 @@ const traceManager = createTraceManager({
   historyFilePath: TRACE_STATS_HISTORY_PATH,
   retentionMax: TRACE_RETENTION_MAX,
 });
+const proxyApiKeys = parseProxyApiKeys(PROXY_API_KEY, PROXY_API_KEYS);
 await Promise.all([
   store.init(),
   oauthStore.init(),
@@ -95,6 +101,7 @@ app.use((req, res, next) => {
     traceManager.recordTrace({
       at: Date.now(),
       route: `${req.method} ${route}`,
+      application: res.locals.proxyApplication,
       status: res.statusCode,
       stream: false,
       latencyMs: Date.now() - startedAt,
@@ -206,22 +213,9 @@ function adminGuard(
   next();
 }
 
-function proxyApiKeyFromHeaders(
-  headers: http.IncomingHttpHeaders,
-): string | undefined {
-  const direct = headers["x-api-key"];
-  if (typeof direct === "string") return direct;
-  if (Array.isArray(direct)) return direct[0];
-  const authorization = headers.authorization;
-  if (typeof authorization !== "string") return undefined;
-  const match = authorization.match(/^Bearer\s+(.+)$/i);
-  return match?.[1];
-}
-
 function hasProxyApiKey(headers: http.IncomingHttpHeaders): boolean {
-  if (!PROXY_API_KEY) return true;
-  const token = proxyApiKeyFromHeaders(headers);
-  return Boolean(token && safeEqual(token, PROXY_API_KEY));
+  if (!proxyApiKeys.length) return true;
+  return Boolean(identifyProxyApplication(headers, proxyApiKeys));
 }
 
 function proxyGuard(
@@ -229,7 +223,12 @@ function proxyGuard(
   res: express.Response,
   next: express.NextFunction,
 ) {
-  if (!PROXY_API_KEY || hasAdminSession(req) || hasProxyApiKey(req.headers)) {
+  if (!proxyApiKeys.length || hasAdminSession(req)) {
+    return next();
+  }
+  const application = identifyProxyApplication(req.headers, proxyApiKeys);
+  if (application) {
+    res.locals.proxyApplication = application;
     return next();
   }
   return res.status(401).json({

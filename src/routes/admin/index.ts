@@ -603,6 +603,10 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       typeof req.query.accountId === "string" ? req.query.accountId.trim() : "";
     const routeFilter =
       typeof req.query.route === "string" ? req.query.route.trim() : "";
+    const applicationFilter =
+      typeof req.query.application === "string"
+        ? req.query.application.trim()
+        : "";
     const sinceMs = parseQueryNumber(req.query.sinceMs);
     const untilMs = parseQueryNumber(req.query.untilMs);
 
@@ -610,12 +614,14 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     const filtered = traces.filter((t) => {
       if (accountIdFilter && t.accountId !== accountIdFilter) return false;
       if (routeFilter && t.route !== routeFilter) return false;
+      if (applicationFilter && t.application !== applicationFilter) return false;
       return true;
     });
 
     const globalAgg = createUsageAggregate();
     const byAccount = new Map<string, ReturnType<typeof createUsageAggregate>>();
     const byRoute = new Map<string, ReturnType<typeof createUsageAggregate>>();
+    const byApplication = new Map<string, ReturnType<typeof createUsageAggregate>>();
 
     for (const trace of filtered) {
       addTraceToAggregate(globalAgg, trace);
@@ -628,6 +634,11 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       const routeKey = trace.route ?? "unknown";
       if (!byRoute.has(routeKey)) byRoute.set(routeKey, createUsageAggregate());
       addTraceToAggregate(byRoute.get(routeKey)!, trace);
+
+      const applicationKey = trace.application ?? "unattributed";
+      if (!byApplication.has(applicationKey))
+        byApplication.set(applicationKey, createUsageAggregate());
+      addTraceToAggregate(byApplication.get(applicationKey)!, trace);
     }
 
     const accounts = await store.listAccounts();
@@ -659,18 +670,23 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     const byRouteOut = Array.from(byRoute.entries())
       .map(([route, agg]) => ({ route, ...finalizeAggregate(agg) }))
       .sort((a, b) => b.requests - a.requests);
+    const byApplicationOut = Array.from(byApplication.entries())
+      .map(([application, agg]) => ({ application, ...finalizeAggregate(agg) }))
+      .sort((a, b) => b.requests - a.requests);
 
     res.json({
       ok: true,
       filters: {
         accountId: accountIdFilter || undefined,
         route: routeFilter || undefined,
+        application: applicationFilter || undefined,
         sinceMs,
         untilMs,
       },
       totals: finalizeAggregate(globalAgg),
       byAccount: byAccountOut,
       byRoute: byRouteOut,
+      byApplication: byApplicationOut,
       tracesEvaluated: traces.length,
       tracesMatched: filtered.length,
     });

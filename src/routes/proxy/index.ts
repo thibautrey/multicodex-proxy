@@ -1635,7 +1635,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     zaiCompactUpstreamPath,
     oauthConfig,
   } = options;
-  const { recordTrace, beginTrace, completeTrace } = traceManager;
+  const { recordTrace } = traceManager;
   const router = express.Router();
   const usageRefreshCoordinator = new UsageRefreshCoordinator();
 
@@ -1677,6 +1677,20 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     res: express.Response,
   ) {
     const startedAt = Date.now();
+    const application =
+      typeof res.locals.proxyApplication === "string"
+        ? res.locals.proxyApplication
+        : undefined;
+    const recordTrace = (
+      entry: Parameters<typeof traceManager.recordTrace>[0],
+    ) => traceManager.recordTrace({ ...entry, application });
+    const beginTrace = (
+      entry: Parameters<typeof traceManager.beginTrace>[0],
+    ) => traceManager.beginTrace({ ...entry, application });
+    const completeTrace = (
+      id: string,
+      entry: Parameters<typeof traceManager.completeTrace>[1],
+    ) => traceManager.completeTrace(id, { ...entry, application });
     const usageRefreshTrace = {
       background: 0,
       blocking: 0,

@@ -87,6 +87,7 @@ export const XAI_AUTH_PATH =
   process.env.XAI_AUTH_PATH ?? `${os.homedir()}/.grok/auth.json`;
 export const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
 export const PROXY_API_KEY = process.env.PROXY_API_KEY ?? "";
+export const PROXY_API_KEYS = process.env.PROXY_API_KEYS ?? "";
 export const MAX_ACCOUNT_RETRY_ATTEMPTS = Math.max(
   1,
   Number(process.env.MAX_ACCOUNT_RETRY_ATTEMPTS ?? 10),

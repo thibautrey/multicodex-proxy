@@ -179,6 +179,19 @@ curl http://localhost:1455/v1/models
 ```
 
 When `PROXY_API_KEY` is set, send it as either a Bearer token or `x-api-key`.
+To identify traffic from several applications without changing authentication or
+quota behavior, set `PROXY_API_KEYS` to a JSON object whose names identify the
+applications and whose values are their keys. For example:
+
+```env
+PROXY_API_KEYS={"mobile-app":"key-for-mobile","back-office":"key-for-back-office"}
+```
+
+Each accepted request stores the matching application name in its trace. Usage
+is available per application from `/admin/stats/usage` in `byApplication`, and
+can be filtered with `?application=mobile-app`. `PROXY_API_KEY` remains supported
+and is attributed to the application name `default`. All keys share the same
+account pool, routing, quota state, and failover behavior.
 An authenticated dashboard session can still use the API. Configure
 `ADMIN_TOKEN` as well when using the dashboard so it can establish that
 session:
@@ -384,6 +397,7 @@ same `/admin/oauth/device/poll` endpoint used by OpenAI device OAuth.
 | `MODELS_STALE_MAX_AGE_MS`         | `1800000`                                 | Maximum model-catalog age eligible for stale-while-revalidate       |
 | `ADMIN_TOKEN`                     | empty                                     | Admin endpoints auth token; empty disables the admin-token check    |
 | `PROXY_API_KEY`                   | empty                                     | Optional Bearer or `x-api-key` required by HTTP and WebSocket proxy endpoints |
+| `PROXY_API_KEYS`                  | empty                                     | JSON object of application names to proxy keys; attribution only, with shared auth behavior and quotas |
 | `CHATGPT_BASE_URL`                | `https://chatgpt.com`                     | OpenAI/ChatGPT upstream base URL                                    |
 | `UPSTREAM_PATH`                   | `/backend-api/codex/responses`            | OpenAI upstream request path                                        |
 | `UPSTREAM_COMPACT_PATH`           | `/backend-api/codex/responses/compact`    | OpenAI upstream path for `/v1/responses/compact`                    |

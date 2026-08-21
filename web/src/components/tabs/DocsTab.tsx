@@ -33,7 +33,7 @@ export function DocsTab({ totalTraceCostFromRows }: { totalTraceCostFromRows: nu
             <li className="mono">GET /admin/traces?page=1&amp;pageSize=100</li>
             <li className="mono">GET /admin/traces?limit=50 (legacy compatibility)</li>
             <li className="mono">GET /admin/stats/traces?sinceMs=&amp;untilMs=</li>
-            <li className="mono">GET /admin/stats/usage?sinceMs=&amp;untilMs=&amp;accountId=&amp;route=</li>
+            <li className="mono">GET /admin/stats/usage?sinceMs=&amp;untilMs=&amp;accountId=&amp;route=&amp;application=</li>
             <li className="mono">POST /admin/oauth/start</li>
             <li className="mono">POST /admin/oauth/complete</li>
           </ul>

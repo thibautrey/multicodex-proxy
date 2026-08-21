@@ -38,6 +38,7 @@ export type Trace = {
   id: string;
   at: number;
   route: string;
+  application?: string;
   accountId?: string;
   accountEmail?: string;
   model?: string;

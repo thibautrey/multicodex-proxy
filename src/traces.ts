@@ -9,6 +9,7 @@ export type TraceEntry = {
   id: string;
   at: number;
   route: string;
+  application?: string;
   accountId?: string;
   accountEmail?: string;
   model?: string;
@@ -337,6 +338,10 @@ function normalizeTrace(raw: any): TraceEntry | null {
         : `${at}-${route}-${status}`,
     at,
     route,
+    application:
+      typeof raw.application === "string" && raw.application.trim()
+        ? raw.application.trim()
+        : undefined,
     accountId: typeof raw.accountId === "string" ? raw.accountId : undefined,
     accountEmail:
       typeof raw.accountEmail === "string" ? raw.accountEmail : undefined,
