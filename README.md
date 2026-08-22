@@ -23,6 +23,8 @@ MultiVibe acts as an OpenAI-compatible gateway that lets you route requests acro
   - `POST /v1/chat/completions`
   - `POST /v1/responses`
   - `POST /v1/responses/compact`
+  - `POST /v1/realtime/calls` (WebRTC SDP negotiation)
+  - `GET /v1/realtime/voices` and `/v1/settings/voices` (ChatGPT voice eligibility/catalog)
   - root-path aliases: `/models`, `/chat/completions`, `/responses`, `/responses/compact`
   - compatibility endpoints: `/api/v1/models`, `/api/tags`, `/version`, `/props`, `/v1/props`
 - **Streaming over SSE or WebSocket**
@@ -30,6 +32,10 @@ MultiVibe acts as an OpenAI-compatible gateway that lets you route requests acro
   - HTTP response stream is `text/event-stream`
   - `/v1/responses` also accepts `ws://` / `wss://` and Codex-style JSON `response.create` frames
   - `/v1/chat/completions` and `/v1/responses/compact` remain HTTP-only
+- **Realtime voice over WebRTC**
+  - opaque multipart/SDP proxy compatible with Codex's native `realtime/calls` transport
+  - audio flows directly over the negotiated WebRTC connection; MultiVibe is only on the session setup path
+  - account-token refresh and quota-aware account rotation happen before the SDP answer is returned
 - **Multi-account routing** with quota-aware failover across OpenAI, OpenAI-compatible, Mistral, z.ai, and Grok Build subscription accounts
 - **Model aliases** (for example `small`) with ordered fallback across providers/models, including optional effort-qualified targets like `high:gpt-5.3-codex`
 - **Image-aware routing override** that can route image-bearing requests to a chosen exposed model or alias while preserving the originally requested model in traces
@@ -268,6 +274,58 @@ ws.onopen = () => {
   );
 };
 ```
+
+### Realtime voice (WebRTC)
+
+MultiVibe proxies the unified Realtime WebRTC handshake rather than rebuilding
+voice as separate speech-to-text, Responses, and text-to-speech requests. This
+keeps latency low, preserves interruption/VAD and data-channel events, and keeps
+audio off the proxy after session setup.
+
+The default mode uses OpenAI ChatGPT/Codex OAuth accounts already configured in
+MultiVibe and forwards to ChatGPT's native Codex Realtime endpoint:
+
+```env
+REALTIME_PROVIDER=openai
+```
+
+Point compatible Codex clients at the proxy's API base:
+
+```toml
+experimental_realtime_webrtc_call_base_url = "https://multivibe.example/v1"
+```
+
+The client sends the native multipart form (`sdp` plus `session`) to
+`POST /v1/realtime/calls`. The response is the upstream SDP answer. The same
+route is also exposed without the `/v1` prefix.
+
+To use a standard OpenAI API key instead of a ChatGPT subscription, configure
+an `openai-compatible` account whose `baseUrl` is `https://api.openai.com/v1`,
+then set:
+
+```env
+REALTIME_PROVIDER=openai-compatible
+```
+
+This is intentionally opt-in because Realtime API-key traffic is billed on the
+API platform and must never be selected silently as a fallback from a ChatGPT
+subscription. A custom full upstream URL can be supplied when needed:
+
+```env
+REALTIME_WEBRTC_CALL_URL=https://api.openai.com/v1/realtime/calls
+REALTIME_REQUEST_TIMEOUT_MS=30000
+```
+
+Voice eligibility and the selected ChatGPT voice can be checked through:
+
+```bash
+curl -H "Authorization: Bearer $PROXY_API_KEY" \
+  "https://multivibe.example/v1/realtime/voices?spoken_language=fr-FR&voice_mode=advanced"
+```
+
+An upstream response without `selected`, or a rejected upstream request, means
+the selected ChatGPT account/workspace is not currently voice-enabled. This is
+the same server-side signal Codex Desktop uses for its unavailable state.
 
 ### Create model alias
 

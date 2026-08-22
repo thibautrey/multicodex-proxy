@@ -29,6 +29,16 @@ export const TRACE_RETENTION_MAX = Math.max(
 ); // Number of recent requests to keep with full text (metadata kept forever in history)
 export const CHATGPT_BASE_URL =
   process.env.CHATGPT_BASE_URL ?? "https://chatgpt.com";
+export const REALTIME_PROVIDER =
+  process.env.REALTIME_PROVIDER === "openai-compatible"
+    ? "openai-compatible"
+    : "openai";
+export const REALTIME_WEBRTC_CALL_URL =
+  process.env.REALTIME_WEBRTC_CALL_URL ?? "";
+export const REALTIME_REQUEST_TIMEOUT_MS = Math.max(
+  1_000,
+  Number(process.env.REALTIME_REQUEST_TIMEOUT_MS ?? 30_000),
+);
 export const MISTRAL_BASE_URL =
   process.env.MISTRAL_BASE_URL ?? "https://api.mistral.ai";
 export const UPSTREAM_PATH =

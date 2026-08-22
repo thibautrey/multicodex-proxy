@@ -7,6 +7,7 @@ import { AccountStore, OAuthStateStore, cleanupOrphanedTmpFiles } from "./store.
 import { createTraceManager } from "./traces.js";
 import { createAdminRouter } from "./routes/admin/index.js";
 import { createProxyRouter } from "./routes/proxy/index.js";
+import { createRealtimeRouter } from "./realtime-proxy.js";
 import { installResponsesWebsocketProxy } from "./websocket-responses.js";
 import { oauthConfig } from "./oauth-config.js";
 import {
@@ -31,6 +32,9 @@ import {
   PROXY_API_KEY,
   PROXY_API_KEYS,
   REQUEST_BODY_LIMIT,
+  REALTIME_PROVIDER,
+  REALTIME_REQUEST_TIMEOUT_MS,
+  REALTIME_WEBRTC_CALL_URL,
 } from "./config.js";
 import { createBodyParserMiddleware } from "./middleware/decompression.js";
 import http from "node:http";
@@ -139,6 +143,16 @@ const proxyRouter = createProxyRouter({
   zaiUpstreamPath: ZAI_UPSTREAM_PATH,
   zaiCompactUpstreamPath: ZAI_COMPACT_UPSTREAM_PATH,
   oauthConfig,
+});
+
+const realtimeRouter = createRealtimeRouter({
+  store,
+  oauthConfig,
+  traceManager,
+  chatgptBaseUrl: CHATGPT_BASE_URL,
+  provider: REALTIME_PROVIDER,
+  webrtcCallUrl: REALTIME_WEBRTC_CALL_URL || undefined,
+  requestTimeoutMs: REALTIME_REQUEST_TIMEOUT_MS,
 });
 
 const ADMIN_SESSION_COOKIE = "multivibe_admin_session";
@@ -305,6 +319,8 @@ app.delete("/admin/session", (req, res) => {
 });
 
 app.use("/admin", adminGuard, adminRouter);
+app.use("/v1", proxyGuard, realtimeRouter);
+app.use("/", rootProxyGuard, realtimeRouter);
 app.use("/v1", proxyGuard, proxyRouter);
 app.use("/", rootProxyGuard, proxyRouter);
 
