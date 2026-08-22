@@ -1,5 +1,10 @@
 import express from "express";
-import { TRACE_INCLUDE_HEADERS } from "./config.js";
+import {
+  CODEX_CLI_ORIGINATOR,
+  CODEX_CLI_USER_AGENT,
+  MODELS_CLIENT_VERSION,
+  TRACE_INCLUDE_HEADERS,
+} from "./config.js";
 import type { OAuthConfig } from "./oauth.js";
 import type { Account, ProviderId } from "./types.js";
 import { AccountStore } from "./store.js";
@@ -27,6 +32,22 @@ const HOP_BY_HOP_HEADERS = new Set([
   "transfer-encoding",
   "upgrade",
 ]);
+
+// These headers are emitted by official Codex/ChatGPT clients and can be
+// required by the upstream edge for device or attestation checks. Keep this
+// list explicit: cookies, credentials, and arbitrary inbound headers must not
+// be copied to ChatGPT.
+const CLIENT_IDENTITY_HEADERS = [
+  "oai-client-version",
+  "oai-device-id",
+  "oai-language",
+  "proof-token",
+  "x-oai-attestation",
+  "x-openai-attestation",
+  "x-openai-browser-token",
+  "x-openai-sentinel",
+  "x-proof-token",
+] as const;
 
 export type RealtimeProxyOptions = {
   store: AccountStore;
@@ -85,6 +106,24 @@ function bufferBody(buffer: Buffer): ArrayBuffer {
   ) as ArrayBuffer;
 }
 
+function incomingHeader(
+  req: express.Request,
+  name: string,
+): string | undefined {
+  const value = req.header(name);
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function officialClientUserAgent(value: string | undefined): string {
+  // A desktop/browser client may provide a useful UA. Do not forward generic
+  // curl/node/undici identifiers, since they make the proxy look like an
+  // automated upstream client and defeat the Codex identity fallback.
+  if (value && /codex|chatgpt|openai/i.test(value)) return value;
+  return CODEX_CLI_USER_AGENT;
+}
+
 function upstreamHeaders(
   req: express.Request,
   account: Account,
@@ -92,11 +131,18 @@ function upstreamHeaders(
   const headers: Record<string, string> = {
     authorization: `Bearer ${account.accessToken}`,
     accept: req.header("accept") || "application/sdp, application/json",
+    originator: incomingHeader(req, "originator") ?? CODEX_CLI_ORIGINATOR,
+    "User-Agent": officialClientUserAgent(incomingHeader(req, "user-agent")),
+    version: incomingHeader(req, "version") ?? MODELS_CLIENT_VERSION,
   };
   const contentType = req.header("content-type");
   if (contentType) headers["content-type"] = contentType;
   if (account.chatgptAccountId) {
     headers["chatgpt-account-id"] = account.chatgptAccountId;
+  }
+  for (const name of CLIENT_IDENTITY_HEADERS) {
+    const value = incomingHeader(req, name);
+    if (value) headers[name] = value;
   }
   return headers;
 }

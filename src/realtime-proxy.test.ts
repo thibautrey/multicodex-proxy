@@ -5,6 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import express from "express";
+import {
+  CODEX_CLI_ORIGINATOR,
+  CODEX_CLI_USER_AGENT,
+  MODELS_CLIENT_VERSION,
+} from "./config.js";
 import { AccountStore } from "./store.js";
 import type { Account } from "./types.js";
 import type { OAuthConfig } from "./oauth.js";
@@ -104,12 +109,30 @@ test("POST realtime/calls forwards multipart SDP opaquely with account auth", as
   const multipart = Buffer.from(
     `--${boundary}\r\nContent-Disposition: form-data; name="sdp"\r\nContent-Type: application/sdp\r\n\r\nv=0\r\n--${boundary}--\r\n`,
   );
-  let received: { url?: string; auth?: string; account?: string; body?: Buffer } = {};
+  let received: {
+    url?: string;
+    auth?: string;
+    account?: string;
+    originator?: string;
+    userAgent?: string;
+    version?: string;
+    deviceId?: string;
+    attestation?: string;
+    cookie?: string;
+    body?: Buffer;
+  } = {};
   globalThis.fetch = async (input, init) => {
+    const headers = new Headers(init?.headers);
     received = {
       url: String(input),
-      auth: new Headers(init?.headers).get("authorization") ?? undefined,
-      account: new Headers(init?.headers).get("chatgpt-account-id") ?? undefined,
+      auth: headers.get("authorization") ?? undefined,
+      account: headers.get("chatgpt-account-id") ?? undefined,
+      originator: headers.get("originator") ?? undefined,
+      userAgent: headers.get("user-agent") ?? undefined,
+      version: headers.get("version") ?? undefined,
+      deviceId: headers.get("oai-device-id") ?? undefined,
+      attestation: headers.get("x-oai-attestation") ?? undefined,
+      cookie: headers.get("cookie") ?? undefined,
       body: Buffer.from(await new Response(init?.body).arrayBuffer()),
     };
     return new Response("v=0\r\na=answer\r\n", {
@@ -128,6 +151,12 @@ test("POST realtime/calls forwards multipart SDP opaquely with account auth", as
     headers: {
       "content-type": `multipart/form-data; boundary=${boundary}`,
       authorization: "Bearer local-proxy-key",
+      originator: "codex_cli_rs",
+      "user-agent": "Codex Desktop/1.0",
+      version: "desktop-test",
+      "oai-device-id": "device-test",
+      "x-oai-attestation": "attestation-test",
+      cookie: "must-not-forward=1",
     },
     body: multipart,
   });
@@ -137,7 +166,46 @@ test("POST realtime/calls forwards multipart SDP opaquely with account auth", as
   assert.equal(received.url, "https://chatgpt.com/backend-api/realtime/calls");
   assert.equal(received.auth, "Bearer upstream-secret");
   assert.equal(received.account, "workspace-1");
+  assert.equal(received.originator, "codex_cli_rs");
+  assert.equal(received.userAgent, "Codex Desktop/1.0");
+  assert.equal(received.version, "desktop-test");
+  assert.equal(received.deviceId, "device-test");
+  assert.equal(received.attestation, "attestation-test");
+  assert.equal(received.cookie, undefined);
   assert.deepEqual(received.body, multipart);
+});
+
+test("POST realtime/calls supplies Codex identity defaults", async (t) => {
+  const { store, dir } = await makeStore([
+    { id: "account-1", provider: "openai", accessToken: "token", enabled: true },
+  ]);
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  let forwarded: Headers | undefined;
+  globalThis.fetch = async (_input, init) => {
+    forwarded = new Headers(init?.headers);
+    return new Response("answer", {
+      status: 200,
+      headers: { "content-type": "application/sdp" },
+    });
+  };
+  const app = express();
+  app.use(createRealtimeRouter(options(store)));
+  const server = await listen(app);
+  t.after(server.close);
+
+  const response = await originalFetch(`${server.url}/realtime/calls`, {
+    method: "POST",
+    headers: { "content-type": "application/sdp" },
+    body: "offer",
+  });
+  assert.equal(response.status, 200);
+  assert.equal(forwarded?.get("originator"), CODEX_CLI_ORIGINATOR);
+  assert.equal(forwarded?.get("user-agent"), CODEX_CLI_USER_AGENT);
+  assert.equal(forwarded?.get("version"), MODELS_CLIENT_VERSION);
 });
 
 test("POST realtime/calls rotates accounts after a quota response", async (t) => {
