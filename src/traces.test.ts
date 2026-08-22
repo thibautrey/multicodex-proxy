@@ -126,6 +126,44 @@ test("request headers stay in recent traces but not long-term stats history", as
   await fs.rm(directory, { recursive: true, force: true });
 });
 
+test("Codex project attribution is resolved once and retained in long-term stats", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-traces-"));
+  const manager = createTraceManager({
+    filePath: path.join(directory, "traces.jsonl"),
+    historyFilePath: path.join(directory, "history.jsonl"),
+    resolveCodexProject: (sessionId) =>
+      sessionId === "thread-project"
+        ? {
+            projectId: "prj_example",
+            projectName: "example",
+            projectRemote: "github.com/acme/example",
+            projectRoot: "/workspace/example",
+            projectHost: "builder",
+          }
+        : undefined,
+  });
+  await manager.initialize();
+
+  manager.recordTrace({
+    at: Date.now(),
+    route: "/responses",
+    codexSessionId: "thread-project",
+    status: 200,
+    stream: false,
+    latencyMs: 10,
+  });
+  await manager.flushPendingWrites();
+
+  const [recent] = await manager.readTraceWindow();
+  assert.equal(recent.projectId, "prj_example");
+  assert.equal(recent.codexSessionId, "thread-project");
+
+  const [historical] = await manager.readStatsHistory();
+  assert.equal(historical.projectId, "prj_example");
+  assert.equal(historical.projectName, "example");
+  assert.equal(historical.codexSessionId, undefined);
+});
+
 test("historical traces keep their recorded cost instead of using current prices", async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-traces-"));
   const filePath = path.join(directory, "traces.jsonl");

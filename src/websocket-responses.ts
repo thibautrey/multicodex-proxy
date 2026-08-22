@@ -7,6 +7,10 @@ import {
   serializeTraceHeaders,
   TRACE_HEADERS_FORWARD_HEADER,
 } from "./trace-headers.js";
+import {
+  CODEX_SESSION_FORWARD_HEADER,
+  extractCodexSessionId,
+} from "./codex-projects.js";
 
 type InstallResponsesWebsocketProxyOptions = {
   server: http.Server;
@@ -353,6 +357,10 @@ async function forwardFrame(
       ? req.headers["x-codex-turn-state"]
       : "";
   if (turnState) headers.set("x-codex-turn-state", turnState);
+  const codexSessionId = extractCodexSessionId(req.headers);
+  if (codexSessionId) {
+    headers.set(CODEX_SESSION_FORWARD_HEADER, codexSessionId);
+  }
   if (TRACE_INCLUDE_HEADERS) {
     headers.set(
       TRACE_HEADERS_FORWARD_HEADER,

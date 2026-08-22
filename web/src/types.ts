@@ -39,6 +39,11 @@ export type Trace = {
   at: number;
   route: string;
   application?: string;
+  projectId?: string;
+  projectName?: string;
+  projectRemote?: string;
+  projectRoot?: string;
+  projectHost?: string;
   accountId?: string;
   accountEmail?: string;
   model?: string;
@@ -118,6 +123,25 @@ export type TracePagination = {
   totalPages: number;
   hasPrev: boolean;
   hasNext: boolean;
+};
+
+export type ProjectUsageStats = {
+  byProject: Array<{
+    projectId: string;
+    projectName?: string;
+    projectRemote?: string;
+    requests: number;
+    ok: number;
+    errors: number;
+    avgLatencyMs: number;
+    tokens: {
+      prompt: number;
+      completion: number;
+      total: number;
+    };
+    firstAt?: number;
+    lastAt?: number;
+  }>;
 };
 
 export type TraceRangePreset = "24h" | "7d" | "30d" | "all";

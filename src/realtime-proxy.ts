@@ -19,6 +19,7 @@ import {
 } from "./quota.js";
 import type { TraceManager } from "./traces.js";
 import { traceHeadersForRequest } from "./trace-headers.js";
+import { extractCodexSessionId } from "./codex-projects.js";
 
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
@@ -195,6 +196,7 @@ async function forwardRealtimeCall(
   const requestHeaders = TRACE_INCLUDE_HEADERS
     ? traceHeadersForRequest(req.headers)
     : undefined;
+  const codexSessionId = extractCodexSessionId(req.headers);
   const body = incomingBody(req);
   if (!contentTypeAccepted(req)) {
     return res.status(415).json({
@@ -266,6 +268,7 @@ async function forwardRealtimeCall(
         at: Date.now(),
         route,
         application,
+        codexSessionId,
         requestHeaders,
         accountId: prepared.id,
         accountEmail: prepared.email,
@@ -289,6 +292,7 @@ async function forwardRealtimeCall(
     at: Date.now(),
     route,
     application,
+    codexSessionId,
     requestHeaders,
     model: "realtime",
     status: lastStatus,
@@ -319,6 +323,7 @@ async function forwardVoiceCatalog(
   const requestHeaders = TRACE_INCLUDE_HEADERS
     ? traceHeadersForRequest(req.headers)
     : undefined;
+  const codexSessionId = extractCodexSessionId(req.headers);
   const selected = chooseAccountForProvider(
     candidateAccounts({ ...options, provider: "openai" }),
     "openai",
@@ -328,6 +333,7 @@ async function forwardVoiceCatalog(
       at: Date.now(),
       route,
       application,
+      codexSessionId,
       requestHeaders,
       model: "realtime-voices",
       status: 503,
@@ -363,6 +369,7 @@ async function forwardVoiceCatalog(
       at: Date.now(),
       route,
       application,
+      codexSessionId,
       requestHeaders,
       accountId: prepared.id,
       accountEmail: prepared.email,
@@ -385,6 +392,7 @@ async function forwardVoiceCatalog(
       at: Date.now(),
       route,
       application,
+      codexSessionId,
       requestHeaders,
       accountId: prepared.id,
       accountEmail: prepared.email,

@@ -5,12 +5,19 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { normalizeTraceHeaders } from "./trace-headers.js";
+import type { CodexProjectAttribution } from "./codex-projects.js";
 
 export type TraceEntry = {
   id: string;
   at: number;
   route: string;
   application?: string;
+  codexSessionId?: string;
+  projectId?: string;
+  projectName?: string;
+  projectRemote?: string;
+  projectRoot?: string;
+  projectHost?: string;
   accountId?: string;
   accountEmail?: string;
   model?: string;
@@ -180,6 +187,9 @@ export type TraceManagerConfig = {
   retentionMax?: number;
   pageSizeMax?: number;
   legacyLimitMax?: number;
+  resolveCodexProject?: (
+    sessionId: string | undefined,
+  ) => CodexProjectAttribution | undefined;
 };
 
 type TraceBucketAggregate = {
@@ -344,6 +354,30 @@ function normalizeTrace(raw: any): TraceEntry | null {
     application:
       typeof raw.application === "string" && raw.application.trim()
         ? raw.application.trim()
+        : undefined,
+    codexSessionId:
+      typeof raw.codexSessionId === "string" && raw.codexSessionId.trim()
+        ? raw.codexSessionId.trim()
+        : undefined,
+    projectId:
+      typeof raw.projectId === "string" && raw.projectId.trim()
+        ? raw.projectId.trim()
+        : undefined,
+    projectName:
+      typeof raw.projectName === "string" && raw.projectName.trim()
+        ? raw.projectName.trim()
+        : undefined,
+    projectRemote:
+      typeof raw.projectRemote === "string" && raw.projectRemote.trim()
+        ? raw.projectRemote.trim()
+        : undefined,
+    projectRoot:
+      typeof raw.projectRoot === "string" && raw.projectRoot.trim()
+        ? raw.projectRoot.trim()
+        : undefined,
+    projectHost:
+      typeof raw.projectHost === "string" && raw.projectHost.trim()
+        ? raw.projectHost.trim()
         : undefined,
     accountId: typeof raw.accountId === "string" ? raw.accountId : undefined,
     accountEmail:
@@ -922,6 +956,7 @@ export function createTraceManager(config: TraceManagerConfig) {
     retentionMax = DEFAULT_RETENTION_MAX,
     pageSizeMax = DEFAULT_PAGE_SIZE_MAX,
     legacyLimitMax = DEFAULT_LEGACY_LIMIT_MAX,
+    resolveCodexProject,
   } = config;
 
   let traceWriteQueue: Promise<void> = Promise.resolve();
@@ -1156,6 +1191,7 @@ export function createTraceManager(config: TraceManagerConfig) {
     const {
       requestBody: _requestBody,
       requestHeaders: _requestHeaders,
+      codexSessionId: _codexSessionId,
       usage: _usage,
       error: _error,
       upstreamError: _upstreamError,
@@ -1435,6 +1471,9 @@ export function createTraceManager(config: TraceManagerConfig) {
   >;
 
   function materializeTrace(entry: TraceInput, id: string = randomUUID()): TraceEntry {
+    const project = entry.projectId
+      ? undefined
+      : resolveCodexProject?.(entry.codexSessionId);
     const normalizedTokens = normalizeTokenFields(entry.usage);
     const hasMeasuredTokens = [
       normalizedTokens.tokensInput,
@@ -1465,6 +1504,7 @@ export function createTraceManager(config: TraceManagerConfig) {
         : undefined);
     return {
       ...entry,
+      ...project,
       id,
       isError: entry.status >= 400,
       startedAt,

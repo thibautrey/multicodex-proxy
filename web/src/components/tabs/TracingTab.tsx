@@ -17,7 +17,7 @@ import {
 import { estimateCostUsd } from "../../model-pricing";
 import { CHART_COLORS, fmt, formatTokenCount, formatTokenRate, maskEmail, maskId, pct, routeLabel, usd } from "../../lib/ui";
 import { Metric } from "../Metric";
-import type { Account, Trace, TracePagination, TraceRangePreset, TraceStats } from "../../types";
+import type { Account, ProjectUsageStats, Trace, TracePagination, TraceRangePreset, TraceStats } from "../../types";
 
 type Props = {
   accounts: Account[];
@@ -30,6 +30,7 @@ type Props = {
   traceRange: TraceRangePreset;
   setTraceRange: (range: TraceRangePreset) => void;
   traces: Trace[];
+  projectUsageStats: ProjectUsageStats;
   expandedTraceId: string | null;
   expandedTrace: Trace | null;
   expandedTraceLoading: boolean;
@@ -51,6 +52,7 @@ export function TracingTab(props: Props) {
     traceRange,
     setTraceRange,
     traces,
+    projectUsageStats,
     expandedTraceId,
     expandedTrace,
     expandedTraceLoading,
@@ -270,6 +272,57 @@ export function TracingTab(props: Props) {
 
       <section className="panel">
         <div className="section-split-header">
+          <h2>Project usage</h2>
+          <span className="badge">Codex session attribution</span>
+        </div>
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Project</th>
+                <th>Requests</th>
+                <th>Errors</th>
+                <th>Input tokens</th>
+                <th>Output tokens</th>
+                <th>Total tokens</th>
+                <th>Avg latency</th>
+              </tr>
+            </thead>
+            <tbody>
+              {projectUsageStats.byProject.map((project) => (
+                <tr key={project.projectId}>
+                  <td>
+                    <div className="mono">
+                      {project.projectId === "unattributed"
+                        ? "Unattributed"
+                        : sanitized
+                          ? "*"
+                          : project.projectName ?? project.projectId}
+                    </div>
+                    {!sanitized && project.projectRemote && (
+                      <div className="muted mono">{project.projectRemote}</div>
+                    )}
+                  </td>
+                  <td>{project.requests}</td>
+                  <td>{project.errors}</td>
+                  <td>{formatTokenCount(project.tokens.prompt)}</td>
+                  <td>{formatTokenCount(project.tokens.completion)}</td>
+                  <td>{formatTokenCount(project.tokens.total)}</td>
+                  <td>{Math.round(project.avgLatencyMs)}ms</td>
+                </tr>
+              ))}
+              {!projectUsageStats.byProject.length && (
+                <tr>
+                  <td colSpan={7} className="muted">No project-attributed usage in this range.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="section-split-header">
           <h2>Request tracing</h2>
           <div className="inline wrap">
             <button className="btn ghost" onClick={() => void gotoTracePage(tracePagination.page - 1)} disabled={!tracePagination.hasPrev}>Previous</button>
@@ -284,6 +337,7 @@ export function TracingTab(props: Props) {
                 <th>Time</th>
                 <th>Route</th>
                 <th>Application</th>
+                <th>Project</th>
                 <th>Model</th>
                 <th>Account</th>
                 <th>Status</th>
@@ -311,6 +365,13 @@ export function TracingTab(props: Props) {
                       <td>{fmt(t.at)}</td>
                       <td className="mono">{routeLabel(t.route)}</td>
                       <td className="mono">{t.application ?? "-"}</td>
+                      <td className="mono">
+                        {t.projectId
+                          ? sanitized
+                            ? "*"
+                            : t.projectName ?? t.projectId
+                          : "-"}
+                      </td>
                       <td className="mono">{modelLabel}</td>
                       <td>
                         <span className="inline wrap">
@@ -336,7 +397,7 @@ export function TracingTab(props: Props) {
                     </tr>
                     {isExpanded && (
                       <tr>
-                        <td colSpan={10}>
+                        <td colSpan={11}>
                           <div className="expanded-trace">
                             {expandedTraceLoading && <div className="muted">Loading trace details...</div>}
                             {!expandedTraceLoading && expandedTrace && expandedTrace.id === t.id && (

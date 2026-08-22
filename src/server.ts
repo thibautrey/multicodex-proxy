@@ -12,6 +12,8 @@ import { installResponsesWebsocketProxy } from "./websocket-responses.js";
 import { oauthConfig } from "./oauth-config.js";
 import {
   ADMIN_TOKEN,
+  CODEX_PROJECT_REGISTRATION_TOKEN,
+  CODEX_PROJECTS_PATH,
   CHATGPT_BASE_URL,
   MISTRAL_BASE_URL,
   MISTRAL_UPSTREAM_PATH,
@@ -45,6 +47,10 @@ import {
   parseProxyApiKeys,
 } from "./proxy-api-keys.js";
 import { traceHeadersForRequest } from "./trace-headers.js";
+import {
+  CodexProjectRegistry,
+  extractCodexSessionId,
+} from "./codex-projects.js";
 
 const app = express();
 app.use(createBodyParserMiddleware());
@@ -70,15 +76,18 @@ await cleanupOrphanedTmpFiles(dataDir);
 
 const store = new AccountStore(STORE_PATH);
 const oauthStore = new OAuthStateStore(OAUTH_STATE_PATH);
+const codexProjectRegistry = new CodexProjectRegistry(CODEX_PROJECTS_PATH);
 const traceManager = createTraceManager({
   filePath: TRACE_FILE_PATH,
   historyFilePath: TRACE_STATS_HISTORY_PATH,
   retentionMax: TRACE_RETENTION_MAX,
+  resolveCodexProject: (sessionId) => codexProjectRegistry.resolve(sessionId),
 });
 const proxyApiKeys = parseProxyApiKeys(PROXY_API_KEY, PROXY_API_KEYS);
 await Promise.all([
   store.init(),
   oauthStore.init(),
+  codexProjectRegistry.init(),
   traceManager.initialize(),
 ]);
 await traceManager.seedStatsHistoryIfMissing();
@@ -108,6 +117,7 @@ app.use((req, res, next) => {
       at: Date.now(),
       route: `${req.method} ${route}`,
       application: res.locals.proxyApplication,
+      codexSessionId: extractCodexSessionId(req.headers),
       requestHeaders: TRACE_INCLUDE_HEADERS
         ? traceHeadersForRequest(req.headers)
         : undefined,
@@ -125,6 +135,7 @@ const adminRouter = createAdminRouter({
   store,
   oauthStore,
   traceManager,
+  codexProjectRegistry,
   oauthConfig,
   openaiBaseUrl: CHATGPT_BASE_URL,
   mistralBaseUrl: MISTRAL_BASE_URL,
@@ -134,6 +145,7 @@ const adminRouter = createAdminRouter({
     oauthStatePath: OAUTH_STATE_PATH,
     tracePath: TRACE_FILE_PATH,
     traceStatsHistoryPath: TRACE_STATS_HISTORY_PATH,
+    codexProjectsPath: CODEX_PROJECTS_PATH,
   },
 });
 
@@ -232,6 +244,23 @@ function adminGuard(
   next();
 }
 
+function projectRegistrationGuard(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+) {
+  if (!CODEX_PROJECT_REGISTRATION_TOKEN) {
+    return res.status(503).json({ error: "Codex project registration is disabled" });
+  }
+  const token =
+    req.header("x-codex-project-token") ||
+    req.header("authorization")?.replace(/^Bearer\s+/i, "");
+  if (!token || !safeEqual(token, CODEX_PROJECT_REGISTRATION_TOKEN)) {
+    return res.status(401).json({ error: "unauthorized" });
+  }
+  next();
+}
+
 function hasProxyApiKey(headers: http.IncomingHttpHeaders): boolean {
   if (!proxyApiKeys.length) return true;
   return Boolean(identifyProxyApplication(headers, proxyApiKeys));
@@ -309,6 +338,19 @@ app.get("/admin/session", (req, res) => {
   res.json({ authenticated: !ADMIN_TOKEN || hasAdminSession(req) });
 });
 
+app.post(
+  "/admin/codex-sessions",
+  projectRegistrationGuard,
+  async (req, res) => {
+    try {
+      const registration = await codexProjectRegistry.register(req.body);
+      res.status(201).json({ ok: true, ...registration });
+    } catch (error: any) {
+      res.status(400).json({ error: error?.message ?? String(error) });
+    }
+  },
+);
+
 app.post("/admin/session", (req, res) => {
   if (!ADMIN_TOKEN) return res.json({ authenticated: true });
   const token = String(req.body?.token ?? "");
@@ -361,7 +403,7 @@ installResponsesWebsocketProxy({
 server.listen(PORT, () => {
   console.log(`multivibe listening on :${PORT}`);
   console.log(
-    `store=${STORE_PATH} oauth=${OAUTH_STATE_PATH} trace=${TRACE_FILE_PATH} traceStats=${TRACE_STATS_HISTORY_PATH} redirect=${oauthConfig.redirectUri} openaiUpstream=${CHATGPT_BASE_URL}${UPSTREAM_PATH} mistralUpstream=${MISTRAL_BASE_URL}${MISTRAL_UPSTREAM_PATH} zaiUpstream=${ZAI_BASE_URL}${ZAI_UPSTREAM_PATH} xaiUpstream=${XAI_BASE_URL}${XAI_RESPONSES_PATH}`,
+    `store=${STORE_PATH} oauth=${OAUTH_STATE_PATH} trace=${TRACE_FILE_PATH} traceStats=${TRACE_STATS_HISTORY_PATH} codexProjects=${CODEX_PROJECTS_PATH} redirect=${oauthConfig.redirectUri} openaiUpstream=${CHATGPT_BASE_URL}${UPSTREAM_PATH} mistralUpstream=${MISTRAL_BASE_URL}${MISTRAL_UPSTREAM_PATH} zaiUpstream=${ZAI_BASE_URL}${ZAI_UPSTREAM_PATH} xaiUpstream=${XAI_BASE_URL}${XAI_RESPONSES_PATH}`,
   );
 });
 
@@ -374,6 +416,7 @@ async function shutdown(signal: NodeJS.Signals) {
     try {
       await Promise.all([
         store.flushIfDirty(),
+        codexProjectRegistry.flushPendingWrites(),
         traceManager.flushPendingWrites(),
       ]);
       if (error) throw error;

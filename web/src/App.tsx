@@ -11,6 +11,7 @@ import type {
   Account,
   ExposedModel,
   ModelAlias,
+  ProjectUsageStats,
   StoreSettings,
   Tab,
   Trace,
@@ -52,6 +53,9 @@ export default function App() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [traces, setTraces] = useState<Trace[]>([]);
   const [traceStats, setTraceStats] = useState<TraceStats>(EMPTY_TRACE_STATS);
+  const [projectUsageStats, setProjectUsageStats] = useState<ProjectUsageStats>({
+    byProject: [],
+  });
   const [tracePagination, setTracePagination] = useState<TracePagination>(EMPTY_TRACE_PAGINATION);
   const [models, setModels] = useState<ExposedModel[]>([]);
   const [aliases, setAliases] = useState<ModelAlias[]>([]);
@@ -222,8 +226,13 @@ export default function App() {
   };
 
   const loadTraceStats = async (range: TraceRangePreset = traceRange) => {
-    const statsRes = await api(`/admin/stats/traces?${traceRangeParams(range).toString()}`);
+    const params = traceRangeParams(range).toString();
+    const [statsRes, usageRes] = await Promise.all([
+      api(`/admin/stats/traces?${params}`),
+      api(`/admin/stats/usage?${params}`),
+    ]);
     setTraceStats((statsRes.stats ?? EMPTY_TRACE_STATS) as TraceStats);
+    setProjectUsageStats({ byProject: usageRes.byProject ?? [] });
   };
 
   const loadTracing = async (page: number, range: TraceRangePreset = traceRange) => {
@@ -232,12 +241,14 @@ export default function App() {
     params.set("page", String(safePage));
     params.set("pageSize", String(TRACE_PAGE_SIZE));
 
-    const [tr, statsRes] = await Promise.all([
+    const [tr, statsRes, usageRes] = await Promise.all([
       api(`/admin/traces?${params.toString()}`),
       api(`/admin/stats/traces?${params.toString()}`),
+      api(`/admin/stats/usage?${traceRangeParams(range).toString()}`),
     ]);
     setTraces((tr.traces ?? []) as Trace[]);
     setTraceStats((statsRes.stats ?? tr.stats ?? EMPTY_TRACE_STATS) as TraceStats);
+    setProjectUsageStats({ byProject: usageRes.byProject ?? [] });
     setTracePagination((tr.pagination ?? { ...EMPTY_TRACE_PAGINATION, page: safePage }) as TracePagination);
     setExpandedTraceId(null);
     setExpandedTrace(null);
@@ -779,6 +790,7 @@ export default function App() {
             traceRange={traceRange}
             setTraceRange={setTraceRange}
             traces={traces}
+            projectUsageStats={projectUsageStats}
             expandedTraceId={expandedTraceId}
             expandedTrace={expandedTrace}
             expandedTraceLoading={expandedTraceLoading}

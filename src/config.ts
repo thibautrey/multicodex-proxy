@@ -8,6 +8,8 @@ export const TRACE_FILE_PATH =
   process.env.TRACE_FILE_PATH ?? "/data/requests-trace.jsonl";
 export const TRACE_STATS_HISTORY_PATH =
   process.env.TRACE_STATS_HISTORY_PATH ?? "/data/requests-stats-history.jsonl";
+export const CODEX_PROJECTS_PATH =
+  process.env.CODEX_PROJECTS_PATH ?? "/data/codex-projects.json";
 export const TRACE_INCLUDE_BODY =
   (process.env.TRACE_INCLUDE_BODY ?? "false") === "true"; // disabling the body trace by default keeps disk writes smaller
 export const TRACE_INCLUDE_HEADERS =
@@ -98,6 +100,8 @@ export const XAI_USER_AGENT =
 export const XAI_AUTH_PATH =
   process.env.XAI_AUTH_PATH ?? `${os.homedir()}/.grok/auth.json`;
 export const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
+export const CODEX_PROJECT_REGISTRATION_TOKEN =
+  process.env.CODEX_PROJECT_REGISTRATION_TOKEN ?? ADMIN_TOKEN;
 export const PROXY_API_KEY = process.env.PROXY_API_KEY ?? "";
 export const PROXY_API_KEYS = process.env.PROXY_API_KEYS ?? "";
 export const MAX_ACCOUNT_RETRY_ATTEMPTS = Math.max(

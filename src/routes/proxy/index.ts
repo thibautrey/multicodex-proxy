@@ -114,6 +114,7 @@ import {
 import { createSSEStreamTap } from "../../responses/sse-stream-tap.js";
 import { createUpstreamPayloadSerializer } from "../../responses/upstream-payload-serializer.js";
 import { buildXaiUpstreamHeaders } from "../../xai.js";
+import { extractCodexSessionId } from "../../codex-projects.js";
 
 type ProxyRoutesOptions = {
   store: AccountStore;
@@ -1709,18 +1710,32 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     const requestHeaders = TRACE_INCLUDE_HEADERS
       ? traceHeadersForRequest(req.headers)
       : undefined;
+    const codexSessionId = extractCodexSessionId(req.headers);
     const recordTrace = (
       entry: Parameters<typeof traceManager.recordTrace>[0],
-    ) => traceManager.recordTrace({ ...entry, application, requestHeaders });
+    ) =>
+      traceManager.recordTrace({
+        ...entry,
+        application,
+        codexSessionId,
+        requestHeaders,
+      });
     const beginTrace = (
       entry: Parameters<typeof traceManager.beginTrace>[0],
-    ) => traceManager.beginTrace({ ...entry, application, requestHeaders });
+    ) =>
+      traceManager.beginTrace({
+        ...entry,
+        application,
+        codexSessionId,
+        requestHeaders,
+      });
     const completeTrace = (
       id: string,
       entry: Parameters<typeof traceManager.completeTrace>[1],
     ) => traceManager.completeTrace(id, {
       ...entry,
       application,
+      codexSessionId,
       requestHeaders,
     });
     const usageRefreshTrace = {

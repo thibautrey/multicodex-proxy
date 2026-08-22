@@ -40,18 +40,21 @@ import {
   pollXaiDeviceCode,
   requestXaiDeviceCode,
 } from "../../xai.js";
+import type { CodexProjectRegistry } from "../../codex-projects.js";
 
 type StoragePaths = {
   accountsPath: string;
   oauthStatePath: string;
   tracePath: string;
   traceStatsHistoryPath: string;
+  codexProjectsPath: string;
 };
 
 export type AdminRoutesOptions = {
   store: AccountStore;
   oauthStore: OAuthStateStore;
   traceManager: TraceManager;
+  codexProjectRegistry: CodexProjectRegistry;
   oauthConfig: OAuthConfig;
   openaiBaseUrl: string;
   mistralBaseUrl: string;
@@ -275,6 +278,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     store,
     oauthStore,
     traceManager,
+    codexProjectRegistry,
     oauthConfig,
     openaiBaseUrl,
     mistralBaseUrl,
@@ -309,13 +313,23 @@ export function createAdminRouter(options: AdminRoutesOptions) {
         oauthStatePath: storagePaths.oauthStatePath,
         tracePath: storagePaths.tracePath,
         traceStatsHistoryPath: storagePaths.traceStatsHistoryPath,
+        codexProjectsPath: storagePaths.codexProjectsPath,
         persistenceLikelyEnabled:
           storagePaths.accountsPath.startsWith("/data/") ||
           storagePaths.accountsPath.startsWith("/data"),
         accountStore: store.getPersistenceStatus(),
         traces: traceManager.getPersistenceStatus(),
+        codexProjects: codexProjectRegistry.getPersistenceStatus(),
       },
     });
+  });
+
+  router.get("/codex-projects", (_req, res) => {
+    res.json({ ok: true, projects: codexProjectRegistry.listProjects() });
+  });
+
+  router.get("/codex-sessions", (_req, res) => {
+    res.json({ ok: true, sessions: codexProjectRegistry.listSessions() });
   });
 
   router.get("/accounts", async (_req, res) =>
@@ -520,8 +534,12 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     const { sinceMs, untilMs } = parseTraceWindowBounds(
       req.query as Record<string, unknown>,
     );
+    const projectId =
+      typeof req.query.projectId === "string" ? req.query.projectId.trim() : "";
     const traces = filterVisibleTraces(await readTraceListWindow());
-    const filtered = filterTracesByWindow(traces, sinceMs, untilMs);
+    const filtered = filterTracesByWindow(traces, sinceMs, untilMs).filter(
+      (trace) => !projectId || trace.projectId === projectId,
+    );
     const sorted = [...filtered].sort((a, b) => b.at - a.at);
     const total = sorted.length;
     const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -540,6 +558,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
         hasNext: page < totalPages,
       },
       stats,
+      filters: { sinceMs, untilMs, projectId: projectId || undefined },
     });
   });
 
@@ -607,6 +626,8 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       typeof req.query.application === "string"
         ? req.query.application.trim()
         : "";
+    const projectIdFilter =
+      typeof req.query.projectId === "string" ? req.query.projectId.trim() : "";
     const sinceMs = parseQueryNumber(req.query.sinceMs);
     const untilMs = parseQueryNumber(req.query.untilMs);
 
@@ -615,6 +636,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       if (accountIdFilter && t.accountId !== accountIdFilter) return false;
       if (routeFilter && t.route !== routeFilter) return false;
       if (applicationFilter && t.application !== applicationFilter) return false;
+      if (projectIdFilter && t.projectId !== projectIdFilter) return false;
       return true;
     });
 
@@ -622,6 +644,14 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     const byAccount = new Map<string, ReturnType<typeof createUsageAggregate>>();
     const byRoute = new Map<string, ReturnType<typeof createUsageAggregate>>();
     const byApplication = new Map<string, ReturnType<typeof createUsageAggregate>>();
+    const byProject = new Map<
+      string,
+      {
+        projectName?: string;
+        projectRemote?: string;
+        aggregate: ReturnType<typeof createUsageAggregate>;
+      }
+    >();
 
     for (const trace of filtered) {
       addTraceToAggregate(globalAgg, trace);
@@ -639,6 +669,16 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       if (!byApplication.has(applicationKey))
         byApplication.set(applicationKey, createUsageAggregate());
       addTraceToAggregate(byApplication.get(applicationKey)!, trace);
+
+      const projectKey = trace.projectId ?? "unattributed";
+      if (!byProject.has(projectKey)) {
+        byProject.set(projectKey, {
+          projectName: trace.projectName,
+          projectRemote: trace.projectRemote,
+          aggregate: createUsageAggregate(),
+        });
+      }
+      addTraceToAggregate(byProject.get(projectKey)!.aggregate, trace);
     }
 
     const accounts = await store.listAccounts();
@@ -673,6 +713,14 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     const byApplicationOut = Array.from(byApplication.entries())
       .map(([application, agg]) => ({ application, ...finalizeAggregate(agg) }))
       .sort((a, b) => b.requests - a.requests);
+    const byProjectOut = Array.from(byProject.entries())
+      .map(([projectId, value]) => ({
+        projectId,
+        projectName: value.projectName,
+        projectRemote: value.projectRemote,
+        ...finalizeAggregate(value.aggregate),
+      }))
+      .sort((a, b) => b.requests - a.requests);
 
     res.json({
       ok: true,
@@ -680,6 +728,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
         accountId: accountIdFilter || undefined,
         route: routeFilter || undefined,
         application: applicationFilter || undefined,
+        projectId: projectIdFilter || undefined,
         sinceMs,
         untilMs,
       },
@@ -687,6 +736,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       byAccount: byAccountOut,
       byRoute: byRouteOut,
       byApplication: byApplicationOut,
+      byProject: byProjectOut,
       tracesEvaluated: traces.length,
       tracesMatched: filtered.length,
     });

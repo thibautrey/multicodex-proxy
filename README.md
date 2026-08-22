@@ -386,6 +386,43 @@ cookies, tokens, session values, and similar secrets are replaced with
 `[REDACTED]`. Header tracing is disabled by default and is not written to the
 long-term stats history.
 
+### Attribute Codex usage by repository
+
+MultiCodex can correlate Codex Desktop sessions with Git repositories without
+patching Codex. A user-level official `SessionStart` hook sends the Codex
+`session_id`, working directory, sanitized Git remote, and worktree metadata to
+MultiCodex. Incoming traces carry the same id in `thread-id`, so project
+attribution is stored directly in recent traces and long-term usage history.
+
+Set a dedicated registration token on the server when possible:
+
+```bash
+CODEX_PROJECT_REGISTRATION_TOKEN=replace-with-a-random-token
+```
+
+When this variable is unset, `ADMIN_TOKEN` is accepted for compatibility. If
+both are empty, project registration is disabled.
+
+Install the hook once on every machine or remote execution host that runs Codex:
+
+```bash
+read -s MULTICODEX_PROJECT_TOKEN
+export MULTICODEX_PROJECT_TOKEN
+node scripts/install-codex-project-hook.mjs --url http://192.0.2.149:1455
+unset MULTICODEX_PROJECT_TOKEN
+```
+
+The installer preserves existing `~/.codex/hooks.json` entries, stores the
+secret in `~/.codex/multicodex-project.json` with mode `0600`, and installs a
+synchronous, fail-open hook. New, resumed, cleared, and compacted sessions are
+registered. See the [official Codex hooks documentation](https://developers.openai.com/codex/hooks/).
+
+Project endpoints:
+
+- `POST /admin/codex-sessions` with `x-codex-project-token`
+- `GET /admin/codex-sessions` with `x-admin-token`
+- `GET /admin/codex-projects` with `x-admin-token`
+
 ### Usage stats
 
 ```bash
@@ -412,6 +449,7 @@ Optional filters:
 
 - `accountId=<id>`
 - `route=/v1/chat/completions`
+- `projectId=<project-id>`
 - `sinceMs=<epoch_ms>`
 - `untilMs=<epoch_ms>`
 
@@ -450,6 +488,7 @@ same `/admin/oauth/device/poll` endpoint used by OpenAI device OAuth.
 | `OAUTH_STATE_PATH`                | `/data/oauth-state.json`                  | OAuth flow state                                                    |
 | `TRACE_FILE_PATH`                 | `/data/requests-trace.jsonl`              | Recent request trace file                                           |
 | `TRACE_STATS_HISTORY_PATH`        | `/data/requests-stats-history.jsonl`      | Lightweight request history for long-term stats                     |
+| `CODEX_PROJECTS_PATH`             | `/data/codex-projects.json`               | Persistent Codex session-to-project registry                        |
 | `TRACE_RETENTION_MAX`             | `1000`                                    | Number of recent full traces to retain; minimum effective value is 100 |
 | `TRACE_INCLUDE_BODY`              | `false`                                   | Persist full request payloads when explicitly enabled; trace stats still work when disabled |
 | `TRACE_INCLUDE_HEADERS`           | `false`                                   | Persist sanitized inbound request headers in recent traces; credentials and tokens are redacted, and headers are excluded from long-term stats history |
@@ -462,6 +501,7 @@ same `/admin/oauth/device/poll` endpoint used by OpenAI device OAuth.
 | `MODELS_STALE_WHILE_REVALIDATE`   | `true`                                    | Serve a bounded stale model catalog while refreshing it in the background |
 | `MODELS_STALE_MAX_AGE_MS`         | `1800000`                                 | Maximum model-catalog age eligible for stale-while-revalidate       |
 | `ADMIN_TOKEN`                     | empty                                     | Admin endpoints auth token; empty disables the admin-token check    |
+| `CODEX_PROJECT_REGISTRATION_TOKEN` | `ADMIN_TOKEN`                            | Limited token accepted by the Codex session registration endpoint   |
 | `PROXY_API_KEY`                   | empty                                     | Optional Bearer or `x-api-key` required by HTTP and WebSocket proxy endpoints |
 | `PROXY_API_KEYS`                  | empty                                     | JSON object of application names to proxy keys; attribution only, with shared auth behavior and quotas |
 | `CHATGPT_BASE_URL`                | `https://chatgpt.com`                     | OpenAI/ChatGPT upstream base URL                                    |
