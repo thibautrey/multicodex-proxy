@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   CodexProjectRegistry,
   extractCodexSessionId,
+  extractLiteLLMProjectAttribution,
   normalizeCodexSessionRegistration,
   sanitizeGitRemote,
 } from "./codex-projects.js";
@@ -55,6 +56,25 @@ test("extracts the Codex session id from direct and forwarded headers", () => {
       "x-codex-turn-metadata": JSON.stringify({ session_id: "thread-metadata" }),
     }),
     "thread-metadata",
+  );
+});
+
+test("derives stable project attribution from the LiteLLM key alias", () => {
+  const direct = extractLiteLLMProjectAttribution({
+    "X-LiteLLM-Key-Alias": "project-alpha",
+  });
+  const forwarded = extractLiteLLMProjectAttribution({
+    [TRACE_HEADERS_FORWARD_HEADER]: JSON.stringify({
+      "x-litellm-key-alias": "project-alpha",
+    }),
+  });
+
+  assert.deepEqual(direct, forwarded);
+  assert.equal(direct?.projectName, "project-alpha");
+  assert.match(direct?.projectId ?? "", /^prj_[a-f0-9]{24}$/);
+  assert.equal(
+    extractLiteLLMProjectAttribution({ "x-litellm-key-alias": "  " }),
+    undefined,
   );
 });
 

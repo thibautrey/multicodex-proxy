@@ -19,7 +19,10 @@ import {
 } from "./quota.js";
 import type { TraceManager } from "./traces.js";
 import { traceHeadersForRequest } from "./trace-headers.js";
-import { extractCodexSessionId } from "./codex-projects.js";
+import {
+  extractCodexSessionId,
+  extractLiteLLMProjectAttribution,
+} from "./codex-projects.js";
 
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
@@ -197,6 +200,7 @@ async function forwardRealtimeCall(
     ? traceHeadersForRequest(req.headers)
     : undefined;
   const codexSessionId = extractCodexSessionId(req.headers);
+  const projectAttribution = extractLiteLLMProjectAttribution(req.headers);
   const body = incomingBody(req);
   if (!contentTypeAccepted(req)) {
     return res.status(415).json({
@@ -265,6 +269,7 @@ async function forwardRealtimeCall(
       copyResponseHeaders(upstream, res);
       res.send(responseBody);
       options.traceManager.recordTrace({
+        ...projectAttribution,
         at: Date.now(),
         route,
         application,
@@ -289,6 +294,7 @@ async function forwardRealtimeCall(
   }
 
   options.traceManager.recordTrace({
+    ...projectAttribution,
     at: Date.now(),
     route,
     application,
@@ -324,12 +330,14 @@ async function forwardVoiceCatalog(
     ? traceHeadersForRequest(req.headers)
     : undefined;
   const codexSessionId = extractCodexSessionId(req.headers);
+  const projectAttribution = extractLiteLLMProjectAttribution(req.headers);
   const selected = chooseAccountForProvider(
     candidateAccounts({ ...options, provider: "openai" }),
     "openai",
   );
   if (!selected) {
     options.traceManager.recordTrace({
+      ...projectAttribution,
       at: Date.now(),
       route,
       application,
@@ -366,6 +374,7 @@ async function forwardVoiceCatalog(
     const body = Buffer.from(await upstream.arrayBuffer());
     const error = upstream.ok ? undefined : body.toString("utf8");
     options.traceManager.recordTrace({
+      ...projectAttribution,
       at: Date.now(),
       route,
       application,
@@ -389,6 +398,7 @@ async function forwardVoiceCatalog(
     rememberError(prepared, `realtime voices: ${message}`);
     await options.store.upsertAccount(prepared);
     options.traceManager.recordTrace({
+      ...projectAttribution,
       at: Date.now(),
       route,
       application,

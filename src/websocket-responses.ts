@@ -10,6 +10,7 @@ import {
 import {
   CODEX_SESSION_FORWARD_HEADER,
   extractCodexSessionId,
+  LITELLM_KEY_ALIAS_HEADER,
 } from "./codex-projects.js";
 
 type InstallResponsesWebsocketProxyOptions = {
@@ -360,6 +361,13 @@ async function forwardFrame(
   const codexSessionId = extractCodexSessionId(req.headers);
   if (codexSessionId) {
     headers.set(CODEX_SESSION_FORWARD_HEADER, codexSessionId);
+  }
+  const rawLiteLLMKeyAlias = req.headers[LITELLM_KEY_ALIAS_HEADER];
+  const liteLLMKeyAlias = Array.isArray(rawLiteLLMKeyAlias)
+    ? rawLiteLLMKeyAlias.join(", ")
+    : rawLiteLLMKeyAlias;
+  if (liteLLMKeyAlias?.trim()) {
+    headers.set(LITELLM_KEY_ALIAS_HEADER, liteLLMKeyAlias);
   }
   if (TRACE_INCLUDE_HEADERS) {
     headers.set(

@@ -394,6 +394,11 @@ patching Codex. A user-level official `SessionStart` hook sends the Codex
 MultiCodex. Incoming traces carry the same id in `thread-id`, so project
 attribution is stored directly in recent traces and long-term usage history.
 
+Requests routed through LiteLLM can identify their project with the
+`X-LiteLLM-Key-Alias` header. When present, this alias takes precedence over
+Codex session attribution and is used as the project name with a stable project
+identifier.
+
 Set a dedicated registration token on the server when possible:
 
 ```bash

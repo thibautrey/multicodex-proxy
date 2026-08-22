@@ -59,6 +59,7 @@ const EMPTY_REGISTRY: RegistryFile = {
 
 export const CODEX_SESSION_FORWARD_HEADER =
   "x-multicodex-codex-session-id";
+export const LITELLM_KEY_ALIAS_HEADER = "x-litellm-key-alias";
 
 function boundedString(value: unknown, maxLength: number): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -199,6 +200,35 @@ export function extractCodexSessionId(
   } catch {
     return undefined;
   }
+}
+
+export function extractLiteLLMProjectAttribution(
+  headers: http.IncomingHttpHeaders | Record<string, unknown>,
+): CodexProjectAttribution | undefined {
+  const normalized = headers as Record<string, unknown>;
+  const forwarded = headerValue(normalized, TRACE_HEADERS_FORWARD_HEADER);
+  if (forwarded) {
+    try {
+      const candidate = extractLiteLLMProjectAttribution(JSON.parse(forwarded));
+      if (candidate) return candidate;
+    } catch {
+      // Fall through to headers present on the current request.
+    }
+  }
+
+  const alias = boundedString(
+    headerValue(normalized, LITELLM_KEY_ALIAS_HEADER),
+    160,
+  );
+  if (!alias) return undefined;
+  const projectId = `prj_${createHash("sha256")
+    .update(`litellm:${alias}`)
+    .digest("hex")
+    .slice(0, 24)}`;
+  return {
+    projectId,
+    projectName: alias,
+  };
 }
 
 async function writeJsonAtomic(filePath: string, value: unknown) {

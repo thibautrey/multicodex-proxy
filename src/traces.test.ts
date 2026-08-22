@@ -164,6 +164,35 @@ test("Codex project attribution is resolved once and retained in long-term stats
   assert.equal(historical.codexSessionId, undefined);
 });
 
+test("explicit LiteLLM project attribution takes precedence over the Codex session", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-traces-"));
+  const manager = createTraceManager({
+    filePath: path.join(directory, "traces.jsonl"),
+    historyFilePath: path.join(directory, "history.jsonl"),
+    resolveCodexProject: () => ({
+      projectId: "prj_codex",
+      projectName: "codex-project",
+    }),
+  });
+  await manager.initialize();
+
+  manager.recordTrace({
+    at: Date.now(),
+    route: "/responses",
+    codexSessionId: "thread-project",
+    projectId: "prj_litellm",
+    projectName: "litellm-project",
+    status: 200,
+    stream: false,
+    latencyMs: 10,
+  });
+  await manager.flushPendingWrites();
+
+  const [trace] = await manager.readTraceWindow();
+  assert.equal(trace.projectId, "prj_litellm");
+  assert.equal(trace.projectName, "litellm-project");
+});
+
 test("historical traces keep their recorded cost instead of using current prices", async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-traces-"));
   const filePath = path.join(directory, "traces.jsonl");

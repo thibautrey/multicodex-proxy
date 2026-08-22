@@ -50,6 +50,7 @@ import { traceHeadersForRequest } from "./trace-headers.js";
 import {
   CodexProjectRegistry,
   extractCodexSessionId,
+  extractLiteLLMProjectAttribution,
 } from "./codex-projects.js";
 
 const app = express();
@@ -114,6 +115,7 @@ app.use((req, res, next) => {
     )
       return;
     traceManager.recordTrace({
+      ...extractLiteLLMProjectAttribution(req.headers),
       at: Date.now(),
       route: `${req.method} ${route}`,
       application: res.locals.proxyApplication,
