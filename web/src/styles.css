@@ -122,7 +122,7 @@ body {
   min-height: 100vh;
   color: var(--text);
   font-family: Inter, "Avenir Next", "Segoe UI", system-ui, -apple-system, sans-serif;
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1.45;
   background:
     radial-gradient(900px 520px at 88% -10%, rgba(20, 125, 114, 0.06), transparent 70%),
@@ -232,7 +232,7 @@ body,
   border-radius: 12px;
   background: linear-gradient(145deg, #25a99b, #116e66 62%, #d59652);
   color: #fff;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 900;
   letter-spacing: -0.02em;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 8px 18px rgba(6, 73, 66, 0.25);
@@ -245,13 +245,13 @@ body,
 
 .brand-copy strong {
   color: var(--sidebar-text);
-  font-size: 15px;
+  font-size: 17px;
   letter-spacing: -0.025em;
 }
 
 .brand-copy span {
   color: var(--sidebar-muted);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .sidebar-nav {
@@ -263,7 +263,7 @@ body,
 .sidebar-nav-label {
   padding: 0 10px 7px;
   color: var(--sidebar-muted);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -340,7 +340,7 @@ body,
 }
 
 .nav-tab-label {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 760;
   letter-spacing: -0.01em;
 }
@@ -348,7 +348,7 @@ body,
 .nav-tab-description {
   overflow: hidden;
   color: var(--sidebar-muted);
-  font-size: 9px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -376,12 +376,12 @@ body,
 
 .sidebar-status strong {
   color: var(--sidebar-text);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .sidebar-status small {
   color: var(--sidebar-muted);
-  font-size: 8px;
+  font-size: 10px;
 }
 
 .status-dot {
@@ -417,7 +417,7 @@ body,
 
 .topbar p {
   margin-top: 6px;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .topbar-actions,
@@ -494,7 +494,7 @@ body,
 
 .eyebrow {
   color: var(--primary);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 850;
   letter-spacing: 0.15em;
   text-transform: uppercase;
@@ -514,7 +514,7 @@ h1 {
 h2 {
   margin: 0;
   color: var(--text);
-  font-size: 1rem;
+  font-size: 1.1rem;
   line-height: 1.2;
   letter-spacing: -0.025em;
 }
@@ -535,7 +535,7 @@ p {
 small {
   display: block;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -610,7 +610,7 @@ small {
 
 .metric-title {
   padding-right: 20px;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 850;
   letter-spacing: 0.11em;
   text-transform: uppercase;
@@ -634,7 +634,7 @@ small {
 
 .metric-detail {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.35;
 }
 
@@ -656,7 +656,7 @@ small {
 
 .section-split-header p {
   max-width: 66ch;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.5;
 }
 
@@ -668,7 +668,7 @@ button {
   background: linear-gradient(180deg, #1b8b7f, var(--primary-strong));
   color: #fff;
   font-weight: 760;
-  font-size: 11px;
+  font-size: 13px;
   cursor: pointer;
   transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease, background 0.16s ease;
 }
@@ -733,7 +733,7 @@ button:disabled {
   border-radius: 999px;
   background: var(--surface-muted);
   color: var(--muted-strong);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 780;
   line-height: 1.2;
 }
@@ -762,7 +762,7 @@ button:disabled {
   border-radius: 9px;
   background: var(--surface-muted);
   color: var(--muted);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 780;
 }
 
@@ -789,7 +789,7 @@ textarea {
   outline: none;
   background: var(--surface-muted);
   color: var(--text);
-  font-size: 11px;
+  font-size: 13px;
   transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
 }
 
@@ -827,14 +827,14 @@ input[type="checkbox"] {
   display: grid;
   gap: 7px;
   color: var(--muted-strong);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
 }
 
 .control-label,
 .info-label {
   color: var(--muted);
-  font-size: 8px;
+  font-size: 10px;
   font-weight: 850;
   letter-spacing: 0.11em;
   text-transform: uppercase;
@@ -865,7 +865,7 @@ input[type="checkbox"] {
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 760;
 }
 
@@ -904,7 +904,7 @@ input[type="checkbox"] {
   padding: 9px 10px 9px 21px;
   border-bottom: 1px solid var(--line);
   color: var(--muted-strong);
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .clean-list li:last-child {
@@ -970,7 +970,7 @@ input[type="checkbox"] {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface-muted);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 780;
   white-space: nowrap;
 }
@@ -1025,7 +1025,7 @@ table,
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 th,
@@ -1042,7 +1042,7 @@ thead th {
   z-index: 1;
   background: var(--surface-muted);
   color: var(--muted);
-  font-size: 8px;
+  font-size: 10px;
   font-weight: 850;
   letter-spacing: 0.09em;
   text-transform: uppercase;
@@ -1076,7 +1076,7 @@ td .muted {
 }
 
 .project-model-table {
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .trace-row {
@@ -1098,7 +1098,7 @@ td .muted {
 }
 
 .account-cell strong {
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .usage-cell {
@@ -1115,7 +1115,7 @@ td .muted {
 }
 
 .usage-value-row strong {
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .reset-quota-actions {
@@ -1128,7 +1128,7 @@ td .muted {
 .reset-quota-btn {
   padding: 5px 7px;
   border-radius: 7px;
-  font-size: 8px;
+  font-size: 10px;
 }
 
 .reset-quota-error {
@@ -1184,7 +1184,7 @@ td .muted {
   background: transparent;
   color: var(--text);
   text-align: left;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .account-action-item:hover {
@@ -1210,7 +1210,7 @@ td .muted {
 }
 
 .recharts-wrapper {
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .recharts-default-tooltip {
@@ -1227,12 +1227,12 @@ td .muted {
 
 .recharts-text {
   fill: var(--muted);
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .recharts-legend-item-text {
   color: var(--muted-strong) !important;
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .pre {
@@ -1245,7 +1245,7 @@ td .muted {
   border-radius: 10px;
   background: #0e1815;
   color: #dcebe6;
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1.6;
   white-space: pre-wrap;
 }
@@ -1272,7 +1272,7 @@ details {
 details summary {
   cursor: pointer;
   color: var(--primary);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 780;
 }
 
@@ -1312,7 +1312,7 @@ details summary {
 
 .workspace-error {
   padding: 11px 13px;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .modal-backdrop {
@@ -1375,7 +1375,7 @@ details summary {
 .auth-error {
   padding: 10px 12px;
   border-radius: 9px;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .auth-loading {
@@ -1468,7 +1468,7 @@ details summary {
   background: var(--surface-muted);
   color: var(--text);
   cursor: pointer;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .model-selector-trigger:hover {
@@ -1530,7 +1530,7 @@ details summary {
   padding: 8px 9px;
   border-radius: 7px;
   cursor: pointer;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .model-selector-item:hover {
@@ -1552,14 +1552,14 @@ details summary {
 .model-selector-provider {
   flex: 0 0 auto;
   color: var(--muted);
-  font-size: 8px;
+  font-size: 10px;
 }
 
 .model-selector-empty {
   padding: 10px;
   color: var(--muted);
   text-align: center;
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .chip-remove {
@@ -1663,7 +1663,7 @@ details summary {
 }
 
 .workspace-tracing > .panel:first-child h2 {
-  font-size: 0.88rem;
+  font-size: 1rem;
 }
 
 .workspace-tracing > .cards7 {
@@ -1676,7 +1676,7 @@ details summary {
 }
 
 .workspace-tracing > .cards7 .metric-detail {
-  font-size: 8px;
+  font-size: 10px;
 }
 
 .workspace-tracing .chart-wrap {
