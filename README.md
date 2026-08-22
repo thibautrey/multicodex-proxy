@@ -412,6 +412,13 @@ node scripts/install-codex-project-hook.mjs --url http://192.0.2.149:1455
 unset MULTICODEX_PROJECT_TOKEN
 ```
 
+Codex does not run a newly installed or changed user hook until its exact
+definition has been reviewed and trusted. On the same local or remote execution
+host, open Codex, run `/hooks`, select `SessionStart`, review the MultiCodex
+command, and press `t` to trust it. Then start or resume a session. The hook
+overview must show the `SessionStart` hook as active rather than awaiting
+review.
+
 The installer preserves existing `~/.codex/hooks.json` entries, stores the
 secret in `~/.codex/multicodex-project.json` with mode `0600`, and installs a
 synchronous, fail-open hook. New, resumed, cleared, and compacted sessions are

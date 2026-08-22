@@ -81,7 +81,15 @@ async function main() {
   }
   manifest.hooks.SessionStart = sessionStart;
   await writeAtomic(hooksPath, `${JSON.stringify(manifest, null, 2)}\n`, 0o600);
-  process.stdout.write(`Installed MultiCodex project attribution hook in ${hooksPath}\n`);
+  process.stdout.write(
+    [
+      `Installed MultiCodex project attribution hook in ${hooksPath}`,
+      "Approval required: open Codex on this execution host, run /hooks,",
+      "review the SessionStart hook, and press t to trust it.",
+      "Codex skips new or changed hooks until they are trusted. Start or resume a session afterwards.",
+      "",
+    ].join("\n"),
+  );
 }
 
 main().catch((error) => {
