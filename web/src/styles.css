@@ -829,6 +829,20 @@ tbody tr:last-child td {
   border-bottom: none;
 }
 
+.project-model-details-row > td {
+  padding: 8px 12px 14px;
+  background: var(--surface-muted);
+}
+
+.project-model-table-wrap {
+  margin-top: 10px;
+  border-radius: 12px;
+}
+
+.project-model-table {
+  font-size: 12px;
+}
+
 .trace-row {
   cursor: pointer;
 }
