@@ -15,7 +15,7 @@ import {
   YAxis,
 } from "recharts";
 import { estimateCostUsd } from "../../model-pricing";
-import { CHART_COLORS, fmt, formatTokenCount, formatTokenRate, maskEmail, maskId, pct, routeLabel, usd } from "../../lib/ui";
+import { fmt, formatTokenCount, formatTokenRate, maskEmail, maskId, pct, routeLabel, usd } from "../../lib/ui";
 import { Metric } from "../Metric";
 import type { Account, ProjectUsageStats, Trace, TracePagination, TraceRangePreset, TraceStats } from "../../types";
 
@@ -91,6 +91,13 @@ export function TracingTab(props: Props) {
   const formatTooltipValue = (value: any) => formatTokenChartValue(value?.[0] ?? value ?? 0);
 
   const formatPieTokenLabel = ({ value }: { value?: number }) => formatTokenChartValue(value);
+  const chartColors = [
+    "var(--chart-1)",
+    "var(--chart-2)",
+    "var(--chart-3)",
+    "var(--chart-4)",
+    "var(--chart-5)",
+  ];
 
   return (
     <>
@@ -102,7 +109,6 @@ export function TracingTab(props: Props) {
               value={traceRange}
               onChange={(e) => {
                 setTraceRange(e.target.value as TraceRangePreset);
-                void gotoTracePage(1);
               }}
             >
               <option value="24h">Last 24h</option>
@@ -133,14 +139,14 @@ export function TracingTab(props: Props) {
           <div className="chart-wrap">
             <ResponsiveContainer width="100%" height={260}>
               <LineChart data={tokensTimeseries}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#d6dde4" />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
                 <XAxis dataKey="label" minTickGap={24} />
                 <YAxis tickFormatter={formatTokenChartValue} />
                 <Tooltip formatter={formatTooltipValue} />
                 <Legend />
-                <Line type="monotone" dataKey="tokensInput" name="input" stroke="#1f7a8c" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="tokensOutput" name="output" stroke="#2da4b8" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="tokensTotal" name="total" stroke="#4c956c" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="tokensInput" name="input" stroke="var(--chart-1)" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="tokensOutput" name="output" stroke="var(--chart-2)" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="tokensTotal" name="total" stroke="var(--chart-3)" strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -150,12 +156,12 @@ export function TracingTab(props: Props) {
           <div className="chart-wrap">
             <ResponsiveContainer width="100%" height={260}>
               <BarChart data={modelChartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#d6dde4" />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
                 <XAxis dataKey="label" interval={0} angle={-15} textAnchor="end" height={56} />
                 <YAxis />
                 <Tooltip />
                 <Legend />
-                <Bar dataKey="count" name="requests" fill="#1f7a8c" />
+                <Bar dataKey="count" name="requests" fill="var(--chart-1)" radius={[5, 5, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -168,12 +174,12 @@ export function TracingTab(props: Props) {
           <div className="chart-wrap">
             <ResponsiveContainer width="100%" height={260}>
               <BarChart data={modelCostChartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#d6dde4" />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
                 <XAxis dataKey="label" interval={0} angle={-15} textAnchor="end" height={56} />
                 <YAxis />
                 <Tooltip formatter={(v: any) => usd(Number(v) || 0)} />
                 <Legend />
-                <Bar dataKey="costUsd" name="cost usd" fill="#4c956c" />
+                <Bar dataKey="costUsd" name="cost usd" fill="var(--chart-3)" radius={[5, 5, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -183,13 +189,13 @@ export function TracingTab(props: Props) {
           <div className="chart-wrap">
             <ResponsiveContainer width="100%" height={260}>
               <LineChart data={tokensTimeseries}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#d6dde4" />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
                 <XAxis dataKey="label" minTickGap={24} />
                 <YAxis />
                 <Tooltip />
                 <Legend />
-                <Line type="monotone" dataKey="errors" name="errors" stroke="#c44545" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="requests" name="requests" stroke="#355070" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="errors" name="errors" stroke="var(--danger)" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="requests" name="requests" stroke="var(--chart-4)" strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -199,12 +205,12 @@ export function TracingTab(props: Props) {
           <div className="chart-wrap">
             <ResponsiveContainer width="100%" height={260}>
               <LineChart data={tokensTimeseries}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#d6dde4" />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
                 <XAxis dataKey="label" minTickGap={24} />
                 <YAxis />
                 <Tooltip formatter={(v: any) => usd(Number(v) || 0)} />
                 <Legend />
-                <Line type="monotone" dataKey="costUsd" name="cost usd" stroke="#4c956c" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="costUsd" name="cost usd" stroke="var(--chart-3)" strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -219,12 +225,12 @@ export function TracingTab(props: Props) {
         <div className="chart-wrap">
           <ResponsiveContainer width="100%" height={260}>
             <LineChart data={tokensTimeseries}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#d6dde4" />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
               <XAxis dataKey="label" minTickGap={24} />
               <YAxis tickFormatter={formatTokenRate} />
               <Tooltip formatter={(value: any) => formatTokenRate(Number(value) || 0)} />
               <Legend />
-              <Line type="monotone" dataKey="inferenceTokensPerSecond" name="tokens/s" stroke="#dc8b3f" strokeWidth={2} dot={false} connectNulls={false} />
+              <Line type="monotone" dataKey="inferenceTokensPerSecond" name="tokens/s" stroke="var(--accent)" strokeWidth={2} dot={false} connectNulls={false} />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -235,13 +241,13 @@ export function TracingTab(props: Props) {
         <div className="chart-wrap">
           <ResponsiveContainer width="100%" height={260}>
             <LineChart data={tokensTimeseries}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#d6dde4" />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
               <XAxis dataKey="label" minTickGap={24} />
               <YAxis />
               <Tooltip />
               <Legend />
-              <Line type="monotone" dataKey="latencyP50Ms" name="p50" stroke="#f4a259" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="latencyP95Ms" name="p95" stroke="#e76f51" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="latencyP50Ms" name="p50" stroke="var(--chart-3)" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="latencyP95Ms" name="p95" stroke="var(--danger)" strokeWidth={2} dot={false} />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -260,7 +266,7 @@ export function TracingTab(props: Props) {
                 label={formatPieTokenLabel}
               >
                 {modelChartData.map((entry, idx) => (
-                  <Cell key={`${entry.label}-${idx}`} fill={CHART_COLORS[idx % CHART_COLORS.length]} />
+                  <Cell key={`${entry.label}-${idx}`} fill={chartColors[idx % chartColors.length]} />
                 ))}
               </Pie>
               <Tooltip formatter={(value: any) => formatTokenChartValue(value)} />

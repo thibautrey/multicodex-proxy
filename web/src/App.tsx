@@ -33,14 +33,33 @@ import {
 
 const q = new URLSearchParams(window.location.search);
 const initialTab = (q.get("tab") as Tab) || "overview";
-const TAB_ITEMS: Array<{ id: Tab; label: string }> = [
-  { id: "overview", label: "Overview" },
-  { id: "accounts", label: "Accounts" },
-  { id: "aliases", label: "Aliases" },
-  { id: "tracing", label: "Tracing" },
-  { id: "playground", label: "Playground" },
-  { id: "docs", label: "Docs" },
+const TAB_ITEMS: Array<{ id: Tab; label: string; description: string }> = [
+  { id: "overview", label: "Overview", description: "Health and usage at a glance" },
+  { id: "accounts", label: "Accounts", description: "Providers, quotas and routing" },
+  { id: "aliases", label: "Aliases", description: "Model routing and fallbacks" },
+  { id: "tracing", label: "Tracing", description: "Requests, cost and latency" },
+  { id: "playground", label: "Playground", description: "Test the proxy interactively" },
+  { id: "docs", label: "API reference", description: "Endpoints and integration notes" },
 ];
+
+function TabIcon({ tab }: { tab: Tab }) {
+  if (tab === "overview") {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>;
+  }
+  if (tab === "accounts") {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="4"/><path d="M3 20c.6-4 2.6-6 6-6s5.4 2 6 6"/><path d="M16 7h5M18.5 4.5v5"/></svg>;
+  }
+  if (tab === "aliases") {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4v5a3 3 0 0 0 3 3h9"/><path d="m15 9 3 3-3 3"/><path d="M6 20v-3a5 5 0 0 1 5-5"/></svg>;
+  }
+  if (tab === "tracing") {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17h3l2-7 4 10 3-13 2 10h2"/></svg>;
+  }
+  if (tab === "playground") {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 3-6 9 6 9M15 3l6 9-6 9"/><path d="m14 8-4 8"/></svg>;
+  }
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5M8 12h8M8 16h8"/></svg>;
+}
 function activeModelBlockCount(account: Account) {
   return Object.values(account.state?.modelBlocks ?? {}).filter(
     (block) => block.until > Date.now(),
@@ -389,13 +408,13 @@ export default function App() {
     const load = async () => {
       try {
         setError("");
-        await loadTracing(tracePageRef.current, traceRangeRef.current);
+        await loadTracing(1, traceRange);
       } catch (e: any) {
         handleError(e);
       }
     };
     void load();
-  }, [tab]);
+  }, [tab, traceRange]);
 
   useEffect(() => {
     if (tab !== "tracing") return;
@@ -661,10 +680,15 @@ export default function App() {
 
   if (authenticated === null) {
     return (
-      <div className="page">
+      <div className="auth-page">
         <div className="auth-shell panel">
-          <h1>MultiVibe</h1>
-          <p className="muted">Checking admin session...</p>
+          <div className="auth-brand-mark" aria-hidden="true">MV</div>
+          <div>
+            <span className="eyebrow">Multi-provider routing</span>
+            <h1>MultiVibe</h1>
+            <p className="muted">Checking your admin session...</p>
+          </div>
+          <div className="auth-loading" aria-label="Loading" />
         </div>
       </div>
     );
@@ -672,20 +696,25 @@ export default function App() {
 
   if (!authenticated) {
     return (
-      <div className="page">
+      <div className="auth-page">
         <form className="auth-shell panel" onSubmit={login}>
+          <div className="auth-brand-mark" aria-hidden="true">MV</div>
           <div>
+            <span className="eyebrow">Admin workspace</span>
             <h1>MultiVibe</h1>
-            <p className="muted">Enter the admin token to unlock the dashboard.</p>
+            <p className="muted">Sign in to manage routing, providers and request activity.</p>
           </div>
-          <input
-            autoFocus
-            type="password"
-            value={loginToken}
-            onChange={(e) => setLoginToken(e.target.value)}
-            placeholder="Admin token"
-            autoComplete="current-password"
-          />
+          <label className="control-field">
+            <span className="control-label">Admin token</span>
+            <input
+              autoFocus
+              type="password"
+              value={loginToken}
+              onChange={(e) => setLoginToken(e.target.value)}
+              placeholder="Enter your token"
+              autoComplete="current-password"
+            />
+          </label>
           {error && <div className="error auth-error">{error}</div>}
           <button className="btn" type="submit" disabled={loginBusy || !loginToken.trim()}>
             {loginBusy ? "Unlocking..." : "Unlock dashboard"}
@@ -697,39 +726,71 @@ export default function App() {
 
   return (
     <div className="page">
-      <div className="shell content-stack">
-        <header className="panel topbar">
-          <div>
-            <h1>MultiVibe</h1>
-            <p className="muted">Quota-aware, multi-provider router with OAuth onboarding and tracing.</p>
+      <div className="shell app-shell">
+        <aside className="sidebar">
+          <div className="sidebar-brand">
+            <div className="brand-mark" aria-hidden="true">MV</div>
+            <div className="brand-copy">
+              <strong>MultiVibe</strong>
+              <span>Proxy control plane</span>
+            </div>
           </div>
-          <div className="inline wrap topbar-actions">
+
+          <nav className="sidebar-nav" aria-label="Primary navigation">
+            <span className="sidebar-nav-label">Workspace</span>
+            {TAB_ITEMS.map((item) => (
+              <button
+                key={item.id}
+                className={tab === item.id ? "nav-tab active" : "nav-tab"}
+                onClick={() => setTab(item.id)}
+                aria-current={tab === item.id ? "page" : undefined}
+              >
+                <span className="nav-tab-icon"><TabIcon tab={item.id} /></span>
+                <span className="nav-tab-copy">
+                  <span className="nav-tab-label">{item.label}</span>
+                  <span className="nav-tab-description">{item.description}</span>
+                </span>
+              </button>
+            ))}
+          </nav>
+
+          <div className="sidebar-footer">
+            <div className="sidebar-status">
+              <span className="status-dot" />
+              <span>
+                <strong>{sanitized ? "Sanitized view" : "System online"}</strong>
+                <small>{accounts.length} accounts · {models.length} models</small>
+              </span>
+            </div>
             <ThemeSwitcher value={themeMode} onChange={setThemeMode} />
-            <span className={sanitized ? "badge badge-live" : "badge"}>
-              {sanitized ? "Sanitized" : "Live"}
-            </span>
-            <button className="btn secondary" onClick={() => void refreshData()}>
-              Refresh data
-            </button>
-            <button className="btn ghost" onClick={() => void logout()}>
-              Lock
-            </button>
           </div>
-        </header>
+        </aside>
 
-        <nav className="tabs panel" aria-label="Primary">
-          {TAB_ITEMS.map((item) => (
-            <button
-              key={item.id}
-              className={tab === item.id ? "tab active" : "tab"}
-              onClick={() => setTab(item.id)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </nav>
+        <div className="workspace">
+          <header className="topbar">
+            <div className="topbar-title">
+              <span className="eyebrow">Control plane</span>
+              <h1>{TAB_ITEMS.find((item) => item.id === tab)?.label}</h1>
+              <p className="muted">{TAB_ITEMS.find((item) => item.id === tab)?.description}</p>
+            </div>
+            <div className="topbar-actions">
+              <span className="badge badge-live">
+                <span className="status-dot" />
+                {sanitized ? "Sanitized" : "Live"}
+              </span>
+              <button className="btn secondary topbar-button" onClick={() => void refreshData()}>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7h-5V2"/><path d="M20 7a9 9 0 1 0 2 7"/></svg>
+                Refresh
+              </button>
+              <button className="btn ghost icon-button" onClick={() => void logout()} title="Lock dashboard" aria-label="Lock dashboard">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+              </button>
+            </div>
+          </header>
 
-        {error && <div className="panel error">{error}</div>}
+          {error && <div className="panel error workspace-error">{error}</div>}
+
+          <main className={`workspace-content workspace-${tab}`}>
 
         {tab === "overview" && (
           <OverviewTab
@@ -816,6 +877,8 @@ export default function App() {
         {tab === "docs" && (
           <DocsTab totalTraceCostFromRows={totalTraceCostFromRows} />
         )}
+          </main>
+        </div>
       </div>
     </div>
   );
