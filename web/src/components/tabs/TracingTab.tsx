@@ -285,35 +285,88 @@ export function TracingTab(props: Props) {
                 <th>Input tokens</th>
                 <th>Output tokens</th>
                 <th>Total tokens</th>
+                <th>Cost</th>
                 <th>Avg latency</th>
+                <th>p95 latency</th>
               </tr>
             </thead>
             <tbody>
               {projectUsageStats.byProject.map((project) => (
-                <tr key={project.projectId}>
-                  <td>
-                    <div className="mono">
-                      {project.projectId === "unattributed"
-                        ? "Unattributed"
-                        : sanitized
-                          ? "*"
-                          : project.projectName ?? project.projectId}
-                    </div>
-                    {!sanitized && project.projectRemote && (
-                      <div className="muted mono">{project.projectRemote}</div>
-                    )}
-                  </td>
-                  <td>{project.requests}</td>
-                  <td>{project.errors}</td>
-                  <td>{formatTokenCount(project.tokens.prompt)}</td>
-                  <td>{formatTokenCount(project.tokens.completion)}</td>
-                  <td>{formatTokenCount(project.tokens.total)}</td>
-                  <td>{Math.round(project.avgLatencyMs)}ms</td>
-                </tr>
+                <React.Fragment key={project.projectId}>
+                  <tr>
+                    <td>
+                      <div className="mono">
+                        {project.projectId === "unattributed"
+                          ? "Unattributed"
+                          : sanitized
+                            ? "*"
+                            : project.projectName ?? project.projectId}
+                      </div>
+                      {!sanitized && project.projectRemote && (
+                        <div className="muted mono">{project.projectRemote}</div>
+                      )}
+                      <div className="muted">{project.requestsWithCost}/{project.requests} priced</div>
+                    </td>
+                    <td>{project.requests}</td>
+                    <td>{project.errors}</td>
+                    <td>{formatTokenCount(project.tokens.input)}</td>
+                    <td>{formatTokenCount(project.tokens.output)}</td>
+                    <td>{formatTokenCount(project.tokens.total)}</td>
+                    <td>{usd(project.costUsd)}</td>
+                    <td>{Math.round(project.avgLatencyMs)}ms</td>
+                    <td>{Math.round(project.latencyP95Ms)}ms</td>
+                  </tr>
+                  <tr className="project-model-details-row">
+                    <td colSpan={9}>
+                      <details>
+                        <summary>{project.models.length} model{project.models.length === 1 ? "" : "s"} — usage and cost details</summary>
+                        <div className="table-wrap project-model-table-wrap">
+                          <table className="data-table project-model-table">
+                            <thead>
+                              <tr>
+                                <th>Model</th>
+                                <th>Requests</th>
+                                <th>Errors</th>
+                                <th>Input</th>
+                                <th>Cached input</th>
+                                <th>Output</th>
+                                <th>Total</th>
+                                <th>Cost</th>
+                                <th>Avg latency</th>
+                                <th>p50</th>
+                                <th>p95</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {project.models.map((model) => (
+                                <tr key={model.model}>
+                                  <td className="mono">{model.model}</td>
+                                  <td>{model.requests}</td>
+                                  <td>{model.errors}</td>
+                                  <td>{formatTokenCount(model.tokens.input)}</td>
+                                  <td>{formatTokenCount(model.tokens.cachedInput)}</td>
+                                  <td>{formatTokenCount(model.tokens.output)}</td>
+                                  <td>{formatTokenCount(model.tokens.total)}</td>
+                                  <td>
+                                    {usd(model.costUsd)}
+                                    <div className="muted">{model.requestsWithCost}/{model.requests} priced</div>
+                                  </td>
+                                  <td>{Math.round(model.avgLatencyMs)}ms</td>
+                                  <td>{Math.round(model.latencyP50Ms)}ms</td>
+                                  <td>{Math.round(model.latencyP95Ms)}ms</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </details>
+                    </td>
+                  </tr>
+                </React.Fragment>
               ))}
               {!projectUsageStats.byProject.length && (
                 <tr>
-                  <td colSpan={7} className="muted">No project-attributed usage in this range.</td>
+                  <td colSpan={9} className="muted">No project-attributed usage in this range.</td>
                 </tr>
               )}
             </tbody>

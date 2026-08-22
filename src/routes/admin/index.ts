@@ -41,6 +41,7 @@ import {
   requestXaiDeviceCode,
 } from "../../xai.js";
 import type { CodexProjectRegistry } from "../../codex-projects.js";
+import { aggregateProjectUsage } from "../../project-usage.js";
 
 type StoragePaths = {
   accountsPath: string;
@@ -644,14 +645,6 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     const byAccount = new Map<string, ReturnType<typeof createUsageAggregate>>();
     const byRoute = new Map<string, ReturnType<typeof createUsageAggregate>>();
     const byApplication = new Map<string, ReturnType<typeof createUsageAggregate>>();
-    const byProject = new Map<
-      string,
-      {
-        projectName?: string;
-        projectRemote?: string;
-        aggregate: ReturnType<typeof createUsageAggregate>;
-      }
-    >();
 
     for (const trace of filtered) {
       addTraceToAggregate(globalAgg, trace);
@@ -670,15 +663,6 @@ export function createAdminRouter(options: AdminRoutesOptions) {
         byApplication.set(applicationKey, createUsageAggregate());
       addTraceToAggregate(byApplication.get(applicationKey)!, trace);
 
-      const projectKey = trace.projectId ?? "unattributed";
-      if (!byProject.has(projectKey)) {
-        byProject.set(projectKey, {
-          projectName: trace.projectName,
-          projectRemote: trace.projectRemote,
-          aggregate: createUsageAggregate(),
-        });
-      }
-      addTraceToAggregate(byProject.get(projectKey)!.aggregate, trace);
     }
 
     const accounts = await store.listAccounts();
@@ -713,14 +697,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     const byApplicationOut = Array.from(byApplication.entries())
       .map(([application, agg]) => ({ application, ...finalizeAggregate(agg) }))
       .sort((a, b) => b.requests - a.requests);
-    const byProjectOut = Array.from(byProject.entries())
-      .map(([projectId, value]) => ({
-        projectId,
-        projectName: value.projectName,
-        projectRemote: value.projectRemote,
-        ...finalizeAggregate(value.aggregate),
-      }))
-      .sort((a, b) => b.requests - a.requests);
+    const byProjectOut = aggregateProjectUsage(filtered);
 
     res.json({
       ok: true,
