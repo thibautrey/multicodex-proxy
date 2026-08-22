@@ -412,6 +412,11 @@ node scripts/install-codex-project-hook.mjs --url http://192.0.2.149:1455
 unset MULTICODEX_PROJECT_TOKEN
 ```
 
+For the local macOS Codex app, run the same command in a terminal on the Mac,
+from a local checkout of this repository. The installer writes to the Codex
+home of the host where it runs (`~/.codex` by default); running it in a remote
+Codex shell only installs the remote hook.
+
 Codex does not run a newly installed or changed user hook until its exact
 definition has been reviewed and trusted. On the same local or remote execution
 host, open Codex, run `/hooks`, select `SessionStart`, review the MultiCodex
