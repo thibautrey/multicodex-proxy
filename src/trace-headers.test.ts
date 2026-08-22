@@ -12,6 +12,7 @@ test("sanitizes sensitive headers while preserving diagnostic headers", () => {
   const headers = sanitizeRequestHeaders({
     Authorization: "Bearer secret",
     "x-api-key": "proxy-secret",
+    "x-oai-attestation": "signed-attestation",
     Cookie: "session=secret",
     "x-project-id": "project-alpha",
     "user-agent": "Codex Desktop/1.0",
@@ -23,6 +24,7 @@ test("sanitizes sensitive headers while preserving diagnostic headers", () => {
     cookie: "[REDACTED]",
     "user-agent": "Codex Desktop/1.0",
     "x-api-key": "[REDACTED]",
+    "x-oai-attestation": "[REDACTED]",
     "x-project-id": "project-alpha",
     "x-repeat": "one, two",
   });

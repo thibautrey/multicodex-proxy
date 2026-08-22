@@ -8,7 +8,7 @@ const MAX_HEADER_VALUE_LENGTH = 512;
 const REDACTED_HEADER_VALUE = "[REDACTED]";
 
 const SENSITIVE_HEADER_PATTERN =
-  /(?:^|[-_])(authorization|proxy[-_]?authorization|api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|token|secret|password|credential|cookie|set[-_]?cookie|session(?:[-_]?id)?|state|nonce|signature|hmac)(?:$|[-_])/i;
+  /(?:^|[-_])(authorization|proxy[-_]?authorization|api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|token|secret|password|credential|cookie|set[-_]?cookie|session(?:[-_]?id)?|state|nonce|signature|hmac|attestation|assertion|proof)(?:$|[-_])/i;
 
 function isSensitiveHeader(name: string): boolean {
   return SENSITIVE_HEADER_PATTERN.test(name);
