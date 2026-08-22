@@ -532,6 +532,12 @@ function modelObject(
   };
 }
 
+function fallbackModelCatalog(): ExposedModel[] {
+  return Array.from(new Set(PROXY_MODELS)).map((id) =>
+    modelObject(id, "openai"),
+  );
+}
+
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
 }
@@ -968,9 +974,7 @@ async function refreshModels(
     updateValidationCache(merged, catalogComplete);
     return merged;
   } catch {
-    const fallback = Array.from(new Set(PROXY_MODELS)).map((id) =>
-      modelObject(id, "openai"),
-    );
+    const fallback = fallbackModelCatalog();
     modelsCache.at = Date.now();
     modelsCache.models = fallback;
     updateValidationCache(fallback, false);
@@ -998,6 +1002,22 @@ export async function discoverModels(
   if (cacheAgeMs < MODELS_CACHE_MS && modelsCache.models.length) {
     options.onPrepared?.("fresh", false);
     return modelsCache.models;
+  }
+
+  // The router starts a discovery in the background at construction time.
+  // A request arriving during that first probe must not inherit all provider
+  // network latency just because no catalog has been observed yet. The
+  // fallback is deliberately not stored as the cache: the in-flight refresh
+  // still publishes the real catalog when it completes.
+  if (!modelsCache.models.length && options.staleWhileRevalidate) {
+    const prepared = await modelsRefreshCoordinator.prepare({
+      staleValue: fallbackModelCatalog(),
+      staleWhileRevalidate: true,
+      refresh: () =>
+        refreshModels(store, openaiBaseUrl, mistralBaseUrl, zaiBaseUrl),
+    });
+    options.onPrepared?.(prepared.mode, prepared.shared);
+    return prepared.value;
   }
 
   const canUseStale = canServeStaleSnapshot({
@@ -1832,6 +1852,9 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             USAGE_STALE_WHILE_REVALIDATE &&
             !valid.state?.scheduledWeeklyReset,
           maxStaleAgeMs: USAGE_STALE_MAX_AGE_MS,
+          serveMissingSnapshotWhileRevalidating:
+            USAGE_STALE_WHILE_REVALIDATE &&
+            !valid.state?.scheduledWeeklyReset,
           onBackgroundUpdate: async (updated) => {
             if (updated.usage) {
               await store.patchAccount(updated.id, {

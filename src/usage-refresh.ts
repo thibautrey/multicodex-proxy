@@ -18,6 +18,12 @@ type RefreshUsage = (
 type PrepareOptions = {
   staleWhileRevalidate: boolean;
   maxStaleAgeMs?: number;
+  /**
+   * A missing usage snapshot is still enough to route a request. When this
+   * flag is enabled, let routing use the account's local zero-usage fallback
+   * while the first probe runs in the background.
+   */
+  serveMissingSnapshotWhileRevalidating?: boolean;
   onBackgroundUpdate?: (account: Account) => void | Promise<void>;
 };
 
@@ -60,10 +66,12 @@ export class UsageRefreshCoordinator {
       : Infinity;
     const withinStaleLimit =
       staleAgeMs <= (options.maxStaleAgeMs ?? Infinity);
+    const canServeMissingSnapshot =
+      !account.usage &&
+      options.serveMissingSnapshotWhileRevalidating === true;
     if (
       options.staleWhileRevalidate &&
-      account.usage &&
-      withinStaleLimit
+      ((account.usage && withinStaleLimit) || canServeMissingSnapshot)
     ) {
       if (!shared && options.onBackgroundUpdate) {
         void active.promise

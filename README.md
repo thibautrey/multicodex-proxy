@@ -453,7 +453,7 @@ same `/admin/oauth/device/poll` endpoint used by OpenAI device OAuth.
 | `TRACE_RETENTION_MAX`             | `1000`                                    | Number of recent full traces to retain; minimum effective value is 100 |
 | `TRACE_INCLUDE_BODY`              | `false`                                   | Persist full request payloads when explicitly enabled; trace stats still work when disabled |
 | `TRACE_INCLUDE_HEADERS`           | `false`                                   | Persist sanitized inbound request headers in recent traces; credentials and tokens are redacted, and headers are excluded from long-term stats history |
-| `USAGE_STALE_WHILE_REVALIDATE`    | `true`                                    | Serve an existing stale usage snapshot while refreshing it in the background |
+| `USAGE_STALE_WHILE_REVALIDATE`    | `true`                                    | Serve stale usage, or route with a missing snapshot, while refreshing in the background |
 | `USAGE_STALE_MAX_AGE_MS`          | `1800000`                                 | Maximum snapshot age eligible for stale-while-revalidate; older snapshots block for refresh |
 | `REQUEST_BODY_LIMIT`              | `100mb`                                   | Max accepted JSON or decompressed zstd request body size            |
 | `PROXY_MODELS`                    | `gpt-5.3-codex,gpt-5.2-codex,gpt-5-codex` | Fallback comma-separated model list for `/v1/models`                |
