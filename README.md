@@ -403,6 +403,11 @@ CODEX_PROJECT_REGISTRATION_TOKEN=replace-with-a-random-token
 When this variable is unset, `ADMIN_TOKEN` is accepted for compatibility. If
 both are empty, project registration is disabled.
 
+The simplest installation path is in the dashboard: open **Tracing**, click
+**Install hook** next to **Codex session attribution**, then paste and execute
+the copied command in a terminal on the machine that runs Codex. The same
+command works on macOS and Linux.
+
 Install the hook once on every machine or remote execution host that runs Codex:
 
 ```bash

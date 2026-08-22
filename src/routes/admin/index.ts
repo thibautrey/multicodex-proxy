@@ -42,6 +42,7 @@ import {
 } from "../../xai.js";
 import type { CodexProjectRegistry } from "../../codex-projects.js";
 import { aggregateProjectUsage } from "../../project-usage.js";
+import { buildCodexHookInstallCommand } from "../../codex-hook-install.js";
 
 type StoragePaths = {
   accountsPath: string;
@@ -60,6 +61,7 @@ export type AdminRoutesOptions = {
   openaiBaseUrl: string;
   mistralBaseUrl: string;
   zaiBaseUrl: string;
+  codexProjectRegistrationToken: string;
   storagePaths: StoragePaths;
 };
 
@@ -284,6 +286,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     openaiBaseUrl,
     mistralBaseUrl,
     zaiBaseUrl,
+    codexProjectRegistrationToken,
     storagePaths,
   } = options;
 
@@ -331,6 +334,20 @@ export function createAdminRouter(options: AdminRoutesOptions) {
 
   router.get("/codex-sessions", (_req, res) => {
     res.json({ ok: true, sessions: codexProjectRegistry.listSessions() });
+  });
+
+  router.post("/codex-hook-install-command", (req, res) => {
+    try {
+      const command = buildCodexHookInstallCommand(
+        req.body?.baseUrl,
+        codexProjectRegistrationToken,
+      );
+      res.json({ ok: true, command });
+    } catch (error: any) {
+      const message = error?.message ?? String(error);
+      const status = message.includes("registration is disabled") ? 503 : 400;
+      res.status(status).json({ error: message });
+    }
   });
 
   router.get("/accounts", async (_req, res) =>

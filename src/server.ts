@@ -140,6 +140,7 @@ const adminRouter = createAdminRouter({
   openaiBaseUrl: CHATGPT_BASE_URL,
   mistralBaseUrl: MISTRAL_BASE_URL,
   zaiBaseUrl: ZAI_BASE_URL,
+  codexProjectRegistrationToken: CODEX_PROJECT_REGISTRATION_TOKEN,
   storagePaths: {
     accountsPath: STORE_PATH,
     oauthStatePath: OAUTH_STATE_PATH,
@@ -324,6 +325,27 @@ function rootProxyGuard(
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const webDist = path.resolve(__dirname, "../web-dist");
+const scriptsDirectory = path.resolve(__dirname, "../scripts");
+
+function sendHookInstallerFile(
+  res: express.Response,
+  fileName: string,
+  contentType: string,
+) {
+  res.setHeader("cache-control", "no-cache");
+  res.type(contentType);
+  res.sendFile(path.join(scriptsDirectory, fileName));
+}
+
+app.get("/install-codex-project-hook.sh", (_req, res) =>
+  sendHookInstallerFile(res, "install-codex-project-hook.sh", "text/x-shellscript"),
+);
+app.get("/install-codex-project-hook.mjs", (_req, res) =>
+  sendHookInstallerFile(res, "install-codex-project-hook.mjs", "text/javascript"),
+);
+app.get("/codex-project-hook.mjs", (_req, res) =>
+  sendHookInstallerFile(res, "codex-project-hook.mjs", "text/javascript"),
+);
 
 app.get("/health", (_req, res) =>
   res.json({

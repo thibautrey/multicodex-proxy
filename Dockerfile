@@ -17,6 +17,11 @@ WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/web-dist ./web-dist
+COPY --from=build \
+  /app/scripts/codex-project-hook.mjs \
+  /app/scripts/install-codex-project-hook.mjs \
+  /app/scripts/install-codex-project-hook.sh \
+  ./scripts/
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
 EXPOSE 1455

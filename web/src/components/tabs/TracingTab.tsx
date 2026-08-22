@@ -16,6 +16,8 @@ import {
 } from "recharts";
 import { estimateCostUsd } from "../../model-pricing";
 import { fmt, formatTokenCount, formatTokenRate, maskEmail, maskId, pct, routeLabel, usd } from "../../lib/ui";
+import { api } from "../../lib/api";
+import { copyTextToClipboard } from "../../lib/clipboard";
 import { Metric } from "../Metric";
 import type { Account, ProjectUsageStats, Trace, TracePagination, TraceRangePreset, TraceStats } from "../../types";
 
@@ -65,6 +67,47 @@ export function TracingTab(props: Props) {
     () => new Map(accounts.map((account) => [account.id, account.provider])),
     [accounts],
   );
+  const [installHookBusy, setInstallHookBusy] = React.useState(false);
+  const [installHookNotice, setInstallHookNotice] = React.useState<string | null>(null);
+  const installHookNoticeTimer = React.useRef<number | undefined>(undefined);
+
+  React.useEffect(
+    () => () => {
+      if (installHookNoticeTimer.current !== undefined) {
+        window.clearTimeout(installHookNoticeTimer.current);
+      }
+    },
+    [],
+  );
+
+  const showInstallHookNotice = (message: string) => {
+    setInstallHookNotice(message);
+    if (installHookNoticeTimer.current !== undefined) {
+      window.clearTimeout(installHookNoticeTimer.current);
+    }
+    installHookNoticeTimer.current = window.setTimeout(() => {
+      setInstallHookNotice(null);
+      installHookNoticeTimer.current = undefined;
+    }, 3_500);
+  };
+
+  const installHook = async () => {
+    setInstallHookBusy(true);
+    try {
+      const response = await api("/admin/codex-hook-install-command", {
+        method: "POST",
+        body: JSON.stringify({ baseUrl: window.location.origin }),
+      });
+      const command = String(response.command ?? "");
+      if (!command) throw new Error("The server returned an empty install command");
+      await copyTextToClipboard(command);
+      showInstallHookNotice("Paste and execute the command in your terminal");
+    } catch (error: any) {
+      showInstallHookNotice(error?.message ?? String(error));
+    } finally {
+      setInstallHookBusy(false);
+    }
+  };
 
   const providerFavicon = (provider?: string) =>
     provider === "mistral"
@@ -279,7 +322,17 @@ export function TracingTab(props: Props) {
       <section className="panel">
         <div className="section-split-header">
           <h2>Project usage</h2>
-          <span className="badge">Codex session attribution</span>
+          <div className="project-attribution-actions">
+            <span className="badge">Codex session attribution</span>
+            <button
+              className="btn secondary install-hook-button"
+              type="button"
+              onClick={() => void installHook()}
+              disabled={installHookBusy}
+            >
+              {installHookBusy ? "Preparing..." : "Install hook"}
+            </button>
+          </div>
         </div>
         <div className="table-wrap">
           <table className="data-table">
@@ -379,6 +432,12 @@ export function TracingTab(props: Props) {
           </table>
         </div>
       </section>
+
+      {installHookNotice && (
+        <div className="hook-install-toast" role="status" aria-live="polite">
+          {installHookNotice}
+        </div>
+      )}
 
       <section className="panel">
         <div className="section-split-header">
