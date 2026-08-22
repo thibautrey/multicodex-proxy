@@ -26,6 +26,7 @@ import {
   TRACE_STATS_HISTORY_PATH,
   TRACE_RETENTION_MAX,
   TRACE_INCLUDE_BODY,
+  TRACE_INCLUDE_HEADERS,
   UPSTREAM_PATH,
   OAUTH_STATE_PATH,
   PORT,
@@ -43,6 +44,7 @@ import {
   identifyProxyApplication,
   parseProxyApiKeys,
 } from "./proxy-api-keys.js";
+import { traceHeadersForRequest } from "./trace-headers.js";
 
 const app = express();
 app.use(createBodyParserMiddleware());
@@ -106,6 +108,9 @@ app.use((req, res, next) => {
       at: Date.now(),
       route: `${req.method} ${route}`,
       application: res.locals.proxyApplication,
+      requestHeaders: TRACE_INCLUDE_HEADERS
+        ? traceHeadersForRequest(req.headers)
+        : undefined,
       status: res.statusCode,
       stream: false,
       latencyMs: Date.now() - startedAt,

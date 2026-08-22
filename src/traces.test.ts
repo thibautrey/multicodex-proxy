@@ -93,6 +93,39 @@ test("trace initialization warms the cache before the first durable stream", asy
   await fs.rm(directory, { recursive: true, force: true });
 });
 
+test("request headers stay in recent traces but not long-term stats history", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-traces-"));
+  const filePath = path.join(directory, "traces.jsonl");
+  const historyFilePath = path.join(directory, "history.jsonl");
+  const manager = createTraceManager({ filePath, historyFilePath });
+
+  await manager.appendTrace({
+    at: Date.now(),
+    route: "/v1/responses",
+    status: 200,
+    stream: false,
+    latencyMs: 10,
+    requestHeaders: {
+      authorization: "[REDACTED]",
+      "x-project-id": "project-alpha",
+    },
+  });
+
+  const [trace] = await manager.readTraceWindow();
+  assert.deepEqual(trace.requestHeaders, {
+    authorization: "[REDACTED]",
+    "x-project-id": "project-alpha",
+  });
+
+  const [listEntry] = await manager.readTraceListWindow();
+  assert.equal(listEntry.hasRequestHeaders, true);
+
+  const [historyEntry] = await manager.readStatsHistory();
+  assert.equal(historyEntry.requestHeaders, undefined);
+
+  await fs.rm(directory, { recursive: true, force: true });
+});
+
 test("historical traces keep their recorded cost instead of using current prices", async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-traces-"));
   const filePath = path.join(directory, "traces.jsonl");

@@ -12,6 +12,7 @@ import {
   PI_USER_AGENT,
   PROXY_MODELS,
   TRACE_INCLUDE_BODY,
+  TRACE_INCLUDE_HEADERS,
   UPSTREAM_COMPACT_PATH,
   UPSTREAM_PATH,
   USAGE_STALE_MAX_AGE_MS,
@@ -87,6 +88,10 @@ import {
   TraceManager,
   type ResponseStreamDiagnostics,
 } from "../../traces.js";
+import {
+  traceHeadersForRequest,
+  TRACE_HEADERS_FORWARD_HEADER,
+} from "../../trace-headers.js";
 import {
   accountNeedsRequestPreparation,
   ensureValidToken,
@@ -1681,16 +1686,23 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       typeof res.locals.proxyApplication === "string"
         ? res.locals.proxyApplication
         : undefined;
+    const requestHeaders = TRACE_INCLUDE_HEADERS
+      ? traceHeadersForRequest(req.headers)
+      : undefined;
     const recordTrace = (
       entry: Parameters<typeof traceManager.recordTrace>[0],
-    ) => traceManager.recordTrace({ ...entry, application });
+    ) => traceManager.recordTrace({ ...entry, application, requestHeaders });
     const beginTrace = (
       entry: Parameters<typeof traceManager.beginTrace>[0],
-    ) => traceManager.beginTrace({ ...entry, application });
+    ) => traceManager.beginTrace({ ...entry, application, requestHeaders });
     const completeTrace = (
       id: string,
       entry: Parameters<typeof traceManager.completeTrace>[1],
-    ) => traceManager.completeTrace(id, { ...entry, application });
+    ) => traceManager.completeTrace(id, {
+      ...entry,
+      application,
+      requestHeaders,
+    });
     const usageRefreshTrace = {
       background: 0,
       blocking: 0,
@@ -3526,7 +3538,12 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
 
     for (const [rawName, rawValue] of Object.entries(originalHeaders)) {
       const name = rawName.toLowerCase();
-      if (isHopByHopHeader(name) || name === "authorization") continue;
+      if (
+        isHopByHopHeader(name) ||
+        name === "authorization" ||
+        name === TRACE_HEADERS_FORWARD_HEADER
+      )
+        continue;
       if (Array.isArray(rawValue)) {
         forwarded[rawName] = rawValue.join(", ");
       } else if (typeof rawValue === "string") {

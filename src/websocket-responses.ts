@@ -1,7 +1,12 @@
 import type http from "node:http";
 import { randomUUID } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
+import { TRACE_INCLUDE_HEADERS } from "./config.js";
 import { createWebsocketSSEMessageRelay } from "./responses/websocket-sse-relay.js";
+import {
+  serializeTraceHeaders,
+  TRACE_HEADERS_FORWARD_HEADER,
+} from "./trace-headers.js";
 
 type InstallResponsesWebsocketProxyOptions = {
   server: http.Server;
@@ -348,6 +353,12 @@ async function forwardFrame(
       ? req.headers["x-codex-turn-state"]
       : "";
   if (turnState) headers.set("x-codex-turn-state", turnState);
+  if (TRACE_INCLUDE_HEADERS) {
+    headers.set(
+      TRACE_HEADERS_FORWARD_HEADER,
+      serializeTraceHeaders(req.headers),
+    );
+  }
 
   let response: Response;
   try {

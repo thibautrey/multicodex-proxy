@@ -1,4 +1,5 @@
 import express from "express";
+import { TRACE_INCLUDE_HEADERS } from "./config.js";
 import type { OAuthConfig } from "./oauth.js";
 import type { Account, ProviderId } from "./types.js";
 import { AccountStore } from "./store.js";
@@ -12,6 +13,7 @@ import {
   rememberError,
 } from "./quota.js";
 import type { TraceManager } from "./traces.js";
+import { traceHeadersForRequest } from "./trace-headers.js";
 
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
@@ -144,6 +146,9 @@ async function forwardRealtimeCall(
     typeof res.locals.proxyApplication === "string"
       ? res.locals.proxyApplication
       : undefined;
+  const requestHeaders = TRACE_INCLUDE_HEADERS
+    ? traceHeadersForRequest(req.headers)
+    : undefined;
   const body = incomingBody(req);
   if (!contentTypeAccepted(req)) {
     return res.status(415).json({
@@ -215,6 +220,7 @@ async function forwardRealtimeCall(
         at: Date.now(),
         route,
         application,
+        requestHeaders,
         accountId: prepared.id,
         accountEmail: prepared.email,
         model: "realtime",
@@ -237,6 +243,7 @@ async function forwardRealtimeCall(
     at: Date.now(),
     route,
     application,
+    requestHeaders,
     model: "realtime",
     status: lastStatus,
     stream: false,
@@ -263,6 +270,9 @@ async function forwardVoiceCatalog(
     typeof res.locals.proxyApplication === "string"
       ? res.locals.proxyApplication
       : undefined;
+  const requestHeaders = TRACE_INCLUDE_HEADERS
+    ? traceHeadersForRequest(req.headers)
+    : undefined;
   const selected = chooseAccountForProvider(
     candidateAccounts({ ...options, provider: "openai" }),
     "openai",
@@ -272,6 +282,7 @@ async function forwardVoiceCatalog(
       at: Date.now(),
       route,
       application,
+      requestHeaders,
       model: "realtime-voices",
       status: 503,
       stream: false,
@@ -306,6 +317,7 @@ async function forwardVoiceCatalog(
       at: Date.now(),
       route,
       application,
+      requestHeaders,
       accountId: prepared.id,
       accountEmail: prepared.email,
       model: "realtime-voices",
@@ -327,6 +339,7 @@ async function forwardVoiceCatalog(
       at: Date.now(),
       route,
       application,
+      requestHeaders,
       accountId: prepared.id,
       accountEmail: prepared.email,
       model: "realtime-voices",

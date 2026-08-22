@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { createInterface } from "node:readline";
+import { normalizeTraceHeaders } from "./trace-headers.js";
 
 export type TraceEntry = {
   id: string;
@@ -31,6 +32,7 @@ export type TraceEntry = {
   costStatus?: "estimated" | "unpriced" | "unknown";
   usage?: any;
   requestBody?: any;
+  requestHeaders?: Record<string, string>;
   error?: string;
   upstreamError?: string;
   upstreamContentType?: string;
@@ -97,8 +99,9 @@ export type CustomToolCallDiagnostic = {
   sawOutputItemDone: boolean;
 };
 
-export type TraceListEntry = Omit<TraceEntry, "requestBody"> & {
+export type TraceListEntry = Omit<TraceEntry, "requestBody" | "requestHeaders"> & {
   hasRequestBody: boolean;
+  hasRequestHeaders: boolean;
 };
 
 export type TraceTotals = {
@@ -382,6 +385,7 @@ function normalizeTrace(raw: any): TraceEntry | null {
             : "unknown",
     usage: raw.usage,
     requestBody: raw.requestBody,
+    requestHeaders: normalizeTraceHeaders(raw.requestHeaders),
     error: typeof raw.error === "string" ? raw.error : undefined,
     upstreamError:
       typeof raw.upstreamError === "string" ? raw.upstreamError : undefined,
@@ -1151,6 +1155,7 @@ export function createTraceManager(config: TraceManagerConfig) {
   function toStatsHistoryEntry(entry: TraceEntry): TraceEntry {
     const {
       requestBody: _requestBody,
+      requestHeaders: _requestHeaders,
       usage: _usage,
       error: _error,
       upstreamError: _upstreamError,
@@ -1197,10 +1202,15 @@ export function createTraceManager(config: TraceManagerConfig) {
   }
 
   function toTraceListEntry(entry: TraceEntry): TraceListEntry {
-    const { requestBody: _requestBody, ...rest } = entry;
+    const {
+      requestBody: _requestBody,
+      requestHeaders: _requestHeaders,
+      ...rest
+    } = entry;
     return {
       ...rest,
       hasRequestBody: typeof entry.requestBody !== "undefined",
+      hasRequestHeaders: typeof entry.requestHeaders !== "undefined",
     };
   }
 

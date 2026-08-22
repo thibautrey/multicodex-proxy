@@ -10,6 +10,8 @@ export const TRACE_STATS_HISTORY_PATH =
   process.env.TRACE_STATS_HISTORY_PATH ?? "/data/requests-stats-history.jsonl";
 export const TRACE_INCLUDE_BODY =
   (process.env.TRACE_INCLUDE_BODY ?? "false") === "true"; // disabling the body trace by default keeps disk writes smaller
+export const TRACE_INCLUDE_HEADERS =
+  (process.env.TRACE_INCLUDE_HEADERS ?? "false") === "true"; // values are sanitized before persistence
 export const USAGE_STALE_WHILE_REVALIDATE =
   (process.env.USAGE_STALE_WHILE_REVALIDATE ?? "true") !== "false";
 export const USAGE_STALE_MAX_AGE_MS = Math.max(

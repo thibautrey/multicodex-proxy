@@ -347,6 +347,12 @@ export function TracingTab(props: Props) {
                                     <pre className="mono pre">{JSON.stringify(expandedTrace.requestBody, null, 2)}</pre>
                                   </details>
                                 )}
+                                {expandedTrace.hasRequestHeaders && (
+                                  <details open>
+                                    <summary>Request Headers (sanitized)</summary>
+                                    <pre className="mono pre">{JSON.stringify(expandedTrace.requestHeaders, null, 2)}</pre>
+                                  </details>
+                                )}
                                 <details>
                                   <summary>Full Trace Object</summary>
                                   <pre className="mono pre">{JSON.stringify(expandedTrace, null, 2)}</pre>

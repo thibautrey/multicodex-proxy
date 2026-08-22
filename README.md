@@ -379,6 +379,13 @@ curl -H "x-admin-token: change-me" \
   "http://localhost:1455/admin/traces?limit=50"
 ```
 
+To inspect which headers a client sends, temporarily start the proxy with
+`TRACE_INCLUDE_HEADERS=true`. The trace detail and the `Full Trace Object` then
+include `requestHeaders`. Header names are preserved, while credentials,
+cookies, tokens, session values, and similar secrets are replaced with
+`[REDACTED]`. Header tracing is disabled by default and is not written to the
+long-term stats history.
+
 ### Usage stats
 
 ```bash
@@ -445,6 +452,7 @@ same `/admin/oauth/device/poll` endpoint used by OpenAI device OAuth.
 | `TRACE_STATS_HISTORY_PATH`        | `/data/requests-stats-history.jsonl`      | Lightweight request history for long-term stats                     |
 | `TRACE_RETENTION_MAX`             | `1000`                                    | Number of recent full traces to retain; minimum effective value is 100 |
 | `TRACE_INCLUDE_BODY`              | `false`                                   | Persist full request payloads when explicitly enabled; trace stats still work when disabled |
+| `TRACE_INCLUDE_HEADERS`           | `false`                                   | Persist sanitized inbound request headers in recent traces; credentials and tokens are redacted, and headers are excluded from long-term stats history |
 | `USAGE_STALE_WHILE_REVALIDATE`    | `true`                                    | Serve an existing stale usage snapshot while refreshing it in the background |
 | `USAGE_STALE_MAX_AGE_MS`          | `1800000`                                 | Maximum snapshot age eligible for stale-while-revalidate; older snapshots block for refresh |
 | `REQUEST_BODY_LIMIT`              | `100mb`                                   | Max accepted JSON or decompressed zstd request body size            |

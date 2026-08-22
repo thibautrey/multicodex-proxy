@@ -63,7 +63,9 @@ export type Trace = {
   usage?: any;
   error?: string;
   requestBody?: any;
+  requestHeaders?: Record<string, string>;
   hasRequestBody?: boolean;
+  hasRequestHeaders?: boolean;
 };
 
 export type TraceStats = {
