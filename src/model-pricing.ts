@@ -52,6 +52,9 @@ const EXACT_PRICING: Record<string, ModelPricing> = {
   "gpt-5.6-sol": { inputPer1M: 5.0, cachedInputPer1M: 0.5, cacheWriteInputPer1M: 6.25, outputPer1M: 30.0 },
   "gpt-5.6-terra": { inputPer1M: 2.0, cachedInputPer1M: 0.2, cacheWriteInputPer1M: 2.5, outputPer1M: 12.0 },
   "gpt-5.6-luna": { inputPer1M: 0.2, cachedInputPer1M: 0.02, cacheWriteInputPer1M: 0.25, outputPer1M: 1.2 },
+  // OpenAI's daybreak-blue-latest alias currently points to gpt-5.6-sol.
+  "daybreak-blue-latest": { inputPer1M: 4.0, cachedInputPer1M: 0.4, cacheWriteInputPer1M: 5.0, outputPer1M: 20.0 },
+  "gpt-daybreak-blue-latest": { inputPer1M: 4.0, cachedInputPer1M: 0.4, cacheWriteInputPer1M: 5.0, outputPer1M: 20.0 },
   // Legacy names retained for historical trace estimates.
   "gpt-5.6": { inputPer1M: 5.0, cachedInputPer1M: 0.5, cacheWriteInputPer1M: 6.25, outputPer1M: 30.0 },
   "gpt-5.6-mini": { inputPer1M: 2.5, cachedInputPer1M: 0.25, cacheWriteInputPer1M: 3.125, outputPer1M: 15.0 },
@@ -73,6 +76,8 @@ const PREFIX_PRICING: Array<{ prefix: string; pricing: ModelPricing }> = [
   { prefix: "gpt-5.6-sol", pricing: EXACT_PRICING["gpt-5.6-sol"] },
   { prefix: "gpt-5.6-terra", pricing: EXACT_PRICING["gpt-5.6-terra"] },
   { prefix: "gpt-5.6-luna", pricing: EXACT_PRICING["gpt-5.6-luna"] },
+  { prefix: "daybreak-blue", pricing: EXACT_PRICING["daybreak-blue-latest"] },
+  { prefix: "gpt-daybreak-blue", pricing: EXACT_PRICING["gpt-daybreak-blue-latest"] },
   { prefix: "gpt-5.6-mini", pricing: EXACT_PRICING["gpt-5.6-mini"] },
   { prefix: "gpt-5.6-nano", pricing: EXACT_PRICING["gpt-5.6-nano"] },
   { prefix: "gpt-5.6", pricing: EXACT_PRICING["gpt-5.6"] },
