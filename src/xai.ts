@@ -9,6 +9,7 @@ import {
   XAI_OAUTH_SCOPES,
   XAI_TOKEN_AUTH,
   XAI_USER_AGENT,
+  AUXILIARY_REQUEST_TIMEOUT_MS,
 } from "./config.js";
 import type { Account, OAuthFlowState } from "./types.js";
 
@@ -145,6 +146,7 @@ export async function requestXaiDeviceCode(
     method: "POST",
     headers: xaiOAuthHeaders(),
     body,
+    signal: AbortSignal.timeout(AUXILIARY_REQUEST_TIMEOUT_MS),
   });
   const text = await response.text();
   const json = parseJson(text);
@@ -197,6 +199,7 @@ export async function pollXaiDeviceCode(
     method: "POST",
     headers: xaiOAuthHeaders(),
     body,
+    signal: AbortSignal.timeout(AUXILIARY_REQUEST_TIMEOUT_MS),
   });
   const text = await response.text();
   const json = parseJson(text);
@@ -263,6 +266,7 @@ export async function refreshXaiAccessToken(
     method: "POST",
     headers: xaiOAuthHeaders("headless"),
     body,
+    signal: AbortSignal.timeout(AUXILIARY_REQUEST_TIMEOUT_MS),
   });
   const text = await response.text();
   const json = parseJson(text);

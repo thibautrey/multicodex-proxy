@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as Sentry from "@sentry/node";
 import crypto from "node:crypto";
+import fs from "node:fs/promises";
 import { AccountStore, OAuthStateStore, cleanupOrphanedTmpFiles } from "./store.js";
 import { createTraceManager } from "./traces.js";
 import { createAdminRouter } from "./routes/admin/index.js";
@@ -27,6 +28,7 @@ import {
   TRACE_FILE_PATH,
   TRACE_STATS_HISTORY_PATH,
   TRACE_RETENTION_MAX,
+  TRACE_STATS_RETENTION_MS,
   TRACE_INCLUDE_BODY,
   TRACE_INCLUDE_HEADERS,
   UPSTREAM_PATH,
@@ -38,6 +40,8 @@ import {
   REALTIME_PROVIDER,
   REALTIME_REQUEST_TIMEOUT_MS,
   REALTIME_WEBRTC_CALL_URL,
+  SHUTDOWN_TIMEOUT_MS,
+  validateProductionSecrets,
 } from "./config.js";
 import { createBodyParserMiddleware } from "./middleware/decompression.js";
 import http from "node:http";
@@ -54,6 +58,7 @@ import {
 } from "./codex-projects.js";
 
 const app = express();
+validateProductionSecrets();
 app.use(createBodyParserMiddleware());
 
 
@@ -82,6 +87,7 @@ const traceManager = createTraceManager({
   filePath: TRACE_FILE_PATH,
   historyFilePath: TRACE_STATS_HISTORY_PATH,
   retentionMax: TRACE_RETENTION_MAX,
+  historyRetentionMs: TRACE_STATS_RETENTION_MS,
   resolveCodexProject: (sessionId) => codexProjectRegistry.resolve(sessionId),
 });
 const configuredProxyApiKeys = parseProxyApiKeys(PROXY_API_KEY, PROXY_API_KEYS);
@@ -92,11 +98,17 @@ await Promise.all([
   traceManager.initialize(),
 ]);
 await traceManager.seedStatsHistoryIfMissing();
-startScheduledWeeklyResetMonitor({
+const weeklyResetTimer = startScheduledWeeklyResetMonitor({
   store,
   oauthConfig,
   openaiBaseUrl: CHATGPT_BASE_URL,
 });
+const traceHistoryCompactionTimer = setInterval(() => {
+  void traceManager.compactStatsHistoryIfNeeded().catch((error) => {
+    console.error("trace history compaction failed", error);
+  });
+}, 24 * 60 * 60_000);
+traceHistoryCompactionTimer.unref();
 
 // Catch-all request tracing — records every request even if it doesn't hit an official endpoint.
 // Routes that record their own detailed trace (e.g. /v1/chat/completions) set res.locals._multivibeTraced
@@ -111,6 +123,8 @@ app.use((req, res, next) => {
     if (
       pathOrUrl.startsWith("/admin/") ||
       pathOrUrl.startsWith("/assets/") ||
+      pathOrUrl === "/health" ||
+      pathOrUrl === "/ready" ||
       pathOrUrl === "/favicon.ico"
     )
       return;
@@ -322,6 +336,7 @@ function rootProxyGuard(
   if (
     pathOrUrl === "/" ||
     pathOrUrl === "/health" ||
+    pathOrUrl === "/ready" ||
     pathOrUrl === "/favicon.ico" ||
     pathOrUrl.startsWith("/admin") ||
     pathOrUrl.startsWith("/assets") ||
@@ -358,6 +373,8 @@ app.get("/codex-project-hook.mjs", (_req, res) =>
   sendHookInstallerFile(res, "codex-project-hook.mjs", "text/javascript"),
 );
 
+let shuttingDown = false;
+
 app.get("/health", (_req, res) =>
   res.json({
     ok: true,
@@ -366,6 +383,47 @@ app.get("/health", (_req, res) =>
     buildId: process.env.APP_BUILD_ID ?? "unknown",
   }),
 );
+
+async function storageWritable(directoryPath: string): Promise<boolean> {
+  const probe = path.join(
+    directoryPath,
+    `.multivibe-ready-${process.pid}-${crypto.randomUUID()}`,
+  );
+  try {
+    await fs.writeFile(probe, "ok", { flag: "wx", mode: 0o600 });
+    await fs.unlink(probe);
+    return true;
+  } catch {
+    await fs.unlink(probe).catch(() => undefined);
+    return false;
+  }
+}
+
+app.get("/ready", async (_req, res) => {
+  const persistence = {
+    accounts: store.getPersistenceStatus(),
+    traces: traceManager.getPersistenceStatus(),
+    codexProjects: codexProjectRegistry.getPersistenceStatus(),
+  };
+  const persistenceDirectories = new Set([
+    STORE_PATH,
+    OAUTH_STATE_PATH,
+    TRACE_FILE_PATH,
+    TRACE_STATS_HISTORY_PATH,
+    CODEX_PROJECTS_PATH,
+  ].map((filePath) => path.dirname(filePath)));
+  const writableChecks = await Promise.all(
+    Array.from(persistenceDirectories, storageWritable),
+  );
+  const writable = writableChecks.every(Boolean);
+  const ok =
+    !shuttingDown &&
+    writable &&
+    !persistence.accounts.lastError &&
+    !persistence.traces.lastError &&
+    !persistence.codexProjects.lastError;
+  res.status(ok ? 200 : 503).json({ ok, writable, shuttingDown, persistence });
+});
 
 app.get("/admin/session", (req, res) => {
   res.json({ authenticated: !ADMIN_TOKEN || hasAdminSession(req) });
@@ -410,6 +468,7 @@ app.get("*", (req, res, next) => {
     req.path.startsWith("/admin/") ||
     req.path.startsWith("/v1/") ||
     req.path === "/health" ||
+    req.path === "/ready" ||
     req.path === "/chat/completions" ||
     req.path === "/responses" ||
     req.path === "/responses/compact" ||
@@ -427,7 +486,7 @@ Sentry.setupExpressErrorHandler(app);
 
 const server = http.createServer(app);
 
-installResponsesWebsocketProxy({
+const responsesWebsocketProxy = installResponsesWebsocketProxy({
   server,
   port: PORT,
   authorize: (req) => hasProxyApiKey(req.headers),
@@ -440,25 +499,52 @@ server.listen(PORT, () => {
   );
 });
 
-let shuttingDown = false;
 async function shutdown(signal: NodeJS.Signals) {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log(`received ${signal}, flushing persistent state`);
-  server.close(async (error) => {
-    try {
-      await Promise.all([
+  console.log(`received ${signal}, stopping traffic and flushing persistent state`);
+  clearInterval(weeklyResetTimer);
+  clearInterval(traceHistoryCompactionTimer);
+
+  let closeError: Error | undefined;
+  const serverClosed = new Promise<void>((resolve) => {
+    server.close((error) => {
+      closeError = error ?? undefined;
+      resolve();
+    });
+  });
+  server.closeIdleConnections();
+
+  const graceful = (async () => {
+    await responsesWebsocketProxy.close();
+    await Promise.all([
         store.flushIfDirty(),
         codexProjectRegistry.flushPendingWrites(),
         traceManager.flushPendingWrites(),
-      ]);
-      if (error) throw error;
-      process.exitCode = 0;
-    } catch (shutdownError) {
-      console.error("graceful shutdown failed", shutdownError);
-      process.exitCode = 1;
-    }
-  });
+    ]);
+    await serverClosed;
+    if (closeError) throw closeError;
+  })();
+
+  let deadline: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      graceful,
+      new Promise<never>((_resolve, reject) => {
+        deadline = setTimeout(
+          () => reject(new Error("graceful shutdown deadline exceeded")),
+          SHUTDOWN_TIMEOUT_MS,
+        );
+      }),
+    ]);
+    process.exitCode = 0;
+  } catch (shutdownError) {
+    server.closeAllConnections();
+    console.error("graceful shutdown failed", shutdownError);
+    process.exitCode = 1;
+  } finally {
+    if (deadline) clearTimeout(deadline);
+  }
 }
 
 process.once("SIGTERM", () => void shutdown("SIGTERM"));

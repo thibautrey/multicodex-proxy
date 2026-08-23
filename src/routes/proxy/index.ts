@@ -15,6 +15,7 @@ import {
   TRACE_INCLUDE_HEADERS,
   UPSTREAM_COMPACT_PATH,
   UPSTREAM_PATH,
+  UPSTREAM_REQUEST_TIMEOUT_MS,
   USAGE_STALE_MAX_AGE_MS,
   USAGE_STALE_WHILE_REVALIDATE,
   XAI_BASE_URL,
@@ -22,6 +23,12 @@ import {
   XAI_MODELS_PATH,
   XAI_RESPONSES_PATH,
 } from "../../config.js";
+import {
+  fetchTextWithTimeout,
+  fetchWithTimeout,
+  readStreamChunk,
+  writeWithBackpressure,
+} from "../../network.js";
 import {
   buildModelsListResponse,
   toOpenAiModelShape,
@@ -863,12 +870,12 @@ async function refreshModels(
           url = `${baseUrl}/v1/models`;
         }
 
-        const r = await fetch(url, { headers });
+        const { response: r, text } = await fetchTextWithTimeout(url, { headers });
         if (!r.ok) {
           catalogComplete = false;
           continue;
         }
-        const json: any = await r.json();
+        const json: any = JSON.parse(text);
 
         if (provider === "openai") {
           if (!Array.isArray(json?.models) || json.models.length === 0) {
@@ -1706,6 +1713,14 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     res: express.Response,
   ) {
     const startedAt = Date.now();
+    const requestDeadline = startedAt + HANG_RETRY_MAX_DURATION_MS;
+    const upstreamAbort = new AbortController();
+    const abortUpstream = () => {
+      if (!res.writableEnded) upstreamAbort.abort(new Error("client disconnected"));
+    };
+    const detachAbort = () => res.off("close", abortUpstream);
+    res.once("close", abortUpstream);
+    res.once("finish", detachAbort);
     const application =
       typeof res.locals.proxyApplication === "string"
         ? res.locals.proxyApplication
@@ -1725,26 +1740,39 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         codexSessionId,
         requestHeaders,
       });
-    const beginTrace = (
+    const beginTrace = async (
       entry: Parameters<typeof traceManager.beginTrace>[0],
-    ) =>
-      traceManager.beginTrace({
-        ...entry,
-        ...projectAttribution,
-        application,
-        codexSessionId,
-        requestHeaders,
-      });
-    const completeTrace = (
-      id: string,
+    ): Promise<string | undefined> => {
+      try {
+        return await traceManager.beginTrace({
+          ...entry,
+          ...projectAttribution,
+          application,
+          codexSessionId,
+          requestHeaders,
+        });
+      } catch (error) {
+        console.error("trace begin failed", error);
+        return undefined;
+      }
+    };
+    const completeTrace = async (
+      id: string | undefined,
       entry: Parameters<typeof traceManager.completeTrace>[1],
-    ) => traceManager.completeTrace(id, {
-      ...entry,
-      ...projectAttribution,
-      application,
-      codexSessionId,
-      requestHeaders,
-    });
+    ) => {
+      if (!id) return;
+      try {
+        await traceManager.completeTrace(id, {
+          ...entry,
+          ...projectAttribution,
+          application,
+          codexSessionId,
+          requestHeaders,
+        });
+      } catch (error) {
+        console.error("trace completion failed", error);
+      }
+    };
     const usageRefreshTrace = {
       background: 0,
       blocking: 0,
@@ -1772,7 +1800,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     const isNativeResponsesStream =
       clientRequestedStream && !isChatCompletionsPath;
     let nativeStreamTraceId: string | undefined;
-    let nativeStreamTracePromise: Promise<string> | undefined;
+    let nativeStreamTracePromise: Promise<string | undefined> | undefined;
     let nativeStreamKeepalive: ReturnType<typeof setInterval> | undefined;
 
     if (isNativeResponsesStream) {
@@ -1783,7 +1811,9 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       res.flushHeaders();
       res.write(": connected\n\n");
       nativeStreamKeepalive = setInterval(() => {
-        if (!res.writableEnded) res.write(": keepalive\n\n");
+        if (!res.writableEnded && res.writableLength === 0) {
+          res.write(": keepalive\n\n");
+        }
       }, 5_000);
       nativeStreamKeepalive.unref?.();
       nativeStreamTracePromise = beginTrace({
@@ -1817,8 +1847,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           nativeStreamKeepalive = undefined;
         }
         if (!res.writableEnded) {
-          res.write(`event: error\ndata: ${JSON.stringify(payload)}\n\n`);
-          res.end();
+          res.end(`event: error\ndata: ${JSON.stringify(payload)}\n\n`);
         }
         if (nativeStreamTracePromise) {
           const traceId = await nativeStreamTracePromise;
@@ -1988,10 +2017,12 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     // Outer hang loop: when all accounts are exhausted (e.g. all rate-limited),
     // sleep and retry instead of failing immediately, up to HANG_RETRY_MAX_DURATION_MS.
     while (true) {
+      if (Date.now() >= requestDeadline || upstreamAbort.signal.aborted) break;
       const tried = new Set<string>();
       let providerTried = false;
 
     for (const candidate of routingCandidates) {
+      if (Date.now() >= requestDeadline || upstreamAbort.signal.aborted) break;
       const providerAccounts = accounts.filter(
         (a) =>
           normalizeProvider(a) === candidate.provider &&
@@ -2005,6 +2036,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         maxAttempts,
       );
       for (let i = 0; i < attemptsForProvider; i++) {
+        if (Date.now() >= requestDeadline || upstreamAbort.signal.aborted) break;
         const selected = chooseAccountForProvider(
           providerAccounts.filter((a) => !tried.has(a.id) && accountUsable(a, candidate.resolvedModel)),
           candidate.provider,
@@ -2238,6 +2270,10 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               method: "POST",
               headers,
               body: serializeUpstreamPayload(payloadToUpstream),
+              signal: upstreamAbort.signal,
+            },
+            {
+              totalTimeoutMs: Math.max(1, requestDeadline - Date.now()),
             },
           );
           latencyBreakdown.upstreamHeadersMs =
@@ -2273,15 +2309,21 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
 
               try {
                 while (!clientDisconnected) {
-                  const { value, done } = await reader.read();
+                  const { value, done } = await readStreamChunk(
+                    reader,
+                    undefined,
+                    upstreamAbort.signal,
+                  );
                   if (done) break;
-                  if (!res.writableEnded) res.write(value);
+                  if (!res.writableEnded) {
+                    await writeWithBackpressure(res, value);
+                  }
                   streamTap.push(value);
                 }
                 if (!clientDisconnected) {
                   const { unterminatedFrame } = streamTap.finish();
                   if (unterminatedFrame && !res.writableEnded) {
-                    res.write("\n\n");
+                    await writeWithBackpressure(res, "\n\n");
                   }
                 }
               } catch (error: any) {
@@ -2351,7 +2393,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                   upstreamContentType: contentType,
                 });
                 res.flushHeaders();
-                res.write(": connected\n\n");
+                await writeWithBackpressure(res, ": connected\n\n");
                 const reader = upstream.body.getReader();
                 const decoder = new TextDecoder();
                 let sseBuffer = "";
@@ -2364,14 +2406,17 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 };
                 res.once("close", abortOnDisconnect);
                 const keepaliveTimer = setInterval(() => {
-                  if (!res.writableEnded && !clientDisconnected) {
+                  if (!res.writableEnded && !clientDisconnected && res.writableLength === 0) {
                     res.write(": keepalive\n\n");
                   }
                 }, 15_000);
                 keepaliveTimer.unref?.();
 
-                const forwardFrame = (frame: string) => {
-                  res.write(frame.endsWith("\n\n") ? frame : `${frame}\n\n`);
+                const forwardFrame = async (frame: string) => {
+                  await writeWithBackpressure(
+                    res,
+                    frame.endsWith("\n\n") ? frame : `${frame}\n\n`,
+                  );
                   if (frame.includes("[DONE]")) doneSent = true;
                   accumulatedUsage =
                     extractSSEFrameUsage(frame) ?? accumulatedUsage;
@@ -2379,14 +2424,18 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
 
                 try {
                   while (!clientDisconnected) {
-                    const { value, done } = await reader.read();
+                    const { value, done } = await readStreamChunk(
+                      reader,
+                      undefined,
+                      upstreamAbort.signal,
+                    );
                     if (done) break;
                     sseBuffer += decoder.decode(value, { stream: true });
                     while (true) {
                       const next = takeNextSSEFrame(sseBuffer);
                       if (!next) break;
                       sseBuffer = next.rest;
-                      forwardFrame(next.frame);
+                      await forwardFrame(next.frame);
                     }
                   }
                 } finally {
@@ -2421,10 +2470,12 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                   const next = takeNextSSEFrame(sseBuffer);
                   if (!next) break;
                   sseBuffer = next.rest;
-                  forwardFrame(next.frame);
+                  await forwardFrame(next.frame);
                 }
-                if (sseBuffer.trim()) forwardFrame(sseBuffer);
-                if (!doneSent) res.write("data: [DONE]\n\n");
+                if (sseBuffer.trim()) await forwardFrame(sseBuffer);
+                if (!doneSent) {
+                  await writeWithBackpressure(res, "data: [DONE]\n\n");
+                }
                 res.end();
 
                 await completeTrace(streamTraceId, {
@@ -2453,7 +2504,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 res.set("Cache-Control", "no-cache");
                 res.set("Connection", "keep-alive");
                 res.flushHeaders();
-                res.write(
+                res.end(
                   `data: ${JSON.stringify({
                     error: {
                       message: "Upstream returned an empty streaming body.",
@@ -2462,7 +2513,6 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                     },
                   })}\n\ndata: [DONE]\n\n`,
                 );
-                res.end();
                 recordTrace({
                   at: Date.now(),
                   route: req.path,
@@ -2489,7 +2539,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 res.set("Connection", "keep-alive");
                 res.flushHeaders();
               }
-              res.write(": connected\n\n");
+              await writeWithBackpressure(res, ": connected\n\n");
 
               const reader = upstream.body.getReader();
               const streamTraceId = await beginTrace({
@@ -2519,13 +2569,13 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               };
               res.once("close", abortOnDisconnect);
               const keepaliveTimer = setInterval(() => {
-                if (!res.writableEnded && !clientDisconnected) {
+                if (!res.writableEnded && !clientDisconnected && res.writableLength === 0) {
                   res.write(": keepalive\n\n");
                 }
               }, 15_000);
               keepaliveTimer.unref?.();
 
-              const forwardConvertedFrame = (frame: string) => {
+              const forwardConvertedFrame = async (frame: string) => {
                 const payloads = parseSSEDataPayloads(frame);
                 for (const payload of payloads) {
                   inspectResponseStreamEvent(payload, streamStateDiagnostics);
@@ -2535,28 +2585,32 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                   streamState,
                 );
                 if (converted && !res.writableEnded) {
-                  res.write(converted);
+                  await writeWithBackpressure(res, converted);
                 } else if (
                   !res.writableEnded &&
                   payloads.some((payload) =>
                     String(payload?.type ?? "").startsWith("response.reasoning"),
                   )
                 ) {
-                  res.write(": keepalive\n\n");
+                  await writeWithBackpressure(res, ": keepalive\n\n");
                 }
               };
               const streamStateDiagnostics = createResponseStreamDiagnostics();
 
               try {
                 while (!clientDisconnected) {
-                  const { value, done } = await reader.read();
+                  const { value, done } = await readStreamChunk(
+                    reader,
+                    undefined,
+                    upstreamAbort.signal,
+                  );
                   if (done) break;
                   sseBuffer += decoder.decode(value, { stream: true });
                   while (true) {
                     const next = takeNextSSEFrame(sseBuffer);
                     if (!next) break;
                     sseBuffer = next.rest;
-                    forwardConvertedFrame(next.frame);
+                    await forwardConvertedFrame(next.frame);
                   }
                 }
 
@@ -2566,9 +2620,9 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                     const next = takeNextSSEFrame(sseBuffer);
                     if (!next) break;
                     sseBuffer = next.rest;
-                    forwardConvertedFrame(next.frame);
+                    await forwardConvertedFrame(next.frame);
                   }
-                  if (sseBuffer.trim()) forwardConvertedFrame(sseBuffer);
+                  if (sseBuffer.trim()) await forwardConvertedFrame(sseBuffer);
                 }
               } catch (error: any) {
                 streamError =
@@ -2604,7 +2658,9 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
 
               const completed =
                 finalizeResponsesSSEToChatCompletionSSE(streamState);
-              if (completed && !res.writableEnded) res.write(completed);
+              if (completed && !res.writableEnded) {
+                await writeWithBackpressure(res, completed);
+              }
 
               if (streamError && !streamState.assistantOutputSent) {
                 rememberError(selected, streamError.message);
@@ -2626,7 +2682,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                   responseStreamDiagnostics: streamStateDiagnostics,
                 });
                 if (!res.writableEnded) {
-                  res.write(
+                  res.end(
                     `data: ${JSON.stringify({
                       error: {
                         message: streamError.message,
@@ -2635,7 +2691,6 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                       },
                     })}\n\ndata: [DONE]\n\n`,
                   );
-                  res.end();
                 }
                 return;
               }
@@ -2648,7 +2703,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 );
                 await store.upsertAccount(selected);
                 if (!res.writableEnded) {
-                  res.write(
+                  res.end(
                     `data: ${JSON.stringify({
                       error: {
                         message: "Upstream returned no assistant output.",
@@ -2657,7 +2712,6 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                       },
                     })}\n\ndata: [DONE]\n\n`,
                   );
-                  res.end();
                 }
                 await completeTrace(streamTraceId, {
                   at: Date.now(),
@@ -2845,8 +2899,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             res.set("Content-Type", "text/event-stream");
             res.set("Cache-Control", "no-cache");
             res.set("Connection", "keep-alive");
-            res.write(rendered.body);
-            res.end();
+            res.end(rendered.body);
 
             recordTrace({
               at: Date.now(),
@@ -2904,8 +2957,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               res.set("Content-Type", "text/event-stream");
               res.set("Cache-Control", "no-cache");
               res.set("Connection", "keep-alive");
-              res.write(chatCompletionObjectToSSE(normalized.chat));
-              res.end();
+              res.end(chatCompletionObjectToSSE(normalized.chat));
 
               recordTrace({
                 at: Date.now(),
@@ -2949,8 +3001,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               res.set("Content-Type", "text/event-stream");
               res.set("Cache-Control", "no-cache");
               res.set("Connection", "keep-alive");
-              res.write(chatCompletionObjectToSSE(converted));
-              res.end();
+              res.end(chatCompletionObjectToSSE(converted));
 
               recordTrace({
                 at: Date.now(),
@@ -3053,8 +3104,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               res.set("Content-Type", "text/event-stream");
               res.set("Cache-Control", "no-cache");
               res.set("Connection", "keep-alive");
-              res.write(chatCompletionObjectToSSE(chatResp));
-              res.end();
+              res.end(chatCompletionObjectToSSE(chatResp));
 
               recordTrace({
                 at: Date.now(),
@@ -3104,8 +3154,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               res.set("Content-Type", "text/event-stream");
               res.set("Cache-Control", "no-cache");
               res.set("Connection", "keep-alive");
-              res.write(responseObjectToSSE(respObj));
-              res.end();
+              res.end(responseObjectToSSE(respObj));
 
               recordTrace({
                 at: Date.now(),
@@ -3147,8 +3196,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               res.set("Content-Type", "text/event-stream");
               res.set("Cache-Control", "no-cache");
               res.set("Connection", "keep-alive");
-              res.write(responseObjectToSSE(sanitized));
-              res.end();
+              res.end(responseObjectToSSE(sanitized));
 
               recordTrace({
                 at: Date.now(),
@@ -3195,8 +3243,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               res.set("Content-Type", "text/event-stream");
               res.set("Cache-Control", "no-cache");
               res.set("Connection", "keep-alive");
-              res.write(rendered.body);
-              res.end();
+              res.end(rendered.body);
 
               recordTrace({
                 at: Date.now(),
@@ -3549,10 +3596,11 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     if (res.headersSent && !isNativeResponsesStream) return;
 
     const elapsed = Date.now() - hangStart;
-    if (elapsed >= HANG_RETRY_MAX_DURATION_MS) break; // fall through to final error response
+    const remaining = requestDeadline - Date.now();
+    if (elapsed >= HANG_RETRY_MAX_DURATION_MS || remaining <= 0) break;
 
     // Wait before retrying: some accounts may have had their rate-limit blocks expire
-    await sleep(HANG_RETRY_INTERVAL_MS);
+    await sleep(Math.min(HANG_RETRY_INTERVAL_MS, remaining));
     // Reload accounts from store to pick up any blocks that expired
     accounts = store.getCachedAccounts();
     // sawEmptyAssistantOutput is preserved across retries
@@ -3685,11 +3733,15 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       selected = await ensureValidToken(selected, oauthConfig);
       await store.upsertAccount(selected);
 
-      const upstream = await fetch(`${trimTrailingSlash(openaiBaseUrl)}${req.originalUrl}`, {
+      const controller = new AbortController();
+      const abort = () => controller.abort(new Error("client disconnected"));
+      res.once("close", abort);
+      const upstream = await fetchWithTimeout(`${trimTrailingSlash(openaiBaseUrl)}${req.originalUrl}`, {
         method: req.method,
         headers: requestHeadersForPassthrough(req, selected),
         body: requestBodyForPassthrough(req),
-      });
+        signal: controller.signal,
+      }, UPSTREAM_REQUEST_TIMEOUT_MS);
 
       res.status(upstream.status);
       setForwardHeaders(upstream, res);
@@ -3697,15 +3749,16 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       if (upstream.body) {
         const reader = upstream.body.getReader();
         while (true) {
-          const { value, done } = await reader.read();
+          const { value, done } = await readStreamChunk(reader, undefined, controller.signal);
           if (done) break;
-          res.write(Buffer.from(value));
+          await writeWithBackpressure(res, value);
         }
         res.end();
       } else {
         res.end();
       }
 
+      res.off("close", abort);
       recordTrace({
         at: Date.now(),
         route: traceRoute,

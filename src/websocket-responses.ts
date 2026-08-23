@@ -1,7 +1,12 @@
 import type http from "node:http";
 import { randomUUID } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
-import { TRACE_INCLUDE_HEADERS } from "./config.js";
+import {
+  TRACE_INCLUDE_HEADERS,
+  WEBSOCKET_MAX_BUFFERED_BYTES,
+  WEBSOCKET_MAX_PAYLOAD_BYTES,
+} from "./config.js";
+import { readStreamChunk } from "./network.js";
 import { createWebsocketSSEMessageRelay } from "./responses/websocket-sse-relay.js";
 import {
   serializeTraceHeaders,
@@ -58,6 +63,11 @@ function rememberFunctionCall(
         ? item.arguments
         : JSON.stringify(item.arguments ?? {}),
   });
+  while (conversationState.functionCalls.size > 1000) {
+    const oldest = conversationState.functionCalls.keys().next().value;
+    if (typeof oldest !== "string") break;
+    conversationState.functionCalls.delete(oldest);
+  }
 }
 
 function rememberFunctionCallsFromResponse(
@@ -88,12 +98,18 @@ function rememberFunctionCallsFromEvent(
 }
 
 function sendJson(ws: WebSocket, payload: unknown) {
-  if (ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify(payload));
+  sendText(ws, JSON.stringify(payload));
 }
 
 function sendText(ws: WebSocket, payload: string) {
   if (ws.readyState !== WebSocket.OPEN) return;
+  if (
+    ws.bufferedAmount + Buffer.byteLength(payload) >
+    WEBSOCKET_MAX_BUFFERED_BYTES
+  ) {
+    ws.terminate();
+    return;
+  }
   ws.send(payload);
 }
 
@@ -193,6 +209,7 @@ async function relaySseAsWebsocket(
   ws: WebSocket,
   response: Response,
   conversationState: ConversationState,
+  signal?: AbortSignal,
 ) {
   if (!response.body) return;
   const reader = response.body.getReader();
@@ -203,8 +220,12 @@ async function relaySseAsWebsocket(
   });
 
   while (true) {
-    const { value, done } = await reader.read();
+    const { value, done } = await readStreamChunk(reader, undefined, signal);
     if (done) break;
+    if (ws.readyState !== WebSocket.OPEN) {
+      await reader.cancel("websocket closed").catch(() => undefined);
+      break;
+    }
     relay.push(value);
   }
   relay.finish();
@@ -256,6 +277,7 @@ async function forwardFrame(
   port: number,
   frame: ResponseCreateFrame,
   conversationState: ConversationState,
+  signal?: AbortSignal,
 ) {
   if (frame.generate === false) {
     const warmup = makeWarmupResponse(frame);
@@ -382,6 +404,7 @@ async function forwardFrame(
       method: "POST",
       headers,
       body: JSON.stringify(upstreamRequest),
+      signal,
     });
   } catch (error) {
     sendError(
@@ -406,7 +429,7 @@ async function forwardFrame(
   }
 
   if (contentType.includes("text/event-stream")) {
-    await relaySseAsWebsocket(ws, response, conversationState);
+    await relaySseAsWebsocket(ws, response, conversationState, signal);
     return;
   }
 
@@ -418,7 +441,11 @@ export function installResponsesWebsocketProxy({
   port,
   authorize,
 }: InstallResponsesWebsocketProxyOptions) {
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({
+    noServer: true,
+    maxPayload: WEBSOCKET_MAX_PAYLOAD_BYTES,
+    perMessageDeflate: false,
+  });
 
   server.on("upgrade", (req, socket, head) => {
     const url = req.url ? new URL(req.url, `http://${req.headers.host ?? "localhost"}`) : null;
@@ -441,6 +468,7 @@ export function installResponsesWebsocketProxy({
 
   wss.on("connection", (ws, req) => {
     let inFlight = false;
+    const connectionAbort = new AbortController();
     const conversationState: ConversationState = {
       functionCalls: new Map(),
     };
@@ -473,7 +501,14 @@ export function installResponsesWebsocketProxy({
 
       inFlight = true;
       try {
-        await forwardFrame(ws, req, port, frame, conversationState);
+        await forwardFrame(
+          ws,
+          req,
+          port,
+          frame,
+          conversationState,
+          connectionAbort.signal,
+        );
       } finally {
         inFlight = false;
       }
@@ -482,5 +517,16 @@ export function installResponsesWebsocketProxy({
     ws.on("error", () => {
       ws.close();
     });
+    ws.once("close", () => {
+      connectionAbort.abort(new Error("websocket closed"));
+      conversationState.functionCalls.clear();
+    });
   });
+
+  return {
+    close: async () => {
+      for (const client of wss.clients) client.terminate();
+      await new Promise<void>((resolve) => wss.close(() => resolve()));
+    },
+  };
 }
