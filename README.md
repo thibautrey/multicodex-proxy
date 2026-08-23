@@ -482,6 +482,16 @@ Model alias admin endpoints:
 - `PATCH /admin/model-aliases/:id`
 - `DELETE /admin/model-aliases/:id`
 
+Proxy API key admin endpoints:
+
+- `GET /admin/proxy-api-keys` (secrets are masked)
+- `POST /admin/proxy-api-keys` with `{"application":"staging-worker"}`
+- `DELETE /admin/proxy-api-keys/:id`
+
+Keys created from the dashboard are persisted in `STORE_PATH`, take effect
+immediately, and are returned in full only by the creation response. Keys from
+`PROXY_API_KEY` and `PROXY_API_KEYS` remain read-only in the dashboard.
+
 Settings endpoints:
 
 - `GET /admin/settings`
@@ -506,7 +516,7 @@ same `/admin/oauth/device/poll` endpoint used by OpenAI device OAuth.
 | Variable                          | Default                                   | Description                                                         |
 | --------------------------------- | ----------------------------------------- | ------------------------------------------------------------------- |
 | `PORT`                            | `1455`                                    | HTTP server port                                                    |
-| `STORE_PATH`                      | `/data/accounts.json`                     | Accounts, aliases, and settings store                               |
+| `STORE_PATH`                      | `/data/accounts.json`                     | Accounts, aliases, API keys, and settings store                     |
 | `OAUTH_STATE_PATH`                | `/data/oauth-state.json`                  | OAuth flow state                                                    |
 | `TRACE_FILE_PATH`                 | `/data/requests-trace.jsonl`              | Recent request trace file                                           |
 | `TRACE_STATS_HISTORY_PATH`        | `/data/requests-stats-history.jsonl`      | Lightweight request history for long-term stats                     |

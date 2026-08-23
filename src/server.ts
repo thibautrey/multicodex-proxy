@@ -84,7 +84,7 @@ const traceManager = createTraceManager({
   retentionMax: TRACE_RETENTION_MAX,
   resolveCodexProject: (sessionId) => codexProjectRegistry.resolve(sessionId),
 });
-const proxyApiKeys = parseProxyApiKeys(PROXY_API_KEY, PROXY_API_KEYS);
+const configuredProxyApiKeys = parseProxyApiKeys(PROXY_API_KEY, PROXY_API_KEYS);
 await Promise.all([
   store.init(),
   oauthStore.init(),
@@ -143,6 +143,7 @@ const adminRouter = createAdminRouter({
   mistralBaseUrl: MISTRAL_BASE_URL,
   zaiBaseUrl: ZAI_BASE_URL,
   codexProjectRegistrationToken: CODEX_PROJECT_REGISTRATION_TOKEN,
+  configuredProxyApiKeys,
   storagePaths: {
     accountsPath: STORE_PATH,
     oauthStatePath: OAUTH_STATE_PATH,
@@ -265,6 +266,10 @@ function projectRegistrationGuard(
 }
 
 function hasProxyApiKey(headers: http.IncomingHttpHeaders): boolean {
+  const proxyApiKeys = [
+    ...configuredProxyApiKeys,
+    ...store.getCachedProxyApiKeys(),
+  ];
   if (!proxyApiKeys.length) return true;
   return Boolean(identifyProxyApplication(headers, proxyApiKeys));
 }
@@ -274,6 +279,10 @@ function proxyGuard(
   res: express.Response,
   next: express.NextFunction,
 ) {
+  const proxyApiKeys = [
+    ...configuredProxyApiKeys,
+    ...store.getCachedProxyApiKeys(),
+  ];
   if (!proxyApiKeys.length || hasAdminSession(req)) {
     return next();
   }

@@ -1786,6 +1786,79 @@ details summary {
     var(--panel);
 }
 
+.workspace-api-keys {
+  grid-template-columns: minmax(0, 0.85fr) minmax(360px, 1.15fr);
+  align-items: start;
+}
+
+.workspace-api-keys > .api-key-list-panel {
+  grid-column: 1 / -1;
+  padding-bottom: 0;
+}
+
+.workspace-api-keys > .api-key-list-panel > .table-wrap {
+  margin-right: -17px;
+  margin-left: -17px;
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 0;
+  border-radius: 0 0 15px 15px;
+}
+
+.api-key-intro {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--primary) 7%, transparent), transparent 62%),
+    var(--panel);
+}
+
+.api-key-notice {
+  display: grid;
+  gap: 3px;
+  margin-top: 16px;
+  padding: 12px 13px;
+  border: 1px solid color-mix(in srgb, var(--warning) 24%, var(--line));
+  border-radius: 10px;
+  background: var(--warning-soft);
+  color: var(--muted-strong);
+  font-size: 12px;
+}
+
+.api-key-notice strong {
+  color: var(--warning);
+}
+
+.api-key-create {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.api-key-secret {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface-muted);
+}
+
+.api-key-secret code {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.api-key-modal {
+  display: grid;
+  gap: 18px;
+  width: min(680px, 100%);
+}
+
 .workspace-tracing > .panel:first-child {
   position: sticky;
   top: 12px;
@@ -2009,6 +2082,7 @@ details summary {
   .alias-grid,
   .modal-grid,
   .workspace-aliases,
+  .workspace-api-keys,
   .workspace-playground > .cards2,
   .workspace-docs > .cards2:first-child {
     grid-template-columns: 1fr;
@@ -2024,6 +2098,14 @@ details summary {
 
   .workspace-aliases > .panel:nth-of-type(n + 3) {
     grid-column: auto;
+  }
+
+  .workspace-api-keys > .api-key-list-panel {
+    grid-column: auto;
+  }
+
+  .api-key-create {
+    grid-template-columns: 1fr;
   }
 
   .workspace-tracing > .panel:first-child {

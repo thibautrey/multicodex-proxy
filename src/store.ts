@@ -6,12 +6,18 @@ import type {
   ModelAlias,
   OAuthFlowState,
   OAuthStateFile,
+  StoredProxyApiKey,
   StoreSettings,
   StoreFile,
 } from "./types.js";
 import { ACCOUNT_FLUSH_INTERVAL_MS } from "./config.js";
 
-const DEFAULT_FILE: StoreFile = { accounts: [], modelAliases: [], settings: {} };
+const DEFAULT_FILE: StoreFile = {
+  accounts: [],
+  modelAliases: [],
+  proxyApiKeys: [],
+  settings: {},
+};
 const DEFAULT_OAUTH_FILE: OAuthStateFile = { states: [] };
 
 async function ensureFile(filePath: string, seed: object) {
@@ -42,6 +48,7 @@ export async function cleanupOrphanedTmpFiles(dataDir: string): Promise<void> {
 export class AccountStore {
   private inMemoryAccounts: Account[] = [];
   private inMemoryModelAliases: ModelAlias[] = [];
+  private inMemoryProxyApiKeys: StoredProxyApiKey[] = [];
   private inMemorySettings: StoreSettings = {};
   private dirty = false;
   private flushTimer: NodeJS.Timeout | null = null;
@@ -62,6 +69,9 @@ export class AccountStore {
     this.inMemoryAccounts = Array.isArray(data.accounts) ? data.accounts : [];
     this.inMemoryModelAliases = Array.isArray(data.modelAliases)
       ? data.modelAliases
+      : [];
+    this.inMemoryProxyApiKeys = Array.isArray(data.proxyApiKeys)
+      ? data.proxyApiKeys
       : [];
     this.inMemorySettings =
       data.settings && typeof data.settings === "object"
@@ -93,6 +103,7 @@ export class AccountStore {
           await writeJsonAtomic(this.filePath, {
             accounts: this.inMemoryAccounts,
             modelAliases: this.inMemoryModelAliases,
+            proxyApiKeys: this.inMemoryProxyApiKeys,
             settings: this.inMemorySettings,
           });
           this.lastFlushError = undefined;
@@ -256,6 +267,34 @@ export class AccountStore {
       (a) => a.id !== id,
     );
     if (this.inMemoryModelAliases.length === before) return false;
+    this.dirty = true;
+    this.revision += 1;
+    await this.flushIfDirty();
+    return true;
+  }
+
+  getCachedProxyApiKeys(): StoredProxyApiKey[] {
+    return this.inMemoryProxyApiKeys.map((entry) => ({ ...entry }));
+  }
+
+  async listProxyApiKeys(): Promise<StoredProxyApiKey[]> {
+    return this.getCachedProxyApiKeys();
+  }
+
+  async addProxyApiKey(entry: StoredProxyApiKey): Promise<StoredProxyApiKey> {
+    this.inMemoryProxyApiKeys.push({ ...entry });
+    this.dirty = true;
+    this.revision += 1;
+    await this.flushIfDirty();
+    return { ...entry };
+  }
+
+  async deleteProxyApiKey(id: string): Promise<boolean> {
+    const before = this.inMemoryProxyApiKeys.length;
+    this.inMemoryProxyApiKeys = this.inMemoryProxyApiKeys.filter(
+      (entry) => entry.id !== id,
+    );
+    if (this.inMemoryProxyApiKeys.length === before) return false;
     this.dirty = true;
     this.revision += 1;
     await this.flushIfDirty();

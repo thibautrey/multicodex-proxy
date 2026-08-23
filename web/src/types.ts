@@ -188,6 +188,7 @@ export type Tab =
   | "overview"
   | "accounts"
   | "aliases"
+  | "api-keys"
   | "tracing"
   | "playground"
   | "docs";
@@ -215,4 +216,16 @@ export type ModelAlias = {
 export type StoreSettings = {
   defaultPassthroughAccountId?: string;
   imageRequestModelOverride?: string;
+};
+
+export type ProxyApiKey = {
+  id: string;
+  application: string;
+  keyPreview: string;
+  createdAt?: number;
+  source: "dashboard" | "environment";
+};
+
+export type CreatedProxyApiKey = ProxyApiKey & {
+  key: string;
 };

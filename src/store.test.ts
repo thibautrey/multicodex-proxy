@@ -33,3 +33,34 @@ test("a mutation arriving during a flush is included before the flush resolves",
 
   await fs.rm(directory, { recursive: true, force: true });
 });
+
+test("dashboard API keys are persisted and can be revoked", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-store-"));
+  const filePath = path.join(directory, "accounts.json");
+  const store = new AccountStore(filePath);
+  await store.init();
+
+  await store.addProxyApiKey({
+    id: "key-one",
+    application: "staging-worker",
+    key: "mv_secret",
+    createdAt: 1_700_000_000_000,
+  });
+
+  const reloaded = new AccountStore(filePath);
+  await reloaded.init();
+  assert.deepEqual(await reloaded.listProxyApiKeys(), [
+    {
+      id: "key-one",
+      application: "staging-worker",
+      key: "mv_secret",
+      createdAt: 1_700_000_000_000,
+    },
+  ]);
+
+  assert.equal(await reloaded.deleteProxyApiKey("key-one"), true);
+  assert.equal(await reloaded.deleteProxyApiKey("missing"), false);
+  assert.deepEqual(await reloaded.listProxyApiKeys(), []);
+
+  await fs.rm(directory, { recursive: true, force: true });
+});

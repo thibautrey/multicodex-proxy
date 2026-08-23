@@ -1,5 +1,5 @@
 import express from "express";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { AccountStore, OAuthStateStore } from "../../store.js";
 import type {
   Account,
@@ -43,6 +43,7 @@ import {
 import type { CodexProjectRegistry } from "../../codex-projects.js";
 import { aggregateProjectUsage } from "../../project-usage.js";
 import { buildCodexHookInstallCommand } from "../../codex-hook-install.js";
+import type { ProxyApiKey } from "../../proxy-api-keys.js";
 
 type StoragePaths = {
   accountsPath: string;
@@ -62,8 +63,20 @@ export type AdminRoutesOptions = {
   mistralBaseUrl: string;
   zaiBaseUrl: string;
   codexProjectRegistrationToken: string;
+  configuredProxyApiKeys: ProxyApiKey[];
   storagePaths: StoragePaths;
 };
+
+function proxyApiKeyPreview(key: string): string {
+  if (key.length <= 12) return `${key.slice(0, 4)}••••`;
+  return `${key.slice(0, 8)}••••${key.slice(-4)}`;
+}
+
+function normalizeApplicationName(value: unknown): string | null {
+  const application = String(value ?? "").trim();
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(application)) return null;
+  return application;
+}
 
 function normalizeBaseUrl(value: unknown): string | undefined {
   const raw = String(value ?? "").trim();
@@ -287,6 +300,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     mistralBaseUrl,
     zaiBaseUrl,
     codexProjectRegistrationToken,
+    configuredProxyApiKeys,
     storagePaths,
   } = options;
 
@@ -306,6 +320,66 @@ export function createAdminRouter(options: AdminRoutesOptions) {
   } = traceManager;
 
   const router = express.Router();
+
+  router.get("/proxy-api-keys", async (_req, res) => {
+    const managed = await store.listProxyApiKeys();
+    res.json({
+      proxyApiKeys: [
+        ...configuredProxyApiKeys.map((entry, index) => ({
+          id: `configured:${index}`,
+          application: entry.application,
+          keyPreview: proxyApiKeyPreview(entry.key),
+          source: "environment" as const,
+        })),
+        ...managed.map((entry) => ({
+          id: entry.id,
+          application: entry.application,
+          keyPreview: proxyApiKeyPreview(entry.key),
+          createdAt: entry.createdAt,
+          source: "dashboard" as const,
+        })),
+      ],
+    });
+  });
+
+  router.post("/proxy-api-keys", async (req, res) => {
+    const application = normalizeApplicationName(req.body?.application);
+    if (!application) {
+      return res.status(400).json({
+        error: "application must contain only letters, numbers, dots, underscores, or hyphens",
+      });
+    }
+    const existing = [
+      ...configuredProxyApiKeys,
+      ...store.getCachedProxyApiKeys(),
+    ];
+    if (existing.some((entry) => entry.application === application)) {
+      return res.status(409).json({ error: "An API key already exists for this application" });
+    }
+    const entry = {
+      id: randomUUID(),
+      application,
+      key: `mv_${randomBytes(32).toString("base64url")}`,
+      createdAt: Date.now(),
+    };
+    await store.addProxyApiKey(entry);
+    res.status(201).json({
+      proxyApiKey: {
+        id: entry.id,
+        application: entry.application,
+        key: entry.key,
+        keyPreview: proxyApiKeyPreview(entry.key),
+        createdAt: entry.createdAt,
+        source: "dashboard",
+      },
+    });
+  });
+
+  router.delete("/proxy-api-keys/:id", async (req, res) => {
+    const deleted = await store.deleteProxyApiKey(String(req.params.id));
+    if (!deleted) return res.status(404).json({ error: "API key not found" });
+    res.json({ ok: true });
+  });
 
   router.get("/config", (_req, res) => {
     res.json({

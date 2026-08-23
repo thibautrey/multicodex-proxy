@@ -78,9 +78,17 @@ export type StoreSettings = {
   imageRequestModelOverride?: string;
 };
 
+export type StoredProxyApiKey = {
+  id: string;
+  application: string;
+  key: string;
+  createdAt: number;
+};
+
 export type StoreFile = {
   accounts: Account[];
   modelAliases?: ModelAlias[];
+  proxyApiKeys?: StoredProxyApiKey[];
   settings?: StoreSettings;
 };
 

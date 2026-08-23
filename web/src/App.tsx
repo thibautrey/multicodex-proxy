@@ -11,6 +11,8 @@ import type {
   Account,
   ExposedModel,
   ModelAlias,
+  ProxyApiKey,
+  CreatedProxyApiKey,
   ProjectUsageStats,
   StoreSettings,
   Tab,
@@ -25,6 +27,7 @@ import { OverviewTab } from "./components/tabs/OverviewTab";
 import { PlaygroundTab } from "./components/tabs/PlaygroundTab";
 import { TracingTab } from "./components/tabs/TracingTab";
 import { AliasesTab } from "./components/tabs/AliasesTab";
+import { ApiKeysTab } from "./components/tabs/ApiKeysTab";
 import {
   initialThemeMode,
   ThemeSwitcher,
@@ -37,6 +40,7 @@ const TAB_ITEMS: Array<{ id: Tab; label: string; description: string }> = [
   { id: "overview", label: "Overview", description: "Health and usage at a glance" },
   { id: "accounts", label: "Accounts", description: "Providers, quotas and routing" },
   { id: "aliases", label: "Aliases", description: "Model routing and fallbacks" },
+  { id: "api-keys", label: "API keys", description: "Application access and credentials" },
   { id: "tracing", label: "Tracing", description: "Requests, cost and latency" },
   { id: "playground", label: "Playground", description: "Test the proxy interactively" },
   { id: "docs", label: "API reference", description: "Endpoints and integration notes" },
@@ -51,6 +55,9 @@ function TabIcon({ tab }: { tab: Tab }) {
   }
   if (tab === "aliases") {
     return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4v5a3 3 0 0 0 3 3h9"/><path d="m15 9 3 3-3 3"/><path d="M6 20v-3a5 5 0 0 1 5-5"/></svg>;
+  }
+  if (tab === "api-keys") {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="m11 12 8-8M15 8l3 3M17 6l2 2"/></svg>;
   }
   if (tab === "tracing") {
     return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17h3l2-7 4 10 3-13 2 10h2"/></svg>;
@@ -78,6 +85,7 @@ export default function App() {
   const [tracePagination, setTracePagination] = useState<TracePagination>(EMPTY_TRACE_PAGINATION);
   const [models, setModels] = useState<ExposedModel[]>([]);
   const [aliases, setAliases] = useState<ModelAlias[]>([]);
+  const [proxyApiKeys, setProxyApiKeys] = useState<ProxyApiKey[]>([]);
   const [settings, setSettings] = useState<StoreSettings>({});
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [loginToken, setLoginToken] = useState("");
@@ -196,12 +204,13 @@ export default function App() {
   }, []);
 
   const loadBase = async () => {
-    const [acc, cfg, mdl, aliasRes, settingsRes] = await Promise.all([
+    const [acc, cfg, mdl, aliasRes, settingsRes, apiKeysRes] = await Promise.all([
       api("/admin/accounts"),
       api("/admin/config"),
       fetch("/v1/models").then((r) => r.json()),
       api("/admin/model-aliases"),
       api("/admin/settings"),
+      api("/admin/proxy-api-keys"),
     ]);
     setAccounts((acc.accounts ?? []) as Account[]);
     setStorageInfo(cfg.storage ?? null);
@@ -209,6 +218,7 @@ export default function App() {
     setModels((mdl.data ?? []) as ExposedModel[]);
     setAliases((aliasRes.modelAliases ?? []) as ModelAlias[]);
     setSettings((settingsRes.settings ?? {}) as StoreSettings);
+    setProxyApiKeys((apiKeysRes.proxyApiKeys ?? []) as ProxyApiKey[]);
   };
 
   const refreshModels = async () => {
@@ -595,6 +605,20 @@ export default function App() {
     }
   };
 
+  const createProxyApiKey = async (application: string): Promise<CreatedProxyApiKey> => {
+    const result = await api("/admin/proxy-api-keys", {
+      method: "POST",
+      body: JSON.stringify({ application }),
+    });
+    await loadBase();
+    return result.proxyApiKey as CreatedProxyApiKey;
+  };
+
+  const deleteProxyApiKey = async (id: string) => {
+    await api(`/admin/proxy-api-keys/${encodeURIComponent(id)}`, { method: "DELETE" });
+    await loadBase();
+  };
+
   const runChatTest = async () => {
     setChatOut("Running...");
     const r = await fetch("/v1/chat/completions", {
@@ -836,6 +860,14 @@ export default function App() {
             patchAlias={patchAlias}
             deleteAlias={deleteAlias}
             patchSettings={patchSettings}
+          />
+        )}
+
+        {tab === "api-keys" && (
+          <ApiKeysTab
+            apiKeys={proxyApiKeys}
+            createApiKey={createProxyApiKey}
+            deleteApiKey={deleteProxyApiKey}
           />
         )}
 
