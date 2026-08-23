@@ -1728,7 +1728,6 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     res: express.Response,
   ) {
     const startedAt = Date.now();
-    const requestDeadline = startedAt + HANG_RETRY_MAX_DURATION_MS;
     const upstreamAbort = new AbortController();
     const abortUpstream = () => {
       if (!res.writableEnded) upstreamAbort.abort(new Error("client disconnected"));
@@ -2032,12 +2031,12 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     // Outer hang loop: when all accounts are exhausted (e.g. all rate-limited),
     // sleep and retry instead of failing immediately, up to HANG_RETRY_MAX_DURATION_MS.
     while (true) {
-      if (Date.now() >= requestDeadline || upstreamAbort.signal.aborted) break;
+      if (upstreamAbort.signal.aborted) break;
       const tried = new Set<string>();
       let providerTried = false;
 
     for (const candidate of routingCandidates) {
-      if (Date.now() >= requestDeadline || upstreamAbort.signal.aborted) break;
+      if (upstreamAbort.signal.aborted) break;
       const providerAccounts = accounts.filter(
         (a) =>
           normalizeProvider(a) === candidate.provider &&
@@ -2051,7 +2050,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         maxAttempts,
       );
       for (let i = 0; i < attemptsForProvider; i++) {
-        if (Date.now() >= requestDeadline || upstreamAbort.signal.aborted) break;
+        if (upstreamAbort.signal.aborted) break;
         const selected = chooseAccountForProvider(
           providerAccounts.filter((a) => !tried.has(a.id) && accountUsable(a, candidate.resolvedModel)),
           candidate.provider,
@@ -2286,9 +2285,6 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               headers,
               body: serializeUpstreamPayload(payloadToUpstream),
               signal: upstreamAbort.signal,
-            },
-            {
-              totalTimeoutMs: Math.max(1, requestDeadline - Date.now()),
             },
           );
           latencyBreakdown.upstreamHeadersMs =
@@ -3619,11 +3615,10 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     if (res.headersSent && !isNativeResponsesStream) return;
 
     const elapsed = Date.now() - hangStart;
-    const remaining = requestDeadline - Date.now();
-    if (elapsed >= HANG_RETRY_MAX_DURATION_MS || remaining <= 0) break;
+    if (elapsed >= HANG_RETRY_MAX_DURATION_MS) break;
 
     // Wait before retrying: some accounts may have had their rate-limit blocks expire
-    await sleep(Math.min(HANG_RETRY_INTERVAL_MS, remaining));
+    await sleep(HANG_RETRY_INTERVAL_MS);
     // Reload accounts from store to pick up any blocks that expired
     accounts = store.getCachedAccounts();
     // sawEmptyAssistantOutput is preserved across retries
