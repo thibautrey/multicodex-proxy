@@ -39,6 +39,7 @@ export function AliasesTab({
   const [description, setDescription] = useState("");
   const [enabled, setEnabled] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isSavingImageOverride, setIsSavingImageOverride] = useState(false);
   const [editingAlias, setEditingAlias] = useState<EditAliasState | null>(null);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
@@ -60,9 +61,23 @@ export function AliasesTab({
       setTargets([]);
       setDescription("");
       setEnabled(true);
+      setIsCreateModalOpen(false);
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const openCreateModal = () => {
+    setId("");
+    setTargets([]);
+    setDescription("");
+    setEnabled(true);
+    setIsCreateModalOpen(true);
+  };
+
+  const closeCreateModal = () => {
+    if (isSubmitting) return;
+    setIsCreateModalOpen(false);
   };
 
   const closeEditModal = () => {
@@ -129,7 +144,7 @@ export function AliasesTab({
 
   return (
     <>
-      <section className="panel">
+      <section className="panel alias-routing-panel">
         <div className="section-split-header">
           <div>
             <h2>Image request model</h2>
@@ -163,87 +178,20 @@ export function AliasesTab({
         </div>
       </section>
 
-      <section className="panel">
+      <section className="panel alias-list-panel">
         <div className="section-split-header">
-          <h2>Create model alias</h2>
-          <span className="badge">{aliases.length} aliases</span>
-        </div>
-          <p className="muted">
-            Alias names can reuse an already exposed model name. If they do, the alias overrides
-            the provider model and routes requests to the configured targets instead.
-          </p>
-          <div className="grid alias-grid">
-            <label>
-              Alias name
-              <input
-                value={id}
-                onChange={(e) => setId(e.target.value)}
-                placeholder="small or gpt-5.4"
-              />
-            </label>
-            <label>
-              Targets (priority order)
-              <ModelSelector
-                models={availableModels}
-                value=""
-                onChange={addTarget}
-                disabled={!availableModels.length}
-              />
-              <span className="muted" style={{fontSize: "0.8rem"}}>
-                Select models in priority order. You can also type to filter.
-              </span>
-            </label>
-            <label>
-              Description (optional)
-              <input
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Small, low-cost coding model"
-              />
-            </label>
-            <label className="inline">
-              <input
-                type="checkbox"
-                checked={enabled}
-                onChange={(e) => setEnabled(e.target.checked)}
-              />
-              Enabled
-            </label>
+          <div>
+            <h2>Model aliases</h2>
+            <p className="muted">
+              Route a stable model name to an ordered list of fallback targets.
+            </p>
           </div>
-          {targets.length > 0 && (
-            <div className="alias-preview">
-              <span className="muted">Resolved order</span>
-              <div className="chips">
-                {targets.map((target, index) => (
-                  <span key={target} className="chip">
-                    <span className="badge badge-live" style={{marginRight: 4}}>{index + 1}</span>
-                    <span className="mono">{target}</span>
-                    <button
-                      className="chip-remove"
-                      onClick={() => removeTarget(target)}
-                      title="Remove target"
-                    >
-                      ×
-                    </button>
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-          <div className="inline wrap">
-            <button
-              className="btn"
-              disabled={isSubmitting || !id.trim() || !targets.length}
-              onClick={() => void onSubmit()}
-            >
-              {isSubmitting ? "Saving..." : "Create alias"}
+          <div className="inline wrap alias-list-actions">
+            <span className="badge">{aliases.length} aliases</span>
+            <button className="btn" onClick={openCreateModal}>
+              Create alias
             </button>
           </div>
-      </section>
-
-      <section className="panel">
-        <div className="section-split-header">
-          <h2>Aliases</h2>
         </div>
         <div className="table-wrap">
           <table className="data-table">
@@ -294,7 +242,7 @@ export function AliasesTab({
               {!aliases.length && (
                 <tr>
                   <td colSpan={5} className="muted empty-row">
-                    No aliases yet.
+                    No aliases yet. Create one to define your first fallback route.
                   </td>
                 </tr>
               )}
@@ -303,15 +251,139 @@ export function AliasesTab({
         </div>
       </section>
 
+      {isCreateModalOpen && (
+        <div className="modal-backdrop" onClick={closeCreateModal}>
+          <form
+            className="modal panel alias-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="create-alias-title"
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={(e) => {
+              e.preventDefault();
+              void onSubmit();
+            }}
+          >
+            <div className="modal-title-row">
+              <div>
+                <h2 id="create-alias-title">Create model alias</h2>
+                <p className="muted">
+                  Add targets in the order they should be tried. The first available model wins.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="btn ghost modal-close-button"
+                onClick={closeCreateModal}
+                disabled={isSubmitting}
+                aria-label="Close create alias dialog"
+              >
+                Close
+              </button>
+            </div>
+            <div className="grid modal-grid alias-modal-grid">
+              <label>
+                Alias name
+                <input
+                  value={id}
+                  onChange={(e) => setId(e.target.value)}
+                  placeholder="small or gpt-5.4"
+                  autoFocus
+                />
+              </label>
+              <label>
+                Description (optional)
+                <input
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="Small, low-cost coding model"
+                />
+              </label>
+              <label className="alias-modal-wide">
+                Targets (priority order)
+                <ModelSelector
+                  models={availableModels}
+                  value=""
+                  onChange={addTarget}
+                  disabled={!availableModels.length}
+                />
+                <span className="field-help">
+                  Select one or more models. Add the preferred target first.
+                </span>
+              </label>
+            </div>
+            {targets.length > 0 && (
+              <div className="alias-preview">
+                <span className="muted">Resolved order</span>
+                <div className="chips">
+                  {targets.map((target, index) => (
+                    <span key={target} className="chip">
+                      <span className="badge badge-live chip-order">{index + 1}</span>
+                      <span className="mono">{target}</span>
+                      <button
+                        type="button"
+                        className="chip-remove"
+                        onClick={() => removeTarget(target)}
+                        title="Remove target"
+                        aria-label={`Remove ${target}`}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            <label className="alias-enabled-control">
+              <input
+                type="checkbox"
+                checked={enabled}
+                onChange={(e) => setEnabled(e.target.checked)}
+              />
+              <span>
+                <strong>Enabled</strong>
+                <small>The alias is immediately available for routing.</small>
+              </span>
+            </label>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="btn ghost"
+                onClick={closeCreateModal}
+                disabled={isSubmitting}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="btn"
+                disabled={isSubmitting || !id.trim() || !targets.length}
+              >
+                {isSubmitting ? "Creating..." : "Create alias"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {editingAlias && (
         <div className="modal-backdrop" onClick={closeEditModal}>
-          <div className="modal panel" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="modal panel"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="edit-alias-title"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="inline wrap row-between">
-              <h2>Update model alias</h2>
+              <h2 id="edit-alias-title">Update model alias</h2>
               <button className="btn ghost" onClick={closeEditModal}>
                 Close
               </button>
             </div>
+            <p className="muted">
+              Alias names can override an exposed provider model with the same name.
+            </p>
             <div className="grid modal-grid">
               <label>
                 Alias name
