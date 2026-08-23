@@ -578,39 +578,3 @@ test("trace storage compacts physical lifecycle records and retains active start
 
   await fs.rm(directory, { recursive: true, force: true });
 });
-
-test("compacts statistics history to the configured retention window", async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-traces-"));
-  const filePath = path.join(directory, "traces.jsonl");
-  const historyFilePath = path.join(directory, "history.jsonl");
-  const now = Date.now();
-  const makeTrace = (id: string, at: number) => ({
-    id,
-    at,
-    route: "/responses",
-    status: 200,
-    stream: false,
-    latencyMs: 10,
-  });
-  await fs.writeFile(
-    historyFilePath,
-    `${JSON.stringify(makeTrace("expired", now - 10_000))}\n${JSON.stringify(
-      makeTrace("retained", now),
-    )}\n`,
-    "utf8",
-  );
-  const oldMtime = new Date(now - 2 * 24 * 60 * 60_000);
-  await fs.utimes(historyFilePath, oldMtime, oldMtime);
-  const manager = createTraceManager({
-    filePath,
-    historyFilePath,
-    historyRetentionMs: 5_000,
-  });
-
-  await manager.initialize();
-  const retained = await manager.readStatsHistory();
-  assert.deepEqual(retained.map((trace) => trace.id), ["retained"]);
-  const disk = (await fs.readFile(historyFilePath, "utf8")).trim();
-  assert.doesNotMatch(disk, /expired/);
-  await fs.rm(directory, { recursive: true, force: true });
-});

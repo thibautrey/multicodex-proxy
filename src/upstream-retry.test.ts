@@ -148,27 +148,3 @@ test("same-account retry classification separates quota from outages", () => {
     false,
   );
 });
-
-test("aborts an upstream attempt at the configured deadline", async () => {
-  const startedAt = Date.now();
-  await assert.rejects(
-    fetchUpstreamWithRetry(
-      "https://example.invalid/responses",
-      { method: "POST" },
-      {
-        maxRetries: 0,
-        requestTimeoutMs: 15,
-        totalTimeoutMs: 30,
-        fetchFn: async (_url, init) =>
-          new Promise<Response>((_resolve, reject) => {
-            init?.signal?.addEventListener(
-              "abort",
-              () => reject(init.signal?.reason),
-              { once: true },
-            );
-          }),
-      },
-    ),
-  );
-  assert.ok(Date.now() - startedAt < 500);
-});

@@ -1,23 +1,6 @@
 import os from "node:os";
 
-function finiteNumber(name: string, fallback: number, minimum = 0): number {
-  const raw = process.env[name];
-  const value = raw === undefined || raw === "" ? fallback : Number(raw);
-  if (!Number.isFinite(value) || value < minimum) {
-    throw new Error(`${name} must be a finite number >= ${minimum}`);
-  }
-  return value;
-}
-
-function finiteInteger(name: string, fallback: number, minimum = 0): number {
-  const value = finiteNumber(name, fallback, minimum);
-  if (!Number.isInteger(value)) {
-    throw new Error(`${name} must be an integer`);
-  }
-  return value;
-}
-
-export const PORT = finiteInteger("PORT", 1455, 1);
+export const PORT = Number(process.env.PORT ?? 1455);
 export const STORE_PATH = process.env.STORE_PATH ?? "/data/accounts.json";
 export const OAUTH_STATE_PATH =
   process.env.OAUTH_STATE_PATH ?? "/data/oauth-state.json";
@@ -35,24 +18,19 @@ export const USAGE_STALE_WHILE_REVALIDATE =
   (process.env.USAGE_STALE_WHILE_REVALIDATE ?? "true") !== "false";
 export const USAGE_STALE_MAX_AGE_MS = Math.max(
   0,
-  finiteNumber("USAGE_STALE_MAX_AGE_MS", 30 * 60_000),
+  Number(process.env.USAGE_STALE_MAX_AGE_MS ?? 30 * 60_000),
 );
 export const MODELS_STALE_WHILE_REVALIDATE =
   (process.env.MODELS_STALE_WHILE_REVALIDATE ?? "true") !== "false";
 export const MODELS_STALE_MAX_AGE_MS = Math.max(
   0,
-  finiteNumber("MODELS_STALE_MAX_AGE_MS", 30 * 60_000),
+  Number(process.env.MODELS_STALE_MAX_AGE_MS ?? 30 * 60_000),
 );
-export const REQUEST_BODY_LIMIT = process.env.REQUEST_BODY_LIMIT ?? "32mb";
+export const REQUEST_BODY_LIMIT = process.env.REQUEST_BODY_LIMIT ?? "100mb";
 export const TRACE_RETENTION_MAX = Math.max(
   100,
-  finiteInteger("TRACE_RETENTION_MAX", 1000, 100),
-); // Number of recent requests to keep with full text.
-export const TRACE_STATS_RETENTION_MS = finiteNumber(
-  "TRACE_STATS_RETENTION_MS",
-  90 * 24 * 60 * 60_000,
-  24 * 60 * 60_000,
-);
+  Number(process.env.TRACE_RETENTION_MAX ?? 1000),
+); // Number of recent requests to keep with full text (metadata kept forever in history)
 export const CHATGPT_BASE_URL =
   process.env.CHATGPT_BASE_URL ?? "https://chatgpt.com";
 export const REALTIME_PROVIDER =
@@ -63,42 +41,7 @@ export const REALTIME_WEBRTC_CALL_URL =
   process.env.REALTIME_WEBRTC_CALL_URL ?? "";
 export const REALTIME_REQUEST_TIMEOUT_MS = Math.max(
   1_000,
-  finiteNumber("REALTIME_REQUEST_TIMEOUT_MS", 30_000, 1_000),
-);
-export const UPSTREAM_REQUEST_TIMEOUT_MS = finiteNumber(
-  "UPSTREAM_REQUEST_TIMEOUT_MS",
-  90_000,
-  1_000,
-);
-export const AUXILIARY_REQUEST_TIMEOUT_MS = finiteNumber(
-  "AUXILIARY_REQUEST_TIMEOUT_MS",
-  15_000,
-  1_000,
-);
-export const UPSTREAM_TOTAL_TIMEOUT_MS = finiteNumber(
-  "UPSTREAM_TOTAL_TIMEOUT_MS",
-  120_000,
-  5_000,
-);
-export const UPSTREAM_STREAM_IDLE_TIMEOUT_MS = finiteNumber(
-  "UPSTREAM_STREAM_IDLE_TIMEOUT_MS",
-  90_000,
-  5_000,
-);
-export const WEBSOCKET_MAX_PAYLOAD_BYTES = finiteInteger(
-  "WEBSOCKET_MAX_PAYLOAD_BYTES",
-  8 * 1024 * 1024,
-  1024,
-);
-export const WEBSOCKET_MAX_BUFFERED_BYTES = finiteInteger(
-  "WEBSOCKET_MAX_BUFFERED_BYTES",
-  1024 * 1024,
-  64 * 1024,
-);
-export const SHUTDOWN_TIMEOUT_MS = finiteNumber(
-  "SHUTDOWN_TIMEOUT_MS",
-  15_000,
-  1_000,
+  Number(process.env.REALTIME_REQUEST_TIMEOUT_MS ?? 30_000),
 );
 export const MISTRAL_BASE_URL =
   process.env.MISTRAL_BASE_URL ?? "https://api.mistral.ai";
@@ -163,23 +106,23 @@ export const PROXY_API_KEY = process.env.PROXY_API_KEY ?? "";
 export const PROXY_API_KEYS = process.env.PROXY_API_KEYS ?? "";
 export const MAX_ACCOUNT_RETRY_ATTEMPTS = Math.max(
   1,
-  finiteInteger("MAX_ACCOUNT_RETRY_ATTEMPTS", 10, 1),
+  Number(process.env.MAX_ACCOUNT_RETRY_ATTEMPTS ?? 10),
 );
 export const MAX_UPSTREAM_RETRIES = Math.max(
   0,
-  finiteInteger("MAX_UPSTREAM_RETRIES", 2, 0),
+  Number(process.env.MAX_UPSTREAM_RETRIES ?? 5),
 );
 export const UPSTREAM_BASE_DELAY_MS = Math.max(
   100,
-  finiteNumber("UPSTREAM_BASE_DELAY_MS", 500, 100),
+  Number(process.env.UPSTREAM_BASE_DELAY_MS ?? 2000),
 );
 export const HANG_RETRY_INTERVAL_MS = Math.max(
   1000,
-  finiteNumber("HANG_RETRY_INTERVAL_MS", 10_000, 1_000),
+  Number(process.env.HANG_RETRY_INTERVAL_MS ?? 10_000),
 );
 export const HANG_RETRY_MAX_DURATION_MS = Math.max(
   5000,
-  finiteNumber("HANG_RETRY_MAX_DURATION_MS", 120_000, 5_000),
+  Number(process.env.HANG_RETRY_MAX_DURATION_MS ?? 120_000),
 );
 export const PI_USER_AGENT = `pi (${os.platform()} ${os.release()}; ${os.arch()})`;
 export const MODELS_CLIENT_VERSION =
@@ -196,12 +139,16 @@ export const PROXY_MODELS = (
   .map((s) => s.trim())
   .filter(Boolean);
 export const MODELS_CACHE_MS = Number(
-  finiteNumber("MODELS_CACHE_MS", 10 * 60_000),
+  process.env.MODELS_CACHE_MS ?? 10 * 60_000,
 );
 
-export const TOKEN_REFRESH_MARGIN_MS = finiteNumber("TOKEN_REFRESH_MARGIN_MS", 60_000);
+export const TOKEN_REFRESH_MARGIN_MS = Number(
+  process.env.TOKEN_REFRESH_MARGIN_MS ?? 60_000,
+);
 
-export const ACCOUNT_FLUSH_INTERVAL_MS = finiteNumber("ACCOUNT_FLUSH_INTERVAL_MS", 5_000);
+export const ACCOUNT_FLUSH_INTERVAL_MS = Number(
+  process.env.ACCOUNT_FLUSH_INTERVAL_MS ?? 5_000,
+);
 
 // EXCLUDED_PROVIDER_MODELS: exclude a model from being routed to a specific provider.
 // Format: "provider1:modelA,provider1:modelB,provider2:modelC"
@@ -228,28 +175,18 @@ export const EXCLUDED_PROVIDER_MODELS = (
 // Empty response retry configuration
 export const EMPTY_RESPONSE_BLOCK_THRESHOLD = Math.max(
   1,
-  finiteInteger("EMPTY_RESPONSE_BLOCK_THRESHOLD", 3, 1),
+  Number(process.env.EMPTY_RESPONSE_BLOCK_THRESHOLD ?? 3),
 );
 export const EMPTY_RESPONSE_BLOCK_DURATION_MS = Math.max(
   5_000,
-  finiteNumber("EMPTY_RESPONSE_BLOCK_DURATION_MS", 30_000, 5_000),
+  Number(process.env.EMPTY_RESPONSE_BLOCK_DURATION_MS ?? 30_000),
 );
 export const EMPTY_RESPONSE_WINDOW_MS = Math.max(
   60_000,
-  finiteNumber("EMPTY_RESPONSE_WINDOW_MS", 5 * 60_000, 60_000),
+  Number(process.env.EMPTY_RESPONSE_WINDOW_MS ?? 5 * 60_000),
 );
 
 export const MODEL_NOT_FOUND_BLOCK_DURATION_MS = Math.max(
   60_000,
-  finiteNumber("MODEL_NOT_FOUND_BLOCK_DURATION_MS", 60 * 60_000, 60_000),
+  Number(process.env.MODEL_NOT_FOUND_BLOCK_DURATION_MS ?? 60 * 60_000),
 );
-
-export function validateProductionSecrets(): void {
-  if (process.env.NODE_ENV !== "production") return;
-  if (!ADMIN_TOKEN || ADMIN_TOKEN === "change-me") {
-    throw new Error("ADMIN_TOKEN must be set to a non-default value in production");
-  }
-  if (!PROXY_API_KEY && !PROXY_API_KEYS) {
-    throw new Error("PROXY_API_KEY or PROXY_API_KEYS must be set in production");
-  }
-}

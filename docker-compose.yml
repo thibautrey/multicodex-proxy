@@ -1,11 +1,6 @@
 services:
   multivibe:
-    build:
-      context: .
-      args:
-        APP_VERSION: ${APP_VERSION:-0.2.0}
-        APP_GIT_SHA: ${APP_GIT_SHA:-unknown}
-        APP_BUILD_ID: ${APP_BUILD_ID:-local}
+    build: .
     container_name: multivibe
     ports:
       - "192.0.2.149:1455:1455"
@@ -15,26 +10,19 @@ services:
       - STORE_PATH=/data/accounts.json
       - OAUTH_STATE_PATH=/data/oauth-state.json
       - TRACE_FILE_PATH=/data/requests-trace.jsonl
-      - REQUEST_BODY_LIMIT=${REQUEST_BODY_LIMIT:-32mb}
-      - UPSTREAM_REQUEST_TIMEOUT_MS=${UPSTREAM_REQUEST_TIMEOUT_MS:-90000}
-      - AUXILIARY_REQUEST_TIMEOUT_MS=${AUXILIARY_REQUEST_TIMEOUT_MS:-15000}
-      - UPSTREAM_TOTAL_TIMEOUT_MS=${UPSTREAM_TOTAL_TIMEOUT_MS:-120000}
-      - UPSTREAM_STREAM_IDLE_TIMEOUT_MS=${UPSTREAM_STREAM_IDLE_TIMEOUT_MS:-90000}
-      - WEBSOCKET_MAX_PAYLOAD_BYTES=${WEBSOCKET_MAX_PAYLOAD_BYTES:-8388608}
-      - WEBSOCKET_MAX_BUFFERED_BYTES=${WEBSOCKET_MAX_BUFFERED_BYTES:-1048576}
-      - TRACE_STATS_RETENTION_MS=${TRACE_STATS_RETENTION_MS:-7776000000}
+      - REQUEST_BODY_LIMIT=${REQUEST_BODY_LIMIT:-500mb}
       - CHATGPT_BASE_URL=https://chatgpt.com
       - REALTIME_PROVIDER=${REALTIME_PROVIDER:-openai}
       - REALTIME_WEBRTC_CALL_URL=${REALTIME_WEBRTC_CALL_URL:-}
       - REALTIME_REQUEST_TIMEOUT_MS=${REALTIME_REQUEST_TIMEOUT_MS:-30000}
       - UPSTREAM_PATH=/backend-api/codex/responses
+      - PROXY_MODELS=gpt-5.3-codex,gpt-5.2-codex,gpt-5-codex
       - MODELS_CLIENT_VERSION=1.0.0
       - MODELS_CACHE_MS=600000
       - EXCLUDED_PROVIDER_MODELS=openai-compatible:gpt-5.5,mistral:mistral-medium-latest
       - PROXY_MODELS=gpt-5.5
-      - ADMIN_TOKEN=${ADMIN_TOKEN:?Set ADMIN_TOKEN to a strong random value}
+      - ADMIN_TOKEN=change-me
       - PROXY_API_KEY=${PROXY_API_KEY:-}
-      - PROXY_API_KEYS=${PROXY_API_KEYS:-}
       - OAUTH_CLIENT_ID=app_EMoamEEZ73f0CkXaXp7hrann
       - OAUTH_AUTHORIZATION_URL=https://auth.openai.com/oauth/authorize
       - OAUTH_TOKEN_URL=https://auth.openai.com/oauth/token
@@ -47,4 +35,3 @@ services:
     volumes:
       - ./data:/data
     restart: unless-stopped
-    stop_grace_period: 20s

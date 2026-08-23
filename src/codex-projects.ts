@@ -56,8 +56,6 @@ const EMPTY_REGISTRY: RegistryFile = {
   projects: [],
   sessions: [],
 };
-const MAX_RETAINED_SESSIONS = 10_000;
-const SESSION_RETENTION_MS = 90 * 24 * 60 * 60_000;
 
 export const CODEX_SESSION_FORWARD_HEADER =
   "x-multicodex-codex-session-id";
@@ -236,20 +234,11 @@ export function extractLiteLLMProjectAttribution(
 async function writeJsonAtomic(filePath: string, value: unknown) {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   const temporaryPath = `${filePath}.tmp-${randomUUID()}`;
-  const handle = await fs.open(temporaryPath, "wx", 0o600);
-  try {
-    await handle.writeFile(JSON.stringify(value, null, 2), "utf8");
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
+  await fs.writeFile(temporaryPath, JSON.stringify(value, null, 2), {
+    encoding: "utf8",
+    mode: 0o600,
+  });
   await fs.rename(temporaryPath, filePath);
-  const directory = await fs.open(path.dirname(filePath), "r");
-  try {
-    await directory.sync();
-  } finally {
-    await directory.close();
-  }
 }
 
 export class CodexProjectRegistry {
@@ -270,16 +259,8 @@ export class CodexProjectRegistry {
       for (const session of Array.isArray(raw.sessions) ? raw.sessions : []) {
         if (session?.sessionId) this.sessions.set(session.sessionId, session);
       }
-      this.prune();
     } catch (error: any) {
-      if (error?.code !== "ENOENT") {
-        const quarantinePath = `${this.filePath}.corrupt-${Date.now()}`;
-        await fs.rename(this.filePath, quarantinePath).catch(() => undefined);
-        console.error(
-          `Codex project registry was corrupt; moved it to ${quarantinePath}`,
-          error,
-        );
-      }
+      if (error?.code !== "ENOENT") throw error;
       await writeJsonAtomic(this.filePath, EMPTY_REGISTRY);
     }
   }
@@ -300,7 +281,6 @@ export class CodexProjectRegistry {
     };
     this.projects.set(storedProject.id, storedProject);
     this.sessions.set(storedSession.sessionId, storedSession);
-    this.prune();
     await this.persist();
     return { project: storedProject, session: storedSession };
   }
@@ -353,19 +333,6 @@ export class CodexProjectRegistry {
     } catch (error: any) {
       this.lastWriteError = { at: Date.now(), message: error?.message ?? String(error) };
       throw error;
-    }
-  }
-
-  private prune() {
-    const cutoff = Date.now() - SESSION_RETENTION_MS;
-    const retained = Array.from(this.sessions.values())
-      .filter((session) => session.lastSeenAt >= cutoff)
-      .sort((a, b) => b.lastSeenAt - a.lastSeenAt)
-      .slice(0, MAX_RETAINED_SESSIONS);
-    this.sessions = new Map(retained.map((session) => [session.sessionId, session]));
-    const usedProjects = new Set(retained.map((session) => session.projectId));
-    for (const projectId of this.projects.keys()) {
-      if (!usedProjects.has(projectId)) this.projects.delete(projectId);
     }
   }
 

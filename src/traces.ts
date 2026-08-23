@@ -187,7 +187,6 @@ export type TraceManagerConfig = {
   retentionMax?: number;
   pageSizeMax?: number;
   legacyLimitMax?: number;
-  historyRetentionMs?: number;
   resolveCodexProject?: (
     sessionId: string | undefined,
   ) => CodexProjectAttribution | undefined;
@@ -216,7 +215,6 @@ const DEFAULT_PAGE_SIZE_MAX = 100;
 const DEFAULT_LEGACY_LIMIT_MAX = 2000;
 const HOUR_MS = 3_600_000;
 const MAX_LATENCY_SAMPLES_PER_BUCKET = 2000;
-const MAX_INFERENCE_SPEED_SAMPLES_PER_BUCKET = 2000;
 const TRACE_COMPACTION_RATIO = 1.5;
 
 function safeNumber(value: unknown): number | undefined {
@@ -876,20 +874,6 @@ function addLatencySample(bucket: TraceBucketAggregate, latencyMs: number) {
   bucket.latencies[replaceAt] = latencyMs;
 }
 
-function addInferenceSpeedSample(
-  bucket: TraceBucketAggregate,
-  inferenceSpeed: number,
-) {
-  if (!Number.isFinite(inferenceSpeed)) return;
-  if (bucket.inferenceSpeeds.length < MAX_INFERENCE_SPEED_SAMPLES_PER_BUCKET) {
-    bucket.inferenceSpeeds.push(inferenceSpeed);
-    return;
-  }
-  bucket.inferenceSpeeds[
-    bucket.requests % MAX_INFERENCE_SPEED_SAMPLES_PER_BUCKET
-  ] = inferenceSpeed;
-}
-
 function addTraceToBucket(bucket: TraceBucketAggregate, trace: TraceEntry) {
   const model = trace.model || "unknown";
   const traceCost =
@@ -918,7 +902,7 @@ function addTraceToBucket(bucket: TraceBucketAggregate, trace: TraceEntry) {
   bucket.tokensTotal += traceTokensTotal;
   const inferenceSpeed = traceInferenceTokensPerSecond(trace);
   if (typeof inferenceSpeed === "number") {
-    addInferenceSpeedSample(bucket, inferenceSpeed);
+    bucket.inferenceSpeeds.push(inferenceSpeed);
   }
   bucket.costUsd += traceCost;
   bucket.latencyMsTotal += Number.isFinite(trace.latencyMs) ? trace.latencyMs : 0;
@@ -957,8 +941,6 @@ export function isHiddenTraceRoute(route: string | undefined): boolean {
   const [pathOnly] = routeWithoutMethod.split("?");
   return (
     pathOnly === "/" ||
-    pathOnly === "/health" ||
-    pathOnly === "/ready" ||
     pathOnly === "/favicon.ico" ||
     pathOnly.startsWith("/admin/") ||
     pathOnly.startsWith("/assets/") ||
@@ -974,7 +956,6 @@ export function createTraceManager(config: TraceManagerConfig) {
     retentionMax = DEFAULT_RETENTION_MAX,
     pageSizeMax = DEFAULT_PAGE_SIZE_MAX,
     legacyLimitMax = DEFAULT_LEGACY_LIMIT_MAX,
-    historyRetentionMs = 90 * 24 * 60 * 60_000,
     resolveCodexProject,
   } = config;
 
@@ -988,7 +969,6 @@ export function createTraceManager(config: TraceManagerConfig) {
   let traceCompactionQueued = false;
   let cacheInit: Promise<void> | null = null;
   let lastWriteError: { at: number; message: string } | undefined;
-  let lastHistoryCompactionAt = 0;
   const traceCompactionThreshold = Math.max(
     retentionMax + 1,
     Math.ceil(retentionMax * TRACE_COMPACTION_RATIO),
@@ -1089,7 +1069,6 @@ export function createTraceManager(config: TraceManagerConfig) {
         try {
           const normalized = normalizeTrace(JSON.parse(line));
           if (!normalized) continue;
-          if (normalized.at < Date.now() - historyRetentionMs) continue;
           onTrace(normalized);
           if (shouldCollect?.(normalized)) collected.push(normalized);
         } catch {}
@@ -1109,42 +1088,6 @@ export function createTraceManager(config: TraceManagerConfig) {
     statsBuckets.set(bucketAt, bucket);
   }
 
-  async function compactStatsHistoryFile(skipRecentlyModified = false): Promise<void> {
-    const cutoff = Date.now() - historyRetentionMs;
-    try {
-      const stat = await fs.stat(historyFilePath);
-      if (skipRecentlyModified && Date.now() - stat.mtimeMs < 24 * 60 * 60_000) {
-        lastHistoryCompactionAt = Date.now();
-        return;
-      }
-    } catch (error: any) {
-      if (error?.code === "ENOENT") {
-        lastHistoryCompactionAt = Date.now();
-        return;
-      }
-      throw error;
-    }
-    const tmp = `${historyFilePath}.tmp-${randomUUID()}`;
-    const output = await fs.open(tmp, "w", 0o600);
-    try {
-      const input = createReadStream(historyFilePath, { encoding: "utf8" });
-      const lines = createInterface({ input, crlfDelay: Infinity });
-      for await (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const normalized = normalizeTrace(JSON.parse(line));
-          if (!normalized || normalized.at < cutoff) continue;
-          await output.writeFile(`${JSON.stringify(toStatsHistoryEntry(normalized))}\n`);
-        } catch {}
-      }
-      await output.sync();
-    } finally {
-      await output.close();
-    }
-    await fs.rename(tmp, historyFilePath);
-    lastHistoryCompactionAt = Date.now();
-  }
-
   function ingestPersistedStatsTrace(trace: TraceEntry) {
     if (statsHistoryIds.has(trace.id)) return;
     rememberStatsHistoryId(trace.id);
@@ -1158,7 +1101,6 @@ export function createTraceManager(config: TraceManagerConfig) {
     }
     cacheInit = (async () => {
       await Promise.all([ensureParentDir(filePath), ensureParentDir(historyFilePath)]);
-      await compactStatsHistoryFile(true);
       const [{ traces, physicalLineCount }] = await Promise.all([
         readTraceFileFromDisk(),
         scanStatsHistory(ingestPersistedStatsTrace),
@@ -1281,14 +1223,6 @@ export function createTraceManager(config: TraceManagerConfig) {
         ingestStatsTrace(normalized);
       }
     });
-    historyWriteQueue = run.catch(() => undefined);
-    await run;
-  }
-
-  async function compactStatsHistoryIfNeeded(force = false): Promise<void> {
-    await ensureCacheReady();
-    if (!force && Date.now() - lastHistoryCompactionAt < 24 * 60 * 60_000) return;
-    const run = historyWriteQueue.then(() => compactStatsHistoryFile());
     historyWriteQueue = run.catch(() => undefined);
     await run;
   }
@@ -1688,7 +1622,6 @@ export function createTraceManager(config: TraceManagerConfig) {
     readStatsHistoryRange,
     seedStatsHistoryIfMissing,
     compactTraceStorageIfNeeded,
-    compactStatsHistoryIfNeeded,
     getTraceStats,
     appendTrace,
     recordTrace,

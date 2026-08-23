@@ -39,9 +39,8 @@ function postJson(
   });
 }
 
-test("rotates to the next account when a 429 is returned as SSE without applying the hang deadline to active routing", async (t) => {
+test("rotates to the next account when a 429 is returned as SSE", async (t) => {
   const now = Date.now();
-  let fakeNow = now;
   const accounts: Account[] = [
     {
       id: "account-one",
@@ -75,8 +74,6 @@ test("rotates to the next account when a 429 is returned as SSE without applying
   const upstreamBodies: string[] = [];
   let modelDiscoveryRequests = 0;
   const originalFetch = globalThis.fetch;
-  const originalDateNow = Date.now;
-  Date.now = () => fakeNow;
 
   globalThis.fetch = async (input, init) => {
     const url = String(input);
@@ -98,10 +95,6 @@ test("rotates to the next account when a 429 is returned as SSE without applying
     upstreamTokens.push(token);
     upstreamBodies.push(String(init?.body ?? ""));
     if (token === "Bearer token-one") {
-      // HANG_RETRY_MAX_DURATION_MS only bounds the sleep/retry cycle used when
-      // every account is exhausted. Advancing beyond its default must not stop
-      // an in-progress rotation to another available account.
-      fakeNow += 120_001;
       return new Response(
         [
           "event: error",
@@ -138,7 +131,6 @@ test("rotates to the next account when a 429 is returned as SSE without applying
   };
   t.after(() => {
     globalThis.fetch = originalFetch;
-    Date.now = originalDateNow;
   });
 
   const updateAccount = (account: Account) => {

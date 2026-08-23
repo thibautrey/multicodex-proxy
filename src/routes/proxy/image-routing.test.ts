@@ -10,7 +10,6 @@ import {
   classifyNativeStreamCompletion,
   isModelAllowedByKeys,
   isStreamingUpstreamResponse,
-  nativeStreamInterruptionFrame,
   payloadHasImage,
 } from "./index.js";
 
@@ -295,49 +294,6 @@ test("client close after response.completed is classified as success", () => {
     clientDisconnected: true,
     error: "client disconnected before stream completion",
   });
-});
-
-test("premature native Responses EOF is classified and serialized as an error", () => {
-  const classification = classifyNativeStreamCompletion(false, false);
-
-  assert.deepEqual(classification, {
-    interrupted: true,
-    status: 599,
-    clientDisconnected: undefined,
-    error: "upstream stream ended before response.completed",
-  });
-  assert.equal(
-    nativeStreamInterruptionFrame(classification.error!),
-    'event: error\ndata: {"error":{"message":"upstream stream ended before response.completed","type":"upstream_error","code":"stream_interrupted"}}\n\n',
-  );
-});
-
-test("native Responses transport errors retain their diagnostic message", () => {
-  assert.deepEqual(
-    classifyNativeStreamCompletion(false, false, new Error("socket reset")),
-    {
-      interrupted: true,
-      status: 599,
-      clientDisconnected: undefined,
-      error: "socket reset",
-    },
-  );
-});
-
-test("native Responses client aborts take precedence over transport errors", () => {
-  assert.deepEqual(
-    classifyNativeStreamCompletion(
-      true,
-      false,
-      new Error("client disconnected"),
-    ),
-    {
-      interrupted: true,
-      status: 499,
-      clientDisconnected: true,
-      error: "client disconnected before stream completion",
-    },
-  );
 });
 
 test("model validation fails open until discovery has populated the cache", () => {

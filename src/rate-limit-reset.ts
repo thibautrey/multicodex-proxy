@@ -8,7 +8,6 @@ import {
   CODEX_CLI_ORIGINATOR,
   CODEX_CLI_USER_AGENT,
   MODELS_CLIENT_VERSION,
-  AUXILIARY_REQUEST_TIMEOUT_MS,
 } from "./config.js";
 
 export const WEEKLY_RESET_REMAINING_THRESHOLD_PERCENT = 0.5;
@@ -65,7 +64,6 @@ export async function rateLimitResetCreditRequest(
         method: consume ? "POST" : "GET",
         headers: openAiAccountHeaders(account),
         ...(endpoint.body ? { body: JSON.stringify(endpoint.body) } : {}),
-        signal: AbortSignal.timeout(AUXILIARY_REQUEST_TIMEOUT_MS),
       },
     );
     const text = await response.text();

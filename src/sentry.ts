@@ -8,18 +8,13 @@ export function initSentry(): void {
   const dsn = process.env.SENTRY_DSN;
   if (!dsn) return;
 
-  const tracesSampleRate = Number(process.env.SENTRY_TRACES_SAMPLE_RATE ?? 0.1);
-  if (!Number.isFinite(tracesSampleRate) || tracesSampleRate < 0 || tracesSampleRate > 1) {
-    throw new Error("SENTRY_TRACES_SAMPLE_RATE must be between 0 and 1");
-  }
-
   Sentry.init({
     dsn,
     environment:
       process.env.SENTRY_ENVIRONMENT ?? process.env.NODE_ENV ?? "production",
     release: process.env.APP_VERSION,
     // Sample all errors; tune performance sampling via env (default 10%).
-    tracesSampleRate,
+    tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE ?? 0.1),
     integrations: [
       // HTTP + Express tracing instrumentation (incoming/outgoing requests).
       Sentry.httpIntegration(),

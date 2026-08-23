@@ -54,7 +54,6 @@ type MutableUsage = {
   latencies: number[];
   statusCounts: Record<string, number>;
 };
-const MAX_LATENCY_SAMPLES = 2000;
 
 const emptyUsage = (): MutableUsage => ({
   requests: 0,
@@ -119,11 +118,7 @@ function addTrace(usage: MutableUsage, trace: TraceEntry) {
   usage.tokensOutput += output;
   usage.tokensTotal += total;
   usage.latencyMsTotal += latency;
-  if (usage.latencies.length < MAX_LATENCY_SAMPLES) {
-    usage.latencies.push(latency);
-  } else {
-    usage.latencies[usage.requests % MAX_LATENCY_SAMPLES] = latency;
-  }
+  usage.latencies.push(latency);
 }
 
 function finalizeUsage(usage: MutableUsage) {

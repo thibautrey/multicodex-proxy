@@ -11,10 +11,10 @@ declare global {
   }
 }
 
-export function parseByteLimit(value: string): number {
+function parseByteLimit(value: string): number {
   const trimmed = value.trim().toLowerCase();
   const match = trimmed.match(/^(\d+(?:\.\d+)?)\s*(b|kb|kib|mb|mib|gb|gib)?$/);
-  if (!match) throw new Error(`Invalid REQUEST_BODY_LIMIT: ${value}`);
+  if (!match) return 100 * 1024 * 1024;
 
   const amount = Number(match[1]);
   const unit = match[2] ?? "b";
@@ -43,7 +43,7 @@ export function createBodyParserMiddleware() {
   const jsonParser = express.json({
     limit: REQUEST_BODY_LIMIT,
     verify: (req, _res, buf) => {
-      (req as express.Request).rawBody = buf;
+      (req as express.Request).rawBody = Buffer.from(buf);
     },
   });
   const requestBodyLimitBytes = parseByteLimit(REQUEST_BODY_LIMIT);
