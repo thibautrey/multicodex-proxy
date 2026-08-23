@@ -1637,10 +1637,10 @@ export function classifyNativeStreamCompletion(
     !clientDisconnected && !streamError && !sawResponseCompleted;
   return {
     interrupted,
-    status: streamError
-      ? 599
-      : clientInterrupted
-        ? 499
+    status: clientInterrupted
+      ? 499
+      : streamError
+        ? 599
         : upstreamEndedEarly
           ? 599
           : 200,
@@ -3562,8 +3562,11 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           return;
         } catch (err: any) {
           const msg = err?.message ?? String(err);
-          rememberError(selected, msg);
-          await store.upsertAccount(selected);
+          const clientDisconnected = upstreamAbort.signal.aborted;
+          if (!clientDisconnected) {
+            rememberError(selected, msg);
+            await store.upsertAccount(selected);
+          }
           if (nativeStreamKeepalive) {
             clearInterval(nativeStreamKeepalive);
             nativeStreamKeepalive = undefined;
@@ -3577,12 +3580,13 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               accountEmail: selected.email,
               model: tracedModel,
               ...traceModelResolution,
-              status: 599,
+              status: clientDisconnected ? 499 : 599,
               stream: true,
               latencyMs: Date.now() - startedAt,
               error: msg,
               requestBody,
               ...traceImage,
+              clientDisconnected: clientDisconnected ? true : undefined,
               lifecycleState: "interrupted",
             });
           } else recordTrace({
@@ -3592,13 +3596,15 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             accountEmail: selected.email,
             model: tracedModel,
             ...traceModelResolution,
-            status: 599,
+            status: clientDisconnected ? 499 : 599,
             stream: false,
             latencyMs: Date.now() - startedAt,
             error: msg,
             requestBody,
             ...traceImage,
+            clientDisconnected: clientDisconnected ? true : undefined,
           });
+          if (clientDisconnected) return;
           if (res.headersSent) {
             res.end();
             return;

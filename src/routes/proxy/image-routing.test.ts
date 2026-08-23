@@ -324,6 +324,22 @@ test("native Responses transport errors retain their diagnostic message", () => 
   );
 });
 
+test("native Responses client aborts take precedence over transport errors", () => {
+  assert.deepEqual(
+    classifyNativeStreamCompletion(
+      true,
+      false,
+      new Error("client disconnected"),
+    ),
+    {
+      interrupted: true,
+      status: 499,
+      clientDisconnected: true,
+      error: "client disconnected before stream completion",
+    },
+  );
+});
+
 test("model validation fails open until discovery has populated the cache", () => {
   assert.equal(isModelAllowedByKeys("gpt-test", new Set()), true);
   assert.equal(
