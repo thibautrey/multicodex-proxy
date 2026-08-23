@@ -118,6 +118,11 @@ import {
   extractCodexSessionId,
   extractLiteLLMProjectAttribution,
 } from "../../codex-projects.js";
+import {
+  buildClaudeCodeModelsResponse,
+  handleAnthropicMessages,
+  isClaudeCodeRequest,
+} from "../../anthropic-compat.js";
 
 type ProxyRoutesOptions = {
   store: AccountStore;
@@ -3755,12 +3760,20 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     res.locals._multivibeTraced = true;
     proxyWithRotation(req, res).catch(next);
   });
+  router.all("/messages", rejectNonPost("/v1/messages"));
+  router.post("/messages", (req, res, next) => {
+    res.locals._multivibeTraced = true;
+    handleAnthropicMessages(req, res).catch(next);
+  });
 
   async function listExposedModels() {
     return discoverModels(store, openaiBaseUrl, mistralBaseUrl, zaiBaseUrl);
   }
 
-  router.get(["/models", "/api/v1/models"], async (_req, res) => {
+  router.get(["/models", "/api/v1/models"], async (req, res) => {
+    if (isClaudeCodeRequest(req.headers)) {
+      return res.json(buildClaudeCodeModelsResponse());
+    }
     const models = await listExposedModels();
     res.json(buildModelsListResponse(models));
   });

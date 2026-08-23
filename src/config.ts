@@ -104,6 +104,10 @@ export const CODEX_PROJECT_REGISTRATION_TOKEN =
   process.env.CODEX_PROJECT_REGISTRATION_TOKEN ?? ADMIN_TOKEN;
 export const PROXY_API_KEY = process.env.PROXY_API_KEY ?? "";
 export const PROXY_API_KEYS = process.env.PROXY_API_KEYS ?? "";
+export const CLAUDE_CODE_MODEL =
+  process.env.CLAUDE_CODE_MODEL ?? "gpt-5.6-luna";
+export const CLAUDE_CODE_FAST_MODEL =
+  process.env.CLAUDE_CODE_FAST_MODEL ?? "gpt-5.4-mini";
 export const MAX_ACCOUNT_RETRY_ATTEMPTS = Math.max(
   1,
   Number(process.env.MAX_ACCOUNT_RETRY_ATTEMPTS ?? 10),

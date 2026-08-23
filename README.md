@@ -536,6 +536,8 @@ same `/admin/oauth/device/poll` endpoint used by OpenAI device OAuth.
 | `CODEX_PROJECT_REGISTRATION_TOKEN` | `ADMIN_TOKEN`                            | Limited token accepted by the Codex session registration endpoint   |
 | `PROXY_API_KEY`                   | empty                                     | Optional Bearer or `x-api-key` required by HTTP and WebSocket proxy endpoints |
 | `PROXY_API_KEYS`                  | empty                                     | JSON object of application names to proxy keys; attribution only, with shared auth behavior and quotas |
+| `CLAUDE_CODE_MODEL`               | `gpt-5.6-luna`                            | Upstream model used for Claude Code opus/sonnet aliases             |
+| `CLAUDE_CODE_FAST_MODEL`          | `gpt-5.4-mini`                            | Upstream model used for Claude Code haiku/fast aliases              |
 | `CHATGPT_BASE_URL`                | `https://chatgpt.com`                     | OpenAI/ChatGPT upstream base URL                                    |
 | `REALTIME_PROVIDER`               | `openai`                                  | Realtime account provider (`openai` or `openai-compatible`)         |
 | `REALTIME_WEBRTC_CALL_URL`        | empty                                     | Optional full Realtime WebRTC upstream URL                          |

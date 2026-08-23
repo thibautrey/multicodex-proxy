@@ -52,6 +52,7 @@ import {
   extractCodexSessionId,
   extractLiteLLMProjectAttribution,
 } from "./codex-projects.js";
+import { anthropicErrorEnvelope } from "./anthropic-compat.js";
 
 const app = express();
 app.use(createBodyParserMiddleware());
@@ -60,6 +61,13 @@ app.use(createBodyParserMiddleware());
 app.use(
   (err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
     if (err?.type === "entity.too.large") {
+      if (/(?:^|\/)messages$/.test(_req.path)) {
+        return res.status(413).json(
+          anthropicErrorEnvelope(413, {
+            message: `Request body is too large. Limit is ${REQUEST_BODY_LIMIT}.`,
+          }),
+        );
+      }
       return res.status(413).json({
         error: {
           message: `Request body is too large. Limit is ${REQUEST_BODY_LIMIT}.`,
@@ -291,6 +299,11 @@ function proxyGuard(
     res.locals.proxyApplication = application;
     return next();
   }
+  if (/\/(?:v1\/)?messages(?:\?|$)/.test(req.originalUrl)) {
+    return res
+      .status(401)
+      .json(anthropicErrorEnvelope(401, "Invalid or missing proxy API key"));
+  }
   return res.status(401).json({
     error: {
       message: "Invalid or missing proxy API key",
@@ -311,6 +324,7 @@ function rootProxyGuard(
     pathOrUrl === "/chat/completions" ||
     pathOrUrl === "/responses" ||
     pathOrUrl === "/responses/compact" ||
+    pathOrUrl === "/messages" ||
     pathOrUrl === "/models" ||
     pathOrUrl.startsWith("/models/") ||
     pathOrUrl === "/api/v1/models" ||
@@ -367,6 +381,8 @@ app.get("/health", (_req, res) =>
   }),
 );
 
+app.head("/api/hello", (_req, res) => res.sendStatus(200));
+
 app.get("/admin/session", (req, res) => {
   res.json({ authenticated: !ADMIN_TOKEN || hasAdminSession(req) });
 });
@@ -413,6 +429,7 @@ app.get("*", (req, res, next) => {
     req.path === "/chat/completions" ||
     req.path === "/responses" ||
     req.path === "/responses/compact" ||
+    req.path === "/messages" ||
     req.path === "/models" ||
     /^\/models\//.test(req.path)
   )

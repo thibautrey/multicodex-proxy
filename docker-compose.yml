@@ -23,6 +23,8 @@ services:
       - PROXY_MODELS=gpt-5.5
       - ADMIN_TOKEN=change-me
       - PROXY_API_KEY=${PROXY_API_KEY:-}
+      - CLAUDE_CODE_MODEL=${CLAUDE_CODE_MODEL:-gpt-5.6-luna}
+      - CLAUDE_CODE_FAST_MODEL=${CLAUDE_CODE_FAST_MODEL:-gpt-5.4-mini}
       - OAUTH_CLIENT_ID=app_EMoamEEZ73f0CkXaXp7hrann
       - OAUTH_AUTHORIZATION_URL=https://auth.openai.com/oauth/authorize
       - OAUTH_TOKEN_URL=https://auth.openai.com/oauth/token
