@@ -260,63 +260,65 @@ export function TracingTab(props: Props) {
         </section>
       </section>
 
-      <section className="panel">
-        <div className="section-split-header">
-          <h2>Inference speed (hourly)</h2>
-          <span className="badge">Output tokens / full request duration</span>
-        </div>
-        <div className="chart-wrap">
-          <ResponsiveContainer width="100%" height={260}>
-            <LineChart data={tokensTimeseries}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
-              <XAxis dataKey="label" minTickGap={24} />
-              <YAxis tickFormatter={formatTokenRate} />
-              <Tooltip formatter={(value: any) => formatTokenRate(Number(value) || 0)} />
-              <Legend />
-              <Line type="monotone" dataKey="inferenceTokensPerSecond" name="tokens/s" stroke="var(--accent)" strokeWidth={2} dot={false} connectNulls={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      </section>
+      <section className="grid cards2">
+        <section className="panel">
+          <div className="section-split-header">
+            <h2>Inference speed (hourly)</h2>
+            <span className="badge">Output tokens / full request duration</span>
+          </div>
+          <div className="chart-wrap">
+            <ResponsiveContainer width="100%" height={260}>
+              <LineChart data={tokensTimeseries}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
+                <XAxis dataKey="label" minTickGap={24} />
+                <YAxis tickFormatter={formatTokenRate} />
+                <Tooltip formatter={(value: any) => formatTokenRate(Number(value) || 0)} />
+                <Legend />
+                <Line type="monotone" dataKey="inferenceTokensPerSecond" name="tokens/s" stroke="var(--accent)" strokeWidth={2} dot={false} connectNulls={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </section>
 
-      <section className="panel">
-        <h2>Latency p50/p95 (hourly)</h2>
-        <div className="chart-wrap">
-          <ResponsiveContainer width="100%" height={260}>
-            <LineChart data={tokensTimeseries}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
-              <XAxis dataKey="label" minTickGap={24} />
-              <YAxis />
-              <Tooltip />
-              <Legend />
-              <Line type="monotone" dataKey="latencyP50Ms" name="p50" stroke="var(--chart-3)" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="latencyP95Ms" name="p95" stroke="var(--danger)" strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      </section>
+        <section className="panel">
+          <h2>Latency p50/p95 (hourly)</h2>
+          <div className="chart-wrap">
+            <ResponsiveContainer width="100%" height={260}>
+              <LineChart data={tokensTimeseries}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
+                <XAxis dataKey="label" minTickGap={24} />
+                <YAxis />
+                <Tooltip />
+                <Legend />
+                <Line type="monotone" dataKey="latencyP50Ms" name="p50" stroke="var(--chart-3)" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="latencyP95Ms" name="p95" stroke="var(--danger)" strokeWidth={2} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </section>
 
-      <section className="panel">
-        <h2>Model split by token volume</h2>
-        <div className="chart-wrap">
-          <ResponsiveContainer width="100%" height={260}>
+        <section className="panel">
+          <h2>Model split by token volume</h2>
+          <div className="chart-wrap">
+            <ResponsiveContainer width="100%" height={260}>
               <PieChart>
-              <Pie
-                data={modelChartData}
-                dataKey="tokensTotal"
-                nameKey="label"
-                outerRadius={90}
-                label={formatPieTokenLabel}
-              >
-                {modelChartData.map((entry, idx) => (
-                  <Cell key={`${entry.label}-${idx}`} fill={chartColors[idx % chartColors.length]} />
-                ))}
-              </Pie>
-              <Tooltip formatter={(value: any) => formatTokenChartValue(value)} />
-              <Legend />
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
+                <Pie
+                  data={modelChartData}
+                  dataKey="tokensTotal"
+                  nameKey="label"
+                  outerRadius={90}
+                  label={formatPieTokenLabel}
+                >
+                  {modelChartData.map((entry, idx) => (
+                    <Cell key={`${entry.label}-${idx}`} fill={chartColors[idx % chartColors.length]} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(value: any) => formatTokenChartValue(value)} />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        </section>
       </section>
 
       <section className="panel">
