@@ -8,15 +8,17 @@
     "build:api": "tsc -p tsconfig.json",
     "build:web": "npm --prefix web run build",
     "build": "npm run build:web && npm run build:api",
-    "start": "node --import ./dist/instrument.js dist/server.js"
+    "start": "node --import ./dist/instrument.js dist/server.js",
+    "test": "node --import tsx --test src/*.test.ts src/routes/proxy/*.test.ts src/responses/*.test.ts",
+    "audit:prod": "npm audit --omit=dev && npm --prefix web audit --omit=dev"
   },
   "dependencies": {
     "@foxglove/wasm-zstd": "^1.0.1",
-    "@sentry/node": "^9.47.1",
+    "@sentry/node": "^10.70.0",
     "@types/ws": "^8.18.1",
-    "body-parser": "^1.20.4",
-    "express": "^4.22.1",
-    "ws": "^8.20.0"
+    "body-parser": "^1.20.6",
+    "express": "^4.22.2",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",

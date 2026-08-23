@@ -306,6 +306,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
   } = traceManager;
 
   const router = express.Router();
+  const usageStatsCache = new Map<string, { at: number; payload: unknown }>();
 
   router.get("/config", (_req, res) => {
     res.json({
@@ -648,6 +649,18 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       typeof req.query.projectId === "string" ? req.query.projectId.trim() : "";
     const sinceMs = parseQueryNumber(req.query.sinceMs);
     const untilMs = parseQueryNumber(req.query.untilMs);
+    const cacheKey = JSON.stringify({
+      accountIdFilter,
+      routeFilter,
+      applicationFilter,
+      projectIdFilter,
+      sinceMs,
+      untilMs,
+    });
+    const cached = usageStatsCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < 30_000) {
+      return res.json(cached.payload);
+    }
 
     const traces = filterVisibleTraces(await readStatsHistoryRange(sinceMs, untilMs));
     const filtered = traces.filter((t) => {
@@ -716,7 +729,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       .sort((a, b) => b.requests - a.requests);
     const byProjectOut = aggregateProjectUsage(filtered);
 
-    res.json({
+    const payload = {
       ok: true,
       filters: {
         accountId: accountIdFilter || undefined,
@@ -733,7 +746,14 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       byProject: byProjectOut,
       tracesEvaluated: traces.length,
       tracesMatched: filtered.length,
-    });
+    };
+    usageStatsCache.set(cacheKey, { at: Date.now(), payload });
+    while (usageStatsCache.size > 50) {
+      const oldest = usageStatsCache.keys().next().value;
+      if (typeof oldest !== "string") break;
+      usageStatsCache.delete(oldest);
+    }
+    res.json(payload);
   });
 
   router.get("/stats/traces", async (req, res) => {

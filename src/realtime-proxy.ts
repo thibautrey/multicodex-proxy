@@ -238,6 +238,7 @@ async function forwardRealtimeCall(
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), options.requestTimeoutMs);
       let upstream: Response;
+      let responseBody: Buffer;
       try {
         upstream = await fetch(realtimeCallUrl(prepared, options), {
           method: "POST",
@@ -245,11 +246,11 @@ async function forwardRealtimeCall(
           body: bufferBody(body),
           signal: controller.signal,
         });
+        responseBody = Buffer.from(await upstream.arrayBuffer());
       } finally {
         clearTimeout(timeout);
       }
 
-      const responseBody = Buffer.from(await upstream.arrayBuffer());
       const errorText = upstream.ok ? "" : responseBody.toString("utf8");
       lastStatus = upstream.status;
       lastError = errorText || `Realtime upstream returned ${upstream.status}`;
@@ -363,15 +364,16 @@ async function forwardVoiceCatalog(
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), options.requestTimeoutMs);
     let upstream: Response;
+    let body: Buffer;
     try {
       upstream = await fetch(realtimeVoicesUrl(options.chatgptBaseUrl, req), {
         headers: upstreamHeaders(req, prepared),
         signal: controller.signal,
       });
+      body = Buffer.from(await upstream.arrayBuffer());
     } finally {
       clearTimeout(timeout);
     }
-    const body = Buffer.from(await upstream.arrayBuffer());
     const error = upstream.ok ? undefined : body.toString("utf8");
     options.traceManager.recordTrace({
       ...projectAttribution,

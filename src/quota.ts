@@ -6,10 +6,18 @@ import {
   MODEL_NOT_FOUND_BLOCK_DURATION_MS,
 } from "./config.js";
 
-export const USAGE_CACHE_TTL_MS = Number(process.env.USAGE_CACHE_TTL_MS ?? 300_000);
-const USAGE_TIMEOUT_MS = Number(process.env.USAGE_TIMEOUT_MS ?? 10_000);
-const BLOCK_FALLBACK_MS = Number(process.env.BLOCK_FALLBACK_MS ?? 30 * 60_000);
-const DEFAULT_ROUTING_WINDOW_MS = Number(process.env.ROUTING_WINDOW_MS ?? 5 * 60 * 1000);
+function configuredNumber(name: string, fallback: number, minimum = 0): number {
+  const value = Number(process.env[name] ?? fallback);
+  if (!Number.isFinite(value) || value < minimum) {
+    throw new Error(`${name} must be a finite number >= ${minimum}`);
+  }
+  return value;
+}
+
+export const USAGE_CACHE_TTL_MS = configuredNumber("USAGE_CACHE_TTL_MS", 300_000);
+const USAGE_TIMEOUT_MS = configuredNumber("USAGE_TIMEOUT_MS", 10_000, 1_000);
+const BLOCK_FALLBACK_MS = configuredNumber("BLOCK_FALLBACK_MS", 30 * 60_000, 1_000);
+const DEFAULT_ROUTING_WINDOW_MS = configuredNumber("ROUTING_WINDOW_MS", 5 * 60 * 1000, 1_000);
 const FIVE_HOUR_WINDOW_SECONDS = 5 * 60 * 60;
 const WEEKLY_WINDOW_SECONDS = 7 * 24 * 60 * 60;
 
@@ -415,7 +423,7 @@ export async function refreshUsageIfNeeded(account: Account, chatgptBaseUrl: str
   }
 }
 
-const RATE_LIMIT_BLOCK_MS = Number(process.env.RATE_LIMIT_BLOCK_MS ?? 60_000);
+const RATE_LIMIT_BLOCK_MS = configuredNumber("RATE_LIMIT_BLOCK_MS", 60_000, 1_000);
 
 export function markQuotaHit(account: Account, model: string, message: string) {
   const isRateLimit = /\b429\b/.test(message);

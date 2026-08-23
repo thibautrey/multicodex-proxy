@@ -45,8 +45,8 @@ MultiVibe acts as an OpenAI-compatible gateway that lets you route requests acro
 - **Default OpenAI passthrough account** for root-path requests that are not handled by the OpenAI-compatible endpoints
 - **Persistent account storage** across container restarts
 - **Request tracing v2** (configurable recent-trace retention, server pagination, trace export, tokens/model/error/latency stats, optional full payload, and image payload diagnostics)
-- **Usage stats endpoint** with global + per-account + per-route aggregates over full history
-- **Time-range stats** (`sinceMs` / `untilMs`) while keeping lightweight history for long-term aggregates
+- **Usage stats endpoint** with global + per-account + per-route aggregates over the retained history
+- **Time-range stats** (`sinceMs` / `untilMs`) with bounded lightweight history for long-term aggregates
 - **zstd-compressed JSON request bodies** for compatible clients
 
 ---
@@ -106,20 +106,27 @@ Everything important is file-based and survives restart (if `/data` is mounted):
 - `/data/requests-stats-history.jsonl`
 
 Recent trace retention defaults to the latest **1000** entries and can be changed with `TRACE_RETENTION_MAX`.
-Stats history is append-only and keeps lightweight request metadata for long-term cost/volume tracking.
+Lightweight stats history defaults to **90 days**, is compacted daily, and can be changed with `TRACE_STATS_RETENTION_MS`.
 
 > Docker compose already mounts `./data:/data`.
+
+The file stores are designed for one MultiVibe process writing a given data directory. Do not run several replicas against the same `/data` mount.
 
 ---
 
 ## 🚀 Quick start (Docker)
 
 ```bash
-docker compose up -d --build
+export ADMIN_TOKEN='replace-with-a-strong-random-admin-token'
+export PROXY_API_KEY='replace-with-a-strong-random-proxy-key'
+./scripts/docker-compose-up.sh
 ```
 
 - Dashboard: `http://localhost:1455`
-- Health: `http://localhost:1455/health`
+- Liveness: `http://localhost:1455/health`
+- Readiness: `http://localhost:1455/ready` (also verifies persistence and writable storage)
+
+Production startup is refused when `ADMIN_TOKEN` is missing/default or when neither `PROXY_API_KEY` nor `PROXY_API_KEYS` is configured. The helper script also records the real Git SHA and build ID in the image.
 
 ---
 
@@ -512,24 +519,32 @@ same `/admin/oauth/device/poll` endpoint used by OpenAI device OAuth.
 | `TRACE_STATS_HISTORY_PATH`        | `/data/requests-stats-history.jsonl`      | Lightweight request history for long-term stats                     |
 | `CODEX_PROJECTS_PATH`             | `/data/codex-projects.json`               | Persistent Codex session-to-project registry                        |
 | `TRACE_RETENTION_MAX`             | `1000`                                    | Number of recent full traces to retain; minimum effective value is 100 |
+| `TRACE_STATS_RETENTION_MS`        | `7776000000`                              | Lightweight stats history retention (90 days by default)            |
 | `TRACE_INCLUDE_BODY`              | `false`                                   | Persist full request payloads when explicitly enabled; trace stats still work when disabled |
 | `TRACE_INCLUDE_HEADERS`           | `false`                                   | Persist sanitized inbound request headers in recent traces; credentials and tokens are redacted, and headers are excluded from long-term stats history |
 | `USAGE_STALE_WHILE_REVALIDATE`    | `true`                                    | Serve stale usage, or route with a missing snapshot, while refreshing in the background |
 | `USAGE_STALE_MAX_AGE_MS`          | `1800000`                                 | Maximum snapshot age eligible for stale-while-revalidate; older snapshots block for refresh |
-| `REQUEST_BODY_LIMIT`              | `100mb`                                   | Max accepted JSON or decompressed zstd request body size            |
+| `REQUEST_BODY_LIMIT`              | `32mb`                                    | Max accepted JSON or decompressed zstd request body size            |
 | `PROXY_MODELS`                    | `gpt-5.3-codex,gpt-5.2-codex,gpt-5-codex` | Fallback comma-separated model list for `/v1/models`                |
 | `MODELS_CLIENT_VERSION`           | `0.144.1`                                 | Codex version sent to OpenAI model discovery and runtime requests     |
 | `MODELS_CACHE_MS`                 | `600000`                                  | Model discovery cache duration (ms)                                 |
 | `MODELS_STALE_WHILE_REVALIDATE`   | `true`                                    | Serve a bounded stale model catalog while refreshing it in the background |
 | `MODELS_STALE_MAX_AGE_MS`         | `1800000`                                 | Maximum model-catalog age eligible for stale-while-revalidate       |
-| `ADMIN_TOKEN`                     | empty                                     | Admin endpoints auth token; empty disables the admin-token check    |
+| `ADMIN_TOKEN`                     | empty                                     | Admin endpoints auth token; required and non-default in production  |
 | `CODEX_PROJECT_REGISTRATION_TOKEN` | `ADMIN_TOKEN`                            | Limited token accepted by the Codex session registration endpoint   |
-| `PROXY_API_KEY`                   | empty                                     | Optional Bearer or `x-api-key` required by HTTP and WebSocket proxy endpoints |
-| `PROXY_API_KEYS`                  | empty                                     | JSON object of application names to proxy keys; attribution only, with shared auth behavior and quotas |
+| `PROXY_API_KEY`                   | empty                                     | Bearer or `x-api-key` required by HTTP and WebSocket proxy endpoints; one proxy key setting is required in production |
+| `PROXY_API_KEYS`                  | empty                                     | JSON object of application names to proxy keys; one proxy key setting is required in production |
 | `CHATGPT_BASE_URL`                | `https://chatgpt.com`                     | OpenAI/ChatGPT upstream base URL                                    |
 | `REALTIME_PROVIDER`               | `openai`                                  | Realtime account provider (`openai` or `openai-compatible`)         |
 | `REALTIME_WEBRTC_CALL_URL`        | empty                                     | Optional full Realtime WebRTC upstream URL                          |
 | `REALTIME_REQUEST_TIMEOUT_MS`     | `30000`                                   | Realtime SDP request timeout (ms)                                   |
+| `UPSTREAM_REQUEST_TIMEOUT_MS`     | `90000`                                   | Timeout for one upstream connection attempt (ms)                    |
+| `AUXILIARY_REQUEST_TIMEOUT_MS`    | `15000`                                   | Timeout for OAuth and model-discovery requests (ms)                 |
+| `UPSTREAM_TOTAL_TIMEOUT_MS`       | `120000`                                  | Overall deadline across retries for one upstream request (ms)       |
+| `UPSTREAM_STREAM_IDLE_TIMEOUT_MS` | `90000`                                   | Cancel an upstream stream after this much inactivity (ms)           |
+| `WEBSOCKET_MAX_PAYLOAD_BYTES`     | `8388608`                                 | Maximum accepted WebSocket message size (8 MiB)                     |
+| `WEBSOCKET_MAX_BUFFERED_BYTES`    | `1048576`                                 | Terminate a WebSocket client after 1 MiB of unsent output           |
+| `SHUTDOWN_TIMEOUT_MS`             | `15000`                                   | Maximum graceful shutdown duration before forced close (ms)         |
 | `UPSTREAM_PATH`                   | `/backend-api/codex/responses`            | OpenAI upstream request path                                        |
 | `UPSTREAM_COMPACT_PATH`           | `/backend-api/codex/responses/compact`    | OpenAI upstream path for `/v1/responses/compact`                    |
 | `MISTRAL_BASE_URL`                | `https://api.mistral.ai`                  | Mistral upstream base URL                                           |
@@ -563,8 +578,8 @@ same `/admin/oauth/device/poll` endpoint used by OpenAI device OAuth.
 | `TOKEN_REFRESH_MARGIN_MS`         | `60000`                                   | Refresh OAuth tokens this long before expiry                        |
 | `ACCOUNT_FLUSH_INTERVAL_MS`       | `5000`                                    | Debounce interval for writing modified account state to disk        |
 | `MAX_ACCOUNT_RETRY_ATTEMPTS`      | `10`                                      | Max accounts to try on quota/rate-limit errors                      |
-| `MAX_UPSTREAM_RETRIES`            | `5`                                       | Retries per upstream request for transient 5xx/transport errors; quota rotates accounts |
-| `UPSTREAM_BASE_DELAY_MS`          | `2000`                                    | Base backoff delay for upstream retries (ms)                        |
+| `MAX_UPSTREAM_RETRIES`            | `2`                                       | Retries per upstream request for transient 5xx/transport errors; quota rotates accounts |
+| `UPSTREAM_BASE_DELAY_MS`          | `500`                                     | Base backoff delay for upstream retries (ms)                        |
 | `HANG_RETRY_INTERVAL_MS`          | `10000`                                   | Delay between retry cycles when all accounts are exhausted (ms)     |
 | `HANG_RETRY_MAX_DURATION_MS`      | `120000`                                  | Max total time to hang-and-retry before returning 429 to client (ms) |
 | `RATE_LIMIT_BLOCK_MS`             | `60000`                                   | Duration to block an account+model after a 429 response (ms)        |
@@ -587,8 +602,8 @@ multi-tenant service, and review the current xAI terms before deployment.
 ## 🛠️ Local dev
 
 ```bash
-npm install
-npm --prefix web install
+npm ci
+npm --prefix web ci
 npm run dev
 ```
 

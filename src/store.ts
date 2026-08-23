@@ -23,10 +23,68 @@ async function ensureFile(filePath: string, seed: object) {
   }
 }
 
-async function writeJsonAtomic(filePath: string, data: unknown): Promise<void> {
+async function syncFile(filePath: string): Promise<void> {
+  const handle = await fs.open(filePath, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+async function syncDirectory(filePath: string): Promise<void> {
+  const handle = await fs.open(path.dirname(filePath), "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+async function writeJsonAtomic(
+  filePath: string,
+  data: unknown,
+  createBackup = true,
+): Promise<void> {
   const tmp = `${filePath}.tmp-${randomUUID()}`;
-  await fs.writeFile(tmp, JSON.stringify(data, null, 2));
+  const handle = await fs.open(tmp, "wx", 0o600);
+  try {
+    await handle.writeFile(JSON.stringify(data, null, 2));
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  try {
+    if (createBackup) {
+      await fs.copyFile(filePath, `${filePath}.bak`);
+      await syncFile(`${filePath}.bak`);
+    }
+  } catch (error: any) {
+    if (error?.code !== "ENOENT") throw error;
+  }
   await fs.rename(tmp, filePath);
+  await syncDirectory(filePath);
+}
+
+async function readJsonWithBackup<T>(filePath: string): Promise<T> {
+  try {
+    return JSON.parse(await fs.readFile(filePath, "utf8")) as T;
+  } catch (primaryError) {
+    try {
+      const recovered = JSON.parse(
+        await fs.readFile(`${filePath}.bak`, "utf8"),
+      ) as T;
+      await writeJsonAtomic(filePath, recovered, false);
+      console.error(
+        `recovered ${filePath} from backup: ${
+          primaryError instanceof Error ? primaryError.message : String(primaryError)
+        }`,
+      );
+      return recovered;
+    } catch {
+      throw primaryError;
+    }
+  }
 }
 
 export async function cleanupOrphanedTmpFiles(dataDir: string): Promise<void> {
@@ -34,8 +92,8 @@ export async function cleanupOrphanedTmpFiles(dataDir: string): Promise<void> {
   const entries = await fs.readdir(dataDir);
   await Promise.all(
     entries
-      .filter((f) => f.endsWith(".tmp-"))
-      .map((f) => fs.unlink(path.join(dataDir, f)))
+      .filter((f) => /\.tmp-[0-9a-f]+(?:-[0-9a-f]+)*$/i.test(f))
+      .map((f) => fs.unlink(path.join(dataDir, f)).catch(() => undefined))
   );
 }
 
@@ -57,8 +115,7 @@ export class AccountStore {
   }
 
   private async reloadFromDisk() {
-    const raw = await fs.readFile(this.filePath, "utf8");
-    const data = JSON.parse(raw) as StoreFile;
+    const data = await readJsonWithBackup<StoreFile>(this.filePath);
     this.inMemoryAccounts = Array.isArray(data.accounts) ? data.accounts : [];
     this.inMemoryModelAliases = Array.isArray(data.modelAliases)
       ? data.modelAliases
@@ -264,6 +321,8 @@ export class AccountStore {
 }
 
 export class OAuthStateStore {
+  private mutationQueue: Promise<void> = Promise.resolve();
+
   constructor(private filePath: string) {}
 
   async init() {
@@ -271,8 +330,7 @@ export class OAuthStateStore {
   }
 
   private async read(): Promise<OAuthStateFile> {
-    const raw = await fs.readFile(this.filePath, "utf8");
-    return JSON.parse(raw) as OAuthStateFile;
+    return readJsonWithBackup<OAuthStateFile>(this.filePath);
   }
 
   private async write(data: OAuthStateFile): Promise<void> {
@@ -280,9 +338,13 @@ export class OAuthStateStore {
   }
 
   async create(state: OAuthFlowState) {
-    const data = await this.read();
-    data.states = [state, ...data.states.filter((s) => s.id !== state.id)].slice(0, 200);
-    await this.write(data);
+    const run = this.mutationQueue.then(async () => {
+      const data = await this.read();
+      data.states = [state, ...data.states.filter((s) => s.id !== state.id)].slice(0, 200);
+      await this.write(data);
+    });
+    this.mutationQueue = run.catch(() => undefined);
+    await run;
   }
 
   async get(id: string): Promise<OAuthFlowState | undefined> {
@@ -291,11 +353,17 @@ export class OAuthStateStore {
   }
 
   async update(id: string, patch: Partial<OAuthFlowState>): Promise<OAuthFlowState | undefined> {
-    const data = await this.read();
-    const idx = data.states.findIndex((s) => s.id === id);
-    if (idx === -1) return undefined;
-    data.states[idx] = { ...data.states[idx], ...patch };
-    await this.write(data);
-    return data.states[idx];
+    let updated: OAuthFlowState | undefined;
+    const run = this.mutationQueue.then(async () => {
+      const data = await this.read();
+      const idx = data.states.findIndex((s) => s.id === id);
+      if (idx === -1) return;
+      data.states[idx] = { ...data.states[idx], ...patch };
+      updated = data.states[idx];
+      await this.write(data);
+    });
+    this.mutationQueue = run.catch(() => undefined);
+    await run;
+    return updated;
   }
 }

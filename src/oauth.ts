@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Account, OAuthFlowState } from "./types.js";
+import { fetchTextWithTimeout } from "./network.js";
 
 export type OAuthConfig = {
   authorizationUrl: string;
@@ -113,25 +114,23 @@ export function parseAuthorizationInput(input: string): { code?: string; state?:
 }
 
 async function postForm(url: string, body: URLSearchParams): Promise<TokenResponse> {
-  const res = await fetch(url, {
+  const { response: res, text } = await fetchTextWithTimeout(url, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body,
   });
 
-  const text = await res.text();
   if (!res.ok) throw new Error(`token endpoint failed ${res.status}: ${text.slice(0, 400)}`);
   return JSON.parse(text) as TokenResponse;
 }
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
-  const res = await fetch(url, {
+  const { response: res, text } = await fetchTextWithTimeout(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
 
-  const text = await res.text();
   let data: any;
   try {
     data = text ? JSON.parse(text) : undefined;
@@ -176,7 +175,7 @@ export async function pollDeviceCode(config: OAuthConfig, flow: OAuthFlowState):
   if (!flow.deviceAuthId || !flow.userCode) {
     throw new Error("device authorization has not been started");
   }
-  const res = await fetch(config.deviceTokenUrl, {
+  const { response: res, text } = await fetchTextWithTimeout(config.deviceTokenUrl, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -184,7 +183,6 @@ export async function pollDeviceCode(config: OAuthConfig, flow: OAuthFlowState):
       user_code: flow.userCode,
     }),
   });
-  const text = await res.text();
   let data: any;
   try {
     data = text ? JSON.parse(text) : undefined;

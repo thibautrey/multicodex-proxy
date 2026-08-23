@@ -165,3 +165,34 @@ test("returns a new account after a successful refresh", async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test("coalesces concurrent OpenAI token refreshes", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  globalThis.fetch = async () => {
+    calls += 1;
+    await gate;
+    return Response.json({ access_token: "shared-token", expires_in: 3600 });
+  };
+  const expired = account({
+    expiresAt: Date.now() - 1,
+    refreshToken: "rotating-refresh-token",
+  });
+
+  try {
+    const first = ensureValidToken(expired, oauthConfig);
+    const second = ensureValidToken(expired, oauthConfig);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(calls, 1);
+    release();
+    const [a, b] = await Promise.all([first, second]);
+    assert.equal(a.accessToken, "shared-token");
+    assert.equal(b.accessToken, "shared-token");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

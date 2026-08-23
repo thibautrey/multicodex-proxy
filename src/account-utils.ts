@@ -9,6 +9,7 @@ import type { Account } from "./types.js";
 import { refreshXaiAccessToken } from "./xai.js";
 
 const xaiRefreshes = new Map<string, Promise<Account>>();
+const openAiRefreshes = new Map<string, Promise<Account>>();
 
 export function isTokenRefreshNeeded(
   account: Account,
@@ -67,27 +68,35 @@ export async function ensureValidToken(
     return refresh;
   }
 
-  try {
-    const refreshed = await refreshAccessToken(
-      oauthConfig,
-      account.refreshToken,
-    );
-    const merged = mergeTokenIntoAccount(account, refreshed);
-    merged.state = {
-      ...merged.state,
-      needsTokenRefresh: false,
-    };
-    return merged;
-  } catch (err: any) {
-    const failed = { ...account };
-    rememberError(
-      failed,
-      `refresh token failed: ${err?.message ?? String(err)}`,
-    );
-    failed.state = {
-      ...failed.state,
-      needsTokenRefresh: true,
-    };
-    return failed;
-  }
+  const current = openAiRefreshes.get(account.id);
+  if (current) return current;
+  const refresh = (async () => {
+    try {
+      const refreshed = await refreshAccessToken(
+        oauthConfig,
+        account.refreshToken,
+      );
+      const merged = mergeTokenIntoAccount(account, refreshed);
+      merged.state = {
+        ...merged.state,
+        needsTokenRefresh: false,
+      };
+      return merged;
+    } catch (err: any) {
+      const failed = { ...account };
+      rememberError(
+        failed,
+        `refresh token failed: ${err?.message ?? String(err)}`,
+      );
+      failed.state = {
+        ...failed.state,
+        needsTokenRefresh: true,
+      };
+      return failed;
+    }
+  })().finally(() => {
+    openAiRefreshes.delete(account.id);
+  });
+  openAiRefreshes.set(account.id, refresh);
+  return refresh;
 }
