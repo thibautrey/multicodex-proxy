@@ -1631,22 +1631,37 @@ export function classifyNativeStreamCompletion(
   sawResponseCompleted: boolean,
   streamError?: Error,
 ) {
-  const interrupted =
-    Boolean(streamError) ||
-    (clientDisconnected && !sawResponseCompleted);
+  const interrupted = Boolean(streamError) || !sawResponseCompleted;
+  const clientInterrupted = clientDisconnected && !sawResponseCompleted;
+  const upstreamEndedEarly =
+    !clientDisconnected && !streamError && !sawResponseCompleted;
   return {
     interrupted,
     status: streamError
       ? 599
-      : clientDisconnected && !sawResponseCompleted
+      : clientInterrupted
         ? 499
-        : 200,
-    clientDisconnected:
-      clientDisconnected && !sawResponseCompleted ? true : undefined,
-    error: clientDisconnected && !sawResponseCompleted
+        : upstreamEndedEarly
+          ? 599
+          : 200,
+    clientDisconnected: clientInterrupted ? true : undefined,
+    error: clientInterrupted
       ? "client disconnected before stream completion"
-      : streamError?.message,
+      : streamError?.message ??
+        (upstreamEndedEarly
+          ? "upstream stream ended before response.completed"
+          : undefined),
   };
+}
+
+export function nativeStreamInterruptionFrame(message: string): string {
+  return `event: error\ndata: ${JSON.stringify({
+    error: {
+      message,
+      type: "upstream_error",
+      code: "stream_interrupted",
+    },
+  })}\n\n`;
 }
 
 function isModelNotFoundError(status: number, errorText: string): boolean {
@@ -2341,7 +2356,15 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 diagnostics.sawResponseCompleted,
                 streamError,
               );
-              if (!clientDisconnected && !res.writableEnded) res.end();
+              if (!clientDisconnected && !res.writableEnded) {
+                if (classification.interrupted && classification.error) {
+                  await writeWithBackpressure(
+                    res,
+                    nativeStreamInterruptionFrame(classification.error),
+                  );
+                }
+                res.end();
+              }
               await completeTrace(streamTraceId, {
                 at: Date.now(),
                 startedAt,

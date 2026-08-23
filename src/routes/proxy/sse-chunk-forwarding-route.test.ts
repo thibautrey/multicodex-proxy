@@ -65,6 +65,13 @@ test("forwards native Responses chunks while preserving diagnostics", async (t) 
     "",
   ].join("\n");
   const upstreamBytes = new TextEncoder().encode(upstreamSSE);
+  const truncatedSSE = [
+    "event: response.output_text.delta",
+    'data: {"type":"response.output_text.delta","delta":"partial"}',
+    "",
+    "",
+  ].join("\n");
+  let upstreamRequestCount = 0;
 
   globalThis.fetch = async (input) => {
     if (String(input).includes("/backend-api/codex/models")) {
@@ -77,6 +84,14 @@ test("forwards native Responses chunks while preserving diagnostics", async (t) 
           headers: { "content-type": "application/json" },
         },
       );
+    }
+
+    upstreamRequestCount += 1;
+    if (upstreamRequestCount === 2) {
+      return new Response(truncatedSSE, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
     }
 
     return new Response(
@@ -171,5 +186,24 @@ test("forwards native Responses chunks while preserving diagnostics", async (t) 
   assert.equal(
     completedTraces[0].responseStreamDiagnostics.outputTextDeltaCount,
     1,
+  );
+
+  const truncatedResponse = await postJson(address.port, "/v1/responses", {
+    model: "gpt-5.6-sol",
+    stream: true,
+    input: "truncate",
+  });
+
+  assert.equal(truncatedResponse.status, 200);
+  assert.equal(
+    truncatedResponse.body,
+    `: connected\n\n${truncatedSSE}event: error\ndata: {"error":{"message":"upstream stream ended before response.completed","type":"upstream_error","code":"stream_interrupted"}}\n\n`,
+  );
+  assert.equal(completedTraces.length, 2);
+  assert.equal(completedTraces[1].status, 599);
+  assert.equal(completedTraces[1].lifecycleState, "interrupted");
+  assert.equal(
+    completedTraces[1].error,
+    "upstream stream ended before response.completed",
   );
 });
