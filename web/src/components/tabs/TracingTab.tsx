@@ -258,9 +258,6 @@ export function TracingTab(props: Props) {
             </ResponsiveContainer>
           </div>
         </section>
-      </section>
-
-      <section className="grid cards2">
         <section className="panel">
           <div className="section-split-header">
             <h2>Inference speed (hourly)</h2>
