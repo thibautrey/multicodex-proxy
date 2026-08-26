@@ -310,6 +310,12 @@ authoritative over a previously returned snapshot.
 `JOB_WORKER_CONCURRENCY` defaults to 16; account/model capacity profiles remain
 the authoritative per-destination concurrency limit.
 
+For application-side adoption, including idempotency, polling/SSE, result
+consumption, cancellation, webhooks, retention, and restart recovery, see the
+[deferred batch integration guide](docs/batch-jobs.md). A standalone
+[coding-agent prompt](docs/prompts/implement-multivibe-batch.md) is also
+available for adapting an existing project.
+
 ### WebSocket responses
 
 ```js
