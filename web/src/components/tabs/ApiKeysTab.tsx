@@ -1,19 +1,46 @@
 import React, { useState } from "react";
 import { copyTextToClipboard } from "../../lib/clipboard";
-import type { CreatedProxyApiKey, ProxyApiKey } from "../../types";
+import type {
+  ApplicationPolicy,
+  ApplicationWebhook,
+  CreatedProxyApiKey,
+  ProxyApiKey,
+} from "../../types";
 
 type Props = {
   apiKeys: ProxyApiKey[];
+  policies: ApplicationPolicy[];
   createApiKey: (application: string) => Promise<CreatedProxyApiKey>;
   deleteApiKey: (id: string) => Promise<void>;
+  setApplicationWeight: (application: string, weight: number) => Promise<void>;
+  createWebhook: (application: string, url: string) => Promise<ApplicationWebhook>;
+  deleteWebhook: (application: string, id: string) => Promise<void>;
 };
 
-export function ApiKeysTab({ apiKeys, createApiKey, deleteApiKey }: Props) {
+export function ApiKeysTab({
+  apiKeys,
+  policies,
+  createApiKey,
+  deleteApiKey,
+  setApplicationWeight,
+  createWebhook,
+  deleteWebhook,
+}: Props) {
   const [application, setApplication] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [createdKey, setCreatedKey] = useState<CreatedProxyApiKey | null>(null);
   const [copied, setCopied] = useState(false);
+  const [webhookApplication, setWebhookApplication] = useState("");
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [createdWebhook, setCreatedWebhook] = useState<ApplicationWebhook | null>(null);
+
+  const policyFor = (application: string) =>
+    policies.find((policy) => policy.application === application) ?? {
+      application,
+      fairnessWeight: 1,
+      webhooks: [],
+    };
 
   const create = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -104,6 +131,7 @@ export function ApiKeysTab({ apiKeys, createApiKey, deleteApiKey }: Props) {
                 <th>Key</th>
                 <th>Created</th>
                 <th>Managed by</th>
+                <th>Fairness weight</th>
                 <th />
               </tr>
             </thead>
@@ -119,6 +147,23 @@ export function ApiKeysTab({ apiKeys, createApiKey, deleteApiKey }: Props) {
                     </span>
                   </td>
                   <td>
+                    <input
+                      type="number"
+                      min="0.1"
+                      max="100"
+                      step="0.1"
+                      defaultValue={policyFor(entry.application).fairnessWeight}
+                      aria-label={`Fairness weight for ${entry.application}`}
+                      onBlur={(event) =>
+                        void setApplicationWeight(
+                          entry.application,
+                          Number(event.target.value) || 1,
+                        )
+                      }
+                      style={{ width: 88 }}
+                    />
+                  </td>
+                  <td>
                     {entry.source === "dashboard" && (
                       <button
                         className="btn danger"
@@ -132,8 +177,48 @@ export function ApiKeysTab({ apiKeys, createApiKey, deleteApiKey }: Props) {
                 </tr>
               ))}
               {!apiKeys.length && (
-                <tr><td colSpan={5} className="muted empty-row">No API keys yet. Proxy access is currently unrestricted.</td></tr>
+                <tr><td colSpan={6} className="muted empty-row">No API keys yet. Proxy access is currently unrestricted.</td></tr>
               )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="section-split-header">
+          <div>
+            <h2>Signed result webhooks</h2>
+            <p className="muted">Register destinations before applications may reference them with X-MultiVibe-Webhook.</p>
+          </div>
+        </div>
+        <form
+          className="api-key-create"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!webhookApplication || !webhookUrl) return;
+            void createWebhook(webhookApplication, webhookUrl).then((webhook) => {
+              setCreatedWebhook(webhook);
+              setWebhookUrl("");
+            });
+          }}
+        >
+          <label className="control-field"><span className="control-label">Application</span>
+            <select value={webhookApplication} onChange={(event) => setWebhookApplication(event.target.value)}>
+              <option value="">Select application</option>
+              {Array.from(new Set(apiKeys.map((entry) => entry.application))).map((name) => <option key={name}>{name}</option>)}
+            </select>
+          </label>
+          <label className="control-field"><span className="control-label">HTTPS endpoint</span><input type="url" value={webhookUrl} onChange={(event) => setWebhookUrl(event.target.value)} placeholder="https://worker.example.com/multivibe" /></label>
+          <button className="btn" type="submit" disabled={!webhookApplication || !webhookUrl}>Register webhook</button>
+        </form>
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead><tr><th>Application</th><th>ID</th><th>URL</th><th>Status</th><th /></tr></thead>
+            <tbody>
+              {policies.flatMap((policy) => policy.webhooks.map((webhook) => (
+                <tr key={webhook.id}><td>{policy.application}</td><td className="mono">{webhook.id}</td><td className="mono">{webhook.url}</td><td><span className="badge badge-live">{webhook.enabled ? "Enabled" : "Disabled"}</span></td><td><button className="btn danger" onClick={() => void deleteWebhook(policy.application, webhook.id)}>Delete</button></td></tr>
+              )))}
+              {!policies.some((policy) => policy.webhooks.length) && <tr><td colSpan={5} className="muted empty-row">No registered webhooks.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -156,6 +241,18 @@ export function ApiKeysTab({ apiKeys, createApiKey, deleteApiKey }: Props) {
             <div className="inline wrap">
               <button className="btn" onClick={() => setCreatedKey(null)}>I have saved this key</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {createdWebhook?.secret && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal panel api-key-modal" role="dialog" aria-modal="true">
+            <span className="badge badge-live">Webhook registered</span>
+            <h2>Copy the HMAC secret</h2>
+            <p className="muted">This secret is shown once. Verify x-multivibe-signature before accepting an event.</p>
+            <div className="api-key-secret"><code>{createdWebhook.secret}</code><button className="btn secondary" onClick={() => void copyTextToClipboard(createdWebhook.secret!)}>Copy</button></div>
+            <button className="btn" onClick={() => setCreatedWebhook(null)}>I have saved this secret</button>
           </div>
         </div>
       )}

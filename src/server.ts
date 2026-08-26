@@ -14,6 +14,8 @@ import {
   ADMIN_TOKEN,
   CODEX_PROJECT_REGISTRATION_TOKEN,
   CODEX_PROJECTS_PATH,
+  JOBS_DB_PATH,
+  JOB_WORKER_CONCURRENCY,
   CHATGPT_BASE_URL,
   MISTRAL_BASE_URL,
   MISTRAL_UPSTREAM_PATH,
@@ -53,6 +55,13 @@ import {
   extractLiteLLMProjectAttribution,
 } from "./codex-projects.js";
 import { anthropicErrorEnvelope } from "./anthropic-compat.js";
+import { CapacityTracker } from "./smart-routing.js";
+import { JobRunner, JobStore } from "./jobs.js";
+import {
+  SmartRoutingCoordinator,
+  createAdmissionMiddleware,
+  createSmartRoutingRouter,
+} from "./smart-routing-routes.js";
 
 const app = express();
 app.use(createBodyParserMiddleware());
@@ -84,6 +93,12 @@ const dataDir = path.dirname(STORE_PATH);
 await cleanupOrphanedTmpFiles(dataDir);
 
 const store = new AccountStore(STORE_PATH);
+const capacityTracker = new CapacityTracker();
+const jobStore = new JobStore(
+  JOBS_DB_PATH,
+  (application) => store.getApplicationPolicy(application).fairnessWeight,
+);
+const smartRouting = new SmartRoutingCoordinator(store, jobStore, capacityTracker);
 const oauthStore = new OAuthStateStore(OAUTH_STATE_PATH);
 const codexProjectRegistry = new CodexProjectRegistry(CODEX_PROJECTS_PATH);
 const traceManager = createTraceManager({
@@ -123,6 +138,7 @@ app.use((req, res, next) => {
     )
       return;
     traceManager.recordTrace({
+      ...(res.locals.multivibeTrace ?? {}),
       ...extractLiteLLMProjectAttribution(req.headers),
       at: Date.now(),
       route: `${req.method} ${route}`,
@@ -152,6 +168,7 @@ const adminRouter = createAdminRouter({
   zaiBaseUrl: ZAI_BASE_URL,
   codexProjectRegistrationToken: CODEX_PROJECT_REGISTRATION_TOKEN,
   configuredProxyApiKeys,
+  smartRouting,
   storagePaths: {
     accountsPath: STORE_PATH,
     oauthStatePath: OAUTH_STATE_PATH,
@@ -172,6 +189,8 @@ const proxyRouter = createProxyRouter({
   zaiUpstreamPath: ZAI_UPSTREAM_PATH,
   zaiCompactUpstreamPath: ZAI_COMPACT_UPSTREAM_PATH,
   oauthConfig,
+  capacityTracker,
+  smartRoutingCoordinator: smartRouting,
 });
 
 const realtimeRouter = createRealtimeRouter({
@@ -186,6 +205,7 @@ const realtimeRouter = createRealtimeRouter({
 
 const ADMIN_SESSION_COOKIE = "multivibe_admin_session";
 const ADMIN_SESSION_MAX_AGE_MS = 400 * 24 * 60 * 60 * 1000;
+const INTERNAL_JOB_TOKEN = crypto.randomBytes(32).toString("base64url");
 
 function safeEqual(a: string, b: string): boolean {
   const left = Buffer.from(a);
@@ -287,6 +307,12 @@ function proxyGuard(
   res: express.Response,
   next: express.NextFunction,
 ) {
+  const internalToken = req.header("x-multivibe-internal-token");
+  if (internalToken && safeEqual(internalToken, INTERNAL_JOB_TOKEN)) {
+    res.locals.proxyApplication =
+      req.header("x-multivibe-internal-application") || "internal-job";
+    return next();
+  }
   const proxyApiKeys = [
     ...configuredProxyApiKeys,
     ...store.getCachedProxyApiKeys(),
@@ -415,10 +441,13 @@ app.delete("/admin/session", (req, res) => {
 });
 
 app.use("/admin", adminGuard, adminRouter);
-app.use("/v1", proxyGuard, realtimeRouter);
-app.use("/", rootProxyGuard, realtimeRouter);
-app.use("/v1", proxyGuard, proxyRouter);
-app.use("/", rootProxyGuard, proxyRouter);
+const admissionMiddleware = createAdmissionMiddleware(smartRouting);
+const smartRoutingRouter = createSmartRoutingRouter(smartRouting);
+app.use("/v1", proxyGuard, admissionMiddleware, smartRoutingRouter);
+app.use("/v1", realtimeRouter);
+app.use("/v1", proxyRouter);
+app.use("/", rootProxyGuard, admissionMiddleware, realtimeRouter);
+app.use("/", proxyRouter);
 
 app.use(express.static(webDist));
 app.get("*", (req, res, next) => {
@@ -444,6 +473,58 @@ Sentry.setupExpressErrorHandler(app);
 
 const server = http.createServer(app);
 
+const jobRunner = new JobRunner(
+  jobStore,
+  async (job) => {
+    const executionTimeoutMs = Math.max(
+      1,
+      Math.min(
+        30 * 60_000,
+        job.deadlineAt ? job.deadlineAt - Date.now() : Number.POSITIVE_INFINITY,
+      ),
+    );
+    const response = await fetch(`http://127.0.0.1:${PORT}${job.route}`, {
+      method: job.method,
+      headers: {
+        ...job.requestHeaders,
+        "content-type": "application/json",
+        "x-multivibe-internal-token": INTERNAL_JOB_TOKEN,
+        "x-multivibe-internal-application": job.application,
+        "x-multivibe-internal-job": "1",
+        "x-multivibe-priority": job.priority,
+        "x-multivibe-execution": "sync",
+      },
+      body: JSON.stringify(job.requestBody),
+      signal: AbortSignal.timeout(executionTimeoutMs),
+    });
+    const raw = await response.text();
+    let body: unknown = raw;
+    try {
+      body = raw ? JSON.parse(raw) : null;
+    } catch {
+      // Keep non-JSON upstream output as text.
+    }
+    const headers: Record<string, string> = {};
+    for (const name of ["content-type", "request-id", "openai-request-id", "anthropic-request-id"]) {
+      const value = response.headers.get(name);
+      if (value) headers[name] = value;
+    }
+    return {
+      status: response.status,
+      headers,
+      body,
+      capacityUnavailable:
+        response.status === 429 &&
+        typeof body === "object" &&
+        body !== null &&
+        (body as any).error?.code === "capacity_unavailable",
+    };
+  },
+  (application, id) =>
+    store.getApplicationPolicy(application).webhooks.find((webhook) => webhook.id === id),
+  JOB_WORKER_CONCURRENCY,
+);
+
 installResponsesWebsocketProxy({
   server,
   port: PORT,
@@ -451,6 +532,8 @@ installResponsesWebsocketProxy({
 });
 
 server.listen(PORT, () => {
+  jobRunner.start();
+  smartRouting.startHealthMonitoring();
   console.log(`multivibe listening on :${PORT}`);
   console.log(
     `store=${STORE_PATH} oauth=${OAUTH_STATE_PATH} trace=${TRACE_FILE_PATH} traceStats=${TRACE_STATS_HISTORY_PATH} codexProjects=${CODEX_PROJECTS_PATH} redirect=${oauthConfig.redirectUri} openaiUpstream=${CHATGPT_BASE_URL}${UPSTREAM_PATH} mistralUpstream=${MISTRAL_BASE_URL}${MISTRAL_UPSTREAM_PATH} zaiUpstream=${ZAI_BASE_URL}${ZAI_UPSTREAM_PATH} xaiUpstream=${XAI_BASE_URL}${XAI_RESPONSES_PATH}`,
@@ -461,6 +544,8 @@ let shuttingDown = false;
 async function shutdown(signal: NodeJS.Signals) {
   if (shuttingDown) return;
   shuttingDown = true;
+  jobRunner.stop();
+  smartRouting.stopHealthMonitoring();
   console.log(`received ${signal}, flushing persistent state`);
   server.close(async (error) => {
     try {
@@ -469,6 +554,7 @@ async function shutdown(signal: NodeJS.Signals) {
         codexProjectRegistry.flushPendingWrites(),
         traceManager.flushPendingWrites(),
       ]);
+      jobStore.close();
       if (error) throw error;
       process.exitCode = 0;
     } catch (shutdownError) {

@@ -50,6 +50,13 @@ type EditAccountState = {
   baseUrl: string;
   priority: string;
   enabled: boolean;
+  location: "local" | "cloud";
+  maxConcurrent: string;
+  prefillTokensPerSecond: string;
+  decodeTokensPerSecond: string;
+  contextWindow: string;
+  healthUrl: string;
+  metricsUrl: string;
 };
 
 type OAuthDialogState = {
@@ -143,6 +150,13 @@ export function AccountsTab(props: Props) {
     useState<OAuthMethod>("browser");
   const [manualPriority, setManualPriority] = useState("0");
   const [manualEnabled, setManualEnabled] = useState(true);
+  const [manualLocation, setManualLocation] = useState<"" | "local" | "cloud">("");
+  const [manualMaxConcurrent, setManualMaxConcurrent] = useState("");
+  const [manualPrefill, setManualPrefill] = useState("");
+  const [manualDecode, setManualDecode] = useState("");
+  const [manualContext, setManualContext] = useState("");
+  const [manualHealthUrl, setManualHealthUrl] = useState("");
+  const [manualMetricsUrl, setManualMetricsUrl] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [editingAccount, setEditingAccount] = useState<EditAccountState | null>(
     null,
@@ -300,6 +314,13 @@ export function AccountsTab(props: Props) {
     setManualOAuthMethod("browser");
     setManualPriority("0");
     setManualEnabled(true);
+    setManualLocation("");
+    setManualMaxConcurrent("");
+    setManualPrefill("");
+    setManualDecode("");
+    setManualContext("");
+    setManualHealthUrl("");
+    setManualMetricsUrl("");
     setIsSubmitting(false);
     sessionStorage.removeItem("multivibe-oauth-pending");
   };
@@ -417,6 +438,15 @@ export function AccountsTab(props: Props) {
         upstreamMode: manualUpstreamMode || undefined,
         priority: Number(manualPriority) || 0,
         enabled: manualEnabled,
+        location: manualLocation || undefined,
+        capacityProfile: {
+          maxConcurrent: manualMaxConcurrent ? Number(manualMaxConcurrent) : undefined,
+          prefillTokensPerSecond: manualPrefill ? Number(manualPrefill) : undefined,
+          decodeTokensPerSecond: manualDecode ? Number(manualDecode) : undefined,
+          contextWindow: manualContext ? Number(manualContext) : undefined,
+          healthUrl: manualHealthUrl.trim() || undefined,
+          metricsUrl: manualMetricsUrl.trim() || undefined,
+        },
       });
       closeModal();
     } finally {
@@ -447,6 +477,13 @@ export function AccountsTab(props: Props) {
       baseUrl: account.baseUrl ?? "",
       priority: String(account.priority ?? 0),
       enabled: account.enabled,
+      location: account.location ?? "cloud",
+      maxConcurrent: String(account.capacityProfile?.maxConcurrent ?? ""),
+      prefillTokensPerSecond: String(account.capacityProfile?.prefillTokensPerSecond ?? ""),
+      decodeTokensPerSecond: String(account.capacityProfile?.decodeTokensPerSecond ?? ""),
+      contextWindow: String(account.capacityProfile?.contextWindow ?? ""),
+      healthUrl: account.capacityProfile?.healthUrl ?? "",
+      metricsUrl: account.capacityProfile?.metricsUrl ?? "",
     });
     setEditOAuthMethod(nextProvider === "xai" ? "device" : "browser");
   };
@@ -496,6 +533,15 @@ export function AccountsTab(props: Props) {
         upstreamMode: editingAccount.upstreamMode || undefined,
         priority: Number(editingAccount.priority) || 0,
         enabled: editingAccount.enabled,
+        location: editingAccount.location,
+        capacityProfile: {
+          maxConcurrent: editingAccount.maxConcurrent ? Number(editingAccount.maxConcurrent) : undefined,
+          prefillTokensPerSecond: editingAccount.prefillTokensPerSecond ? Number(editingAccount.prefillTokensPerSecond) : undefined,
+          decodeTokensPerSecond: editingAccount.decodeTokensPerSecond ? Number(editingAccount.decodeTokensPerSecond) : undefined,
+          contextWindow: editingAccount.contextWindow ? Number(editingAccount.contextWindow) : undefined,
+          healthUrl: editingAccount.healthUrl.trim() || undefined,
+          metricsUrl: editingAccount.metricsUrl.trim() || undefined,
+        },
       });
       closeEditModal();
     } finally {
@@ -766,6 +812,14 @@ export function AccountsTab(props: Props) {
                       {a.upstreamMode && (
                         <span className="mono muted">
                           upstream: {a.upstreamMode}
+                        </span>
+                      )}
+                      <span className={a.location === "local" ? "badge badge-live" : "badge"}>
+                        {a.location ?? "cloud"}
+                      </span>
+                      {a.capacityProfile && (
+                        <span className="mono muted">
+                          capacity: {a.capacityProfile.maxConcurrent ?? "?"} slots · {a.capacityProfile.prefillTokensPerSecond ?? "?"} prefill tok/s · {a.capacityProfile.decodeTokensPerSecond ?? "?"} decode tok/s · {a.capacityProfile.contextWindow ?? "?"} ctx
                         </span>
                       )}
                       {isOpenAiAccount(a) && (
@@ -1066,6 +1120,17 @@ export function AccountsTab(props: Props) {
                   </option>
                 </select>
               </label>
+              {isManualTokenProvider(provider) && (
+                <>
+                  <label>Execution location<select value={manualLocation} onChange={(e) => setManualLocation(e.target.value as "" | "local" | "cloud")}><option value="">Infer from URL/provider</option><option value="local">Local</option><option value="cloud">Cloud</option></select></label>
+                  <label>Concurrent slots<input type="number" min="1" value={manualMaxConcurrent} onChange={(e) => setManualMaxConcurrent(e.target.value)} placeholder="1 local / 8 cloud" /></label>
+                  <label>Prefill tokens/s<input type="number" min="0" value={manualPrefill} onChange={(e) => setManualPrefill(e.target.value)} /></label>
+                  <label>Decode tokens/s<input type="number" min="0" value={manualDecode} onChange={(e) => setManualDecode(e.target.value)} /></label>
+                  <label>Context window<input type="number" min="1" value={manualContext} onChange={(e) => setManualContext(e.target.value)} placeholder="262144" /></label>
+                  <label>Health URL<input type="url" value={manualHealthUrl} onChange={(e) => setManualHealthUrl(e.target.value)} placeholder="http://mac.local:8000/health" /></label>
+                  <label>Metrics URL<input type="url" value={manualMetricsUrl} onChange={(e) => setManualMetricsUrl(e.target.value)} placeholder="Optional JSON metrics" /></label>
+                </>
+              )}
               {isManualTokenProvider(provider) ? (
                 <>
                   <label>
@@ -1243,6 +1308,13 @@ export function AccountsTab(props: Props) {
                   </option>
                 </select>
               </label>
+              <label>Execution location<select value={editingAccount.location} onChange={(e) => setEditingAccount((current) => current ? { ...current, location: e.target.value as "local" | "cloud" } : current)}><option value="local">Local</option><option value="cloud">Cloud</option></select></label>
+              <label>Concurrent slots<input type="number" min="1" value={editingAccount.maxConcurrent} onChange={(e) => setEditingAccount((current) => current ? { ...current, maxConcurrent: e.target.value } : current)} /></label>
+              <label>Prefill tokens/s<input type="number" min="0" value={editingAccount.prefillTokensPerSecond} onChange={(e) => setEditingAccount((current) => current ? { ...current, prefillTokensPerSecond: e.target.value } : current)} /></label>
+              <label>Decode tokens/s<input type="number" min="0" value={editingAccount.decodeTokensPerSecond} onChange={(e) => setEditingAccount((current) => current ? { ...current, decodeTokensPerSecond: e.target.value } : current)} /></label>
+              <label>Context window<input type="number" min="1" value={editingAccount.contextWindow} onChange={(e) => setEditingAccount((current) => current ? { ...current, contextWindow: e.target.value } : current)} /></label>
+              <label>Health URL<input type="url" value={editingAccount.healthUrl} onChange={(e) => setEditingAccount((current) => current ? { ...current, healthUrl: e.target.value } : current)} /></label>
+              <label>Metrics URL<input type="url" value={editingAccount.metricsUrl} onChange={(e) => setEditingAccount((current) => current ? { ...current, metricsUrl: e.target.value } : current)} /></label>
               {isManualTokenProvider(editingAccount.provider) ? (
                 <>
                   <label>

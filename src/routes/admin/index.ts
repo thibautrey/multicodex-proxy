@@ -4,7 +4,9 @@ import { AccountStore, OAuthStateStore } from "../../store.js";
 import type {
   Account,
   CompatibilityMode,
+  CapacityProfile,
   ModelAlias,
+  ApplicationWebhook,
   UpstreamMode,
 } from "../../types.js";
 import { normalizeProvider, refreshUsageIfNeeded } from "../../quota.js";
@@ -44,6 +46,14 @@ import type { CodexProjectRegistry } from "../../codex-projects.js";
 import { aggregateProjectUsage } from "../../project-usage.js";
 import { buildCodexHookInstallCommand } from "../../codex-hook-install.js";
 import type { ProxyApiKey } from "../../proxy-api-keys.js";
+import {
+  evaluateAliasPolicy,
+  inferAccountLocation,
+  migrateModelAlias,
+  parseRoutingHeaders,
+  validateSmartAlias,
+} from "../../smart-routing.js";
+import type { SmartRoutingCoordinator } from "../../smart-routing-routes.js";
 
 type StoragePaths = {
   accountsPath: string;
@@ -65,6 +75,7 @@ export type AdminRoutesOptions = {
   codexProjectRegistrationToken: string;
   configuredProxyApiKeys: ProxyApiKey[];
   storagePaths: StoragePaths;
+  smartRouting?: SmartRoutingCoordinator;
 };
 
 function proxyApiKeyPreview(key: string): string {
@@ -98,6 +109,38 @@ function normalizeCompatibilityMode(
   if (value === "chat-completions-bridge")
     return "chat-completions-bridge";
   return undefined;
+}
+
+function normalizeCapacityProfile(value: unknown): CapacityProfile | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("capacityProfile must be an object");
+  }
+  const raw = value as Record<string, unknown>;
+  const positive = (key: string, integer = false) => {
+    if (raw[key] === undefined || raw[key] === "") return undefined;
+    const parsed = Number(raw[key]);
+    if (!Number.isFinite(parsed) || parsed <= 0 || (integer && !Number.isInteger(parsed))) {
+      throw new Error(`${key} must be a positive ${integer ? "integer" : "number"}`);
+    }
+    return parsed;
+  };
+  const endpoint = (key: string) => {
+    if (!raw[key]) return undefined;
+    const parsed = new URL(String(raw[key]));
+    if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) {
+      throw new Error(`${key} must be an HTTP(S) URL without credentials`);
+    }
+    return parsed.toString();
+  };
+  return {
+    maxConcurrent: positive("maxConcurrent", true),
+    prefillTokensPerSecond: positive("prefillTokensPerSecond"),
+    decodeTokensPerSecond: positive("decodeTokensPerSecond"),
+    contextWindow: positive("contextWindow", true),
+    healthUrl: endpoint("healthUrl"),
+    metricsUrl: endpoint("metricsUrl"),
+  };
 }
 
 function parseQueryNumber(v: unknown): number | undefined {
@@ -302,6 +345,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     codexProjectRegistrationToken,
     configuredProxyApiKeys,
     storagePaths,
+    smartRouting,
   } = options;
 
   const {
@@ -379,6 +423,72 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     const deleted = await store.deleteProxyApiKey(String(req.params.id));
     if (!deleted) return res.status(404).json({ error: "API key not found" });
     res.json({ ok: true });
+  });
+
+  router.get("/application-policies", (_req, res) => {
+    res.json({
+      applicationPolicies: store.getCachedApplicationPolicies().map((policy) => ({
+        ...policy,
+        webhooks: policy.webhooks.map(({ secret: _secret, ...webhook }) => webhook),
+      })),
+    });
+  });
+
+  router.patch("/application-policies/:application", async (req, res) => {
+    const application = normalizeApplicationName(req.params.application);
+    if (!application) return res.status(400).json({ error: "invalid application" });
+    const current = store.getApplicationPolicy(application);
+    const fairnessWeight = Number(req.body?.fairnessWeight ?? current.fairnessWeight);
+    if (!Number.isFinite(fairnessWeight) || fairnessWeight < 0.1 || fairnessWeight > 100) {
+      return res.status(400).json({ error: "fairnessWeight must be between 0.1 and 100" });
+    }
+    const policy = await store.upsertApplicationPolicy({
+      ...current,
+      fairnessWeight,
+    });
+    res.json({
+      ok: true,
+      applicationPolicy: {
+        ...policy,
+        webhooks: policy.webhooks.map(({ secret: _secret, ...webhook }) => webhook),
+      },
+    });
+  });
+
+  router.post("/application-policies/:application/webhooks", async (req, res) => {
+    const application = normalizeApplicationName(req.params.application);
+    if (!application) return res.status(400).json({ error: "invalid application" });
+    let url: URL;
+    try {
+      url = new URL(String(req.body?.url ?? ""));
+      if (!(["http:", "https:"] as string[]).includes(url.protocol) || url.username || url.password) {
+        throw new Error("invalid webhook URL");
+      }
+    } catch {
+      return res.status(400).json({ error: "webhook URL must be an absolute HTTP(S) URL without credentials" });
+    }
+    const policy = store.getApplicationPolicy(application);
+    const webhook: ApplicationWebhook = {
+      id: randomUUID(),
+      url: url.toString(),
+      secret: randomBytes(32).toString("base64url"),
+      enabled: true,
+      createdAt: Date.now(),
+    };
+    policy.webhooks.push(webhook);
+    await store.upsertApplicationPolicy(policy);
+    res.status(201).json({ webhook });
+  });
+
+  router.delete("/application-policies/:application/webhooks/:id", async (req, res) => {
+    const application = normalizeApplicationName(req.params.application);
+    if (!application) return res.status(400).json({ error: "invalid application" });
+    const policy = store.getApplicationPolicy(application);
+    const before = policy.webhooks.length;
+    policy.webhooks = policy.webhooks.filter((webhook) => webhook.id !== req.params.id);
+    if (policy.webhooks.length === before) return res.status(404).json({ error: "not found" });
+    await store.upsertApplicationPolicy(policy);
+    res.status(204).end();
   });
 
   router.get("/config", (_req, res) => {
@@ -543,42 +653,80 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     res.json({ modelAliases: await store.listModelAliases() }),
   );
 
+  router.post("/model-aliases/simulate", (req, res) => {
+    if (!smartRouting) return res.status(503).json({ error: "smart routing is unavailable" });
+    const alias = migrateModelAlias(req.body?.alias ?? req.body);
+    const errors = validateSmartAlias(alias);
+    if (errors.length) return res.status(400).json({ error: errors[0], errors });
+    const input = req.body?.request ?? {};
+    const routing = parseRoutingHeaders(
+      {
+        "x-multivibe-priority": input.priority ?? "standard",
+        "x-multivibe-execution": input.executionMode ?? "sync",
+      },
+      input.application ?? "simulation",
+      typeof input.now === "number" ? input.now : Date.now(),
+    );
+    routing.effort = input.effort;
+    routing.modalities = Array.isArray(input.modalities) ? input.modalities : ["text"];
+    routing.requiresTools = Boolean(input.requiresTools);
+    routing.estimatedInputTokens = Math.max(0, Number(input.inputTokens) || 0);
+    const decision = evaluateAliasPolicy(
+      alias,
+      routing,
+      smartRouting.resources(alias.id, alias),
+      Math.max(1, Number(input.outputTokens) || 8_192),
+    );
+    res.json({
+      rule: decision.rule?.id,
+      onNoCapacity: decision.onNoCapacity,
+      decision: decision.eligible[0]
+        ? {
+            model: decision.eligible[0].config.model,
+            accountId: decision.eligible[0].resource.accountId,
+            location: decision.eligible[0].resource.location,
+            score: decision.eligible[0].score,
+          }
+        : undefined,
+      candidates: decision.candidates,
+    });
+  });
+
   router.post("/model-aliases", async (req, res) => {
     const body = req.body ?? {};
     const id = sanitizeAliasId(body.id);
     if (!id) return res.status(400).json({ error: "id required" });
 
-    const targets = normalizeAliasTargets(body.targets);
-    if (!targets.length)
-      return res.status(400).json({ error: "at least one target is required" });
-
-    const targetErr = validateAliasTargets(targets);
-    if (targetErr) return res.status(400).json({ error: targetErr });
-
-    const alias: ModelAlias = {
-      id,
-      targets,
-      enabled: body.enabled ?? true,
-      description:
-        typeof body.description === "string" && body.description.trim()
-          ? body.description.trim()
-          : undefined,
-    };
+    if (typeof body.targets !== "undefined") {
+      const targets = normalizeAliasTargets(body.targets);
+      if (!targets.length)
+        return res.status(400).json({ error: "at least one target is required" });
+      const targetErr = validateAliasTargets(targets);
+      if (targetErr) return res.status(400).json({ error: targetErr });
+      body.targets = targets;
+    }
+    const alias = migrateModelAlias({ ...body, id });
+    const errors = validateSmartAlias(alias);
+    if (errors.length) return res.status(400).json({ error: errors[0], errors });
     await store.upsertModelAlias(alias);
     res.json({ ok: true, modelAlias: alias });
   });
 
   router.patch("/model-aliases/:id", async (req, res) => {
     const body = req.body ?? {};
+    const current = (await store.listModelAliases()).find(
+      (alias) => alias.id === req.params.id,
+    );
+    if (!current) return res.status(404).json({ error: "not found" });
     const patch: Partial<ModelAlias> = {};
 
     if (typeof body.enabled !== "undefined") patch.enabled = Boolean(body.enabled);
-    if (typeof body.description !== "undefined") {
-      patch.description =
-        typeof body.description === "string" && body.description.trim()
-          ? body.description.trim()
-          : undefined;
-    }
+    if (typeof body.description !== "undefined") patch.description =
+      typeof body.description === "string" && body.description.trim()
+        ? body.description.trim()
+        : undefined;
+    if (typeof body.defaults !== "undefined") patch.defaults = body.defaults;
+    if (typeof body.rules !== "undefined") patch.rules = body.rules;
     if (typeof body.targets !== "undefined") {
       const targets = normalizeAliasTargets(body.targets);
       if (!targets.length) {
@@ -588,11 +736,12 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       }
       const targetErr = validateAliasTargets(targets);
       if (targetErr) return res.status(400).json({ error: targetErr });
-      patch.targets = targets;
+      patch.rules = migrateModelAlias({ ...current, schemaVersion: 1, targets }).rules;
     }
-
+    const candidate = migrateModelAlias({ ...current, ...patch, id: current.id });
+    const errors = validateSmartAlias(candidate);
+    if (errors.length) return res.status(400).json({ error: errors[0], errors });
     const updated = await store.patchModelAlias(req.params.id, patch);
-    if (!updated) return res.status(404).json({ error: "not found" });
     res.json({ ok: true, modelAlias: updated });
   });
 
@@ -849,6 +998,12 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     if (provider === "openai-compatible" && !baseUrl) {
       return res.status(400).json({ error: "baseUrl required for openai-compatible accounts" });
     }
+    let capacityProfile: CapacityProfile | undefined;
+    try {
+      capacityProfile = normalizeCapacityProfile(body.capacityProfile);
+    } catch (error: any) {
+      return res.status(400).json({ error: error?.message ?? String(error) });
+    }
     const account: Account = {
       id: body.id ?? randomUUID(),
       provider,
@@ -874,6 +1029,11 @@ export function createAdminRouter(options: AdminRoutesOptions) {
           ? body.oidcClientId ?? XAI_OAUTH_CLIENT_ID
           : body.oidcClientId,
       baseUrl,
+      location:
+        body.location === "local" || body.location === "cloud"
+          ? body.location
+          : inferAccountLocation({ provider, baseUrl }),
+      capacityProfile,
       enabled: body.enabled ?? true,
       priority: body.priority ?? 0,
       usage: body.usage,
@@ -895,6 +1055,16 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       body.compatibilityMode = normalizeCompatibilityMode(
         body.compatibilityMode,
       );
+    }
+    if ("location" in body && body.location !== "local" && body.location !== "cloud") {
+      return res.status(400).json({ error: "location must be local or cloud" });
+    }
+    if ("capacityProfile" in body) {
+      try {
+        body.capacityProfile = normalizeCapacityProfile(body.capacityProfile);
+      } catch (error: any) {
+        return res.status(400).json({ error: error?.message ?? String(error) });
+      }
     }
     const existing = (await store.listAccounts()).find((a) => a.id === req.params.id);
     if (!existing) return res.status(404).json({ error: "not found" });

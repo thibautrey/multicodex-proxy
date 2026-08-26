@@ -23,6 +23,19 @@ export type TraceEntry = {
   model?: string;
   requestedModel?: string;
   resolvedModel?: string;
+  priority?: "critical" | "interactive" | "standard" | "batch";
+  routingDecision?: "local" | "cloud" | "queued" | "rejected";
+  routingRule?: string;
+  routingScores?: Array<{
+    model: string;
+    accountId: string;
+    score: number;
+    rejectedReasons: string[];
+  }>;
+  admissionWaitMs?: number;
+  jobId?: string;
+  executionLocation?: "local" | "cloud";
+  capacityVersion?: number;
   status: number;
   isError: boolean;
   stream: boolean;

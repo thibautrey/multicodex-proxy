@@ -9,8 +9,11 @@ import {
 } from "./lib/ui";
 import type {
   Account,
+  ApplicationPolicy,
+  ApplicationWebhook,
   ExposedModel,
   ModelAlias,
+  PriorityClass,
   ProxyApiKey,
   CreatedProxyApiKey,
   ProjectUsageStats,
@@ -86,6 +89,7 @@ export default function App() {
   const [models, setModels] = useState<ExposedModel[]>([]);
   const [aliases, setAliases] = useState<ModelAlias[]>([]);
   const [proxyApiKeys, setProxyApiKeys] = useState<ProxyApiKey[]>([]);
+  const [applicationPolicies, setApplicationPolicies] = useState<ApplicationPolicy[]>([]);
   const [settings, setSettings] = useState<StoreSettings>({});
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [loginToken, setLoginToken] = useState("");
@@ -204,13 +208,14 @@ export default function App() {
   }, []);
 
   const loadBase = async () => {
-    const [acc, cfg, mdl, aliasRes, settingsRes, apiKeysRes] = await Promise.all([
+    const [acc, cfg, mdl, aliasRes, settingsRes, apiKeysRes, policiesRes] = await Promise.all([
       api("/admin/accounts"),
       api("/admin/config"),
       fetch("/v1/models").then((r) => r.json()),
       api("/admin/model-aliases"),
       api("/admin/settings"),
       api("/admin/proxy-api-keys"),
+      api("/admin/application-policies"),
     ]);
     setAccounts((acc.accounts ?? []) as Account[]);
     setStorageInfo(cfg.storage ?? null);
@@ -219,6 +224,7 @@ export default function App() {
     setAliases((aliasRes.modelAliases ?? []) as ModelAlias[]);
     setSettings((settingsRes.settings ?? {}) as StoreSettings);
     setProxyApiKeys((apiKeysRes.proxyApiKeys ?? []) as ProxyApiKey[]);
+    setApplicationPolicies((policiesRes.applicationPolicies ?? []) as ApplicationPolicy[]);
   };
 
   const refreshModels = async () => {
@@ -577,12 +583,7 @@ export default function App() {
     return result;
   };
 
-  const saveAlias = async (body: {
-    id: string;
-    targets: string[];
-    enabled?: boolean;
-    description?: string;
-  }) => {
+  const saveAlias = async (body: ModelAlias) => {
     await api("/admin/model-aliases", {
       method: "POST",
       body: JSON.stringify(body),
@@ -605,6 +606,17 @@ export default function App() {
     }
   };
 
+  const simulateAlias = async (
+    alias: ModelAlias,
+    request: Record<string, unknown>,
+  ) => api("/admin/model-aliases/simulate", {
+    method: "POST",
+    body: JSON.stringify({ alias, request }),
+  });
+
+  const loadCapacity = async (model: string, priority: PriorityClass) =>
+    api(`/v1/capacity?model=${encodeURIComponent(model)}&priority=${priority}`);
+
   const createProxyApiKey = async (application: string): Promise<CreatedProxyApiKey> => {
     const result = await api("/admin/proxy-api-keys", {
       method: "POST",
@@ -616,6 +628,34 @@ export default function App() {
 
   const deleteProxyApiKey = async (id: string) => {
     await api(`/admin/proxy-api-keys/${encodeURIComponent(id)}`, { method: "DELETE" });
+    await loadBase();
+  };
+
+  const setApplicationWeight = async (application: string, fairnessWeight: number) => {
+    await api(`/admin/application-policies/${encodeURIComponent(application)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ fairnessWeight }),
+    });
+    await loadBase();
+  };
+
+  const createApplicationWebhook = async (
+    application: string,
+    url: string,
+  ): Promise<ApplicationWebhook> => {
+    const result = await api(
+      `/admin/application-policies/${encodeURIComponent(application)}/webhooks`,
+      { method: "POST", body: JSON.stringify({ url }) },
+    );
+    await loadBase();
+    return result.webhook as ApplicationWebhook;
+  };
+
+  const deleteApplicationWebhook = async (application: string, id: string) => {
+    await api(
+      `/admin/application-policies/${encodeURIComponent(application)}/webhooks/${encodeURIComponent(id)}`,
+      { method: "DELETE" },
+    );
     await loadBase();
   };
 
@@ -860,14 +900,20 @@ export default function App() {
             patchAlias={patchAlias}
             deleteAlias={deleteAlias}
             patchSettings={patchSettings}
+            simulateAlias={simulateAlias}
+            loadCapacity={loadCapacity}
           />
         )}
 
         {tab === "api-keys" && (
           <ApiKeysTab
             apiKeys={proxyApiKeys}
+            policies={applicationPolicies}
             createApiKey={createProxyApiKey}
             deleteApiKey={deleteProxyApiKey}
+            setApplicationWeight={setApplicationWeight}
+            createWebhook={createApplicationWebhook}
+            deleteWebhook={deleteApplicationWebhook}
           />
         )}
 

@@ -539,6 +539,20 @@ function loopbackHeaders(req: express.Request): Record<string, string> {
   const apiKey = req.header("x-api-key");
   if (authorization) headers.authorization = authorization;
   if (apiKey) headers["x-api-key"] = apiKey;
+  for (const name of [
+    "x-multivibe-priority",
+    "x-multivibe-execution",
+    "x-multivibe-max-wait-ms",
+    "x-multivibe-deadline",
+    "x-multivibe-idempotency-key",
+    "x-multivibe-webhook",
+    "x-multivibe-internal-token",
+    "x-multivibe-internal-application",
+    "x-multivibe-internal-job",
+  ]) {
+    const value = req.header(name);
+    if (value) headers[name] = value;
+  }
   return headers;
 }
 
@@ -568,6 +582,18 @@ export async function handleAnthropicMessages(
   } catch (error: any) {
     res.status(502).json(anthropicErrorEnvelope(502, error));
     return;
+  }
+
+  for (const name of [
+    "x-multivibe-decision",
+    "x-multivibe-priority",
+    "x-multivibe-resolved-model",
+    "x-multivibe-estimated-wait-ms",
+    "x-multivibe-capacity-version",
+    "retry-after",
+  ]) {
+    const value = upstream.headers.get(name);
+    if (value) res.setHeader(name, value);
   }
 
   if (!upstream.ok) {

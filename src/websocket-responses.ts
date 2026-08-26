@@ -324,6 +324,18 @@ async function forwardFrame(
         ? req.headers["x-api-key"][0]
         : "";
   if (xApiKeyHeader) headers.set("x-api-key", xApiKeyHeader);
+  for (const name of [
+    "x-multivibe-priority",
+    "x-multivibe-execution",
+    "x-multivibe-max-wait-ms",
+    "x-multivibe-deadline",
+    "x-multivibe-idempotency-key",
+    "x-multivibe-webhook",
+  ]) {
+    const raw = req.headers[name];
+    const value = Array.isArray(raw) ? raw[0] : raw;
+    if (typeof value === "string" && value) headers.set(name, value);
+  }
   headers.set("content-type", "application/json");
   headers.set("accept", "text/event-stream");
 

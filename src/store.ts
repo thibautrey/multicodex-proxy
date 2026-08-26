@@ -3,6 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type {
   Account,
+  ApplicationPolicy,
   ModelAlias,
   OAuthFlowState,
   OAuthStateFile,
@@ -11,11 +12,13 @@ import type {
   StoreFile,
 } from "./types.js";
 import { ACCOUNT_FLUSH_INTERVAL_MS } from "./config.js";
+import { inferAccountLocation, migrateModelAlias } from "./smart-routing.js";
 
 const DEFAULT_FILE: StoreFile = {
   accounts: [],
   modelAliases: [],
   proxyApiKeys: [],
+  applicationPolicies: [],
   settings: {},
 };
 const DEFAULT_OAUTH_FILE: OAuthStateFile = { states: [] };
@@ -27,12 +30,14 @@ async function ensureFile(filePath: string, seed: object) {
   } catch {
     await writeJsonAtomic(filePath, seed);
   }
+  await fs.chmod(filePath, 0o600);
 }
 
 async function writeJsonAtomic(filePath: string, data: unknown): Promise<void> {
   const tmp = `${filePath}.tmp-${randomUUID()}`;
-  await fs.writeFile(tmp, JSON.stringify(data, null, 2));
+  await fs.writeFile(tmp, JSON.stringify(data, null, 2), { mode: 0o600 });
   await fs.rename(tmp, filePath);
+  await fs.chmod(filePath, 0o600);
 }
 
 export async function cleanupOrphanedTmpFiles(dataDir: string): Promise<void> {
@@ -49,6 +54,7 @@ export class AccountStore {
   private inMemoryAccounts: Account[] = [];
   private inMemoryModelAliases: ModelAlias[] = [];
   private inMemoryProxyApiKeys: StoredProxyApiKey[] = [];
+  private inMemoryApplicationPolicies: ApplicationPolicy[] = [];
   private inMemorySettings: StoreSettings = {};
   private dirty = false;
   private flushTimer: NodeJS.Timeout | null = null;
@@ -65,19 +71,43 @@ export class AccountStore {
 
   private async reloadFromDisk() {
     const raw = await fs.readFile(this.filePath, "utf8");
-    const data = JSON.parse(raw) as StoreFile;
-    this.inMemoryAccounts = Array.isArray(data.accounts) ? data.accounts : [];
+    const data = JSON.parse(raw) as StoreFile & { modelAliases?: unknown[] };
+    let migrated = false;
+    this.inMemoryAccounts = Array.isArray(data.accounts)
+      ? data.accounts.map((account) => {
+          if (account.location) return account;
+          migrated = true;
+          return { ...account, location: inferAccountLocation(account) };
+        })
+      : [];
     this.inMemoryModelAliases = Array.isArray(data.modelAliases)
-      ? data.modelAliases
+      ? data.modelAliases.map((alias) => {
+          const next = migrateModelAlias(alias);
+          if ((alias as any)?.schemaVersion !== 2) migrated = true;
+          return next;
+        })
       : [];
     this.inMemoryProxyApiKeys = Array.isArray(data.proxyApiKeys)
       ? data.proxyApiKeys
+      : [];
+    this.inMemoryApplicationPolicies = Array.isArray(data.applicationPolicies)
+      ? data.applicationPolicies.map((policy) => ({
+          application: policy.application,
+          fairnessWeight: Math.max(0.1, Number(policy.fairnessWeight) || 1),
+          webhooks: Array.isArray(policy.webhooks)
+            ? policy.webhooks.map((webhook) => ({ ...webhook }))
+            : [],
+        }))
       : [];
     this.inMemorySettings =
       data.settings && typeof data.settings === "object"
         ? { ...data.settings }
         : {};
-    this.dirty = false;
+    this.dirty = migrated;
+    if (migrated) {
+      this.revision += 1;
+      await this.flushIfDirty();
+    }
   }
 
   private scheduleFlush() {
@@ -104,6 +134,7 @@ export class AccountStore {
             accounts: this.inMemoryAccounts,
             modelAliases: this.inMemoryModelAliases,
             proxyApiKeys: this.inMemoryProxyApiKeys,
+            applicationPolicies: this.inMemoryApplicationPolicies,
             settings: this.inMemorySettings,
           });
           this.lastFlushError = undefined;
@@ -141,7 +172,7 @@ export class AccountStore {
   }
 
   getCachedModelAliases(): ModelAlias[] {
-    return this.inMemoryModelAliases.map((a) => ({ ...a, targets: [...a.targets] }));
+    return this.inMemoryModelAliases.map((alias) => structuredClone(alias));
   }
 
   getCachedSettings(): StoreSettings {
@@ -171,11 +202,14 @@ export class AccountStore {
   }
 
   markAccountModified(accountId: string, account: Account) {
+    const normalized = account.location
+      ? account
+      : { ...account, location: inferAccountLocation(account) };
     const idx = this.inMemoryAccounts.findIndex((a) => a.id === accountId);
     if (idx === -1) {
-      this.inMemoryAccounts.push(account);
+      this.inMemoryAccounts.push(normalized);
     } else {
-      this.inMemoryAccounts[idx] = account;
+      this.inMemoryAccounts[idx] = normalized;
     }
     this.dirty = true;
     this.revision += 1;
@@ -253,9 +287,10 @@ export class AccountStore {
       ...existing,
       ...patch,
       id: existing.id,
-      targets: Array.isArray(patch.targets)
-        ? [...patch.targets]
-        : [...existing.targets],
+      schemaVersion: 2,
+      rules: Array.isArray(patch.rules)
+        ? structuredClone(patch.rules)
+        : structuredClone(existing.rules),
     };
     this.markModelAliasModified(id, updated);
     return updated;
@@ -299,6 +334,36 @@ export class AccountStore {
     this.revision += 1;
     await this.flushIfDirty();
     return true;
+  }
+
+  getCachedApplicationPolicies(): ApplicationPolicy[] {
+    return this.inMemoryApplicationPolicies.map((policy) => structuredClone(policy));
+  }
+
+  getApplicationPolicy(application: string): ApplicationPolicy {
+    const policy = this.inMemoryApplicationPolicies.find(
+      (entry) => entry.application === application,
+    );
+    return policy
+      ? structuredClone(policy)
+      : { application, fairnessWeight: 1, webhooks: [] };
+  }
+
+  async upsertApplicationPolicy(policy: ApplicationPolicy): Promise<ApplicationPolicy> {
+    const normalized: ApplicationPolicy = {
+      application: policy.application,
+      fairnessWeight: Math.max(0.1, Math.min(100, Number(policy.fairnessWeight) || 1)),
+      webhooks: policy.webhooks.map((webhook) => ({ ...webhook })),
+    };
+    const index = this.inMemoryApplicationPolicies.findIndex(
+      (entry) => entry.application === normalized.application,
+    );
+    if (index === -1) this.inMemoryApplicationPolicies.push(normalized);
+    else this.inMemoryApplicationPolicies[index] = normalized;
+    this.dirty = true;
+    this.revision += 1;
+    await this.flushIfDirty();
+    return structuredClone(normalized);
   }
 }
 

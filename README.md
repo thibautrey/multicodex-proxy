@@ -37,7 +37,9 @@ MultiVibe acts as an OpenAI-compatible gateway that lets you route requests acro
   - audio flows directly over the negotiated WebRTC connection; MultiVibe is only on the session setup path
   - account-token refresh and quota-aware account rotation happen before the SDP answer is returned
 - **Multi-account routing** with quota-aware failover across OpenAI, OpenAI-compatible, Mistral, z.ai, and Grok Build subscription accounts
-- **Model aliases** (for example `small`) with ordered fallback across providers/models, including optional effort-qualified targets like `high:gpt-5.3-codex`
+- **Smart model aliases** with versioned conditions, local/cloud candidates, deterministic scoring, capacity constraints, budgets, and queue/reject fallbacks
+- **Durable deferred jobs** with weighted priority/application fairness, SQLite leases, retries, polling/SSE results, and optional signed webhooks
+- **Application-visible capacity** through authenticated snapshots and resumable SSE events
 - **Image-aware routing override** that can route image-bearing requests to a chosen exposed model or alias while preserving the originally requested model in traces
 - **OAuth onboarding** from dashboard with browser callback or device-code flow, including xAI device OAuth for SuperGrok / X Premium+
 - **Manual OpenAI-compatible connections** with custom `baseUrl` + API key
@@ -88,6 +90,18 @@ When a request arrives, MultiVibe resolves the requested model to a provider and
 
 When the requested model is an alias, MultiVibe resolves it to ordered target models and automatically falls back across target models/providers as quotas are hit.
 
+Aliases are stored as schema v2 routing policies. Rules match application,
+priority, reasoning effort, modalities, tools, input size, execution mode, and
+time windows. The first matching rule filters candidates by location, wait,
+context, and quality, then scores latency, cost, quality, and locality. Legacy
+`targets` payloads remain accepted for one compatibility version and are
+migrated automatically, including effort-qualified targets.
+
+Capacity is measured per account/model from declared concurrency and throughput,
+health/metrics endpoints, requests actually in flight, quota blocks, and learned
+EWMA observations. RFC1918 and localhost OpenAI-compatible URLs migrate as
+`local`; public providers migrate as `cloud`.
+
 Aliases may also intentionally reuse an already exposed provider model name. In that case, the alias overrides the provider model and routes requests using the alias target order instead.
 
 Alias targets can optionally be prefixed with a reasoning-effort tier: `minimal:`, `low:`, `medium:`, `high:`, or `xhigh:`. Requests using Chat Completions `reasoning_effort` or Responses `reasoning.effort` select the closest matching target tier before falling back.
@@ -104,9 +118,13 @@ Everything important is file-based and survives restart (if `/data` is mounted):
 - `/data/oauth-state.json`
 - `/data/requests-trace.jsonl`
 - `/data/requests-stats-history.jsonl`
+- `/data/jobs.sqlite` (WAL, mode `0600`)
 
 Recent trace retention defaults to the latest **1000** entries and can be changed with `TRACE_RETENTION_MAX`.
 Stats history is append-only and keeps lightweight request metadata for long-term cost/volume tracking.
+Deferred request payloads and results are stored in clear text in the protected
+SQLite volume. Consumed or webhook-delivered results have a one-hour grace
+period; unretrieved content is purged after 30 days.
 
 > Docker compose already mounts `./data:/data`.
 
@@ -248,6 +266,50 @@ curl -N -X POST http://localhost:1455/v1/responses \
   }'
 ```
 
+### Smart admission and deferred jobs
+
+Inference endpoints accept these optional headers:
+
+```text
+X-MultiVibe-Priority: critical|interactive|standard|batch
+X-MultiVibe-Execution: sync|auto|defer
+X-MultiVibe-Max-Wait-Ms: 30000
+X-MultiVibe-Deadline: 2026-08-27T07:00:00+02:00
+X-MultiVibe-Idempotency-Key: translation-order-42
+X-MultiVibe-Webhook: <registered webhook id>
+```
+
+Without them, requests retain the historical synchronous behavior unless the
+selected alias explicitly declares defaults. Non-streamed deferred requests
+return `202` and a `multivibe.job`. Streaming, WebSocket, and Realtime requests
+cannot be deferred.
+
+```bash
+curl -X POST http://localhost:1455/v1/responses \
+  -H "Authorization: Bearer $PROXY_API_KEY" \
+  -H "content-type: application/json" \
+  -H "X-MultiVibe-Priority: batch" \
+  -H "X-MultiVibe-Execution: defer" \
+  -H "X-MultiVibe-Idempotency-Key: nightly-translation-42" \
+  -d '{"model":"smart-translation","input":"..."}'
+```
+
+Application-isolated job endpoints are:
+
+- `GET /v1/jobs` and `GET /v1/jobs/:id`
+- `GET /v1/jobs/:id/result`
+- `GET /v1/jobs/:id/events` (SSE with `Last-Event-ID`)
+- `DELETE /v1/jobs/:id`
+
+Capacity is available through `GET /v1/capacity?model=<alias>&priority=<class>`
+and resumable events through `GET /v1/capacity/events`. Both require the same
+application authentication as inference. The admission decision remains
+authoritative over a previously returned snapshot.
+
+`JOBS_DB_PATH` defaults to `/data/jobs.sqlite`.
+`JOB_WORKER_CONCURRENCY` defaults to 16; account/model capacity profiles remain
+the authoritative per-destination concurrency limit.
+
 ### WebSocket responses
 
 ```js
@@ -327,21 +389,33 @@ An upstream response without `selected`, or a rejected upstream request, means
 the selected ChatGPT account/workspace is not currently voice-enabled. This is
 the same server-side signal Codex Desktop uses for its unavailable state.
 
-### Create model alias
+### Create a smart alias policy
 
 ```bash
 curl -X POST http://localhost:1455/admin/model-aliases \
   -H "x-admin-token: change-me" \
   -H "content-type: application/json" \
   -d '{
-    "id": "small",
-    "targets": ["gpt-5.1-codex-mini", "devstral-small-latest"],
+    "schemaVersion": 2,
+    "id": "smart-code",
     "enabled": true,
-    "description": "Small coding model pool"
+    "description": "Prefer the future local Mac, overflow to cloud",
+    "rules": [{
+      "id": "interactive",
+      "match": {"priorities": ["critical", "interactive"]},
+      "constraints": {"allowedLocations": ["local", "cloud"]},
+      "objectives": {"latency": 50, "cost": 10, "quality": 25, "locality": 15},
+      "candidates": [
+        {"model": "local-model", "location": "local", "quality": 80},
+        {"model": "gpt-5.6", "location": "cloud", "quality": 95}
+      ],
+      "onNoCapacity": "queue"
+    }]
   }'
 ```
 
-Targets may also be effort-qualified:
+The legacy payload remains accepted during the compatibility window and is
+migrated immediately to schema v2:
 
 ```json
 {

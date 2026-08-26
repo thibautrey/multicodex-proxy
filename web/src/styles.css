@@ -1425,6 +1425,101 @@ details summary {
   font-size: 11px;
 }
 
+.smart-alias-editor {
+  display: grid;
+  gap: 1rem;
+}
+
+.smart-alias-basics,
+.smart-rule-grid {
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+
+.smart-rule {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 1rem;
+  background: color-mix(in srgb, var(--panel) 92%, var(--accent) 8%);
+}
+
+.smart-objectives {
+  grid-template-columns: repeat(4, minmax(110px, 1fr));
+}
+
+.smart-candidates {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 0.7rem;
+}
+
+.smart-candidate {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.smart-candidate label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.smart-candidate label input {
+  width: 72px;
+}
+
+.smart-json-editor {
+  width: 100%;
+  min-height: 520px;
+  resize: vertical;
+}
+
+.smart-save-row {
+  border-top: 1px solid var(--line);
+  padding-top: 1rem;
+}
+
+.smart-routing-observability {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.smart-simulator-grid {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.smart-result {
+  max-height: 380px;
+  overflow: auto;
+  white-space: pre-wrap;
+  padding: 0.8rem;
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.capacity-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+  margin-top: 1rem;
+}
+
+@media (max-width: 900px) {
+  .smart-routing-observability,
+  .smart-objectives {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .smart-candidate {
+    grid-template-columns: 1fr;
+  }
+}
+
 .modal-actions {
   display: flex;
   align-items: center;

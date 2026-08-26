@@ -10,6 +10,11 @@ export const TRACE_STATS_HISTORY_PATH =
   process.env.TRACE_STATS_HISTORY_PATH ?? "/data/requests-stats-history.jsonl";
 export const CODEX_PROJECTS_PATH =
   process.env.CODEX_PROJECTS_PATH ?? "/data/codex-projects.json";
+export const JOBS_DB_PATH = process.env.JOBS_DB_PATH ?? "/data/jobs.sqlite";
+export const JOB_WORKER_CONCURRENCY = Math.max(
+  1,
+  Number(process.env.JOB_WORKER_CONCURRENCY ?? 16),
+);
 export const TRACE_INCLUDE_BODY =
   (process.env.TRACE_INCLUDE_BODY ?? "false") === "true"; // disabling the body trace by default keeps disk writes smaller
 export const TRACE_INCLUDE_HEADERS =

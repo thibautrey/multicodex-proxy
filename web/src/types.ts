@@ -14,6 +14,15 @@ export type Account = {
   oidcClientId?: string;
   baseUrl?: string;
   priority?: number;
+  location?: "local" | "cloud";
+  capacityProfile?: {
+    maxConcurrent?: number;
+    prefillTokensPerSecond?: number;
+    decodeTokensPerSecond?: number;
+    contextWindow?: number;
+    healthUrl?: string;
+    metricsUrl?: string;
+  };
   usage?: any;
   state?: {
     modelBlocks?: Record<string, { until: number; reason: string }>;
@@ -207,10 +216,61 @@ export type ExposedModel = {
 };
 
 export type ModelAlias = {
+  schemaVersion: 2;
   id: string;
-  targets: string[];
+  rules: RoutingRule[];
   enabled: boolean;
   description?: string;
+  defaults?: {
+    priority?: PriorityClass;
+    executionMode?: "sync" | "auto" | "defer";
+  };
+};
+
+export type PriorityClass = "critical" | "interactive" | "standard" | "batch";
+
+export type RoutingCandidate = {
+  model: string;
+  provider?: "openai" | "openai-compatible" | "mistral" | "zai" | "xai";
+  accountIds?: string[];
+  location?: "local" | "cloud";
+  quality?: number;
+  inputCostPerMillionUsd?: number;
+  outputCostPerMillionUsd?: number;
+  capacityProfile?: {
+    maxConcurrent?: number;
+    prefillTokensPerSecond?: number;
+    decodeTokensPerSecond?: number;
+    contextWindow?: number;
+    healthUrl?: string;
+    metricsUrl?: string;
+  };
+};
+
+export type RoutingRule = {
+  id: string;
+  enabled?: boolean;
+  match?: {
+    applications?: string[];
+    priorities?: PriorityClass[];
+    efforts?: string[];
+    modalities?: Array<"text" | "image" | "audio" | "video">;
+    requiresTools?: boolean;
+    executionModes?: Array<"sync" | "auto" | "defer">;
+    minInputTokens?: number;
+    maxInputTokens?: number;
+    timeWindows?: Array<{ days?: number[]; start: string; end: string; timezone?: string }>;
+  };
+  constraints?: {
+    allowedLocations?: Array<"local" | "cloud">;
+    maxPredictedWaitMs?: number;
+    minContextWindow?: number;
+    minQuality?: number;
+  };
+  objectives?: { latency: number; cost: number; quality: number; locality: number };
+  candidates: RoutingCandidate[];
+  onNoCapacity?: "next-rule" | "queue" | "reject";
+  cloudBudget?: { amountUsd: number; period: "hour" | "day" | "month" };
 };
 
 export type StoreSettings = {
@@ -228,4 +288,18 @@ export type ProxyApiKey = {
 
 export type CreatedProxyApiKey = ProxyApiKey & {
   key: string;
+};
+
+export type ApplicationWebhook = {
+  id: string;
+  url: string;
+  enabled: boolean;
+  createdAt: number;
+  secret?: string;
+};
+
+export type ApplicationPolicy = {
+  application: string;
+  fairnessWeight: number;
+  webhooks: ApplicationWebhook[];
 };

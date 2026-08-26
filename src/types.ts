@@ -10,6 +10,26 @@ export type CompatibilityMode =
   | "responses"
   | "chat-completions-bridge";
 
+export const PRIORITY_CLASSES = [
+  "critical",
+  "interactive",
+  "standard",
+  "batch",
+] as const;
+export type PriorityClass = (typeof PRIORITY_CLASSES)[number];
+export type ExecutionMode = "sync" | "auto" | "defer";
+export type ExecutionLocation = "local" | "cloud";
+export type CapacityState = "ready" | "degraded" | "queue_only" | "unavailable";
+
+export type CapacityProfile = {
+  maxConcurrent?: number;
+  prefillTokensPerSecond?: number;
+  decodeTokensPerSecond?: number;
+  contextWindow?: number;
+  healthUrl?: string;
+  metricsUrl?: string;
+};
+
 export type UsageWindow = {
   usedPercent?: number;
   resetAt?: number; // epoch ms
@@ -62,11 +82,83 @@ export type Account = {
   baseUrl?: string;
   enabled: boolean;
   priority?: number;
+  location?: ExecutionLocation;
+  capacityProfile?: CapacityProfile;
   usage?: UsageSnapshot;
   state?: AccountState;
 };
 
+export type TimeWindow = {
+  days?: number[];
+  start: string;
+  end: string;
+  timezone?: string;
+};
+
+export type RoutingRuleMatch = {
+  applications?: string[];
+  priorities?: PriorityClass[];
+  efforts?: string[];
+  modalities?: Array<"text" | "image" | "audio" | "video">;
+  requiresTools?: boolean;
+  executionModes?: ExecutionMode[];
+  minInputTokens?: number;
+  maxInputTokens?: number;
+  timeWindows?: TimeWindow[];
+};
+
+export type RoutingRuleConstraints = {
+  allowedLocations?: ExecutionLocation[];
+  maxPredictedWaitMs?: number;
+  minContextWindow?: number;
+  minQuality?: number;
+};
+
+export type RoutingObjectives = {
+  latency: number;
+  cost: number;
+  quality: number;
+  locality: number;
+};
+
+export type RoutingCandidateConfig = {
+  model: string;
+  provider?: ProviderId;
+  accountIds?: string[];
+  location?: ExecutionLocation;
+  quality?: number;
+  inputCostPerMillionUsd?: number;
+  outputCostPerMillionUsd?: number;
+  capacityProfile?: CapacityProfile;
+};
+
+export type RoutingRule = {
+  id: string;
+  enabled?: boolean;
+  match?: RoutingRuleMatch;
+  constraints?: RoutingRuleConstraints;
+  objectives?: RoutingObjectives;
+  candidates: RoutingCandidateConfig[];
+  onNoCapacity?: "next-rule" | "queue" | "reject";
+  cloudBudget?: {
+    amountUsd: number;
+    period: "hour" | "day" | "month";
+  };
+};
+
 export type ModelAlias = {
+  schemaVersion: 2;
+  id: string;
+  rules: RoutingRule[];
+  enabled: boolean;
+  description?: string;
+  defaults?: {
+    priority?: PriorityClass;
+    executionMode?: ExecutionMode;
+  };
+};
+
+export type LegacyModelAlias = {
   id: string;
   targets: string[];
   enabled: boolean;
@@ -85,10 +177,25 @@ export type StoredProxyApiKey = {
   createdAt: number;
 };
 
+export type ApplicationWebhook = {
+  id: string;
+  url: string;
+  secret: string;
+  enabled: boolean;
+  createdAt: number;
+};
+
+export type ApplicationPolicy = {
+  application: string;
+  fairnessWeight: number;
+  webhooks: ApplicationWebhook[];
+};
+
 export type StoreFile = {
   accounts: Account[];
   modelAliases?: ModelAlias[];
   proxyApiKeys?: StoredProxyApiKey[];
+  applicationPolicies?: ApplicationPolicy[];
   settings?: StoreSettings;
 };
 

@@ -123,6 +123,16 @@ import {
   handleAnthropicMessages,
   isClaudeCodeRequest,
 } from "../../anthropic-compat.js";
+import {
+  aliasCandidateModels,
+  allAliasCandidateModels,
+  capacityTokenUsage,
+  type CapacityLease,
+  type CapacityTracker,
+  type PolicyDecision,
+  type RoutingRequest,
+} from "../../smart-routing.js";
+import type { SmartRoutingCoordinator } from "../../smart-routing-routes.js";
 
 type ProxyRoutesOptions = {
   store: AccountStore;
@@ -135,6 +145,8 @@ type ProxyRoutesOptions = {
   zaiUpstreamPath: string;
   zaiCompactUpstreamPath: string;
   oauthConfig: OAuthConfig;
+  capacityTracker?: CapacityTracker;
+  smartRoutingCoordinator?: SmartRoutingCoordinator;
 };
 
 const modelsCache: { at: number; models: ExposedModel[] } = {
@@ -939,9 +951,10 @@ async function refreshModels(
 
     const aliases = store
       .getCachedModelAliases()
-      .filter((a) => a.enabled && a.targets.length > 0);
+      .filter((a) => a.enabled && allAliasCandidateModels(a).length > 0);
     for (const alias of aliases) {
-      const firstTarget = alias.targets[0];
+      const aliasTargets = allAliasCandidateModels(alias);
+      const firstTarget = aliasTargets[0];
       const aliasTarget = Array.from(byId.values()).find(
         (model) =>
           normalizeModelLookupKey(model.id) ===
@@ -971,7 +984,7 @@ async function refreshModels(
           ...modelObject(alias.id, provider).metadata,
           provider_candidates: providers,
           is_alias: true,
-          alias_targets: [...alias.targets],
+          alias_targets: aliasTargets,
         },
       });
     }
@@ -1231,8 +1244,8 @@ function buildRoutingCandidates(
   );
 
   let targets: string[];
-  if (alias && alias.targets.length) {
-    targets = resolveEffortTargets(alias.targets, requestEffort);
+  if (alias) {
+    targets = aliasCandidateModels(alias, requestEffort);
   } else if (requestModel) {
     targets = [requestModel];
   } else {
@@ -1668,6 +1681,8 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     zaiUpstreamPath,
     zaiCompactUpstreamPath,
     oauthConfig,
+    capacityTracker,
+    smartRoutingCoordinator,
   } = options;
   const { recordTrace } = traceManager;
   const router = express.Router();
@@ -1711,6 +1726,24 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     res: express.Response,
   ) {
     const startedAt = Date.now();
+    const reservedCapacityLease = res.locals.multivibeCapacityLease as
+      | CapacityLease
+      | undefined;
+    let reservationReleased = false;
+    let completedRoutingAccountId: string | undefined;
+    let currentCapacityObservation:
+      | { inputTokens?: number; outputTokens?: number }
+      | undefined;
+    const observeCapacityUsage = (usage: any) => {
+      if (!currentCapacityObservation || !usage) return;
+      const observed = capacityTokenUsage(usage);
+      if (observed.inputTokens !== undefined) {
+        currentCapacityObservation.inputTokens = observed.inputTokens;
+      }
+      if (observed.outputTokens !== undefined) {
+        currentCapacityObservation.outputTokens = observed.outputTokens;
+      }
+    };
     const application =
       typeof res.locals.proxyApplication === "string"
         ? res.locals.proxyApplication
@@ -1722,14 +1755,16 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     const projectAttribution = extractLiteLLMProjectAttribution(req.headers);
     const recordTrace = (
       entry: Parameters<typeof traceManager.recordTrace>[0],
-    ) =>
-      traceManager.recordTrace({
+    ) => {
+      observeCapacityUsage(entry.usage);
+      return traceManager.recordTrace({
         ...entry,
         ...projectAttribution,
         application,
         codexSessionId,
         requestHeaders,
       });
+    };
     const beginTrace = (
       entry: Parameters<typeof traceManager.beginTrace>[0],
     ) =>
@@ -1743,13 +1778,16 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     const completeTrace = (
       id: string,
       entry: Parameters<typeof traceManager.completeTrace>[1],
-    ) => traceManager.completeTrace(id, {
-      ...entry,
-      ...projectAttribution,
-      application,
-      codexSessionId,
-      requestHeaders,
-    });
+    ) => {
+      observeCapacityUsage(entry.usage);
+      return traceManager.completeTrace(id, {
+        ...entry,
+        ...projectAttribution,
+        application,
+        codexSessionId,
+        requestHeaders,
+      });
+    };
     const usageRefreshTrace = {
       background: 0,
       blocking: 0,
@@ -1986,6 +2024,60 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       requestEffort,
       requestHasImage,
     );
+    let policyDecision = res.locals.multivibePolicyDecision as
+      | PolicyDecision
+      | undefined;
+    const routingRequest = res.locals.multivibeRouting as
+      | RoutingRequest
+      | undefined;
+    const effectivePolicyModel =
+      requestHasImage && imageRequestModelOverride
+        ? imageRequestModelOverride
+        : requestModel;
+    if (smartRoutingCoordinator && routingRequest && effectivePolicyModel) {
+      policyDecision = smartRoutingCoordinator.decision(
+        effectivePolicyModel,
+        routingRequest,
+      );
+    }
+    res.once("finish", () => {
+      if (
+        res.statusCode < 500 &&
+        completedRoutingAccountId &&
+        routingRequest &&
+        policyDecision
+      ) {
+        smartRoutingCoordinator?.recordCloudConsumption(
+          routingRequest,
+          policyDecision,
+          completedRoutingAccountId,
+        );
+      }
+    });
+    if (policyDecision?.eligible.length) {
+      const rank = new Map(
+        policyDecision.eligible.map((entry, index) => [
+          `${normalizeModelLookupKey(entry.config.model)}::${entry.resource.provider}`,
+          index,
+        ]),
+      );
+      routingCandidates.sort(
+        (left, right) =>
+          (rank.get(
+            `${normalizeModelLookupKey(left.resolvedModel)}::${left.provider}`,
+          ) ?? Number.MAX_SAFE_INTEGER) -
+          (rank.get(
+            `${normalizeModelLookupKey(right.resolvedModel)}::${right.provider}`,
+          ) ?? Number.MAX_SAFE_INTEGER),
+      );
+      const allowedRoutes = new Set(rank.keys());
+      const restricted = routingCandidates.filter((candidate) =>
+        allowedRoutes.has(
+          `${normalizeModelLookupKey(candidate.resolvedModel)}::${candidate.provider}`,
+        ),
+      );
+      routingCandidates.splice(0, routingCandidates.length, ...restricted);
+    }
     const maxAttempts = Math.min(accounts.length, MAX_ACCOUNT_RETRY_ATTEMPTS);
     let sawEmptyAssistantOutput = false;
     const hangStart = Date.now();
@@ -1997,10 +2089,23 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       let providerTried = false;
 
     for (const candidate of routingCandidates) {
+      const policyAccountIds = policyDecision?.eligible.length
+        ? new Set(
+            policyDecision.eligible
+              .filter(
+                (entry) =>
+                  normalizeModelLookupKey(entry.config.model) ===
+                    normalizeModelLookupKey(candidate.resolvedModel) &&
+                  entry.resource.provider === candidate.provider,
+              )
+              .map((entry) => entry.resource.accountId),
+          )
+        : undefined;
       const providerAccounts = accounts.filter(
         (a) =>
           normalizeProvider(a) === candidate.provider &&
-          accountSupportsModel(a.id, candidate.resolvedModel, discoveredModels),
+          accountSupportsModel(a.id, candidate.resolvedModel, discoveredModels) &&
+          (!policyAccountIds || policyAccountIds.has(a.id)),
       );
       if (!providerAccounts.length) continue;
       providerTried = true;
@@ -2010,11 +2115,55 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         maxAttempts,
       );
       for (let i = 0; i < attemptsForProvider; i++) {
-        const selected = chooseAccountForProvider(
-          providerAccounts.filter((a) => !tried.has(a.id) && accountUsable(a, candidate.resolvedModel)),
-          candidate.provider,
+        const usableAccounts = providerAccounts.filter(
+          (account) =>
+            !tried.has(account.id) &&
+            accountUsable(account, candidate.resolvedModel),
         );
+        const preferredResource = policyDecision?.eligible.find(
+          (entry) =>
+            normalizeModelLookupKey(entry.config.model) ===
+              normalizeModelLookupKey(candidate.resolvedModel) &&
+            entry.resource.provider === candidate.provider &&
+            usableAccounts.some(
+              (account) => account.id === entry.resource.accountId,
+            ),
+        )?.resource;
+        const selected = preferredResource
+          ? usableAccounts.find(
+              (account) => account.id === preferredResource.accountId,
+            )
+          : chooseAccountForProvider(usableAccounts, candidate.provider);
         if (!selected) break;
+        completedRoutingAccountId = selected.id;
+        let attemptCapacityLease: CapacityLease | undefined;
+
+        if (capacityTracker && candidate.resolvedModel) {
+          const reservationMatches =
+            !reservationReleased &&
+            reservedCapacityLease?.accountId === selected.id &&
+            reservedCapacityLease.model.toLowerCase() ===
+              candidate.resolvedModel.toLowerCase();
+          if (reservationMatches) {
+            attemptCapacityLease = reservedCapacityLease;
+          } else if (reservedCapacityLease && !reservationReleased) {
+            res.locals.multivibeCapacityLeaseClaimed = true;
+            reservedCapacityLease.release();
+            reservationReleased = true;
+          }
+          res.setHeader(
+            "X-MultiVibe-Decision",
+            selected.location === "local" ? "local" : "cloud",
+          );
+          res.setHeader(
+            "X-MultiVibe-Resolved-Model",
+            candidate.resolvedModel,
+          );
+          res.setHeader(
+            "X-MultiVibe-Capacity-Version",
+            String(capacityTracker.getVersion()),
+          );
+        }
 
         tried.add(selected.id);
         selected.state = { ...selected.state, lastSelectedAt: Date.now() };
@@ -2093,6 +2242,8 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           );
         }
         const requestBody = TRACE_INCLUDE_BODY ? req.body : undefined;
+        const executionLocation =
+          selected.location === "local" ? ("local" as const) : ("cloud" as const);
         const latencyBreakdown = {
           preparationMs: 0,
           upstreamHeadersMs: 0,
@@ -2128,6 +2279,22 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                   compactionItemCount,
                   itemsBeforeLatestCompaction: latestCompactionIndex,
                 },
+              }
+            : {}),
+          ...(routingRequest
+            ? {
+                priority: routingRequest.priority,
+                routingDecision: executionLocation,
+                routingRule: policyDecision?.rule?.id,
+                routingScores: policyDecision?.candidates.map((entry) => ({
+                  model: entry.config.model,
+                  accountId: entry.resource.accountId,
+                  score: entry.score,
+                  rejectedReasons: entry.rejectedReasons,
+                })),
+                admissionWaitMs: Date.now() - startedAt,
+                executionLocation,
+                capacityVersion: capacityTracker?.getVersion(),
               }
             : {}),
         };
@@ -2197,6 +2364,15 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           headers["chatgpt-account-id"] = selected.chatgptAccountId;
         }
         if (sessionId) headers.session_id = sessionId;
+
+        if (capacityTracker && candidate.resolvedModel) {
+          attemptCapacityLease ??= capacityTracker.acquire(
+            selected.id,
+            candidate.resolvedModel,
+          );
+          res.locals.multivibeCapacityLeaseClaimed = true;
+          currentCapacityObservation = {};
+        }
 
         try {
           let upstreamBaseUrl = accountBaseUrl(
@@ -3542,6 +3718,17 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             res.end();
             return;
           }
+        } finally {
+          if (attemptCapacityLease) {
+            attemptCapacityLease.release({
+              latencyMs: Date.now() - attemptCapacityLease.startedAt,
+              ...currentCapacityObservation,
+            });
+            if (attemptCapacityLease === reservedCapacityLease) {
+              reservationReleased = true;
+            }
+          }
+          currentCapacityObservation = undefined;
         }
       }
     }
