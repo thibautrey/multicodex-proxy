@@ -2433,6 +2433,53 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             Boolean(upstream.body),
           );
 
+          // Native Responses streaming commits the client headers before the
+          // upstream status is known. Convert upstream errors to SSE instead
+          // of attempting to send a JSON response after headers are sent.
+          if (isNativeResponsesStream && !upstream.ok) {
+            const upstreamText = await upstream.text();
+            let errorPayload: any = upstreamText;
+            try {
+              errorPayload = upstreamText ? JSON.parse(upstreamText) : undefined;
+            } catch {
+              // Keep the upstream text as the diagnostic message below.
+            }
+            const upstreamError =
+              errorPayload?.error ??
+              ({
+                message: upstreamText || `Upstream returned HTTP ${upstream.status}`,
+                type: "upstream_error",
+                code: "upstream_error",
+              } as const);
+            if (!res.writableEnded) {
+              res.write(
+                `event: error\ndata: ${JSON.stringify({ error: upstreamError })}\n\n`,
+              );
+              res.end();
+            }
+            const traceId = await nativeStreamTracePromise!;
+            await completeTrace(traceId, {
+              at: Date.now(),
+              startedAt,
+              route: req.path,
+              accountId: selected.id,
+              accountEmail: selected.email,
+              model: tracedModel,
+              ...traceModelResolution,
+              status: upstream.status,
+              stream: true,
+              latencyMs: Date.now() - startedAt,
+              requestBody,
+              error:
+                typeof upstreamError?.message === "string"
+                  ? upstreamError.message
+                  : `Upstream returned HTTP ${upstream.status}`,
+              upstreamContentType: contentType,
+              lifecycleState: "completed",
+            });
+            return;
+          }
+
           if (isStream) {
             if (!shouldReturnChatCompletions && clientRequestedStream && upstream.body) {
               const streamTraceId = nativeStreamTraceId!;
