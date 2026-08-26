@@ -138,6 +138,9 @@ BUILD_ID="$(git rev-parse HEAD)" \
 docker compose up -d --build
 ```
 
+Compose requires both values so an image cannot be deployed with an
+ambiguous `unknown` build identity.
+
 - Dashboard: `http://localhost:1455`
 - Health: `http://localhost:1455/health`
 
