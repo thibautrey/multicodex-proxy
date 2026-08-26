@@ -122,6 +122,15 @@ test("forwards native Responses chunks while preserving diagnostics", async (t) 
       completedTraces.push(entry);
     },
   };
+  const capacityTracker = {
+    getVersion: () => 1,
+    acquire: (_accountId: string, _model: string) => ({
+      accountId: _accountId,
+      model: _model,
+      startedAt: Date.now(),
+      release: () => undefined,
+    }),
+  };
   const app = express();
   app.use(express.json());
   app.use(
@@ -137,6 +146,7 @@ test("forwards native Responses chunks while preserving diagnostics", async (t) 
       zaiUpstreamPath: "/v1/chat/completions",
       zaiCompactUpstreamPath: "/v1/chat/completions",
       oauthConfig: {} as any,
+      capacityTracker: capacityTracker as any,
     }),
   );
   const server = http.createServer(app);

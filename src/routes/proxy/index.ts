@@ -2151,18 +2151,20 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             reservedCapacityLease.release();
             reservationReleased = true;
           }
-          res.setHeader(
-            "X-MultiVibe-Decision",
-            selected.location === "local" ? "local" : "cloud",
-          );
-          res.setHeader(
-            "X-MultiVibe-Resolved-Model",
-            candidate.resolvedModel,
-          );
-          res.setHeader(
-            "X-MultiVibe-Capacity-Version",
-            String(capacityTracker.getVersion()),
-          );
+          if (!res.headersSent) {
+            res.setHeader(
+              "X-MultiVibe-Decision",
+              selected.location === "local" ? "local" : "cloud",
+            );
+            res.setHeader(
+              "X-MultiVibe-Resolved-Model",
+              candidate.resolvedModel,
+            );
+            res.setHeader(
+              "X-MultiVibe-Capacity-Version",
+              String(capacityTracker.getVersion()),
+            );
+          }
         }
 
         tried.add(selected.id);
