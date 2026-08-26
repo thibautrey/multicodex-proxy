@@ -138,6 +138,8 @@ period; unretrieved content is purged after 30 days.
 
 The script calculates the commit identity, rebuilds and recreates the
 container, then verifies that `/health` reports the same image identity.
+It also stores the identities in the local, ignored `.env` file so subsequent
+commands such as `docker compose logs` work without extra environment setup.
 Set `HEALTH_URL` when deploying against a remote host:
 
 ```bash

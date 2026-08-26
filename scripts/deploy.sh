@@ -9,9 +9,21 @@ cd "$ROOT_DIR"
 GIT_SHA=$(git rev-parse --short HEAD)
 BUILD_ID=$(git rev-parse HEAD)
 
+# Persist the image identity so later `docker compose` commands (logs, ps,
+# inspect, and build) inherit the same required variables automatically.
+umask 077
+env_file="$ROOT_DIR/.env"
+tmp_env_file=$(mktemp "$ROOT_DIR/.env.deploy.XXXXXX")
+trap 'rm -f "$tmp_env_file"' EXIT INT TERM
+if [ -f "$env_file" ]; then
+  awk '!/^GIT_SHA=/ && !/^BUILD_ID=/' "$env_file" > "$tmp_env_file"
+fi
+printf 'GIT_SHA=%s\nBUILD_ID=%s\n' "$GIT_SHA" "$BUILD_ID" >> "$tmp_env_file"
+mv "$tmp_env_file" "$env_file"
+trap - EXIT INT TERM
+
 printf '%s\n' "Deploying commit $GIT_SHA"
-GIT_SHA="$GIT_SHA" BUILD_ID="$BUILD_ID" \
-  docker compose up -d --build --force-recreate
+docker compose up -d --build --force-recreate
 
 printf '%s\n' "Waiting for $HEALTH_URL"
 i=0
