@@ -2480,6 +2480,17 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 diagnostics.sawResponseCompleted,
                 streamError,
               );
+              if (streamError && !clientDisconnected && !res.writableEnded) {
+                res.write(
+                  `event: error\ndata: ${JSON.stringify({
+                    error: {
+                      message: streamError.message,
+                      type: "upstream_error",
+                      code: "stream_interrupted",
+                    },
+                  })}\n\n`,
+                );
+              }
               if (!clientDisconnected && !res.writableEnded) res.end();
               await completeTrace(streamTraceId, {
                 at: Date.now(),
