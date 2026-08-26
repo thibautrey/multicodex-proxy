@@ -230,6 +230,7 @@ test("returns an SSE error when a native Responses stream is interrupted", async
     beginTrace: async () => "stream-trace",
     completeTrace: async (_id: string, entry: any) => {
       completedTraces.push(entry);
+      throw new Error("trace persistence failed");
     },
   };
   const app = express();

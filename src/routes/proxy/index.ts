@@ -3736,46 +3736,61 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         } catch (err: any) {
           const msg = err?.message ?? String(err);
           rememberError(selected, msg);
-          await store.upsertAccount(selected);
           if (nativeStreamKeepalive) {
             clearInterval(nativeStreamKeepalive);
             nativeStreamKeepalive = undefined;
           }
-          if (nativeStreamTraceId) {
-            await completeTrace(nativeStreamTraceId, {
+          if (isNativeResponsesStream && res.headersSent && !res.writableEnded) {
+            res.write(
+              `event: error\ndata: ${JSON.stringify({
+                error: {
+                  message: msg,
+                  type: "upstream_error",
+                  code: "stream_interrupted",
+                },
+              })}\n\n`,
+            );
+            res.end();
+          }
+          await store.upsertAccount(selected).catch((persistError) => {
+            console.error("failed to persist upstream stream error", persistError);
+          });
+          try {
+            if (nativeStreamTraceId) {
+              await completeTrace(nativeStreamTraceId, {
+                at: Date.now(),
+                startedAt,
+                route: req.path,
+                accountId: selected.id,
+                accountEmail: selected.email,
+                model: tracedModel,
+                ...traceModelResolution,
+                status: 599,
+                stream: true,
+                latencyMs: Date.now() - startedAt,
+                error: msg,
+                requestBody,
+                ...traceImage,
+                lifecycleState: "interrupted",
+              });
+            } else recordTrace({
               at: Date.now(),
-              startedAt,
               route: req.path,
               accountId: selected.id,
               accountEmail: selected.email,
               model: tracedModel,
               ...traceModelResolution,
               status: 599,
-              stream: true,
+              stream: false,
               latencyMs: Date.now() - startedAt,
               error: msg,
               requestBody,
               ...traceImage,
-              lifecycleState: "interrupted",
             });
-          } else recordTrace({
-            at: Date.now(),
-            route: req.path,
-            accountId: selected.id,
-            accountEmail: selected.email,
-            model: tracedModel,
-            ...traceModelResolution,
-            status: 599,
-            stream: false,
-            latencyMs: Date.now() - startedAt,
-            error: msg,
-            requestBody,
-            ...traceImage,
-          });
-          if (res.headersSent) {
-            res.end();
-            return;
+          } catch (traceError) {
+            console.error("failed to record upstream stream error", traceError);
           }
+          if (res.headersSent) return;
         } finally {
           if (attemptCapacityLease) {
             attemptCapacityLease.release({
