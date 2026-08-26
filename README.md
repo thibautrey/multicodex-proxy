@@ -133,11 +133,20 @@ period; unretrieved content is purged after 30 days.
 ## 🚀 Quick start (Docker)
 
 ```bash
+GIT_SHA="$(git rev-parse --short HEAD)" \
+BUILD_ID="$(git rev-parse HEAD)" \
 docker compose up -d --build
 ```
 
 - Dashboard: `http://localhost:1455`
 - Health: `http://localhost:1455/health`
+
+The health response includes the exact image identity in `gitSha` and
+`buildId`. Verify it after deployment:
+
+```bash
+curl -fsS http://localhost:1455/health
+```
 
 ---
 
