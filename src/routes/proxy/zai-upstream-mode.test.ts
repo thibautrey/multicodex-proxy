@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { resolveUpstreamMode } from "./index.js";
+import {
+  resolveUpstreamMode,
+  shouldForwardDecodedResponseHeader,
+} from "./index.js";
 
 test("routes z.ai through chat completions for every public inference dialect", () => {
   const account = { provider: "zai" as const };
@@ -20,4 +23,10 @@ test("keeps an explicit z.ai upstream mode override", () => {
     ),
     "responses",
   );
+});
+
+test("does not forward encoding metadata after fetch decoded the upstream body", () => {
+  assert.equal(shouldForwardDecodedResponseHeader("content-encoding"), false);
+  assert.equal(shouldForwardDecodedResponseHeader("Content-Length"), false);
+  assert.equal(shouldForwardDecodedResponseHeader("content-type"), true);
 });

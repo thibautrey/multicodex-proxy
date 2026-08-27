@@ -568,6 +568,11 @@ function isHopByHopHeader(name: string): boolean {
   return HOP_BY_HOP_HEADERS.has(name.toLowerCase());
 }
 
+export function shouldForwardDecodedResponseHeader(name: string): boolean {
+  const normalized = name.toLowerCase();
+  return !isHopByHopHeader(normalized) && normalized !== "content-encoding";
+}
+
 function accountBaseUrl(
   account: { provider?: ProviderId; baseUrl?: string | undefined },
   openaiBaseUrl: string,
@@ -3927,7 +3932,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
   }
   function setForwardHeaders(from: Response, to: express.Response) {
     for (const [k, v] of from.headers.entries())
-      if (!isHopByHopHeader(k)) to.setHeader(k, v);
+      if (shouldForwardDecodedResponseHeader(k)) to.setHeader(k, v);
   }
 
   function requestHeadersForPassthrough(
