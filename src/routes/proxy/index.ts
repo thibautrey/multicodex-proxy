@@ -586,7 +586,7 @@ function accountBaseUrl(
   return openaiBaseUrl;
 }
 
-function resolveUpstreamMode(
+export function resolveUpstreamMode(
   account: {
     provider?: ProviderId;
     upstreamMode?: UpstreamMode;
@@ -595,9 +595,10 @@ function resolveUpstreamMode(
   isChatCompletionsPath: boolean,
   isResponsesCompactPath: boolean,
 ): UpstreamMode {
-  if (isResponsesCompactPath) return "responses";
   if (account.upstreamMode) return account.upstreamMode;
   const provider = normalizeProvider(account);
+  if (provider === "zai") return "chat/completions";
+  if (isResponsesCompactPath) return "responses";
   if (provider === "openai-compatible") {
     if (account.compatibilityMode === "responses") return "responses";
     return "chat/completions";
