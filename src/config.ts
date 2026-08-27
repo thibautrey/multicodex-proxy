@@ -63,6 +63,8 @@ export const ZAI_UPSTREAM_PATH =
   process.env.ZAI_UPSTREAM_PATH ?? "/v1/chat/completions";
 export const ZAI_COMPACT_UPSTREAM_PATH =
   process.env.ZAI_COMPACT_UPSTREAM_PATH ?? "/v1/chat/completions";
+export const ZAI_MODELS_PATH =
+  process.env.ZAI_MODELS_PATH ?? "/api/paas/v4/models";
 export const XAI_BASE_URL =
   process.env.XAI_BASE_URL ?? "https://cli-chat-proxy.grok.com/v1";
 export const XAI_RESPONSES_PATH =

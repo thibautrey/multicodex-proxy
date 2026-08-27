@@ -647,6 +647,7 @@ same `/admin/oauth/device/poll` endpoint used by OpenAI device OAuth.
 | `ZAI_BASE_URL`                    | `https://api.z.ai`                        | z.ai upstream base URL                                              |
 | `ZAI_UPSTREAM_PATH`               | `/v1/chat/completions`                    | z.ai upstream path for responses routed through chat completions    |
 | `ZAI_COMPACT_UPSTREAM_PATH`       | `/v1/chat/completions`                    | z.ai upstream path for compact responses                            |
+| `ZAI_MODELS_PATH`                 | `/api/paas/v4/models`                     | z.ai model-discovery path                                           |
 | `XAI_BASE_URL`                    | `https://cli-chat-proxy.grok.com/v1`      | Grok Build subscription upstream base URL                           |
 | `XAI_RESPONSES_PATH`              | `/responses`                              | Grok Build Responses upstream path                                  |
 | `XAI_CHAT_COMPLETIONS_PATH`       | `/chat/completions`                       | Grok Build Chat Completions upstream path                           |

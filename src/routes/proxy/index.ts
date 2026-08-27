@@ -20,6 +20,7 @@ import {
   XAI_BASE_URL,
   XAI_CHAT_COMPLETIONS_PATH,
   XAI_MODELS_PATH,
+  ZAI_MODELS_PATH,
   XAI_RESPONSES_PATH,
 } from "../../config.js";
 import {
@@ -877,7 +878,7 @@ async function refreshModels(
             catalogComplete = false;
             continue;
           }
-          url = `${baseUrl}/v1/models`;
+          url = `${baseUrl}${provider === "zai" ? ZAI_MODELS_PATH : "/v1/models"}`;
         }
 
         const r = await fetch(url, { headers });
