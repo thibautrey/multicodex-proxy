@@ -1138,6 +1138,67 @@ type EffortTier = (typeof EFFORT_TIERS)[number];
 
 const EFFORT_TARGET_RE = /^(minimal|low|medium|high|xhigh):(.+)$/;
 
+const UNSUPPORTED_VALUE_RE =
+  /Unsupported value:\s*['"]([^'"]+)['"][\s\S]*?Supported values? (?:are|is):\s*([^\n.}]+)/i;
+
+function closestSupportedValue(
+  rejected: string,
+  supported: readonly string[],
+): string | undefined {
+  if (supported.length === 0) return undefined;
+  const rejectedIndex = EFFORT_TIERS.indexOf(rejected as EffortTier);
+  if (rejectedIndex < 0) return supported[0];
+
+  return [...supported].sort((left, right) => {
+    const leftIndex = EFFORT_TIERS.indexOf(left as EffortTier);
+    const rightIndex = EFFORT_TIERS.indexOf(right as EffortTier);
+    const leftDistance =
+      leftIndex < 0
+        ? Number.MAX_SAFE_INTEGER
+        : Math.abs(leftIndex - rejectedIndex);
+    const rightDistance =
+      rightIndex < 0
+        ? Number.MAX_SAFE_INTEGER
+        : Math.abs(rightIndex - rejectedIndex);
+    return leftDistance - rightDistance;
+  })[0];
+}
+
+/**
+ * Correct a reasoning-effort enum rejected by an OpenAI-compatible upstream.
+ * The error response is authoritative, which avoids maintaining a model/version
+ * compatibility table in the proxy as providers add models.
+ */
+export function applyUnsupportedValueCorrection(
+  payload: any,
+  errorText: string,
+): { from: string; to: string } | undefined {
+  if (!payload || typeof payload !== "object") return undefined;
+  const match = errorText.match(UNSUPPORTED_VALUE_RE);
+  if (!match) return undefined;
+
+  const rejected = match[1];
+  const supported = [...match[2].matchAll(/['"]([^'"]+)['"]/g)].map(
+    (entry) => entry[1],
+  );
+  const replacement = closestSupportedValue(rejected, supported);
+  if (!replacement || replacement === rejected) return undefined;
+
+  if (payload.reasoning_effort === rejected) {
+    payload.reasoning_effort = replacement;
+    return { from: rejected, to: replacement };
+  }
+  if (
+    payload.reasoning &&
+    typeof payload.reasoning === "object" &&
+    payload.reasoning.effort === rejected
+  ) {
+    payload.reasoning.effort = replacement;
+    return { from: rejected, to: replacement };
+  }
+  return undefined;
+}
+
 function hasReasoningEffort(payload: any): boolean {
   if (!payload || typeof payload !== "object") return false;
   if (Object.prototype.hasOwnProperty.call(payload, "reasoning_effort")) {
@@ -2413,7 +2474,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           }
           const upstreamStartedAt = Date.now();
           latencyBreakdown.preparationMs = upstreamStartedAt - startedAt;
-          const upstream = await fetchUpstreamWithRetry(
+          let upstream = await fetchUpstreamWithRetry(
             `${upstreamBaseUrl}${upstreamPath}`,
             {
               method: "POST",
@@ -2421,6 +2482,32 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               body: serializeUpstreamPayload(payloadToUpstream),
             },
           );
+          if (upstream.status === 400) {
+            const errorText = await upstream.text();
+            const correction = applyUnsupportedValueCorrection(
+              payloadToUpstream,
+              errorText,
+            );
+            if (correction) {
+              console.info(
+                `[proxy] Retrying ${candidate.resolvedModel ?? "model"} after correcting unsupported value ${correction.from} -> ${correction.to}`,
+              );
+              upstream = await fetchUpstreamWithRetry(
+                `${upstreamBaseUrl}${upstreamPath}`,
+                {
+                  method: "POST",
+                  headers,
+                  body: serializeUpstreamPayload(payloadToUpstream),
+                },
+              );
+            } else {
+              upstream = new Response(errorText, {
+                status: upstream.status,
+                statusText: upstream.statusText,
+                headers: upstream.headers,
+              });
+            }
+          }
           latencyBreakdown.upstreamHeadersMs =
             Date.now() - upstreamStartedAt;
 
