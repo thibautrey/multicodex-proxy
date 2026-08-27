@@ -133,11 +133,28 @@ period; unretrieved content is purged after 30 days.
 ## 🚀 Quick start (Docker)
 
 ```bash
-docker compose up -d --build
+./scripts/deploy.sh
+```
+
+The script calculates the commit identity, rebuilds and recreates the
+container, then verifies that `/health` reports the same image identity.
+It also stores the identities in the local, ignored `.env` file so subsequent
+commands such as `docker compose logs` work without extra environment setup.
+Set `HEALTH_URL` when deploying against a remote host:
+
+```bash
+HEALTH_URL=http://192.0.2.149:1455/health ./scripts/deploy.sh
 ```
 
 - Dashboard: `http://localhost:1455`
 - Health: `http://localhost:1455/health`
+
+The health response includes the exact image identity in `gitSha` and
+`buildId`. Verify it after deployment:
+
+```bash
+curl -fsS http://localhost:1455/health
+```
 
 ---
 

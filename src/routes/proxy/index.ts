@@ -2212,18 +2212,20 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             reservedCapacityLease.release();
             reservationReleased = true;
           }
-          res.setHeader(
-            "X-MultiVibe-Decision",
-            selected.location === "local" ? "local" : "cloud",
-          );
-          res.setHeader(
-            "X-MultiVibe-Resolved-Model",
-            candidate.resolvedModel,
-          );
-          res.setHeader(
-            "X-MultiVibe-Capacity-Version",
-            String(capacityTracker.getVersion()),
-          );
+          if (!res.headersSent) {
+            res.setHeader(
+              "X-MultiVibe-Decision",
+              selected.location === "local" ? "local" : "cloud",
+            );
+            res.setHeader(
+              "X-MultiVibe-Resolved-Model",
+              candidate.resolvedModel,
+            );
+            res.setHeader(
+              "X-MultiVibe-Capacity-Version",
+              String(capacityTracker.getVersion()),
+            );
+          }
         }
 
         tried.add(selected.id);
@@ -2520,6 +2522,53 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             Boolean(upstream.body),
           );
 
+          // Native Responses streaming commits the client headers before the
+          // upstream status is known. Convert upstream errors to SSE instead
+          // of attempting to send a JSON response after headers are sent.
+          if (isNativeResponsesStream && !upstream.ok) {
+            const upstreamText = await upstream.text();
+            let errorPayload: any = upstreamText;
+            try {
+              errorPayload = upstreamText ? JSON.parse(upstreamText) : undefined;
+            } catch {
+              // Keep the upstream text as the diagnostic message below.
+            }
+            const upstreamError =
+              errorPayload?.error ??
+              ({
+                message: upstreamText || `Upstream returned HTTP ${upstream.status}`,
+                type: "upstream_error",
+                code: "upstream_error",
+              } as const);
+            if (!res.writableEnded) {
+              res.write(
+                `event: error\ndata: ${JSON.stringify({ error: upstreamError })}\n\n`,
+              );
+              res.end();
+            }
+            const traceId = await nativeStreamTracePromise!;
+            await completeTrace(traceId, {
+              at: Date.now(),
+              startedAt,
+              route: req.path,
+              accountId: selected.id,
+              accountEmail: selected.email,
+              model: tracedModel,
+              ...traceModelResolution,
+              status: upstream.status,
+              stream: true,
+              latencyMs: Date.now() - startedAt,
+              requestBody,
+              error:
+                typeof upstreamError?.message === "string"
+                  ? upstreamError.message
+                  : `Upstream returned HTTP ${upstream.status}`,
+              upstreamContentType: contentType,
+              lifecycleState: "completed",
+            });
+            return;
+          }
+
           if (isStream) {
             if (!shouldReturnChatCompletions && clientRequestedStream && upstream.body) {
               const streamTraceId = nativeStreamTraceId!;
@@ -2567,6 +2616,17 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 diagnostics.sawResponseCompleted,
                 streamError,
               );
+              if (streamError && !clientDisconnected && !res.writableEnded) {
+                res.write(
+                  `event: error\ndata: ${JSON.stringify({
+                    error: {
+                      message: streamError.message,
+                      type: "upstream_error",
+                      code: "stream_interrupted",
+                    },
+                  })}\n\n`,
+                );
+              }
               if (!clientDisconnected && !res.writableEnded) res.end();
               await completeTrace(streamTraceId, {
                 at: Date.now(),
@@ -3765,46 +3825,61 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         } catch (err: any) {
           const msg = err?.message ?? String(err);
           rememberError(selected, msg);
-          await store.upsertAccount(selected);
           if (nativeStreamKeepalive) {
             clearInterval(nativeStreamKeepalive);
             nativeStreamKeepalive = undefined;
           }
-          if (nativeStreamTraceId) {
-            await completeTrace(nativeStreamTraceId, {
+          if (isNativeResponsesStream && res.headersSent && !res.writableEnded) {
+            res.write(
+              `event: error\ndata: ${JSON.stringify({
+                error: {
+                  message: msg,
+                  type: "upstream_error",
+                  code: "stream_interrupted",
+                },
+              })}\n\n`,
+            );
+            res.end();
+          }
+          await store.upsertAccount(selected).catch((persistError) => {
+            console.error("failed to persist upstream stream error", persistError);
+          });
+          try {
+            if (nativeStreamTraceId) {
+              await completeTrace(nativeStreamTraceId, {
+                at: Date.now(),
+                startedAt,
+                route: req.path,
+                accountId: selected.id,
+                accountEmail: selected.email,
+                model: tracedModel,
+                ...traceModelResolution,
+                status: 599,
+                stream: true,
+                latencyMs: Date.now() - startedAt,
+                error: msg,
+                requestBody,
+                ...traceImage,
+                lifecycleState: "interrupted",
+              });
+            } else recordTrace({
               at: Date.now(),
-              startedAt,
               route: req.path,
               accountId: selected.id,
               accountEmail: selected.email,
               model: tracedModel,
               ...traceModelResolution,
               status: 599,
-              stream: true,
+              stream: false,
               latencyMs: Date.now() - startedAt,
               error: msg,
               requestBody,
               ...traceImage,
-              lifecycleState: "interrupted",
             });
-          } else recordTrace({
-            at: Date.now(),
-            route: req.path,
-            accountId: selected.id,
-            accountEmail: selected.email,
-            model: tracedModel,
-            ...traceModelResolution,
-            status: 599,
-            stream: false,
-            latencyMs: Date.now() - startedAt,
-            error: msg,
-            requestBody,
-            ...traceImage,
-          });
-          if (res.headersSent) {
-            res.end();
-            return;
+          } catch (traceError) {
+            console.error("failed to record upstream stream error", traceError);
           }
+          if (res.headersSent) return;
         } finally {
           if (attemptCapacityLease) {
             attemptCapacityLease.release({

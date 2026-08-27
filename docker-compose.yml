@@ -1,9 +1,13 @@
 services:
   multivibe:
-    build: .
+    build:
+      context: .
+      args:
+        GIT_SHA: ${GIT_SHA:?GIT_SHA must be set to the deployed commit}
+        BUILD_ID: ${BUILD_ID:?BUILD_ID must be set to the deployed commit}
     container_name: multivibe
     ports:
-      - "192.0.2.149:1455:1455"
+      - "1455:1455"
     environment:
       - PORT=1455
       - PUBLIC_BASE_URL=http://localhost:1455

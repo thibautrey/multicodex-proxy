@@ -8,6 +8,8 @@ RUN npm --prefix web install
 
 FROM node:22-alpine AS build
 WORKDIR /app
+ARG GIT_SHA=unknown
+ARG BUILD_ID=unknown
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/web/node_modules ./web/node_modules
 COPY . .
@@ -17,6 +19,10 @@ FROM node:22-alpine
 WORKDIR /app
 RUN apk add --no-cache libstdc++
 ENV NODE_ENV=production
+ARG GIT_SHA=unknown
+ARG BUILD_ID=unknown
+ENV APP_GIT_SHA=$GIT_SHA
+ENV APP_BUILD_ID=$BUILD_ID
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/web-dist ./web-dist
 COPY --from=build \
