@@ -60,9 +60,9 @@ export const MISTRAL_COMPACT_UPSTREAM_PATH =
   process.env.MISTRAL_COMPACT_UPSTREAM_PATH ?? "/v1/responses/compact";
 export const ZAI_BASE_URL = process.env.ZAI_BASE_URL ?? "https://api.z.ai";
 export const ZAI_UPSTREAM_PATH =
-  process.env.ZAI_UPSTREAM_PATH ?? "/v1/chat/completions";
+  process.env.ZAI_UPSTREAM_PATH ?? "/api/paas/v4/chat/completions";
 export const ZAI_COMPACT_UPSTREAM_PATH =
-  process.env.ZAI_COMPACT_UPSTREAM_PATH ?? "/v1/chat/completions";
+  process.env.ZAI_COMPACT_UPSTREAM_PATH ?? "/api/paas/v4/chat/completions";
 export const ZAI_MODELS_PATH =
   process.env.ZAI_MODELS_PATH ?? "/api/paas/v4/models";
 export const XAI_BASE_URL =
