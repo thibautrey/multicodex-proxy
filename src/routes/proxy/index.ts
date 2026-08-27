@@ -2582,6 +2582,13 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
 
               const reader = upstream.body.getReader();
               const diagnostics = createResponseStreamDiagnostics();
+              const chatStreamState = shouldSendChatCompletions
+                ? createChatStreamAccumulator(
+                    req.body?.model ?? payloadToUpstream?.model ?? "unknown",
+                  )
+                : undefined;
+              const decoder = chatStreamState ? new TextDecoder() : undefined;
+              let sseBuffer = "";
               let usage: any = undefined;
               let clientDisconnected = false;
               let streamError: Error | undefined;
@@ -2594,15 +2601,52 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 usage =
                   inspectResponseStreamFrame(frame, diagnostics) ?? usage;
               });
+              const forwardChatCompletionFrame = (frame: string) => {
+                streamTap.push(new TextEncoder().encode(frame));
+                const converted = convertChatCompletionSSEToResponseSSE(
+                  frame,
+                  chatStreamState!,
+                );
+                if (converted && !res.writableEnded) res.write(converted);
+              };
 
               try {
                 while (!clientDisconnected) {
                   const { value, done } = await reader.read();
                   if (done) break;
-                  if (!res.writableEnded) res.write(value);
-                  streamTap.push(value);
+                  if (chatStreamState) {
+                    sseBuffer += decoder!.decode(value, { stream: true });
+                    while (true) {
+                      const next = takeNextSSEFrame(sseBuffer);
+                      if (!next) break;
+                      sseBuffer = next.rest;
+                      forwardChatCompletionFrame(next.frame);
+                    }
+                  } else {
+                    if (!res.writableEnded) res.write(value);
+                    streamTap.push(value);
+                  }
                 }
                 if (!clientDisconnected) {
+                  if (chatStreamState) {
+                    sseBuffer += decoder!.decode();
+                    while (true) {
+                      const next = takeNextSSEFrame(sseBuffer);
+                      if (!next) break;
+                      sseBuffer = next.rest;
+                      forwardChatCompletionFrame(next.frame);
+                    }
+                    if (sseBuffer.trim()) {
+                      forwardChatCompletionFrame(sseBuffer);
+                    }
+                    const completed =
+                      finalizeChatCompletionSSEToResponseSSE(chatStreamState);
+                    if (completed && !res.writableEnded) {
+                      res.write(completed);
+                      streamTap.push(new TextEncoder().encode(completed));
+                    }
+                    usage = chatStreamState.usage ?? usage;
+                  }
                   const { unterminatedFrame } = streamTap.finish();
                   if (unterminatedFrame && !res.writableEnded) {
                     res.write("\n\n");

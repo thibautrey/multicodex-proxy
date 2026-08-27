@@ -282,3 +282,121 @@ test("returns an SSE error when a native Responses stream is interrupted", async
   assert.equal(completedTraces[0].status, 599);
   assert.equal(completedTraces[0].lifecycleState, "interrupted");
 });
+
+test("converts a z.ai chat completion SSE to a completed Responses stream", async (t) => {
+  const account: Account = {
+    id: "zai-account",
+    provider: "zai",
+    accessToken: "zai-token",
+    enabled: true,
+  };
+  const completedTraces: any[] = [];
+  const originalFetch = globalThis.fetch;
+  const upstreamSSE = [
+    'data: {"id":"chatcmpl-zai","object":"chat.completion.chunk","created":1,"model":"glm-5.3-flash","choices":[{"index":0,"delta":{"content":"ALIAS_E2E_OK"},"finish_reason":null}]}',
+    "",
+    'data: {"id":"chatcmpl-zai","object":"chat.completion.chunk","created":1,"model":"glm-5.3-flash","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":3,"total_tokens":15}}',
+    "",
+    "data: [DONE]",
+    "",
+    "",
+  ].join("\n");
+
+  globalThis.fetch = async (input) => {
+    if (String(input).includes("models")) {
+      return new Response(
+        JSON.stringify({ data: [{ id: "glm-5.3-flash" }] }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    return new Response(
+      new ReadableStream({
+        start(controller) {
+          const bytes = new TextEncoder().encode(upstreamSSE);
+          controller.enqueue(bytes.slice(0, 97));
+          controller.enqueue(bytes.slice(97));
+          controller.close();
+        },
+      }),
+      { status: 200, headers: { "content-type": "text/event-stream" } },
+    );
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const store = {
+    getCachedAccounts: () => [account],
+    listAccounts: async () => [account],
+    getCachedModelAliases: () => [
+      {
+        id: "gpt-5.6-sol",
+        enabled: true,
+        schemaVersion: 2,
+        rules: [
+          {
+            id: "default",
+            candidates: [{ model: "glm-5.3-flash" }],
+            onNoCapacity: "reject",
+          },
+        ],
+      },
+    ],
+    getCachedSettings: () => ({}),
+    upsertAccount: async (updated: Account) => updated,
+  };
+  const traceManager = {
+    recordTrace: () => undefined,
+    beginTrace: async () => "zai-stream-trace",
+    completeTrace: async (_id: string, entry: any) => {
+      completedTraces.push(entry);
+    },
+  };
+  const app = express();
+  app.use(express.json());
+  app.use(
+    "/v1",
+    createProxyRouter({
+      store: store as any,
+      traceManager: traceManager as any,
+      openaiBaseUrl: "https://chatgpt.example",
+      mistralBaseUrl: "https://mistral.example",
+      mistralUpstreamPath: "/v1/responses",
+      mistralCompactUpstreamPath: "/v1/responses/compact",
+      zaiBaseUrl: "https://zai.example",
+      zaiUpstreamPath: "/api/coding/paas/v4/chat/completions",
+      zaiCompactUpstreamPath: "/api/coding/paas/v4/chat/completions",
+      oauthConfig: {} as any,
+    }),
+  );
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(
+    () =>
+      new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      ),
+  );
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+
+  const response = await postJson(address.port, "/v1/responses", {
+    model: "gpt-5.6-sol",
+    stream: true,
+    input: "hello",
+  });
+
+  assert.equal(response.status, 200);
+  assert.doesNotMatch(response.body, /chat\.completion\.chunk/);
+  assert.match(response.body, /event: response\.output_text\.delta/);
+  assert.match(response.body, /ALIAS_E2E_OK/);
+  assert.match(response.body, /event: response\.completed/);
+  assert.equal(completedTraces.length, 1);
+  assert.equal(completedTraces[0].lifecycleState, "completed");
+  assert.equal(completedTraces[0].status, 200);
+  assert.deepEqual(completedTraces[0].usage, {
+    prompt_tokens: 12,
+    completion_tokens: 3,
+    total_tokens: 15,
+  });
+});
