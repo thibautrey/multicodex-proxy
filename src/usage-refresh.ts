@@ -78,7 +78,8 @@ export class UsageRefreshCoordinator {
           .then(async (updated) => {
             if (
               updated.usage &&
-              updated.usage.fetchedAt > account.usage!.fetchedAt
+              (!account.usage ||
+                updated.usage.fetchedAt > account.usage.fetchedAt)
             ) {
               await options.onBackgroundUpdate!(updated);
             }

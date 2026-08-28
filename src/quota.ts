@@ -312,9 +312,9 @@ export function chooseAccount(accounts: Account[]): Account | null {
   }
 
   const untouched = available.filter((a) => {
-    const p = safePct(a.usage?.primary?.usedPercent);
-    const w = safePct(a.usage?.secondary?.usedPercent);
-    return p === 0 && w === 0;
+    const primary = a.usage?.primary?.usedPercent;
+    const secondary = a.usage?.secondary?.usedPercent;
+    return primary === 0 && secondary === 0;
   });
 
   const pool = untouched.length ? untouched : available;
