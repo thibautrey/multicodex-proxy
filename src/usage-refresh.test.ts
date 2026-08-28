@@ -58,6 +58,35 @@ test("serves an account without a usage snapshot while its first probe runs", as
   await new Promise((resolve) => setImmediate(resolve));
 });
 
+test("persists the first usage snapshot refreshed in the background", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const updates: Account[] = [];
+  const coordinator = new UsageRefreshCoordinator(async (value) => {
+    await gate;
+    value.usage = { fetchedAt: Date.now(), primary: { usedPercent: 20 } };
+    return value;
+  });
+
+  const prepared = await coordinator.prepare(account(), "https://example.test", {
+    staleWhileRevalidate: true,
+    serveMissingSnapshotWhileRevalidating: true,
+    onBackgroundUpdate: (updated) => {
+      updates.push(updated);
+    },
+  });
+
+  assert.equal(prepared.mode, "background");
+  assert.equal(updates.length, 0);
+
+  release();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].usage?.primary?.usedPercent, 20);
+});
+
 test("does not probe while the usage snapshot is fresh", async () => {
   let calls = 0;
   const coordinator = new UsageRefreshCoordinator(async (value) => {
