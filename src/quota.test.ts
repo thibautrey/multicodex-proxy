@@ -49,3 +49,42 @@ test("does not treat a missing usage snapshot as untouched usage", () => {
     "known-untouched",
   );
 });
+
+test("balances equal weekly usage between accounts with different quota windows", () => {
+  const withFiveHourQuota = account("with-five-hour-balanced", 0, 0);
+  const withoutFiveHourQuota = account("without-five-hour-balanced", undefined, 0);
+
+  const selected = [
+    chooseAccount([withFiveHourQuota, withoutFiveHourQuota])?.id,
+    chooseAccount([withFiveHourQuota, withoutFiveHourQuota])?.id,
+    chooseAccount([withFiveHourQuota, withoutFiveHourQuota])?.id,
+    chooseAccount([withFiveHourQuota, withoutFiveHourQuota])?.id,
+  ];
+
+  assert.deepEqual(selected, [
+    "with-five-hour-balanced",
+    "without-five-hour-balanced",
+    "with-five-hour-balanced",
+    "without-five-hour-balanced",
+  ]);
+});
+
+test("stops using a five-hour account near its limit when a weekly-only account exists", () => {
+  const withFiveHourQuota = account("with-five-hour-near-limit", 90, 0);
+  const withoutFiveHourQuota = account("without-five-hour-near-limit", undefined, 0);
+
+  assert.equal(
+    chooseAccount([withFiveHourQuota, withoutFiveHourQuota])?.id,
+    "without-five-hour-near-limit",
+  );
+});
+
+test("keeps a five-hour account in rotation below the near-limit threshold", () => {
+  const withFiveHourQuota = account("with-five-hour-below-limit", 89, 0);
+  const withoutFiveHourQuota = account("without-five-hour-below-limit", undefined, 0);
+
+  const first = chooseAccount([withFiveHourQuota, withoutFiveHourQuota])?.id;
+  const second = chooseAccount([withFiveHourQuota, withoutFiveHourQuota])?.id;
+
+  assert.notEqual(first, second);
+});

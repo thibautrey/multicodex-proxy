@@ -9,16 +9,16 @@ import {
 export const USAGE_CACHE_TTL_MS = Number(process.env.USAGE_CACHE_TTL_MS ?? 300_000);
 const USAGE_TIMEOUT_MS = Number(process.env.USAGE_TIMEOUT_MS ?? 10_000);
 const BLOCK_FALLBACK_MS = Number(process.env.BLOCK_FALLBACK_MS ?? 30 * 60_000);
-const DEFAULT_ROUTING_WINDOW_MS = Number(process.env.ROUTING_WINDOW_MS ?? 5 * 60 * 1000);
 const FIVE_HOUR_WINDOW_SECONDS = 5 * 60 * 60;
 const WEEKLY_WINDOW_SECONDS = 7 * 24 * 60 * 60;
+const FIVE_HOUR_NEAR_LIMIT_PERCENT = (() => {
+  const value = Number(process.env.FIVE_HOUR_QUOTA_THRESHOLD_PERCENT ?? 90);
+  return Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 90;
+})();
 
-type RouteCache = {
-  bucket: number;
-  accountId?: string;
-};
-
-const routeCache: RouteCache = { bucket: -1, accountId: undefined };
+// Keep only the last choice as a tie breaker. A sticky account for several
+// minutes makes one weekly quota grow while the other remains untouched.
+const lastSelectedAccountByProvider = new Map<ProviderId, string>();
 
 export function normalizeProvider(account?: Pick<Account, "provider">): ProviderId {
   if (account?.provider === "openai-compatible") return "openai-compatible";
@@ -28,22 +28,35 @@ export function normalizeProvider(account?: Pick<Account, "provider">): Provider
   return "openai";
 }
 
-function nowBucket(now: number, windowMs: number) {
-  return Math.floor(now / windowMs);
-}
-
 function safePct(v?: number): number {
   if (typeof v !== "number" || Number.isNaN(v)) return 0;
   return Math.max(0, Math.min(100, v));
 }
 
-function scoreAccount(account: Account): number {
-  const p = safePct(account.usage?.primary?.usedPercent);
-  const w = safePct(account.usage?.secondary?.usedPercent);
+function hasFiveHourQuota(account: Account): boolean {
+  return Boolean(account.usage?.primary);
+}
 
-  const mean = (p + w) / 2;
-  const imbalance = Math.abs(p - w);
-  return mean * 0.75 + imbalance * 0.25;
+function hasKnownNoFiveHourQuota(account: Account): boolean {
+  // An account with a weekly window and no normalized primary window is the
+  // OpenAI shape for a plan without a five-hour quota. An absent usage
+  // snapshot is deliberately not classified this way.
+  return Boolean(account.usage?.secondary && !account.usage.primary);
+}
+
+function fiveHourQuotaIsNearLimit(account: Account): boolean {
+  const usedPercent = account.usage?.primary?.usedPercent;
+  return (
+    typeof usedPercent === "number" &&
+    safePct(usedPercent) >= FIVE_HOUR_NEAR_LIMIT_PERCENT
+  );
+}
+
+function weeklyUsage(account: Account): number | undefined {
+  const value = account.usage?.secondary?.usedPercent;
+  return typeof value === "number" && Number.isFinite(value)
+    ? safePct(value)
+    : undefined;
 }
 
 function parseUsage(data: any): UsageSnapshot {
@@ -297,32 +310,28 @@ export function clearEmptyResponseHistory(account: Account, model?: string) {
 }
 
 export function chooseAccount(accounts: Account[]): Account | null {
-  const now = Date.now();
-  const windowMs = Number.isFinite(DEFAULT_ROUTING_WINDOW_MS) && DEFAULT_ROUTING_WINDOW_MS > 0 ? DEFAULT_ROUTING_WINDOW_MS : 5 * 60 * 1000;
-
   const available = accounts.filter((a) => a.enabled);
 
   if (!available.length) return null;
 
-  const bucket = nowBucket(now, windowMs);
+  const knownNoFiveHourQuota = available.filter(hasKnownNoFiveHourQuota);
+  const pool =
+    knownNoFiveHourQuota.length > 0
+      ? available.filter(
+          (account) =>
+            !hasFiveHourQuota(account) || !fiveHourQuotaIsNearLimit(account),
+        )
+      : available;
+  const effectivePool = pool.length ? pool : available;
 
-  if (routeCache.bucket === bucket && routeCache.accountId) {
-    const sticky = available.find((a) => a.id === routeCache.accountId);
-    if (sticky) return sticky;
-  }
-
-  const untouched = available.filter((a) => {
-    const primary = a.usage?.primary?.usedPercent;
-    const secondary = a.usage?.secondary?.usedPercent;
-    return primary === 0 && secondary === 0;
-  });
-
-  const pool = untouched.length ? untouched : available;
-
-  const sorted = [...pool].sort((a, b) => {
-    const sa = scoreAccount(a);
-    const sb = scoreAccount(b);
-    if (sa !== sb) return sa - sb;
+  const sorted = [...effectivePool].sort((a, b) => {
+    const aw = weeklyUsage(a);
+    const bw = weeklyUsage(b);
+    // Known weekly usage wins over an account whose usage has not been
+    // fetched yet. This preserves the safe behavior for missing snapshots.
+    if (aw === undefined && bw !== undefined) return 1;
+    if (aw !== undefined && bw === undefined) return -1;
+    if (aw !== undefined && bw !== undefined && aw !== bw) return aw - bw;
 
     const ar = a.usage?.secondary?.resetAt ?? Number.MAX_SAFE_INTEGER;
     const br = b.usage?.secondary?.resetAt ?? Number.MAX_SAFE_INTEGER;
@@ -335,9 +344,26 @@ export function chooseAccount(accounts: Account[]): Account | null {
     return a.id.localeCompare(b.id);
   });
 
-  const winner = sorted[0] ?? null;
-  routeCache.bucket = bucket;
-  routeCache.accountId = winner?.id;
+  if (!sorted.length) return null;
+
+  // When weekly usage is equal (which is common while snapshots are being
+  // refreshed), alternate between accounts instead of selecting the first
+  // one forever. If usage differs, the sort above still favors the less-used
+  // weekly quota.
+  const provider = normalizeProvider(sorted[0]);
+  const previousId = lastSelectedAccountByProvider.get(provider);
+  const lowestWeeklyUsage = weeklyUsage(sorted[0]);
+  const lowestUsageAccounts = sorted.filter(
+    (account) => weeklyUsage(account) === lowestWeeklyUsage,
+  );
+  const previousIndex = previousId
+    ? lowestUsageAccounts.findIndex((account) => account.id === previousId)
+    : -1;
+  const winner =
+    previousIndex >= 0
+      ? lowestUsageAccounts[(previousIndex + 1) % lowestUsageAccounts.length]
+      : sorted[0];
+  lastSelectedAccountByProvider.set(provider, winner.id);
 
   return winner;
 }

@@ -83,10 +83,10 @@ MultiVibe acts as an OpenAI-compatible gateway that lets you route requests acro
 
 When a request arrives, MultiVibe resolves the requested model to a provider and chooses an account with this strategy:
 
-1. Prefer accounts untouched on both windows (5h + weekly)
-2. Otherwise prefer account with nearest weekly reset
-3. Fallback by priority
-4. On `429`/quota-like errors, temporarily block the account+model and retry on the next candidate
+1. Share traffic according to the least-used known weekly quota; equal weekly usage alternates between accounts.
+2. If a weekly-only account exists, stop selecting an account with a 5h window once that 5h quota reaches the near-limit threshold (`90%` by default).
+3. Use the weekly reset time and configured priority as tie breakers.
+4. On `429`/quota-like errors, temporarily block the account+model and retry on the next candidate.
 
 When the requested model is an alias, MultiVibe resolves it to ordered target models and automatically falls back across target models/providers as quotas are hit.
 
@@ -672,6 +672,7 @@ same `/admin/oauth/device/poll` endpoint used by OpenAI device OAuth.
 | `OAUTH_REDIRECT_URI`              | `http://localhost:1455/auth/callback`     | Redirect URI                                                        |
 | `TOKEN_REFRESH_MARGIN_MS`         | `60000`                                   | Refresh OAuth tokens this long before expiry                        |
 | `ACCOUNT_FLUSH_INTERVAL_MS`       | `5000`                                    | Debounce interval for writing modified account state to disk        |
+| `FIVE_HOUR_QUOTA_THRESHOLD_PERCENT`| `90`                                      | 5h usage percentage at which a weekly-only account is preferred exclusively |
 | `MAX_ACCOUNT_RETRY_ATTEMPTS`      | `10`                                      | Max accounts to try on quota/rate-limit errors                      |
 | `MAX_UPSTREAM_RETRIES`            | `5`                                       | Retries per upstream request for transient 5xx/transport errors; quota rotates accounts |
 | `UPSTREAM_BASE_DELAY_MS`          | `2000`                                    | Base backoff delay for upstream retries (ms)                        |
