@@ -84,7 +84,7 @@ MultiVibe acts as an OpenAI-compatible gateway that lets you route requests acro
 When a request arrives, MultiVibe resolves the requested model to a provider and chooses an account with this strategy:
 
 1. Share traffic according to the least-used known weekly quota; equal weekly usage alternates between accounts.
-2. If a weekly-only account exists, stop selecting an account with a 5h window once that 5h quota reaches the near-limit threshold (`90%` by default).
+2. Stop selecting an account with a 5h window once that 5h quota reaches the near-limit threshold (`90%` by default), while another candidate remains available. This applies whether or not the other candidate is weekly-only.
 3. Use the weekly reset time and configured priority as tie breakers.
 4. On `429`/quota-like errors, temporarily block the account+model and retry on the next candidate.
 

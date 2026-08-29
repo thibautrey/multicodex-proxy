@@ -37,13 +37,6 @@ function hasFiveHourQuota(account: Account): boolean {
   return Boolean(account.usage?.primary);
 }
 
-function hasKnownNoFiveHourQuota(account: Account): boolean {
-  // An account with a weekly window and no normalized primary window is the
-  // OpenAI shape for a plan without a five-hour quota. An absent usage
-  // snapshot is deliberately not classified this way.
-  return Boolean(account.usage?.secondary && !account.usage.primary);
-}
-
 function fiveHourQuotaIsNearLimit(account: Account): boolean {
   const usedPercent = account.usage?.primary?.usedPercent;
   return (
@@ -314,14 +307,13 @@ export function chooseAccount(accounts: Account[]): Account | null {
 
   if (!available.length) return null;
 
-  const knownNoFiveHourQuota = available.filter(hasKnownNoFiveHourQuota);
-  const pool =
-    knownNoFiveHourQuota.length > 0
-      ? available.filter(
-          (account) =>
-            !hasFiveHourQuota(account) || !fiveHourQuotaIsNearLimit(account),
-        )
-      : available;
+  // A nearly exhausted five-hour window must never win solely because its
+  // weekly usage is lower. This applies whether the other accounts are
+  // weekly-only or also have a five-hour window.
+  const pool = available.filter(
+    (account) =>
+      !hasFiveHourQuota(account) || !fiveHourQuotaIsNearLimit(account),
+  );
   const effectivePool = pool.length ? pool : available;
 
   const sorted = [...effectivePool].sort((a, b) => {

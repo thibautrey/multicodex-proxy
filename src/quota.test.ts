@@ -79,6 +79,16 @@ test("stops using a five-hour account near its limit when a weekly-only account 
   );
 });
 
+test("does not use an exhausted five-hour account to equalize weekly usage", () => {
+  const withFiveHourQuota = account("with-five-hour-exhausted", 100, 0);
+  const otherFiveHourQuota = account("other-five-hour-available", 10, 50);
+
+  assert.equal(
+    chooseAccount([withFiveHourQuota, otherFiveHourQuota])?.id,
+    "other-five-hour-available",
+  );
+});
+
 test("keeps a five-hour account in rotation below the near-limit threshold", () => {
   const withFiveHourQuota = account("with-five-hour-below-limit", 89, 0);
   const withoutFiveHourQuota = account("without-five-hour-below-limit", undefined, 0);
