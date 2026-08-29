@@ -2,6 +2,7 @@ import {
   EXCLUDED_PROVIDER_MODELS,
   CODEX_CLI_ORIGINATOR,
   CODEX_CLI_USER_AGENT,
+  CODEX_SESSION_AFFINITY,
   HANG_RETRY_INTERVAL_MS,
   HANG_RETRY_MAX_DURATION_MS,
   MAX_ACCOUNT_RETRY_ATTEMPTS,
@@ -35,6 +36,7 @@ import type {
   UpstreamMode,
 } from "../../types.js";
 import {
+  accountSelectionPool,
   accountUsable,
   chooseAccountForProvider,
   clearEmptyResponseHistory,
@@ -142,6 +144,11 @@ import {
   type RoutingRequest,
 } from "../../smart-routing.js";
 import type { SmartRoutingCoordinator } from "../../smart-routing-routes.js";
+import {
+  findSessionAffinityAccount,
+  preferSessionAffinityAccount,
+  SessionAffinityCache,
+} from "../../session-affinity.js";
 
 type ProxyRoutesOptions = {
   store: AccountStore;
@@ -1795,6 +1802,7 @@ function isModelNotFoundError(status: number, errorText: string): boolean {
 }
 
 export function createProxyRouter(options: ProxyRoutesOptions) {
+  const sessionAffinity = new SessionAffinityCache();
   const {
     store,
     traceManager,
@@ -2259,12 +2267,44 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               (account) => account.id === entry.resource.accountId,
             ),
         )?.resource;
-        const selected = preferredResource
+
+        const affinityAccounts = accountSelectionPool(usableAccounts);
+        const affinityAccount = findSessionAffinityAccount(
+          sessionAffinity,
+          CODEX_SESSION_AFFINITY,
+          codexSessionId,
+          candidate.provider,
+          affinityAccounts,
+        );
+
+        // Policy constraints have already filtered providerAccounts above.
+        // Within that eligible set, prefer the account already associated
+        // with this Codex session to preserve cache locality. Smart-routing's
+        // preferred resource remains the fallback for a new or invalidated
+        // affinity.
+        const preferredAccount = preferredResource
           ? usableAccounts.find(
               (account) => account.id === preferredResource.accountId,
             )
-          : chooseAccountForProvider(usableAccounts, candidate.provider);
+          : undefined;
+
+        const selected =
+          preferSessionAffinityAccount(affinityAccount, preferredAccount) ??
+          chooseAccountForProvider(usableAccounts, candidate.provider);
+
         if (!selected) break;
+
+        if (CODEX_SESSION_AFFINITY && codexSessionId) {
+          // Remember the last selected eligible account. If it fails and the
+          // request rotates to another account, that later selection replaces
+          // this mapping immediately.
+          sessionAffinity.remember(
+            codexSessionId,
+            candidate.provider,
+            selected.id,
+          );
+        }
+
         completedRoutingAccountId = selected.id;
         let attemptCapacityLease: CapacityLease | undefined;
 

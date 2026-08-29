@@ -116,6 +116,8 @@ export const XAI_AUTH_PATH =
 export const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
 export const CODEX_PROJECT_REGISTRATION_TOKEN =
   process.env.CODEX_PROJECT_REGISTRATION_TOKEN ?? ADMIN_TOKEN;
+export const CODEX_SESSION_AFFINITY =
+  (process.env.CODEX_SESSION_AFFINITY ?? "false") === "true";
 export const PROXY_API_KEY = process.env.PROXY_API_KEY ?? "";
 export const PROXY_API_KEYS = process.env.PROXY_API_KEYS ?? "";
 export const CLAUDE_CODE_MODEL =

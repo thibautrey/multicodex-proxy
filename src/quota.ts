@@ -359,10 +359,10 @@ export function clearEmptyResponseHistory(account: Account, model?: string) {
   }
 }
 
-export function chooseAccount(accounts: Account[]): Account | null {
+export function accountSelectionPool(accounts: Account[]): Account[] {
   const available = accounts.filter((a) => a.enabled);
 
-  if (!available.length) return null;
+  if (!available.length) return [];
 
   // A nearly exhausted five-hour window must never win solely because its
   // weekly usage is lower. This applies whether the other accounts are
@@ -371,7 +371,14 @@ export function chooseAccount(accounts: Account[]): Account | null {
     (account) =>
       !hasFiveHourQuota(account) || !fiveHourQuotaIsNearLimit(account),
   );
-  const effectivePool = pool.length ? pool : available;
+
+  return pool.length ? pool : available;
+}
+
+export function chooseAccount(accounts: Account[]): Account | null {
+  const effectivePool = accountSelectionPool(accounts);
+
+  if (!effectivePool.length) return null;
 
   const sorted = [...effectivePool].sort((a, b) => {
     const aw = weeklyUsage(a);
