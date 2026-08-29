@@ -1,6 +1,6 @@
 export type Account = {
   id: string;
-  provider?: "openai" | "openai-compatible" | "mistral" | "zai" | "xai";
+  provider?: "openai" | "openai-compatible" | "opencode" | "mistral" | "zai" | "xai";
   upstreamMode?: "responses" | "chat/completions";
   compatibilityMode?: "auto" | "responses" | "chat-completions-bridge";
   email?: string;
@@ -8,6 +8,10 @@ export type Account = {
   accessToken?: string;
   refreshToken?: string;
   chatgptAccountId?: string;
+  opencodeAccountId?: string;
+  opencodeOrgId?: string;
+  opencodeOrgName?: string;
+  opencodeConsoleUrl?: string;
   xaiUserId?: string;
   xaiAuthScope?: string;
   oidcIssuer?: string;
@@ -206,9 +210,9 @@ export type ExposedModel = {
   id: string;
   owned_by?: string;
   metadata?: {
-    provider?: "openai" | "openai-compatible" | "mistral" | "zai" | "xai";
+    provider?: "openai" | "openai-compatible" | "opencode" | "mistral" | "zai" | "xai";
     provider_candidates?: Array<
-      "openai" | "openai-compatible" | "mistral" | "zai" | "xai"
+      "openai" | "openai-compatible" | "opencode" | "mistral" | "zai" | "xai"
     >;
     is_alias?: boolean;
     alias_targets?: string[];
@@ -231,7 +235,7 @@ export type PriorityClass = "critical" | "interactive" | "standard" | "batch";
 
 export type RoutingCandidate = {
   model: string;
-  provider?: "openai" | "openai-compatible" | "mistral" | "zai" | "xai";
+  provider?: "openai" | "openai-compatible" | "opencode" | "mistral" | "zai" | "xai";
   accountIds?: string[];
   location?: "local" | "cloud";
   quality?: number;

@@ -35,6 +35,7 @@ import {
   XAI_BASE_URL,
   XAI_OAUTH_CLIENT_ID,
   XAI_OAUTH_ISSUER,
+  OPENCODE_BASE_URL,
 } from "../../config.js";
 import {
   accountFromXaiOAuth,
@@ -42,6 +43,11 @@ import {
   pollXaiDeviceCode,
   requestXaiDeviceCode,
 } from "../../xai.js";
+import {
+  accountFromOpenCodeOAuth,
+  pollOpenCodeDeviceCode,
+  requestOpenCodeDeviceCode,
+} from "../../opencode.js";
 import type { CodexProjectRegistry } from "../../codex-projects.js";
 import { aggregateProjectUsage } from "../../project-usage.js";
 import { buildCodexHookInstallCommand } from "../../codex-hook-install.js";
@@ -987,6 +993,8 @@ export function createAdminRouter(options: AdminRoutesOptions) {
           ? "zai"
           : body.provider === "xai"
             ? "xai"
+          : body.provider === "opencode"
+            ? "opencode"
           : body.provider === "openai-compatible"
             ? "openai-compatible"
             : "openai";
@@ -1028,7 +1036,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
         provider === "xai"
           ? body.oidcClientId ?? XAI_OAUTH_CLIENT_ID
           : body.oidcClientId,
-      baseUrl,
+      baseUrl: provider === "opencode" ? baseUrl ?? OPENCODE_BASE_URL : baseUrl,
       location:
         body.location === "local" || body.location === "cloud"
           ? body.location
@@ -1039,6 +1047,9 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       usage: body.usage,
       state: body.state,
     };
+    if (provider === "opencode") {
+      await refreshUsageIfNeeded(account, account.baseUrl!, true);
+    }
     await store.addOrUpdate(account);
     res.json({ ok: true, account: redact(account) });
   });
@@ -1112,6 +1123,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     const provider = normalizeProvider(account);
     let usageBaseUrl = openaiBaseUrl;
     if (provider === "openai-compatible") usageBaseUrl = account.baseUrl ?? "";
+    else if (provider === "opencode") usageBaseUrl = account.baseUrl ?? OPENCODE_BASE_URL;
     else if (provider === "mistral") usageBaseUrl = mistralBaseUrl;
     else if (provider === "zai") usageBaseUrl = zaiBaseUrl;
     else if (provider === "xai") usageBaseUrl = account.baseUrl ?? XAI_BASE_URL;
@@ -1206,6 +1218,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
         const provider = normalizeProvider(valid);
         let usageBaseUrl = openaiBaseUrl;
         if (provider === "openai-compatible") usageBaseUrl = valid.baseUrl ?? "";
+        else if (provider === "opencode") usageBaseUrl = valid.baseUrl ?? OPENCODE_BASE_URL;
         else if (provider === "mistral") usageBaseUrl = mistralBaseUrl;
         else if (provider === "zai") usageBaseUrl = zaiBaseUrl;
         else if (provider === "xai") usageBaseUrl = valid.baseUrl ?? XAI_BASE_URL;
@@ -1284,9 +1297,14 @@ export function createAdminRouter(options: AdminRoutesOptions) {
   router.post("/oauth/start", async (req, res) => {
     const email = String(req.body?.email ?? "").trim();
     const targetAccountId = String(req.body?.accountId ?? "").trim() || undefined;
-    const provider = req.body?.provider === "xai" ? "xai" : "openai";
+    const provider =
+      req.body?.provider === "xai"
+        ? "xai"
+        : req.body?.provider === "opencode"
+          ? "opencode"
+          : "openai";
     const method =
-      provider === "xai" || req.body?.method === "device"
+      provider === "xai" || provider === "opencode" || req.body?.method === "device"
         ? "device"
         : "browser";
     if (provider === "openai" && !email) {
@@ -1323,6 +1341,27 @@ export function createAdminRouter(options: AdminRoutesOptions) {
             userCode: device.userCode,
             verificationUrl:
               device.verificationUrlComplete ?? device.verificationUrl,
+            intervalSeconds: device.intervalSeconds,
+            expiresAt: device.expiresAt,
+          });
+        }
+        if (provider === "opencode") {
+          const device = await requestOpenCodeDeviceCode();
+          await oauthStore.create({
+            ...flow,
+            deviceAuthId: device.deviceCode,
+            userCode: device.userCode,
+            verificationUrl: device.verificationUrl,
+            intervalSeconds: device.intervalSeconds,
+            expiresAt: device.expiresAt,
+          });
+          return res.json({
+            ok: true,
+            flowId: flow.id,
+            provider,
+            method,
+            userCode: device.userCode,
+            verificationUrl: device.verificationUrl,
             intervalSeconds: device.intervalSeconds,
             expiresAt: device.expiresAt,
           });
@@ -1392,9 +1431,9 @@ export function createAdminRouter(options: AdminRoutesOptions) {
 
     const flow = await oauthStore.get(flowId);
     if (!flow) return res.status(404).json({ error: "flow not found" });
-    if (flow.provider === "xai") {
+    if (flow.provider === "xai" || flow.provider === "opencode") {
       return res.status(400).json({
-        error: "Grok Build OAuth uses the device-code completion endpoint",
+        error: `${flow.provider === "xai" ? "Grok Build" : "OpenCode"} OAuth uses the device-code completion endpoint`,
       });
     }
 
@@ -1439,6 +1478,60 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     }
 
     try {
+      if (flow.provider === "opencode") {
+        if (!flow.deviceAuthId) {
+          throw new Error("OpenCode device authorization is missing its device code");
+        }
+        const result = await pollOpenCodeDeviceCode(
+          flow.deviceAuthId,
+          flow.intervalSeconds,
+        );
+        if (result.status === "pending") {
+          await oauthStore.update(flow.id, {
+            intervalSeconds: result.intervalSeconds,
+          });
+          return res.json({
+            ok: true,
+            status: "pending",
+            intervalSeconds: result.intervalSeconds,
+          });
+        }
+        const accounts = await store.listAccounts();
+        const existing = flow.targetAccountId
+          ? accounts.find((account) => account.id === flow.targetAccountId)
+          : undefined;
+        if (flow.targetAccountId && !existing) {
+          throw new Error("target OpenCode account not found for reauth");
+        }
+        let account = await accountFromOpenCodeOAuth(flow, result.token, existing);
+        if (!existing && account.opencodeAccountId) {
+          const duplicate = accounts.find(
+            (candidate) =>
+              normalizeProvider(candidate) === "opencode" &&
+              candidate.opencodeAccountId === account.opencodeAccountId &&
+              candidate.opencodeOrgId === account.opencodeOrgId,
+          );
+          if (duplicate) {
+            account = await accountFromOpenCodeOAuth(flow, result.token, duplicate);
+          }
+        }
+        account = await refreshUsageIfNeeded(
+          account,
+          account.baseUrl ?? OPENCODE_BASE_URL,
+          true,
+        );
+        await store.addOrUpdate(account);
+        await oauthStore.update(flow.id, {
+          status: "success",
+          completedAt: Date.now(),
+          accountId: account.id,
+        });
+        return res.json({
+          ok: true,
+          status: "success",
+          account: redact(account),
+        });
+      }
       if (flow.provider === "xai") {
         if (!flow.deviceAuthId) {
           throw new Error("xAI device authorization is missing its device code");

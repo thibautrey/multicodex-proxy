@@ -36,12 +36,13 @@ MultiVibe acts as an OpenAI-compatible gateway that lets you route requests acro
   - opaque multipart/SDP proxy compatible with Codex's native `realtime/calls` transport
   - audio flows directly over the negotiated WebRTC connection; MultiVibe is only on the session setup path
   - account-token refresh and quota-aware account rotation happen before the SDP answer is returned
-- **Multi-account routing** with quota-aware failover across OpenAI, OpenAI-compatible, Mistral, z.ai, and Grok Build subscription accounts
+- **Multi-account routing** with quota-aware failover across OpenAI, OpenAI-compatible, OpenCode Zen/Go, Mistral, z.ai, and Grok Build subscription accounts
 - **Smart model aliases** with versioned conditions, local/cloud candidates, deterministic scoring, capacity constraints, budgets, and queue/reject fallbacks
 - **Durable deferred jobs** with weighted priority/application fairness, SQLite leases, retries, polling/SSE results, and optional signed webhooks
 - **Application-visible capacity** through authenticated snapshots and resumable SSE events
 - **Image-aware routing override** that can route image-bearing requests to a chosen exposed model or alias while preserving the originally requested model in traces
-- **OAuth onboarding** from dashboard with browser callback or device-code flow, including xAI device OAuth for SuperGrok / X Premium+
+- **OAuth onboarding** from dashboard with browser callback or device-code flow, including OpenCode Console and xAI device OAuth
+- **OpenCode quota detection** for rolling 5-hour, weekly, and monthly OpenCode Go windows
 - **Manual OpenAI-compatible connections** with custom `baseUrl` + API key
 - **Optional local proxy API key** for HTTP and WebSocket clients via `PROXY_API_KEY`
 - **Default OpenAI passthrough account** for root-path requests that are not handled by the OpenAI-compatible endpoints
@@ -173,6 +174,12 @@ For headless or remote setups, choose **Device code** instead. The dashboard ope
 the verification page, shows a one-time code, and completes automatically after
 you approve the login.
 
+For OpenCode, choose **OpenCode Zen / Go**. You can enter an `OPENCODE_API_KEY`
+from the OpenCode Console or click **Connect OpenCode account** to use the
+official `opencode-cli` device flow. OAuth accounts discover their Zen/Go API
+root from the Console. The Accounts table refreshes and displays the rolling
+5-hour, weekly, and monthly quotas exposed by OpenCode Go.
+
 For Grok Build, choose **Grok Build (subscription)** and start the device login.
 The proxy sends the resulting subscription bearer to
 `https://cli-chat-proxy.grok.com/v1`, together with the same client headers as
@@ -199,7 +206,7 @@ Device OAuth is preferred when the CLI and proxy may run concurrently. Refresh
 tokens rotate; importing the same session into independent stores can make one
 consumer stale after the other refreshes it.
 
-Mistral, z.ai, and generic OpenAI-compatible accounts use manual token/API-key
+Mistral, z.ai, OpenCode service accounts, and generic OpenAI-compatible accounts use manual token/API-key
 entry in the dashboard. Generic OpenAI-compatible accounts also require a
 `baseUrl`.
 
@@ -606,6 +613,11 @@ To start Grok Build device OAuth, call `POST /admin/oauth/start` with
 `{"provider":"xai","method":"device"}`. Poll the returned `flowId` through the
 same `/admin/oauth/device/poll` endpoint used by OpenAI device OAuth.
 
+OpenCode Console uses the same endpoints with
+`{"provider":"opencode","method":"device"}`. The returned access and refresh
+tokens are stored with the account; OpenCode API keys can instead be added
+directly through `POST /admin/accounts` with `provider: "opencode"`.
+
 ---
 
 ## ⚙️ Environment variables
@@ -644,6 +656,9 @@ same `/admin/oauth/device/poll` endpoint used by OpenAI device OAuth.
 | `MISTRAL_BASE_URL`                | `https://api.mistral.ai`                  | Mistral upstream base URL                                           |
 | `MISTRAL_UPSTREAM_PATH`           | `/v1/responses`                           | Mistral upstream path for responses                                 |
 | `MISTRAL_COMPACT_UPSTREAM_PATH`   | `/v1/responses/compact`                   | Mistral upstream path for compact responses                         |
+| `OPENCODE_BASE_URL`               | `https://opencode.ai/zen`                 | OpenCode API root before `/v1`; OAuth discovery can override it per account |
+| `OPENCODE_CONSOLE_URL`            | `https://opencode.ai/console`             | OpenCode Console API and device OAuth base URL                       |
+| `OPENCODE_OAUTH_CLIENT_ID`        | `opencode-cli`                            | Official OpenCode device OAuth client id                             |
 | `ZAI_BASE_URL`                    | `https://api.z.ai`                        | z.ai upstream base URL                                              |
 | `ZAI_UPSTREAM_PATH`               | `/api/coding/paas/v4/chat/completions`    | z.ai Coding Plan upstream path for responses routed through chat completions |
 | `ZAI_COMPACT_UPSTREAM_PATH`       | `/api/coding/paas/v4/chat/completions`    | z.ai Coding Plan upstream path for compact responses                |

@@ -112,6 +112,8 @@ export function TracingTab(props: Props) {
   const providerFavicon = (provider?: string) =>
     provider === "mistral"
       ? "https://mistral.ai/favicon.ico"
+      : provider === "opencode"
+        ? "https://opencode.ai/favicon-v3.svg"
       : provider === "zai"
         ? "https://z.ai/favicon.ico"
         : provider === "xai"
@@ -121,6 +123,8 @@ export function TracingTab(props: Props) {
   const providerLabel = (provider?: string) =>
     provider === "mistral"
       ? "Mistral"
+      : provider === "opencode"
+        ? "OpenCode"
       : provider === "openai-compatible"
         ? "OpenAI-compatible"
         : provider === "zai"

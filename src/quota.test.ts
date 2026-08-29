@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { chooseAccount } from "./quota.js";
+import {
+  chooseAccount,
+  parseOpenCodeUsage,
+  refreshUsageIfNeeded,
+} from "./quota.js";
 import type { Account } from "./types.js";
 
 function account(
@@ -97,4 +101,75 @@ test("keeps a five-hour account in rotation below the near-limit threshold", () 
   const second = chooseAccount([withFiveHourQuota, withoutFiveHourQuota])?.id;
 
   assert.notEqual(first, second);
+});
+
+test("normalizes OpenCode Go rolling, weekly, and monthly quotas", () => {
+  const usage = parseOpenCodeUsage({
+    usage: {
+      rolling: {
+        status: "ok",
+        percent: 12.5,
+        resetsAt: "2026-08-29T16:00:00.000Z",
+      },
+      weekly: {
+        status: "ok",
+        percent: 34,
+        resetsAt: "2026-09-01T00:00:00.000Z",
+      },
+      monthly: {
+        status: "rate-limited",
+        percent: 100,
+        resetsAt: "2026-09-15T00:00:00.000Z",
+      },
+    },
+  });
+
+  assert.equal(usage.primary?.usedPercent, 12.5);
+  assert.equal(usage.primary?.windowSeconds, 5 * 60 * 60);
+  assert.equal(usage.secondary?.usedPercent, 34);
+  assert.equal(usage.secondary?.windowSeconds, 7 * 24 * 60 * 60);
+  assert.equal(usage.monthly?.usedPercent, 100);
+  assert.equal(
+    usage.monthly?.resetAt,
+    Date.parse("2026-09-15T00:00:00.000Z"),
+  );
+});
+
+test("refreshes OpenCode quotas from the account's Go usage endpoint", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    assert.equal(String(input), "https://opencode.ai/zen/go/v1/usage");
+    assert.equal(
+      new Headers(init?.headers).get("authorization"),
+      "Bearer opencode-key",
+    );
+    return Response.json({
+      usage: {
+        rolling: { percent: 8, resetsAt: "2026-08-30T00:00:00Z" },
+        weekly: { percent: 21, resetsAt: "2026-09-01T00:00:00Z" },
+        monthly: { percent: 55, resetsAt: "2026-09-15T00:00:00Z" },
+      },
+    });
+  };
+  const opencode: Account = {
+    id: "opencode",
+    provider: "opencode",
+    accessToken: "opencode-key",
+    baseUrl: "https://opencode.ai/zen/go",
+    enabled: true,
+  };
+
+  try {
+    const refreshed = await refreshUsageIfNeeded(
+      opencode,
+      opencode.baseUrl!,
+      true,
+    );
+    assert.equal(refreshed.usage?.primary?.usedPercent, 8);
+    assert.equal(refreshed.usage?.secondary?.usedPercent, 21);
+    assert.equal(refreshed.usage?.monthly?.usedPercent, 55);
+    assert.equal(refreshed.state?.lastError, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
