@@ -293,7 +293,7 @@ export function clearEmptyResponseHistory(account: Account, model?: string) {
     // A successful response should only clear a block created by
     // empty-response detection. Quota/rate-limit/model-specific blocks may
     // have been created concurrently by another request and must survive.
-    if (block?.reason.startsWith("empty responses (")) {
+    if (block?.reason?.startsWith("empty responses (")) {
       delete modelBlocks[modelKey];
     }
 

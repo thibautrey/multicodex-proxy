@@ -277,3 +277,22 @@ test("non-finite quota snapshot values cannot create an invalid block timestamp"
     "invalid quota reset values should fall back to the transient rate-limit cooldown",
   );
 });
+
+test("clearing empty-response history tolerates a malformed block without a reason", () => {
+  const account = makeAccount();
+
+  account.state = {
+    modelBlocks: {
+      [MODEL]: {
+        until: Date.now() + MINUTE,
+        reason: undefined,
+      } as unknown as { until: number; reason: string },
+    },
+  };
+
+  assert.doesNotThrow(() => {
+    clearEmptyResponseHistory(account, MODEL);
+  });
+
+  assert.ok(account.state?.modelBlocks?.[MODEL]);
+});
