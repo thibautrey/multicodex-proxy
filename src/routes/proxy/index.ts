@@ -1943,6 +1943,19 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     let nativeStreamTracePromise: Promise<string> | undefined;
     let nativeStreamKeepalive: ReturnType<typeof setInterval> | undefined;
 
+    const startNativeStreamTrace = () =>
+      beginTrace({
+        at: startedAt,
+        startedAt,
+        route: req.path,
+        model:
+          typeof req.body?.model === "string" ? req.body.model : undefined,
+        status: 102,
+        stream: true,
+        latencyMs: 0,
+        requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
+      });
+
     if (isNativeResponsesStream) {
       res.status(200);
       res.set("Content-Type", "text/event-stream");
@@ -1954,17 +1967,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         if (!res.writableEnded) res.write(": keepalive\n\n");
       }, 5_000);
       nativeStreamKeepalive.unref?.();
-      nativeStreamTracePromise = beginTrace({
-        at: startedAt,
-        startedAt,
-        route: req.path,
-        model:
-          typeof req.body?.model === "string" ? req.body.model : undefined,
-        status: 102,
-        stream: true,
-        latencyMs: 0,
-        requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
-      });
+      nativeStreamTracePromise = startNativeStreamTrace();
     }
 
     const sendPreparationError = async (
@@ -2616,6 +2619,48 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 type: "upstream_error",
                 code: "upstream_error",
               } as const);
+
+            if (
+              upstream.status === 402 ||
+              upstream.status === 429 ||
+              isQuotaErrorText(upstreamText)
+            ) {
+              markQuotaHit(
+                selected,
+                blockModel,
+                `quota/rate-limit: ${upstream.status}`,
+              );
+              await store.upsertAccount(selected);
+
+              const traceId =
+                nativeStreamTraceId ?? (await nativeStreamTracePromise!);
+              await completeTrace(traceId, {
+                at: Date.now(),
+                startedAt,
+                route: req.path,
+                accountId: selected.id,
+                accountEmail: selected.email,
+                model: tracedModel,
+                ...traceModelResolution,
+                status: upstream.status,
+                stream: true,
+                latencyMs: Date.now() - startedAt,
+                requestBody,
+                error:
+                  typeof upstreamError?.message === "string"
+                    ? upstreamError.message
+                    : `Upstream returned HTTP ${upstream.status}`,
+                upstreamContentType: contentType,
+                lifecycleState: "completed",
+              });
+
+              // Start a fresh trace for the next account attempt while keeping
+              // the already-committed client SSE connection alive.
+              nativeStreamTraceId = undefined;
+              nativeStreamTracePromise = startNativeStreamTrace();
+              continue;
+            }
+
             if (!res.writableEnded) {
               res.write(
                 `event: error\ndata: ${JSON.stringify({ error: upstreamError })}\n\n`,
