@@ -685,16 +685,24 @@ export function AccountsTab(props: Props) {
   ).length;
   const enabledCount = accounts.filter((account) => account.enabled).length;
 
-  const renderUsageCell = (value?: number, resetAt?: number) => {
+  const renderUsageCell = (
+    value?: number,
+    resetAt?: number,
+    unsupported = false,
+  ) => {
     const safeValue =
       typeof value === "number" ? Math.max(0, Math.min(100, value)) : 0;
     return (
       <div className="usage-cell">
         <div className="usage-value-row">
           <strong>
-            {typeof value === "number" ? `${Math.round(value)}%` : "?"}
+            {unsupported
+              ? "N/A"
+              : typeof value === "number"
+                ? `${Math.round(value)}%`
+                : "?"}
           </strong>
-          <small>{fmt(resetAt)}</small>
+          <small>{unsupported ? "Not exposed" : fmt(resetAt)}</small>
         </div>
         <div className="mini-progress">
           <span style={{ width: `${safeValue}%` }} />
@@ -908,18 +916,21 @@ export function AccountsTab(props: Props) {
                     {renderUsageCell(
                       a.usage?.primary?.usedPercent,
                       a.usage?.primary?.resetAt,
+                      a.usage?.quotaStatus === "unsupported",
                     )}
                   </td>
                   <td>
                     {renderUsageCell(
                       a.usage?.secondary?.usedPercent,
                       a.usage?.secondary?.resetAt,
+                      a.usage?.quotaStatus === "unsupported",
                     )}
                   </td>
                   <td>
                     {renderUsageCell(
                       a.usage?.monthly?.usedPercent,
                       a.usage?.monthly?.resetAt,
+                      a.usage?.quotaStatus === "unsupported",
                     )}
                   </td>
                   <td>

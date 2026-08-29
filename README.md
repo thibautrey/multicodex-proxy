@@ -178,7 +178,9 @@ For OpenCode, choose **OpenCode Zen / Go**. You can enter an `OPENCODE_API_KEY`
 from the OpenCode Console or click **Connect OpenCode account** to use the
 official `opencode-cli` device flow. OAuth accounts discover their Zen/Go API
 root from the Console. The Accounts table refreshes and displays the rolling
-5-hour, weekly, and monthly quotas exposed by OpenCode Go.
+5-hour, weekly, and monthly quotas exposed by OpenCode Go. Zen and other plans
+that do not expose the Go usage endpoint remain routable and display `N/A`
+instead of reporting a quota-probe error.
 
 For Grok Build, choose **Grok Build (subscription)** and start the device login.
 The proxy sends the resulting subscription bearer to

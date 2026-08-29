@@ -118,8 +118,29 @@ export function parseOpenCodeUsage(data: any): UsageSnapshot {
     primary: toWindow(usage?.rolling, FIVE_HOUR_WINDOW_SECONDS),
     secondary: toWindow(usage?.weekly, WEEKLY_WINDOW_SECONDS),
     monthly: toWindow(usage?.monthly),
+    quotaStatus: "available",
     fetchedAt: Date.now(),
   };
+}
+
+function markOpenCodeQuotaUnsupported(account: Account): Account {
+  const isProbeAvailabilityError = (message?: string) =>
+    /^OpenCode usage probe failed (403|404)\b/.test(message ?? "");
+  account.usage = {
+    ...account.usage,
+    quotaStatus: "unsupported",
+    fetchedAt: Date.now(),
+  };
+  account.state = {
+    ...account.state,
+    lastError: isProbeAvailabilityError(account.state?.lastError)
+      ? undefined
+      : account.state?.lastError,
+    recentErrors: account.state?.recentErrors?.filter(
+      (error) => !isProbeAvailabilityError(error.message),
+    ),
+  };
+  return account;
 }
 
 function bearerToken(token: string): string {
@@ -446,6 +467,12 @@ export async function refreshUsageIfNeeded(account: Account, chatgptBaseUrl: str
         headers,
         signal: controller.signal,
       });
+      // OpenCode exposes this endpoint only for eligible Go subscriptions.
+      // Zen, balance-backed, and some OAuth accounts return 403/404 even
+      // though inference remains fully usable.
+      if (res.status === 403 || res.status === 404) {
+        return markOpenCodeQuotaUnsupported(account);
+      }
       if (!res.ok) throw new Error(`OpenCode usage probe failed ${res.status}`);
       const json = await res.json();
       account.usage = parseOpenCodeUsage(json);

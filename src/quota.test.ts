@@ -173,3 +173,67 @@ test("refreshes OpenCode quotas from the account's Go usage endpoint", async () 
     globalThis.fetch = originalFetch;
   }
 });
+
+test("treats unavailable OpenCode Go quotas as unsupported instead of an account error", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    Response.json(
+      { type: "error", error: { message: "not found" } },
+      { status: 404 },
+    );
+  const opencode: Account = {
+    id: "opencode-zen",
+    provider: "opencode",
+    accessToken: "opencode-key",
+    baseUrl: "https://opencode.ai/zen",
+    enabled: true,
+    state: {
+      lastError: "OpenCode usage probe failed 404",
+      recentErrors: [
+        { at: Date.now(), message: "OpenCode usage probe failed 404" },
+        { at: Date.now(), message: "other error" },
+      ],
+    },
+  };
+
+  try {
+    const refreshed = await refreshUsageIfNeeded(
+      opencode,
+      opencode.baseUrl!,
+      true,
+    );
+    assert.equal(refreshed.usage?.quotaStatus, "unsupported");
+    assert.equal(refreshed.state?.lastError, undefined);
+    assert.deepEqual(
+      refreshed.state?.recentErrors?.map((error) => error.message),
+      ["other error"],
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("keeps OpenCode authentication failures visible", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    Response.json({ error: { message: "unauthorized" } }, { status: 401 });
+  const opencode: Account = {
+    id: "opencode-invalid",
+    provider: "opencode",
+    accessToken: "invalid-key",
+    baseUrl: "https://opencode.ai/zen/go",
+    enabled: true,
+  };
+
+  try {
+    const refreshed = await refreshUsageIfNeeded(
+      opencode,
+      opencode.baseUrl!,
+      true,
+    );
+    assert.match(refreshed.state?.lastError ?? "", /failed 401/);
+    assert.notEqual(refreshed.usage?.quotaStatus, "unsupported");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
