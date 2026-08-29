@@ -125,6 +125,13 @@ import {
   isClaudeCodeRequest,
 } from "../../anthropic-compat.js";
 import {
+  accountSupportsModelByAvailability,
+  createProviderModelAvailability,
+  finalizeProviderModelAvailability,
+  recordDiscoveredModel,
+  type ModelAvailabilityByProvider,
+} from "./model-availability.js";
+import {
   aliasCandidateModels,
   allAliasCandidateModels,
   capacityTokenUsage,
@@ -156,6 +163,8 @@ const modelsCache: { at: number; models: ExposedModel[] } = {
 };
 const modelsRefreshCoordinator =
   new AsyncRefreshCoordinator<ExposedModel[]>();
+// Internal routing metadata. It is intentionally not exposed in /models.
+const modelAvailabilityByProvider: ModelAvailabilityByProvider = new Map();
 
 // Separate cache for fast O(1) model validation using Set
 const modelsValidationCache: {
@@ -753,6 +762,7 @@ function providersForModel(
 
 function accountSupportsModel(
   accountId: string,
+  provider: ProviderId,
   model: string | undefined,
   discoveredModels: ExposedModel[],
 ): boolean {
@@ -764,9 +774,12 @@ function accountSupportsModel(
   );
   if (!discovered) return true;
 
-  const accountIds = discovered.metadata.account_ids;
-  if (!accountIds?.length) return true;
-  return accountIds.includes(accountId);
+  return accountSupportsModelByAvailability(
+    accountId,
+    provider,
+    key,
+    modelAvailabilityByProvider,
+  );
 }
 
 function supportedToolTypesForRoute(
@@ -838,6 +851,16 @@ async function refreshModels(
     const accounts = await store.listAccounts();
     const byId = new Map<string, ExposedModel>();
     const activeAccounts = accounts.filter((a) => a.enabled && a.accessToken);
+    const discoveredAvailabilityByProvider: ModelAvailabilityByProvider =
+      new Map();
+    for (const account of activeAccounts) {
+      const provider = normalizeProvider(account);
+      const availability =
+        discoveredAvailabilityByProvider.get(provider) ??
+        createProviderModelAvailability();
+      availability.activeAccountIds.add(account.id);
+      discoveredAvailabilityByProvider.set(provider, availability);
+    }
     let catalogComplete = activeAccounts.length > 0;
 
     for (const account of activeAccounts) {
@@ -900,12 +923,21 @@ async function refreshModels(
             continue;
           }
           const upstream = json.models;
+          const availability = discoveredAvailabilityByProvider.get(provider);
+          availability?.successfulAccountIds.add(account.id);
           for (const entry of upstream) {
             const slug =
               typeof entry?.slug === "string" && entry.slug.trim()
                 ? entry.slug.trim()
                 : "";
             if (!slug) continue;
+            if (availability) {
+              recordDiscoveredModel(
+                availability,
+                normalizeModelLookupKey(slug),
+                account.id,
+              );
+            }
             if (isModelExcludedFromProvider(slug, provider)) continue;
             byId.set(
               slug,
@@ -930,12 +962,21 @@ async function refreshModels(
           catalogComplete = false;
           continue;
         }
+        const availability = discoveredAvailabilityByProvider.get(provider);
+        availability?.successfulAccountIds.add(account.id);
         for (const entry of upstream) {
           const id =
             typeof entry?.id === "string" && entry.id.trim()
               ? entry.id.trim()
               : "";
           if (!id) continue;
+          if (availability) {
+            recordDiscoveredModel(
+              availability,
+              normalizeModelLookupKey(id),
+              account.id,
+            );
+          }
           if (isModelExcludedFromProvider(id, provider)) continue;
           byId.set(
             id,
@@ -950,6 +991,14 @@ async function refreshModels(
       } catch {
         catalogComplete = false;
       }
+    }
+
+    for (const availability of discoveredAvailabilityByProvider.values()) {
+      finalizeProviderModelAvailability(availability);
+    }
+    modelAvailabilityByProvider.clear();
+    for (const [provider, availability] of discoveredAvailabilityByProvider) {
+      modelAvailabilityByProvider.set(provider, availability);
     }
 
     for (const id of PROXY_MODELS) {
@@ -1003,6 +1052,7 @@ async function refreshModels(
     updateValidationCache(merged, catalogComplete);
     return merged;
   } catch {
+    modelAvailabilityByProvider.clear();
     const fallback = fallbackModelCatalog();
     modelsCache.at = Date.now();
     modelsCache.models = fallback;
@@ -2172,7 +2222,12 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       const providerAccounts = accounts.filter(
         (a) =>
           normalizeProvider(a) === candidate.provider &&
-          accountSupportsModel(a.id, candidate.resolvedModel, discoveredModels) &&
+          accountSupportsModel(
+            a.id,
+            candidate.provider,
+            candidate.resolvedModel,
+            discoveredModels,
+          ) &&
           (!policyAccountIds || policyAccountIds.has(a.id)),
       );
       if (!providerAccounts.length) continue;
