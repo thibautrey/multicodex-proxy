@@ -241,3 +241,39 @@ test("usage-limit with no usable quota snapshot still creates a fallback block",
   assert.ok(block.until > before);
   assert.equal(accountUsable(account, MODEL), false);
 });
+
+test("non-finite quota snapshot values cannot create an invalid block timestamp", () => {
+  const account = makeAccount();
+  const now = Date.now();
+
+  account.usage = {
+    fetchedAt: now,
+    primary: {
+      usedPercent: Number.NaN,
+      resetAt: now + 2 * HOUR,
+    },
+    secondary: {
+      usedPercent: 100,
+      resetAt: Number.NaN,
+    },
+  };
+
+  markQuotaHit(
+    account,
+    MODEL,
+    "quota/rate-limit: 429",
+    '{"error":{"type":"usage_limit_reached"}}',
+  );
+
+  const block = account.state?.modelBlocks?.[MODEL];
+
+  assert.ok(block);
+  assert.ok(
+    Number.isFinite(block.until),
+    "non-finite quota snapshot values must never produce an invalid block timestamp",
+  );
+  assert.ok(
+    block.until > now && block.until < now + 10 * MINUTE,
+    "invalid quota reset values should fall back to the transient rate-limit cooldown",
+  );
+});

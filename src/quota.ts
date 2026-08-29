@@ -453,8 +453,10 @@ function exhaustedQuotaResetAt(
       if (
         !window ||
         typeof window.usedPercent !== "number" ||
+        !Number.isFinite(window.usedPercent) ||
         window.usedPercent < 99 ||
         typeof window.resetAt !== "number" ||
+        !Number.isFinite(window.resetAt) ||
         window.resetAt <= now
       ) {
         return [];
