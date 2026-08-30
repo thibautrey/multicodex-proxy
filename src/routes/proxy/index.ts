@@ -2679,6 +2679,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 selected,
                 blockModel,
                 `quota/rate-limit: ${upstream.status}`,
+                upstreamText,
               );
               await store.upsertAccount(selected);
 
