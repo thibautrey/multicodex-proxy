@@ -1760,6 +1760,19 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+export async function waitForHangRetry(
+  ms: number,
+  signal: AbortSignal,
+): Promise<boolean> {
+  try {
+    await sleep(ms, signal);
+    return true;
+  } catch (error) {
+    if (signal.aborted) return false;
+    throw error;
+  }
+}
+
 export function isStreamingUpstreamResponse(
   contentType: string,
   clientRequestedStream: boolean,
@@ -4219,7 +4232,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     if (elapsed >= HANG_RETRY_MAX_DURATION_MS) break; // fall through to final error response
 
     // Wait before retrying: some accounts may have had their rate-limit blocks expire
-    await sleep(HANG_RETRY_INTERVAL_MS, requestSignal);
+    if (!(await waitForHangRetry(HANG_RETRY_INTERVAL_MS, requestSignal))) return;
     // Reload accounts from store to pick up any blocks that expired
     accounts = store.getCachedAccounts();
     // sawEmptyAssistantOutput is preserved across retries

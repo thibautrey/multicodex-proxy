@@ -2,8 +2,15 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import test from "node:test";
 import express from "express";
-import { createProxyRouter } from "./index.js";
+import { createProxyRouter, waitForHangRetry } from "./index.js";
 import type { Account } from "../../types.js";
+
+test("ends the global hang retry cleanly when the client aborts", async () => {
+  const controller = new AbortController();
+  const waiting = waitForHangRetry(60_000, controller.signal);
+  controller.abort();
+  assert.equal(await waiting, false);
+});
 
 test("aborts an upstream request when the client disconnects before headers", async (t) => {
   const account: Account = {
