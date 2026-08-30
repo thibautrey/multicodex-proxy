@@ -1740,8 +1740,37 @@ function renderBufferedResponsesStream(
   };
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal?.reason ?? new DOMException("The operation was aborted", "AbortError"));
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout>;
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      reject(signal?.reason ?? new DOMException("The operation was aborted", "AbortError"));
+    };
+    timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+export async function waitForHangRetry(
+  ms: number,
+  signal: AbortSignal,
+): Promise<boolean> {
+  try {
+    await sleep(ms, signal);
+    return true;
+  } catch (error) {
+    if (signal.aborted) return false;
+    throw error;
+  }
 }
 
 export function isStreamingUpstreamResponse(
@@ -1866,6 +1895,22 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     res: express.Response,
   ) {
     const startedAt = Date.now();
+    const requestAbortController = new AbortController();
+    const abortRequest = () => {
+      if (res.writableEnded) return;
+      requestAbortController.abort();
+    };
+    const cleanupRequestCancellation = () => {
+      req.off("aborted", abortRequest);
+      res.off("close", abortRequest);
+      res.off("close", cleanupRequestCancellation);
+      res.off("finish", cleanupRequestCancellation);
+    };
+    req.once("aborted", abortRequest);
+    res.once("close", abortRequest);
+    res.once("close", cleanupRequestCancellation);
+    res.once("finish", cleanupRequestCancellation);
+    const requestSignal = requestAbortController.signal;
     const reservedCapacityLease = res.locals.multivibeCapacityLease as
       | CapacityLease
       | undefined;
@@ -2229,10 +2274,12 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     // Outer hang loop: when all accounts are exhausted (e.g. all rate-limited),
     // sleep and retry instead of failing immediately, up to HANG_RETRY_MAX_DURATION_MS.
     while (true) {
+      if (requestSignal.aborted) return;
       const tried = new Set<string>();
       let providerTried = false;
 
     for (const candidate of routingCandidates) {
+      if (requestSignal.aborted) return;
       const policyAccountIds = policyDecision?.eligible.length
         ? new Set(
             policyDecision.eligible
@@ -2264,6 +2311,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         maxAttempts,
       );
       for (let i = 0; i < attemptsForProvider; i++) {
+        if (requestSignal.aborted) return;
         const usableAccounts = providerAccounts.filter(
           (account) =>
             !tried.has(account.id) &&
@@ -2611,6 +2659,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               method: "POST",
               headers,
               body: serializeUpstreamPayload(payloadToUpstream),
+              signal: requestSignal,
             },
           );
           if (upstream.status === 400) {
@@ -2629,6 +2678,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                   method: "POST",
                   headers,
                   body: serializeUpstreamPayload(payloadToUpstream),
+                  signal: requestSignal,
                 },
               );
             } else {
@@ -4044,6 +4094,61 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           await store.upsertAccount(selected);
           return;
         } catch (err: any) {
+          if (requestSignal.aborted) {
+            if (nativeStreamKeepalive) {
+              clearInterval(nativeStreamKeepalive);
+              nativeStreamKeepalive = undefined;
+            }
+            if (isNativeResponsesStream) {
+              const traceId =
+                nativeStreamTraceId ??
+                (nativeStreamTracePromise
+                  ? await nativeStreamTracePromise
+                  : undefined);
+              if (traceId) {
+                try {
+                  await completeTrace(traceId, {
+                    at: Date.now(),
+                    startedAt,
+                    route: req.path,
+                    accountId: selected.id,
+                    accountEmail: selected.email,
+                    model: tracedModel,
+                    ...traceModelResolution,
+                    status: 499,
+                    stream: true,
+                    latencyMs: Date.now() - startedAt,
+                    error: "client disconnected before upstream completion",
+                    requestBody,
+                    ...traceImage,
+                    lifecycleState: "interrupted",
+                  });
+                } catch (traceError) {
+                  console.error("failed to record client disconnect", traceError);
+                }
+              }
+            } else {
+              try {
+                recordTrace({
+                  at: Date.now(),
+                  route: req.path,
+                  accountId: selected.id,
+                  accountEmail: selected.email,
+                  model: tracedModel,
+                  ...traceModelResolution,
+                  status: 499,
+                  stream: false,
+                  latencyMs: Date.now() - startedAt,
+                  error: "client disconnected before upstream completion",
+                  requestBody,
+                  ...traceImage,
+                });
+              } catch (traceError) {
+                console.error("failed to record client disconnect", traceError);
+              }
+            }
+            return;
+          }
           const msg = err?.message ?? String(err);
           rememberError(selected, msg);
           if (nativeStreamKeepalive) {
@@ -4127,7 +4232,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     if (elapsed >= HANG_RETRY_MAX_DURATION_MS) break; // fall through to final error response
 
     // Wait before retrying: some accounts may have had their rate-limit blocks expire
-    await sleep(HANG_RETRY_INTERVAL_MS);
+    if (!(await waitForHangRetry(HANG_RETRY_INTERVAL_MS, requestSignal))) return;
     // Reload accounts from store to pick up any blocks that expired
     accounts = store.getCachedAccounts();
     // sawEmptyAssistantOutput is preserved across retries
