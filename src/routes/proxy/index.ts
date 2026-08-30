@@ -3,6 +3,7 @@ import {
   CODEX_CLI_ORIGINATOR,
   CODEX_CLI_USER_AGENT,
   CODEX_SESSION_AFFINITY,
+  CODEX_SESSION_AFFINITY_MAX_ENTRIES,
   HANG_RETRY_INTERVAL_MS,
   HANG_RETRY_MAX_DURATION_MS,
   MAX_ACCOUNT_RETRY_ATTEMPTS,
@@ -163,6 +164,8 @@ type ProxyRoutesOptions = {
   oauthConfig: OAuthConfig;
   capacityTracker?: CapacityTracker;
   smartRoutingCoordinator?: SmartRoutingCoordinator;
+  sessionAffinityCache?: SessionAffinityCache;
+  sessionAffinityEnabled?: boolean;
 };
 
 const modelsCache: { at: number; models: ExposedModel[] } = {
@@ -1802,7 +1805,11 @@ function isModelNotFoundError(status: number, errorText: string): boolean {
 }
 
 export function createProxyRouter(options: ProxyRoutesOptions) {
-  const sessionAffinity = new SessionAffinityCache();
+  const sessionAffinity =
+    options.sessionAffinityCache ??
+    new SessionAffinityCache(undefined, CODEX_SESSION_AFFINITY_MAX_ENTRIES);
+  const sessionAffinityEnabled =
+    options.sessionAffinityEnabled ?? CODEX_SESSION_AFFINITY;
   const {
     store,
     traceManager,
@@ -1881,6 +1888,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       typeof res.locals.proxyApplication === "string"
         ? res.locals.proxyApplication
         : undefined;
+    const affinityApplication = application ?? "default";
     const requestHeaders = TRACE_INCLUDE_HEADERS
       ? traceHeadersForRequest(req.headers)
       : undefined;
@@ -2268,13 +2276,14 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             ),
         )?.resource;
 
-        const affinityAccounts = accountSelectionPool(usableAccounts);
+        const quotaAwareAccounts = accountSelectionPool(usableAccounts);
         const affinityAccount = findSessionAffinityAccount(
           sessionAffinity,
-          CODEX_SESSION_AFFINITY,
+          sessionAffinityEnabled,
+          affinityApplication,
           codexSessionId,
           candidate.provider,
-          affinityAccounts,
+          quotaAwareAccounts,
         );
 
         // Policy constraints have already filtered providerAccounts above.
@@ -2283,7 +2292,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         // preferred resource remains the fallback for a new or invalidated
         // affinity.
         const preferredAccount = preferredResource
-          ? usableAccounts.find(
+          ? quotaAwareAccounts.find(
               (account) => account.id === preferredResource.accountId,
             )
           : undefined;
@@ -2294,11 +2303,12 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
 
         if (!selected) break;
 
-        if (CODEX_SESSION_AFFINITY && codexSessionId) {
+        if (sessionAffinityEnabled && codexSessionId) {
           // Remember the last selected eligible account. If it fails and the
           // request rotates to another account, that later selection replaces
           // this mapping immediately.
           sessionAffinity.remember(
+            affinityApplication,
             codexSessionId,
             candidate.provider,
             selected.id,

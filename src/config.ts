@@ -118,6 +118,10 @@ export const CODEX_PROJECT_REGISTRATION_TOKEN =
   process.env.CODEX_PROJECT_REGISTRATION_TOKEN ?? ADMIN_TOKEN;
 export const CODEX_SESSION_AFFINITY =
   (process.env.CODEX_SESSION_AFFINITY ?? "false") === "true";
+export const CODEX_SESSION_AFFINITY_MAX_ENTRIES = (() => {
+  const value = Number(process.env.CODEX_SESSION_AFFINITY_MAX_ENTRIES ?? 10_000);
+  return Number.isFinite(value) ? Math.max(1, Math.floor(value)) : 10_000;
+})();
 export const PROXY_API_KEY = process.env.PROXY_API_KEY ?? "";
 export const PROXY_API_KEYS = process.env.PROXY_API_KEYS ?? "";
 export const CLAUDE_CODE_MODEL =
