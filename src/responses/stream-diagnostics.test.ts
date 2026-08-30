@@ -5,6 +5,7 @@ import {
   extractSSEFrameUsage,
   inspectResponseStreamEvent,
   inspectResponseStreamFrame,
+  responseStreamFrameHasMeaningfulOutput,
 } from "./stream-diagnostics.js";
 
 function frame(event: any): string {
@@ -172,4 +173,33 @@ test("usage extraction ignores ordinary chunks and reads final usage", () => {
       total_tokens: 12,
     },
   );
+});
+
+test("meaningful output detection excludes metadata and accepts generated deltas", () => {
+  const ignored = [
+    ": connected",
+    ": keepalive",
+    "data: [DONE]",
+    'data: {"type":"response.created","response":{"id":"response-1"}}',
+    'data: {"type":"response.output_text.delta","delta":""}',
+    'data: {"object":"chat.completion.chunk","choices":[{"delta":{"role":"assistant"}}]}',
+    'data: {"type":"response.completed","response":{"usage":{"output_tokens":1}}}',
+  ];
+  for (const candidate of ignored) {
+    assert.equal(responseStreamFrameHasMeaningfulOutput(candidate), false, candidate);
+  }
+
+  const meaningful = [
+    'data: {"type":"response.output_text.delta","delta":"hello"}',
+    'data: {"type":"response.reasoning_summary_text.delta","delta":"thinking"}',
+    'data: {"type":"response.refusal.delta","delta":"cannot comply"}',
+    'data: {"type":"response.function_call_arguments.delta","delta":"{\\"x\\":1}"}',
+    'data: {"type":"response.custom_tool_call_input.delta","delta":"query"}',
+    'data: {"object":"chat.completion.chunk","choices":[{"delta":{"content":"hello"}}]}',
+    'data: {"object":"chat.completion.chunk","choices":[{"delta":{"reasoning_content":"thinking"}}]}',
+    'data: {"object":"chat.completion.chunk","choices":[{"delta":{"tool_calls":[{"function":{"arguments":"{}"}}]}}]}',
+  ];
+  for (const candidate of meaningful) {
+    assert.equal(responseStreamFrameHasMeaningfulOutput(candidate), true, candidate);
+  }
 });

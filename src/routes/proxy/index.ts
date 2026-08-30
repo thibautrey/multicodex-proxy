@@ -115,6 +115,7 @@ import {
   extractSSEFrameUsage,
   inspectResponseStreamEvent,
   inspectResponseStreamFrame,
+  responseStreamFrameHasMeaningfulOutput,
 } from "../../responses/stream-diagnostics.js";
 import { createSSEStreamTap } from "../../responses/sse-stream-tap.js";
 import { createUpstreamPayloadSerializer } from "../../responses/upstream-payload-serializer.js";
@@ -2495,6 +2496,15 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           preparationMs: 0,
           upstreamHeadersMs: 0,
         };
+        let ttftMs: number | undefined;
+        const markFirstOutput = (frame: string) => {
+          if (
+            ttftMs === undefined &&
+            responseStreamFrameHasMeaningfulOutput(frame)
+          ) {
+            ttftMs = Date.now() - startedAt;
+          }
+        };
         const upstreamContextInspection =
           payloadToUpstream?.input === req.body?.input
             ? incomingContextInspection
@@ -2504,6 +2514,10 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           latestCompactionIndex,
         } = upstreamContextInspection;
         const traceImage = {
+          provider: candidate.provider,
+          get ttftMs() {
+            return ttftMs;
+          },
           ...(imageTrace ? { imageTrace } : {}),
           latencyBreakdown,
           ...(usageRefreshTrace.background ||
@@ -2825,6 +2839,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               const streamTap = createSSEStreamTap((frame) => {
                 usage =
                   inspectResponseStreamFrame(frame, diagnostics) ?? usage;
+                if (!chatStreamState) markFirstOutput(frame);
               });
               const forwardChatCompletionFrame = (frame: string) => {
                 streamTap.push(new TextEncoder().encode(frame));
@@ -2832,7 +2847,10 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                   frame,
                   chatStreamState!,
                 );
-                if (converted && !res.writableEnded) res.write(converted);
+                if (converted && !res.writableEnded) {
+                  res.write(converted);
+                  markFirstOutput(frame);
+                }
               };
 
               try {
@@ -2976,6 +2994,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
 
                 const forwardFrame = (frame: string) => {
                   res.write(frame.endsWith("\n\n") ? frame : `${frame}\n\n`);
+                  markFirstOutput(frame);
                   if (frame.includes("[DONE]")) doneSent = true;
                   accumulatedUsage =
                     extractSSEFrameUsage(frame) ?? accumulatedUsage;
@@ -3140,6 +3159,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 );
                 if (converted && !res.writableEnded) {
                   res.write(converted);
+                  markFirstOutput(frame);
                 } else if (
                   !res.writableEnded &&
                   payloads.some((payload) =>

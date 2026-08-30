@@ -182,6 +182,9 @@ test("forwards native Responses chunks while preserving diagnostics", async (t) 
     completedTraces[0].responseStreamDiagnostics.outputTextDeltaCount,
     1,
   );
+  assert.equal(completedTraces[0].provider, "openai");
+  assert.equal(typeof completedTraces[0].ttftMs, "number");
+  assert.ok(completedTraces[0].ttftMs >= 0);
 });
 
 test("returns an SSE error when a native Responses stream is interrupted", async (t) => {
@@ -281,6 +284,7 @@ test("returns an SSE error when a native Responses stream is interrupted", async
   assert.match(response.body, /event: error\ndata: .*stream_interrupted/);
   assert.equal(completedTraces[0].status, 599);
   assert.equal(completedTraces[0].lifecycleState, "interrupted");
+  assert.equal(typeof completedTraces[0].ttftMs, "number");
 });
 
 test("converts a z.ai chat completion SSE to a completed Responses stream", async (t) => {
@@ -399,4 +403,6 @@ test("converts a z.ai chat completion SSE to a completed Responses stream", asyn
     completion_tokens: 3,
     total_tokens: 15,
   });
+  assert.equal(completedTraces[0].provider, "zai");
+  assert.equal(typeof completedTraces[0].ttftMs, "number");
 });

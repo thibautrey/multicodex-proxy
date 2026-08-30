@@ -138,6 +138,16 @@ export function TracingTab(props: Props) {
   const formatTooltipValue = (value: any) => formatTokenChartValue(value?.[0] ?? value ?? 0);
 
   const formatPieTokenLabel = ({ value }: { value?: number }) => formatTokenChartValue(value);
+  const ttftBucketLabel = (bucket: string) =>
+    bucket === "lt1k"
+      ? "<1K"
+      : bucket === "1k-8k"
+        ? "1K–8K"
+        : bucket === "8k-32k"
+          ? "8K–32K"
+          : bucket === "32k+"
+            ? "32K+"
+            : "Unknown";
   const chartColors = [
     "var(--chart-1)",
     "var(--chart-2)",
@@ -444,6 +454,65 @@ export function TracingTab(props: Props) {
 
       <section className="panel">
         <div className="section-split-header">
+          <h2>Time to first token by provider and model</h2>
+          <span className="badge">Completed HTTP SSE requests</span>
+        </div>
+        <p className="muted">
+          Client-perceived TTFT grouped by input size. Rankings require at least 10 samples within a bucket.
+        </p>
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th>Provider</th>
+                <th>Model</th>
+                <th>Input bucket</th>
+                <th>Samples</th>
+                <th>p50 TTFT</th>
+                <th>p95 TTFT</th>
+                <th>Median input</th>
+                <th>Cached input</th>
+                <th>Confidence</th>
+              </tr>
+            </thead>
+            <tbody>
+              {traceStats.ttftByProviderModel.length ? (
+                traceStats.ttftByProviderModel.map((group) => (
+                  <tr key={`${group.provider}:${group.model}:${group.inputTokenBucket}`}>
+                    <td>{group.rank ?? "—"}</td>
+                    <td>
+                      <span className="provider-badge">
+                        <img className="provider-icon" src={providerFavicon(group.provider)} alt="" loading="lazy" />
+                        {providerLabel(group.provider)}
+                      </span>
+                    </td>
+                    <td className="mono">{group.model}</td>
+                    <td>{ttftBucketLabel(group.inputTokenBucket)}</td>
+                    <td>{group.samples}</td>
+                    <td>{Math.round(group.ttftP50Ms)}ms</td>
+                    <td>{Math.round(group.ttftP95Ms)}ms</td>
+                    <td>{group.medianInputTokens === undefined ? "—" : formatTokenCount(group.medianInputTokens)}</td>
+                    <td>{group.cachedInputRatio === undefined ? "—" : pct(group.cachedInputRatio)}</td>
+                    <td>
+                      <span className={group.confidence === "low" ? "badge badge-warn" : "badge badge-live"}>
+                        {group.confidence === "low" ? "Low" : "Sufficient"}
+                      </span>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={10} className="muted">No measured TTFT in this range yet.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="section-split-header">
           <h2>Request tracing</h2>
           <div className="inline wrap">
             <button className="btn ghost" onClick={() => void gotoTracePage(tracePagination.page - 1)} disabled={!tracePagination.hasPrev}>Previous</button>
@@ -463,6 +532,7 @@ export function TracingTab(props: Props) {
                 <th>Account</th>
                 <th>Status</th>
                 <th>Latency</th>
+                <th>TTFT</th>
                 <th>Tokens</th>
                 <th>Cost</th>
                 <th>Error</th>
@@ -472,7 +542,7 @@ export function TracingTab(props: Props) {
               {traces.map((t) => {
                 const isExpanded = expandedTraceId === t.id;
                 const rowCost = typeof t.costUsd === "number" ? t.costUsd : (estimateCostUsd(t.model, t.tokensInput ?? 0, t.tokensOutput ?? 0, t.tokensInputCached ?? 0, t.tokensInputCacheWrite ?? 0) ?? 0);
-                const provider = t.accountId ? accountProviderById.get(t.accountId) : undefined;
+                const provider = t.provider ?? (t.accountId ? accountProviderById.get(t.accountId) : undefined);
                 const accountLabel = sanitized
                   ? maskEmail(t.accountEmail) || maskId(t.accountId)
                   : t.accountEmail ?? t.accountId ?? "-";
@@ -512,13 +582,14 @@ export function TracingTab(props: Props) {
                       </td>
                       <td>{t.status}</td>
                       <td>{t.latencyMs}ms</td>
+                      <td>{typeof t.ttftMs === "number" ? `${Math.round(t.ttftMs)}ms` : "—"}</td>
                       <td>{typeof (t.tokensTotal ?? t.usage?.total_tokens) === "number" ? formatTokenCount(t.tokensTotal ?? t.usage?.total_tokens) : "-"}</td>
                       <td className="mono">{usd(rowCost)}</td>
                       <td className="mono">{t.error?.slice(0, 60) ?? "-"}</td>
                     </tr>
                     {isExpanded && (
                       <tr>
-                        <td colSpan={11}>
+                        <td colSpan={12}>
                           <div className="expanded-trace">
                             {expandedTraceLoading && <div className="muted">Loading trace details...</div>}
                             {!expandedTraceLoading && expandedTrace && expandedTrace.id === t.id && (

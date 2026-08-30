@@ -6,6 +6,7 @@ import path from "node:path";
 import { createInterface } from "node:readline";
 import { normalizeTraceHeaders } from "./trace-headers.js";
 import type { CodexProjectAttribution } from "./codex-projects.js";
+import type { ProviderId } from "./types.js";
 
 export type TraceEntry = {
   id: string;
@@ -24,6 +25,7 @@ export type TraceEntry = {
   projectHost?: string;
   accountId?: string;
   accountEmail?: string;
+  provider?: ProviderId;
   model?: string;
   requestedModel?: string;
   resolvedModel?: string;
@@ -44,6 +46,7 @@ export type TraceEntry = {
   isError: boolean;
   stream: boolean;
   latencyMs: number;
+  ttftMs?: number;
   tokensInput?: number;
   tokensInputCached?: number;
   tokensInputCacheWrite?: number;
@@ -171,10 +174,26 @@ export type TraceTimeseriesBucket = {
   latencyP95Ms: number;
 };
 
+export type TtftInputTokenBucket = "lt1k" | "1k-8k" | "8k-32k" | "32k+" | "unknown";
+
+export type TraceTtftStats = {
+  provider: ProviderId;
+  model: string;
+  inputTokenBucket: TtftInputTokenBucket;
+  samples: number;
+  ttftP50Ms: number;
+  ttftP95Ms: number;
+  medianInputTokens?: number;
+  cachedInputRatio?: number;
+  confidence: "low" | "sufficient";
+  rank?: number;
+};
+
 export type TraceStats = {
   totals: TraceTotals;
   models: TraceModelStats[];
   timeseries: TraceTimeseriesBucket[];
+  ttftByProviderModel: TraceTtftStats[];
 };
 
 export type UsageTokenTotals = {
@@ -227,6 +246,18 @@ type TraceBucketAggregate = {
   latencies: number[];
   inferenceSpeeds: number[];
   models: Map<string, TraceModelStats>;
+  ttftGroups: Map<string, MutableTraceTtftStats>;
+};
+
+type MutableTraceTtftStats = {
+  provider: ProviderId;
+  model: string;
+  inputTokenBucket: TtftInputTokenBucket;
+  samples: number;
+  ttftSamples: number[];
+  inputTokenSamples: number[];
+  cachedInputTokens: number;
+  totalInputTokens: number;
 };
 
 const DEFAULT_RETENTION_MAX = 1000;
@@ -307,6 +338,7 @@ function normalizeTrace(raw: any): TraceEntry | null {
   const route = typeof raw.route === "string" ? raw.route : "";
   const status = safeNumber(raw.status);
   const latencyMs = safeNumber(raw.latencyMs);
+  const rawTtftMs = safeNumber(raw.ttftMs);
   if (
     !at ||
     !route ||
@@ -401,6 +433,15 @@ function normalizeTrace(raw: any): TraceEntry | null {
     accountId: typeof raw.accountId === "string" ? raw.accountId : undefined,
     accountEmail:
       typeof raw.accountEmail === "string" ? raw.accountEmail : undefined,
+    provider:
+      raw.provider === "openai" ||
+      raw.provider === "openai-compatible" ||
+      raw.provider === "opencode" ||
+      raw.provider === "mistral" ||
+      raw.provider === "zai" ||
+      raw.provider === "xai"
+        ? raw.provider
+        : undefined,
     model,
     requestedModel:
       typeof raw.requestedModel === "string" ? raw.requestedModel : undefined,
@@ -410,6 +451,10 @@ function normalizeTrace(raw: any): TraceEntry | null {
     isError: typeof raw.isError === "boolean" ? raw.isError : status >= 400,
     stream: Boolean(raw.stream),
     latencyMs,
+    ttftMs:
+      typeof rawTtftMs === "number" && rawTtftMs >= 0
+        ? rawTtftMs
+        : undefined,
     tokensInput: normalizedTokens.tokensInput,
     tokensInputCached: normalizedTokens.tokensInputCached,
     tokensInputCacheWrite: normalizedTokens.tokensInputCacheWrite,
@@ -540,6 +585,158 @@ function average(values: number[]): number {
   return values.length
     ? values.reduce((sum, value) => sum + value, 0) / values.length
     : 0;
+}
+
+function ttftInputTokenBucket(
+  tokensInput: number | undefined,
+): TtftInputTokenBucket {
+  if (
+    typeof tokensInput !== "number" ||
+    !Number.isFinite(tokensInput) ||
+    tokensInput < 0
+  ) {
+    return "unknown";
+  }
+  if (tokensInput < 1_000) return "lt1k";
+  if (tokensInput < 8_000) return "1k-8k";
+  if (tokensInput < 32_000) return "8k-32k";
+  return "32k+";
+}
+
+function isTtftAggregateCandidate(trace: TraceEntry): boolean {
+  return (
+    trace.lifecycleState === "completed" &&
+    trace.stream &&
+    !trace.isError &&
+    trace.status >= 200 &&
+    trace.status < 400 &&
+    typeof trace.provider === "string" &&
+    Boolean(trace.model) &&
+    typeof trace.ttftMs === "number" &&
+    Number.isFinite(trace.ttftMs) &&
+    trace.ttftMs >= 0
+  );
+}
+
+function addTtftSample(
+  groups: Map<string, MutableTraceTtftStats>,
+  trace: TraceEntry,
+): void {
+  if (!isTtftAggregateCandidate(trace)) return;
+  const provider = trace.provider!;
+  const model = trace.model!;
+  const inputTokenBucket = ttftInputTokenBucket(trace.tokensInput);
+  const key = JSON.stringify([provider, model, inputTokenBucket]);
+  const group = groups.get(key) ?? {
+    provider,
+    model,
+    inputTokenBucket,
+    samples: 0,
+    ttftSamples: [],
+    inputTokenSamples: [],
+    cachedInputTokens: 0,
+    totalInputTokens: 0,
+  };
+  group.samples += 1;
+  if (group.ttftSamples.length < MAX_LATENCY_SAMPLES_PER_BUCKET) {
+    group.ttftSamples.push(trace.ttftMs!);
+  } else {
+    group.ttftSamples[group.samples % MAX_LATENCY_SAMPLES_PER_BUCKET] =
+      trace.ttftMs!;
+  }
+  if (
+    typeof trace.tokensInput === "number" &&
+    Number.isFinite(trace.tokensInput)
+  ) {
+    if (group.inputTokenSamples.length < MAX_LATENCY_SAMPLES_PER_BUCKET) {
+      group.inputTokenSamples.push(trace.tokensInput);
+    } else {
+      group.inputTokenSamples[group.samples % MAX_LATENCY_SAMPLES_PER_BUCKET] =
+        trace.tokensInput;
+    }
+    group.totalInputTokens += trace.tokensInput;
+    group.cachedInputTokens += Math.max(0, trace.tokensInputCached ?? 0);
+  }
+  groups.set(key, group);
+}
+
+function mergeTtftGroup(
+  groups: Map<string, MutableTraceTtftStats>,
+  incoming: MutableTraceTtftStats,
+): void {
+  const key = JSON.stringify([
+    incoming.provider,
+    incoming.model,
+    incoming.inputTokenBucket,
+  ]);
+  const group = groups.get(key) ?? {
+    provider: incoming.provider,
+    model: incoming.model,
+    inputTokenBucket: incoming.inputTokenBucket,
+    samples: 0,
+    ttftSamples: [],
+    inputTokenSamples: [],
+    cachedInputTokens: 0,
+    totalInputTokens: 0,
+  };
+  group.samples += incoming.samples;
+  group.ttftSamples.push(...incoming.ttftSamples);
+  group.inputTokenSamples.push(...incoming.inputTokenSamples);
+  if (group.ttftSamples.length > MAX_LATENCY_SAMPLES_PER_BUCKET) {
+    group.ttftSamples = group.ttftSamples.slice(-MAX_LATENCY_SAMPLES_PER_BUCKET);
+  }
+  if (group.inputTokenSamples.length > MAX_LATENCY_SAMPLES_PER_BUCKET) {
+    group.inputTokenSamples = group.inputTokenSamples.slice(
+      -MAX_LATENCY_SAMPLES_PER_BUCKET,
+    );
+  }
+  group.cachedInputTokens += incoming.cachedInputTokens;
+  group.totalInputTokens += incoming.totalInputTokens;
+  groups.set(key, group);
+}
+
+function finalizeTtftGroups(
+  groups: Map<string, MutableTraceTtftStats>,
+): TraceTtftStats[] {
+  const finalized: TraceTtftStats[] = Array.from(groups.values()).map((group) => ({
+    provider: group.provider,
+    model: group.model,
+    inputTokenBucket: group.inputTokenBucket,
+    samples: group.samples,
+    ttftP50Ms: percentile(group.ttftSamples, 50),
+    ttftP95Ms: percentile(group.ttftSamples, 95),
+    medianInputTokens: group.inputTokenSamples.length
+      ? percentile(group.inputTokenSamples, 50)
+      : undefined,
+    cachedInputRatio:
+      group.totalInputTokens > 0
+        ? Math.min(1, group.cachedInputTokens / group.totalInputTokens)
+        : undefined,
+    confidence: group.samples >= 10 ? ("sufficient" as const) : ("low" as const),
+  }));
+
+  for (const bucket of ["lt1k", "1k-8k", "8k-32k", "32k+"] as const) {
+    finalized
+      .filter(
+        (group) =>
+          group.inputTokenBucket === bucket && group.confidence === "sufficient",
+      )
+      .sort((left, right) => left.ttftP50Ms - right.ttftP50Ms)
+      .forEach((group, index) => {
+        group.rank = index + 1;
+      });
+  }
+
+  return finalized.sort((left, right) => {
+    if (left.inputTokenBucket !== right.inputTokenBucket) {
+      return left.inputTokenBucket.localeCompare(right.inputTokenBucket);
+    }
+    if (left.rank !== undefined || right.rank !== undefined) {
+      return (left.rank ?? Number.POSITIVE_INFINITY) -
+        (right.rank ?? Number.POSITIVE_INFINITY);
+    }
+    return left.ttftP50Ms - right.ttftP50Ms;
+  });
 }
 
 function traceDurationMs(
@@ -730,6 +927,8 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
     ? traces.reduce((sum, t) => sum + t.latencyMs, 0) / requests
     : 0;
   const errorRate = requests ? errors / requests : 0;
+  const ttftGroups = new Map<string, MutableTraceTtftStats>();
+  for (const trace of traces) addTtftSample(ttftGroups, trace);
 
   const modelMap = new Map<string, TraceModelStats>();
   for (const trace of traces) {
@@ -856,6 +1055,7 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
     },
     models,
     timeseries,
+    ttftByProviderModel: finalizeTtftGroups(ttftGroups),
   };
 }
 
@@ -876,6 +1076,7 @@ function createEmptyBucket(at: number): TraceBucketAggregate {
     latencies: [],
     inferenceSpeeds: [],
     models: new Map(),
+    ttftGroups: new Map(),
   };
 }
 
@@ -926,6 +1127,7 @@ function addTraceToBucket(bucket: TraceBucketAggregate, trace: TraceEntry) {
   bucket.costUsd += traceCost;
   bucket.latencyMsTotal += Number.isFinite(trace.latencyMs) ? trace.latencyMs : 0;
   addLatencySample(bucket, trace.latencyMs);
+  addTtftSample(bucket.ttftGroups, trace);
 
   const existing = bucket.models.get(model);
   if (existing) {
@@ -1357,6 +1559,7 @@ export function createTraceManager(config: TraceManagerConfig) {
       .sort((a, b) => a.at - b.at);
 
     const modelMap = new Map<string, TraceModelStats>();
+    const ttftGroups = new Map<string, MutableTraceTtftStats>();
     let requests = 0;
     let requestsWithUsage = 0;
     let requestsWithCost = 0;
@@ -1388,6 +1591,9 @@ export function createTraceManager(config: TraceManagerConfig) {
       inferenceRequests += bucket.inferenceSpeeds.length;
       costUsd += bucket.costUsd;
       latencyWeightedTotal += bucket.latencyMsTotal;
+      for (const group of bucket.ttftGroups.values()) {
+        mergeTtftGroup(ttftGroups, group);
+      }
 
       for (const model of bucket.models.values()) {
         const existing = modelMap.get(model.model);
@@ -1444,6 +1650,7 @@ export function createTraceManager(config: TraceManagerConfig) {
         },
         models: Array.from(modelMap.values()).sort((a, b) => b.count - a.count),
         timeseries,
+        ttftByProviderModel: finalizeTtftGroups(ttftGroups),
       },
     };
   }

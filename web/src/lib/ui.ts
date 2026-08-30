@@ -22,6 +22,7 @@ export const EMPTY_TRACE_STATS: TraceStats = {
   },
   models: [],
   timeseries: [],
+  ttftByProviderModel: [],
 };
 
 export const EMPTY_TRACE_PAGINATION: TracePagination = {

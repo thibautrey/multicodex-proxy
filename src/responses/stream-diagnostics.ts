@@ -203,3 +203,52 @@ export function extractSSEFrameUsage(frame: string): any {
   }
   return usage;
 }
+
+function hasGeneratedValue(value: unknown): boolean {
+  if (typeof value === "string") return value.length > 0;
+  if (Array.isArray(value)) return value.some(hasGeneratedValue);
+  if (!value || typeof value !== "object") return false;
+  return Object.values(value).some(hasGeneratedValue);
+}
+
+function eventHasMeaningfulOutput(event: any): boolean {
+  const type = typeof event?.type === "string" ? event.type : "";
+  const responseDeltaType =
+    type === "response.output_text.delta" ||
+    type.startsWith("response.reasoning") ||
+    type.startsWith("response.refusal") ||
+    ((type.includes("function_call") ||
+      type.includes("tool_call") ||
+      type.includes("tool_call_input")) &&
+      type.endsWith(".delta"));
+  if (responseDeltaType && hasGeneratedValue(event?.delta)) return true;
+
+  if (event?.object !== "chat.completion.chunk" || !Array.isArray(event?.choices)) {
+    return false;
+  }
+  return event.choices.some((choice: any) => {
+    const delta = choice?.delta;
+    if (!delta || typeof delta !== "object") return false;
+    return (
+      hasGeneratedValue(delta.content) ||
+      hasGeneratedValue(delta.reasoning_content) ||
+      hasGeneratedValue(delta.refusal) ||
+      hasGeneratedValue(delta.function_call) ||
+      hasGeneratedValue(delta.tool_calls)
+    );
+  });
+}
+
+/** True only when a complete SSE frame contains generated output a client can consume. */
+export function responseStreamFrameHasMeaningfulOutput(frame: string): boolean {
+  for (const rawLine of frame.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line.startsWith("data:")) continue;
+    const payload = line.slice(5).trim();
+    if (!payload || payload === "[DONE]") continue;
+    try {
+      if (eventHasMeaningfulOutput(JSON.parse(payload))) return true;
+    } catch {}
+  }
+  return false;
+}

@@ -59,6 +59,7 @@ export type Trace = {
   projectHost?: string;
   accountId?: string;
   accountEmail?: string;
+  provider?: "openai" | "openai-compatible" | "opencode" | "mistral" | "zai" | "xai";
   model?: string;
   requestedModel?: string;
   resolvedModel?: string;
@@ -66,6 +67,7 @@ export type Trace = {
   isError: boolean;
   stream: boolean;
   latencyMs: number;
+  ttftMs?: number;
   lifecycleState?: "started" | "completed" | "interrupted";
   startedAt?: number;
   completedAt?: number;
@@ -126,6 +128,18 @@ export type TraceStats = {
     costUsd: number;
     latencyP50Ms: number;
     latencyP95Ms: number;
+  }>;
+  ttftByProviderModel: Array<{
+    provider: "openai" | "openai-compatible" | "opencode" | "mistral" | "zai" | "xai";
+    model: string;
+    inputTokenBucket: "lt1k" | "1k-8k" | "8k-32k" | "32k+" | "unknown";
+    samples: number;
+    ttftP50Ms: number;
+    ttftP95Ms: number;
+    medianInputTokens?: number;
+    cachedInputRatio?: number;
+    confidence: "low" | "sufficient";
+    rank?: number;
   }>;
 };
 

@@ -71,6 +71,62 @@ test("trace stats calculate inference speed from request start and end", () => {
   );
 });
 
+test("TTFT stats group successful streams by provider, model, and input size", () => {
+  const manager = createTraceManager({
+    filePath: "/tmp/multivibe-ttft-traces.jsonl",
+  });
+  const base = 1_728_000_000_000;
+  let id = 0;
+  const trace = (overrides: Partial<TraceEntry>): TraceEntry => ({
+    id: `ttft-${id++}`,
+    at: base + id,
+    route: "/responses",
+    provider: "openai",
+    model: "shared-model",
+    status: 200,
+    isError: false,
+    stream: true,
+    latencyMs: 1_000,
+    lifecycleState: "completed",
+    tokensInput: 1_500,
+    tokensInputCached: 750,
+    ttftMs: 100,
+    ...overrides,
+  });
+  const traces: TraceEntry[] = [
+    ...Array.from({ length: 10 }, (_, index) => trace({ ttftMs: 100 + index * 10 })),
+    ...Array.from({ length: 10 }, (_, index) =>
+      trace({ provider: "mistral", ttftMs: 200 + index * 10 }),
+    ),
+    trace({ provider: "xai", ttftMs: 75 }),
+    trace({ provider: "zai", tokensInput: undefined, tokensInputCached: undefined, ttftMs: 80 }),
+    trace({ provider: "opencode", status: 500, isError: true, ttftMs: 25 }),
+    trace({ provider: "openai-compatible", lifecycleState: "interrupted", ttftMs: 30 }),
+    trace({ provider: "openai-compatible", stream: false, ttftMs: 30 }),
+  ];
+
+  const groups = manager.buildTraceStats(traces).ttftByProviderModel;
+  assert.equal(groups.length, 4);
+  const openai = groups.find((group) => group.provider === "openai")!;
+  assert.deepEqual(openai, {
+    provider: "openai",
+    model: "shared-model",
+    inputTokenBucket: "1k-8k",
+    samples: 10,
+    ttftP50Ms: 140,
+    ttftP95Ms: 190,
+    medianInputTokens: 1_500,
+    cachedInputRatio: 0.5,
+    confidence: "sufficient",
+    rank: 1,
+  });
+  assert.equal(groups.find((group) => group.provider === "mistral")?.rank, 2);
+  assert.equal(groups.find((group) => group.provider === "xai")?.confidence, "low");
+  assert.equal(groups.find((group) => group.provider === "xai")?.rank, undefined);
+  assert.equal(groups.find((group) => group.provider === "zai")?.inputTokenBucket, "unknown");
+  assert.equal(groups.some((group) => group.provider === "opencode"), false);
+});
+
 test("trace initialization warms the cache before the first durable stream", async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-traces-"));
   const filePath = path.join(directory, "nested", "traces.jsonl");
@@ -446,6 +502,8 @@ test("stream traces are durable at start and finalized without duplicate stats",
     stream: true,
     latencyMs: 25,
     model: "test-model",
+    provider: "mistral",
+    ttftMs: 12,
     usage: {
       input_tokens: 120,
       input_tokens_details: {
@@ -488,6 +546,8 @@ test("stream traces are durable at start and finalized without duplicate stats",
   assert.equal(traces[0].lifecycleState, "interrupted");
   assert.equal(traces[0].clientDisconnected, true);
   assert.equal(traces[0].status, 499);
+  assert.equal(traces[0].provider, "mistral");
+  assert.equal(traces[0].ttftMs, 12);
   assert.equal(traces[0].tokensInputCached, 80);
   assert.equal(traces[0].tokensInputCacheWrite, 32);
   assert.equal(traces[0].tokensReasoning, 6);
