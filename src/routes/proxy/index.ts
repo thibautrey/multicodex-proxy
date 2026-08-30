@@ -2,6 +2,8 @@ import {
   EXCLUDED_PROVIDER_MODELS,
   CODEX_CLI_ORIGINATOR,
   CODEX_CLI_USER_AGENT,
+  CODEX_SESSION_AFFINITY,
+  CODEX_SESSION_AFFINITY_MAX_ENTRIES,
   HANG_RETRY_INTERVAL_MS,
   HANG_RETRY_MAX_DURATION_MS,
   MAX_ACCOUNT_RETRY_ATTEMPTS,
@@ -35,6 +37,7 @@ import type {
   UpstreamMode,
 } from "../../types.js";
 import {
+  accountSelectionPool,
   accountUsable,
   chooseAccountForProvider,
   clearEmptyResponseHistory,
@@ -142,6 +145,11 @@ import {
   type RoutingRequest,
 } from "../../smart-routing.js";
 import type { SmartRoutingCoordinator } from "../../smart-routing-routes.js";
+import {
+  findSessionAffinityAccount,
+  preferSessionAffinityAccount,
+  SessionAffinityCache,
+} from "../../session-affinity.js";
 
 type ProxyRoutesOptions = {
   store: AccountStore;
@@ -156,6 +164,8 @@ type ProxyRoutesOptions = {
   oauthConfig: OAuthConfig;
   capacityTracker?: CapacityTracker;
   smartRoutingCoordinator?: SmartRoutingCoordinator;
+  sessionAffinityCache?: SessionAffinityCache;
+  sessionAffinityEnabled?: boolean;
 };
 
 const modelsCache: { at: number; models: ExposedModel[] } = {
@@ -1795,6 +1805,11 @@ function isModelNotFoundError(status: number, errorText: string): boolean {
 }
 
 export function createProxyRouter(options: ProxyRoutesOptions) {
+  const sessionAffinity =
+    options.sessionAffinityCache ??
+    new SessionAffinityCache(undefined, CODEX_SESSION_AFFINITY_MAX_ENTRIES);
+  const sessionAffinityEnabled =
+    options.sessionAffinityEnabled ?? CODEX_SESSION_AFFINITY;
   const {
     store,
     traceManager,
@@ -1873,6 +1888,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       typeof res.locals.proxyApplication === "string"
         ? res.locals.proxyApplication
         : undefined;
+    const affinityApplication = application ?? "default";
     const requestHeaders = TRACE_INCLUDE_HEADERS
       ? traceHeadersForRequest(req.headers)
       : undefined;
@@ -2259,12 +2275,46 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               (account) => account.id === entry.resource.accountId,
             ),
         )?.resource;
-        const selected = preferredResource
-          ? usableAccounts.find(
+
+        const quotaAwareAccounts = accountSelectionPool(usableAccounts);
+        const affinityAccount = findSessionAffinityAccount(
+          sessionAffinity,
+          sessionAffinityEnabled,
+          affinityApplication,
+          codexSessionId,
+          candidate.provider,
+          quotaAwareAccounts,
+        );
+
+        // Policy constraints have already filtered providerAccounts above.
+        // Within that eligible set, prefer the account already associated
+        // with this Codex session to preserve cache locality. Smart-routing's
+        // preferred resource remains the fallback for a new or invalidated
+        // affinity.
+        const preferredAccount = preferredResource
+          ? quotaAwareAccounts.find(
               (account) => account.id === preferredResource.accountId,
             )
-          : chooseAccountForProvider(usableAccounts, candidate.provider);
+          : undefined;
+
+        const selected =
+          preferSessionAffinityAccount(affinityAccount, preferredAccount) ??
+          chooseAccountForProvider(usableAccounts, candidate.provider);
+
         if (!selected) break;
+
+        if (sessionAffinityEnabled && codexSessionId) {
+          // Remember the last selected eligible account. If it fails and the
+          // request rotates to another account, that later selection replaces
+          // this mapping immediately.
+          sessionAffinity.remember(
+            affinityApplication,
+            codexSessionId,
+            candidate.provider,
+            selected.id,
+          );
+        }
+
         completedRoutingAccountId = selected.id;
         let attemptCapacityLease: CapacityLease | undefined;
 
