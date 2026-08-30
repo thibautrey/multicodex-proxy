@@ -9,7 +9,11 @@ import type {
   ApplicationWebhook,
   UpstreamMode,
 } from "../../types.js";
-import { normalizeProvider, refreshUsageIfNeeded } from "../../quota.js";
+import {
+  isUsageRefreshNeeded,
+  normalizeProvider,
+  refreshUsageIfNeeded,
+} from "../../quota.js";
 import {
   accountFromOAuth,
   buildAuthorizationUrl,
@@ -21,7 +25,7 @@ import {
   requestDeviceCode,
   type OAuthConfig,
 } from "../../oauth.js";
-import { ensureValidToken } from "../../account-utils.js";
+import { ensureValidToken, isTokenRefreshNeeded } from "../../account-utils.js";
 import type { TraceManager } from "../../traces.js";
 import { isHiddenTraceRoute } from "../../traces.js";
 import { discoverModels } from "../proxy/index.js";
@@ -370,6 +374,58 @@ export function createAdminRouter(options: AdminRoutesOptions) {
   } = traceManager;
 
   const router = express.Router();
+
+  const usageBaseUrlForAccount = (account: Account): string => {
+    const provider = normalizeProvider(account);
+    if (provider === "openai-compatible") return account.baseUrl ?? "";
+    if (provider === "opencode") return account.baseUrl ?? OPENCODE_BASE_URL;
+    if (provider === "mistral") return mistralBaseUrl;
+    if (provider === "zai") return zaiBaseUrl;
+    if (provider === "xai") return account.baseUrl ?? XAI_BASE_URL;
+    return openaiBaseUrl;
+  };
+
+  const refreshAccountsUsage = async (force: boolean): Promise<Account[]> => {
+    const refreshed = await Promise.all(
+      (await store.listAccounts()).map(async (account) => {
+        const tokenRefreshNeeded = isTokenRefreshNeeded(account);
+        const usageRefreshNeeded = force || isUsageRefreshNeeded(account);
+        if (!tokenRefreshNeeded && !usageRefreshNeeded) {
+          return { account, modified: false };
+        }
+        const valid = tokenRefreshNeeded
+          ? await ensureValidToken(account, oauthConfig)
+          : account;
+        await refreshUsageIfNeeded(valid, usageBaseUrlForAccount(valid), force);
+        return { account: valid, modified: true };
+      }),
+    );
+    await Promise.all(
+      refreshed
+        .filter(({ modified }) => modified)
+        .map(({ account }) => store.addOrUpdate(account)),
+    );
+    const accounts = refreshed.map(({ account }) => account);
+    await Promise.all(
+      accounts
+        .filter((account) => normalizeProvider(account) === "openai")
+        .map((account) =>
+          maybeConsumeScheduledWeeklyReset(account.id, store, openaiBaseUrl),
+        ),
+    );
+    return store.getCachedAccounts();
+  };
+
+  let staleUsageRefresh: Promise<Account[]> | undefined;
+  const refreshStaleAccountsUsage = (): Promise<Account[]> => {
+    if (staleUsageRefresh) return staleUsageRefresh;
+    const refresh = refreshAccountsUsage(false);
+    staleUsageRefresh = refresh;
+    void refresh.finally(() => {
+      if (staleUsageRefresh === refresh) staleUsageRefresh = undefined;
+    }).catch(() => undefined);
+    return refresh;
+  };
 
   router.get("/proxy-api-keys", async (_req, res) => {
     const managed = await store.listProxyApiKeys();
@@ -1120,14 +1176,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     );
     if (!account) return res.status(404).json({ error: "not found" });
     account = await ensureValidToken(account, oauthConfig);
-    const provider = normalizeProvider(account);
-    let usageBaseUrl = openaiBaseUrl;
-    if (provider === "openai-compatible") usageBaseUrl = account.baseUrl ?? "";
-    else if (provider === "opencode") usageBaseUrl = account.baseUrl ?? OPENCODE_BASE_URL;
-    else if (provider === "mistral") usageBaseUrl = mistralBaseUrl;
-    else if (provider === "zai") usageBaseUrl = zaiBaseUrl;
-    else if (provider === "xai") usageBaseUrl = account.baseUrl ?? XAI_BASE_URL;
-    await refreshUsageIfNeeded(account, usageBaseUrl, true);
+    await refreshUsageIfNeeded(account, usageBaseUrlForAccount(account), true);
     await store.addOrUpdate(account);
     await maybeConsumeScheduledWeeklyReset(account.id, store, openaiBaseUrl);
     res.json({ ok: true, account: redact(account) });
@@ -1212,31 +1261,21 @@ export function createAdminRouter(options: AdminRoutesOptions) {
   });
 
   router.post("/usage/refresh", async (_req, res) => {
-    const refreshed = await Promise.all(
-      (await store.listAccounts()).map(async (account) => {
-        const valid = await ensureValidToken(account, oauthConfig);
-        const provider = normalizeProvider(valid);
-        let usageBaseUrl = openaiBaseUrl;
-        if (provider === "openai-compatible") usageBaseUrl = valid.baseUrl ?? "";
-        else if (provider === "opencode") usageBaseUrl = valid.baseUrl ?? OPENCODE_BASE_URL;
-        else if (provider === "mistral") usageBaseUrl = mistralBaseUrl;
-        else if (provider === "zai") usageBaseUrl = zaiBaseUrl;
-        else if (provider === "xai") usageBaseUrl = valid.baseUrl ?? XAI_BASE_URL;
-        await refreshUsageIfNeeded(valid, usageBaseUrl, true);
-        return valid;
-      }),
-    );
-    await Promise.all(refreshed.map((account) => store.addOrUpdate(account)));
-    await Promise.all(
-      refreshed
-        .filter((account) => normalizeProvider(account) === "openai")
-        .map((account) =>
-          maybeConsumeScheduledWeeklyReset(account.id, store, openaiBaseUrl),
-        ),
-    );
+    const accounts = await refreshAccountsUsage(true);
     res.json({
       ok: true,
-      accounts: store.getCachedAccounts().map(redact),
+      accounts: accounts.map(redact),
+    });
+  });
+
+  // The dashboard uses this endpoint for lightweight polling. Fresh usage
+  // snapshots are left untouched; snapshots whose cache TTL or quota reset
+  // has elapsed are refreshed before the current account state is returned.
+  router.post("/usage/refresh-stale", async (_req, res) => {
+    const accounts = await refreshStaleAccountsUsage();
+    res.json({
+      ok: true,
+      accounts: accounts.map(redact),
     });
   });
 

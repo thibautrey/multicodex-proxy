@@ -443,7 +443,16 @@ export function isUsageRefreshNeeded(
   account: Account,
   now = Date.now(),
 ): boolean {
+  const resetDue = [
+    account.usage?.primary?.resetAt,
+    account.usage?.secondary?.resetAt,
+    account.usage?.monthly?.resetAt,
+  ].some(
+    (resetAt) =>
+      typeof resetAt === "number" && Number.isFinite(resetAt) && resetAt <= now,
+  );
   return (
+    resetDue ||
     !account.usage ||
     now - account.usage.fetchedAt >= USAGE_CACHE_TTL_MS
   );

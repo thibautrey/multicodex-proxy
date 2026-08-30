@@ -49,6 +49,9 @@ const TAB_ITEMS: Array<{ id: Tab; label: string; description: string }> = [
   { id: "docs", label: "API reference", description: "Endpoints and integration notes" },
 ];
 
+const USAGE_REFRESH_MIN_INTERVAL_MS = 50_000;
+const USAGE_REFRESH_MAX_INTERVAL_MS = 60_000;
+
 function TabIcon({ tab }: { tab: Tab }) {
   if (tab === "overview") {
     return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></svg>;
@@ -230,6 +233,11 @@ export default function App() {
   const refreshModels = async () => {
     const mdl = await fetch("/v1/models").then((r) => r.json());
     setModels((mdl.data ?? []) as ExposedModel[]);
+  };
+
+  const refreshStaleUsage = async () => {
+    const result = await api("/admin/usage/refresh-stale", { method: "POST" });
+    setAccounts((result.accounts ?? []) as Account[]);
   };
 
   useEffect(() => {
@@ -446,6 +454,34 @@ export default function App() {
     }, 30_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (authenticated !== true) return;
+    let timer: number | undefined;
+    let cancelled = false;
+
+    const scheduleRefresh = () => {
+      const range =
+        USAGE_REFRESH_MAX_INTERVAL_MS - USAGE_REFRESH_MIN_INTERVAL_MS;
+      const delay =
+        USAGE_REFRESH_MIN_INTERVAL_MS + Math.floor(Math.random() * (range + 1));
+      timer = window.setTimeout(async () => {
+        try {
+          await refreshStaleUsage();
+        } catch (error) {
+          if (!cancelled) handleError(error);
+        } finally {
+          if (!cancelled) scheduleRefresh();
+        }
+      }, delay);
+    };
+
+    scheduleRefresh();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [authenticated]);
 
   const patch = async (id: string, body: any) => {
     await api(`/admin/accounts/${id}`, { method: "PATCH", body: JSON.stringify(body) });
