@@ -36,19 +36,33 @@ export class SessionAffinityCache {
     now = Date.now(),
   ): string | undefined {
     const key = affinityKey(application, sessionId, provider);
+    const accountId = this.peek(application, sessionId, provider, now);
+    if (!accountId) return undefined;
+
     const entry = this.entries.get(key);
-
     if (!entry) return undefined;
-
-    if (entry.expiresAt <= now) {
-      this.entries.delete(key);
-      return undefined;
-    }
 
     // Reads also refresh recency so an actively used session is not evicted
     // before an idle session merely because it was inserted earlier.
     this.entries.delete(key);
     this.entries.set(key, entry);
+    return accountId;
+  }
+
+  peek(
+    application: string,
+    sessionId: string,
+    provider: ProviderId,
+    now = Date.now(),
+  ): string | undefined {
+    const key = affinityKey(application, sessionId, provider);
+    const entry = this.entries.get(key);
+
+    if (!entry) return undefined;
+    if (entry.expiresAt <= now) {
+      this.entries.delete(key);
+      return undefined;
+    }
     return entry.accountId;
   }
 
