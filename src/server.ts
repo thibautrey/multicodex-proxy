@@ -51,6 +51,7 @@ import {
 import { traceHeadersForRequest } from "./trace-headers.js";
 import {
   CodexProjectRegistry,
+  extractCodexProjectRoot,
   extractCodexSessionId,
   extractLiteLLMProjectAttribution,
 } from "./codex-projects.js";
@@ -105,7 +106,8 @@ const traceManager = createTraceManager({
   filePath: TRACE_FILE_PATH,
   historyFilePath: TRACE_STATS_HISTORY_PATH,
   retentionMax: TRACE_RETENTION_MAX,
-  resolveCodexProject: (sessionId) => codexProjectRegistry.resolve(sessionId),
+  resolveCodexProject: (sessionId, projectRoot) =>
+    codexProjectRegistry.resolve(sessionId, projectRoot),
 });
 const configuredProxyApiKeys = parseProxyApiKeys(PROXY_API_KEY, PROXY_API_KEYS);
 await Promise.all([
@@ -140,6 +142,7 @@ app.use((req, res, next) => {
     traceManager.recordTrace({
       ...(res.locals.multivibeTrace ?? {}),
       ...extractLiteLLMProjectAttribution(req.headers),
+      codexProjectRoot: extractCodexProjectRoot(req.headers),
       at: Date.now(),
       route: `${req.method} ${route}`,
       application: res.locals.proxyApplication,

@@ -500,6 +500,29 @@ patching Codex. A user-level official `SessionStart` hook sends the Codex
 MultiCodex. Incoming traces carry the same id in `thread-id`, so project
 attribution is stored directly in recent traces and long-term usage history.
 
+Codex can also send the deterministic project root on every provider request,
+including internal/system requests that do not have a session registered by the
+hook. Configure the custom provider to map an environment variable to the
+following header:
+
+```toml
+[model_providers.multivibe]
+env_http_headers = { "X-MultiCodex-Project-Root" = "MULTICODEX_PROJECT_ROOT" }
+```
+
+Set that variable before starting Codex from a checkout (the fallback to the
+current directory also supports non-Git workspaces):
+
+```bash
+export MULTICODEX_PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)"
+/Applications/ChatGPT.app/Contents/Resources/codex --profile multivibe
+```
+
+MultiVibe always tries the exact `session_id` registry lookup first. The root
+header is used only when that lookup misses, and only when it identifies one
+registered project; an unknown root or a root shared by multiple projects is
+left unattributed rather than guessed.
+
 Requests routed through LiteLLM can identify their project with the
 `X-LiteLLM-Key-Alias` header. When present, this alias takes precedence over
 Codex session attribution and is used as the project name with a stable project

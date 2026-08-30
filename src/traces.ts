@@ -13,6 +13,8 @@ export type TraceEntry = {
   route: string;
   application?: string;
   codexSessionId?: string;
+  /** Untrusted request context used only for registry fallback resolution. */
+  codexProjectRoot?: string;
   projectId?: string;
   projectName?: string;
   projectRemote?: string;
@@ -202,6 +204,7 @@ export type TraceManagerConfig = {
   legacyLimitMax?: number;
   resolveCodexProject?: (
     sessionId: string | undefined,
+    projectRoot?: string,
   ) => CodexProjectAttribution | undefined;
 };
 
@@ -1205,6 +1208,7 @@ export function createTraceManager(config: TraceManagerConfig) {
       requestBody: _requestBody,
       requestHeaders: _requestHeaders,
       codexSessionId: _codexSessionId,
+      codexProjectRoot: _codexProjectRoot,
       usage: _usage,
       error: _error,
       upstreamError: _upstreamError,
@@ -1486,7 +1490,8 @@ export function createTraceManager(config: TraceManagerConfig) {
   function materializeTrace(entry: TraceInput, id: string = randomUUID()): TraceEntry {
     const project = entry.projectId
       ? undefined
-      : resolveCodexProject?.(entry.codexSessionId);
+      : resolveCodexProject?.(entry.codexSessionId, entry.codexProjectRoot);
+    const { codexProjectRoot: _codexProjectRoot, ...traceEntry } = entry;
     const normalizedTokens = normalizeTokenFields(entry.usage);
     const hasMeasuredTokens = [
       normalizedTokens.tokensInput,
@@ -1516,7 +1521,7 @@ export function createTraceManager(config: TraceManagerConfig) {
         ? completedAt - Math.max(0, entry.latencyMs)
         : undefined);
     return {
-      ...entry,
+      ...traceEntry,
       ...project,
       id,
       isError: entry.status >= 400,

@@ -117,6 +117,7 @@ import { createSSEStreamTap } from "../../responses/sse-stream-tap.js";
 import { createUpstreamPayloadSerializer } from "../../responses/upstream-payload-serializer.js";
 import { buildXaiUpstreamHeaders } from "../../xai.js";
 import {
+  extractCodexProjectRoot,
   extractCodexSessionId,
   extractLiteLLMProjectAttribution,
 } from "../../codex-projects.js";
@@ -1877,6 +1878,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       ? traceHeadersForRequest(req.headers)
       : undefined;
     const codexSessionId = extractCodexSessionId(req.headers);
+    const codexProjectRoot = extractCodexProjectRoot(req.headers);
     const projectAttribution = extractLiteLLMProjectAttribution(req.headers);
     const recordTrace = (
       entry: Parameters<typeof traceManager.recordTrace>[0],
@@ -1887,6 +1889,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         ...projectAttribution,
         application,
         codexSessionId,
+        codexProjectRoot,
         requestHeaders,
       });
     };
@@ -1898,6 +1901,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         ...projectAttribution,
         application,
         codexSessionId,
+        codexProjectRoot,
         requestHeaders,
       });
     const completeTrace = (
@@ -1910,6 +1914,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         ...projectAttribution,
         application,
         codexSessionId,
+        codexProjectRoot,
         requestHeaders,
       });
     };

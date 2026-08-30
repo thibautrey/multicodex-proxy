@@ -8,7 +8,9 @@ import {
   TRACE_HEADERS_FORWARD_HEADER,
 } from "./trace-headers.js";
 import {
+  CODEX_PROJECT_ROOT_FORWARD_HEADER,
   CODEX_SESSION_FORWARD_HEADER,
+  extractCodexProjectRoot,
   extractCodexSessionId,
   LITELLM_KEY_ALIAS_HEADER,
 } from "./codex-projects.js";
@@ -373,6 +375,10 @@ async function forwardFrame(
   const codexSessionId = extractCodexSessionId(req.headers);
   if (codexSessionId) {
     headers.set(CODEX_SESSION_FORWARD_HEADER, codexSessionId);
+  }
+  const codexProjectRoot = extractCodexProjectRoot(req.headers);
+  if (codexProjectRoot) {
+    headers.set(CODEX_PROJECT_ROOT_FORWARD_HEADER, codexProjectRoot);
   }
   const rawLiteLLMKeyAlias = req.headers[LITELLM_KEY_ALIAS_HEADER];
   const liteLLMKeyAlias = Array.isArray(rawLiteLLMKeyAlias)
