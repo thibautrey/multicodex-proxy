@@ -99,8 +99,10 @@ function createStore(accounts: Account[]) {
 }
 
 function createTraceManager() {
+  const traces: any[] = [];
   return {
-    recordTrace: () => undefined,
+    traces,
+    recordTrace: (entry: any) => traces.push(entry),
     beginTrace: async () => "trace",
     completeTrace: async () => undefined,
   };
@@ -120,11 +122,12 @@ async function startTestServer(
       next();
     },
   );
+  const traceManager = createTraceManager();
   app.use(
     "/v1",
     createProxyRouter({
       store: store as any,
-      traceManager: createTraceManager() as any,
+      traceManager: traceManager as any,
       openaiBaseUrl: "https://chatgpt.example",
       mistralBaseUrl: "https://mistral.example",
       mistralUpstreamPath: "/v1/responses",
@@ -141,7 +144,7 @@ async function startTestServer(
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   assert.ok(address && typeof address === "object");
-  return { server, port: address.port };
+  return { server, port: address.port, traceManager };
 }
 
 test("routes repeated requests from one Codex session to the same account", async (t) => {
@@ -289,7 +292,7 @@ test("applies quota filtering to a smart-routing fallback after affinity invalid
     };
     next();
   };
-  const { server, port } = await startTestServer(
+  const { server, port, traceManager } = await startTestServer(
     createStore([nearLimit, available]),
     cache,
     policyMiddleware,
@@ -316,4 +319,8 @@ test("applies quota filtering to a smart-routing fallback after affinity invalid
     "Bearer token-account-two",
     "Bearer token-account-two",
   ]);
+  const rotatedTrace = traceManager.traces.find(
+    (trace: any) => trace.accountId === "account-two" && trace.status === 200,
+  );
+  assert.equal(rotatedTrace?.accountSelection?.rotated, true);
 });

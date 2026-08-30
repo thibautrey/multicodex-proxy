@@ -183,6 +183,20 @@ test("remembering an active session refreshes its TTL", () => {
   );
 });
 
+test("peeks an active session without changing its affinity value", () => {
+  const cache = new SessionAffinityCache(60_000);
+  cache.remember("default", "thread-peek", "openai", "account-one", 1_000);
+
+  assert.equal(
+    cache.peek("default", "thread-peek", "openai", 2_000),
+    "account-one",
+  );
+  assert.equal(
+    cache.peek("default", "thread-peek", "openai", 62_000),
+    undefined,
+  );
+});
+
 test("evicts the least recently used entry when the cache is full", () => {
   const cache = new SessionAffinityCache(1_000, 2);
   const first = account("account-one");

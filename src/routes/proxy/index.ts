@@ -2403,6 +2403,14 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         )?.resource;
 
         const quotaAwareAccounts = accountSelectionPool(usableAccounts);
+        const previousAffinityAccountId =
+          sessionAffinityEnabled && codexSessionId
+            ? sessionAffinity.peek(
+                affinityApplication,
+                codexSessionId,
+                candidate.provider,
+              )
+            : undefined;
         const affinityAccount = findSessionAffinityAccount(
           sessionAffinity,
           sessionAffinityEnabled,
@@ -2454,8 +2462,10 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           eligibleCount: quotaSelection.eligibleCount,
           nearLimitCount: quotaSelection.nearLimitCount,
           rotated: Boolean(
-            previousAttemptAccountId &&
-              previousAttemptAccountId !== selected.id,
+            (previousAttemptAccountId &&
+              previousAttemptAccountId !== selected.id) ||
+              (previousAffinityAccountId &&
+                previousAffinityAccountId !== selected.id),
           ),
           selectedHeadroomPercent: accountHeadroom(selected),
           selectedWeeklyRemainingPercent,
