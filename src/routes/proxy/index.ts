@@ -1750,7 +1750,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
     const onAbort = () => {
       clearTimeout(timer);
       signal?.removeEventListener("abort", onAbort);
-      reject(signal.reason ?? new DOMException("The operation was aborted", "AbortError"));
+      reject(signal?.reason ?? new DOMException("The operation was aborted", "AbortError"));
     };
     timer = setTimeout(() => {
       signal?.removeEventListener("abort", onAbort);
