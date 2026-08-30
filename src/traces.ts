@@ -6,7 +6,18 @@ import path from "node:path";
 import { createInterface } from "node:readline";
 import { normalizeTraceHeaders } from "./trace-headers.js";
 import type { CodexProjectAttribution } from "./codex-projects.js";
-import type { ProviderId } from "./types.js";
+import type { AccountSelectionTelemetry, ProviderId } from "./types.js";
+
+function normalizeSelectionProvider(value: unknown): ProviderId {
+  return value === "openai" ||
+    value === "openai-compatible" ||
+    value === "opencode" ||
+    value === "mistral" ||
+    value === "zai" ||
+    value === "xai"
+    ? value
+    : "openai";
+}
 
 export type TraceEntry = {
   id: string;
@@ -26,6 +37,7 @@ export type TraceEntry = {
   accountId?: string;
   accountEmail?: string;
   provider?: ProviderId;
+  accountSelection?: AccountSelectionTelemetry;
   model?: string;
   requestedModel?: string;
   resolvedModel?: string;
@@ -441,6 +453,34 @@ function normalizeTrace(raw: any): TraceEntry | null {
       raw.provider === "zai" ||
       raw.provider === "xai"
         ? raw.provider
+        : undefined,
+    accountSelection:
+      raw.accountSelection && typeof raw.accountSelection === "object"
+        ? {
+            reason:
+              raw.accountSelection.reason === "sticky" ||
+              raw.accountSelection.reason === "policy-preferred" ||
+              raw.accountSelection.reason === "quota-headroom"
+                ? raw.accountSelection.reason
+                : "quota-headroom",
+            provider: normalizeSelectionProvider(raw.accountSelection.provider),
+            candidateCount:
+              safeNumber(raw.accountSelection.candidateCount) ?? 0,
+            eligibleCount:
+              safeNumber(raw.accountSelection.eligibleCount) ?? 0,
+            nearLimitCount:
+              safeNumber(raw.accountSelection.nearLimitCount) ?? 0,
+            rotated: Boolean(raw.accountSelection.rotated),
+            selectedHeadroomPercent: safeNumber(
+              raw.accountSelection.selectedHeadroomPercent,
+            ),
+            selectedWeeklyRemainingPercent: safeNumber(
+              raw.accountSelection.selectedWeeklyRemainingPercent,
+            ),
+            selectedFiveHourRemainingPercent: safeNumber(
+              raw.accountSelection.selectedFiveHourRemainingPercent,
+            ),
+          }
         : undefined,
     model,
     requestedModel:

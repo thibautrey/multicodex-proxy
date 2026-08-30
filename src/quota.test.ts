@@ -4,6 +4,7 @@ import {
   chooseAccount,
   parseOpenCodeUsage,
   refreshUsageIfNeeded,
+  selectAccountForProvider,
 } from "./quota.js";
 import type { Account } from "./types.js";
 
@@ -101,6 +102,35 @@ test("keeps a five-hour account in rotation below the near-limit threshold", () 
   const second = chooseAccount([withFiveHourQuota, withoutFiveHourQuota])?.id;
 
   assert.notEqual(first, second);
+});
+
+test("prefers the account with the greatest quota headroom across windows", () => {
+  const fiveHourConstrained = account("five-hour-constrained", 98, 10);
+  const weeklyConstrained = account("weekly-constrained", 90, 60);
+
+  const decision = selectAccountForProvider(
+    [fiveHourConstrained, weeklyConstrained],
+    "openai",
+  );
+
+  assert.equal(decision.account?.id, "weekly-constrained");
+  assert.equal(decision.selectedHeadroomPercent, 10);
+  assert.equal(decision.selectedWeeklyRemainingPercent, 40);
+  assert.equal(decision.selectedFiveHourRemainingPercent, 10);
+  assert.equal(decision.candidateCount, 2);
+  assert.equal(decision.eligibleCount, 2);
+});
+
+test("keeps provider selection isolated when no account matches", () => {
+  const decision = selectAccountForProvider(
+    [account("openai-only", 10, 10)],
+    "mistral",
+  );
+
+  assert.equal(decision.provider, "mistral");
+  assert.equal(decision.account, null);
+  assert.equal(decision.candidateCount, 0);
+  assert.equal(decision.eligibleCount, 0);
 });
 
 test("normalizes OpenCode Go rolling, weekly, and monthly quotas", () => {

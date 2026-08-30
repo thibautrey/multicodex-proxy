@@ -54,6 +54,46 @@ function weeklyUsage(account: Account): number | undefined {
     : undefined;
 }
 
+function remainingPercent(value: number | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? 100 - safePct(value)
+    : undefined;
+}
+
+export type AccountSelectionDecision = {
+  account: Account | null;
+  provider: ProviderId;
+  candidateCount: number;
+  eligibleCount: number;
+  nearLimitCount: number;
+  selectedHeadroomPercent?: number;
+  selectedWeeklyRemainingPercent?: number;
+  selectedFiveHourRemainingPercent?: number;
+};
+
+export function accountHeadroom(account: Account): number | undefined {
+  const windows = [
+    remainingPercent(account.usage?.primary?.usedPercent),
+    remainingPercent(account.usage?.secondary?.usedPercent),
+    remainingPercent(account.usage?.monthly?.usedPercent),
+  ].filter((value): value is number => typeof value === "number");
+  return windows.length ? Math.min(...windows) : undefined;
+}
+
+function accountSelectionMetrics(account: Account) {
+  const selectedWeeklyRemainingPercent = remainingPercent(
+    account.usage?.secondary?.usedPercent,
+  );
+  const selectedFiveHourRemainingPercent = remainingPercent(
+    account.usage?.primary?.usedPercent,
+  );
+  return {
+    selectedHeadroomPercent: accountHeadroom(account),
+    selectedWeeklyRemainingPercent,
+    selectedFiveHourRemainingPercent,
+  };
+}
+
 function parseUsage(data: any): UsageSnapshot {
   const upstreamPrimary = data?.rate_limit?.primary_window;
   const upstreamSecondary = data?.rate_limit?.secondary_window;
@@ -384,15 +424,53 @@ export function accountSelectionPool(accounts: Account[]): Account[] {
 }
 
 export function chooseAccount(accounts: Account[]): Account | null {
-  const effectivePool = accountSelectionPool(accounts);
+  return selectAccount(accounts).account;
+}
 
-  if (!effectivePool.length) return null;
+export function selectAccount(accounts: Account[]): AccountSelectionDecision {
+  const provider = normalizeProvider(accounts[0]);
+  const candidates = accounts.filter((account) => account.enabled);
+  const effectivePool = accountSelectionPool(accounts);
+  const nearLimitCount = candidates.filter(
+    (account) => hasFiveHourQuota(account) && fiveHourQuotaIsNearLimit(account),
+  ).length;
+  const allEffectiveAccountsNearLimit =
+    effectivePool.length > 0 &&
+    effectivePool.every(
+      (account) => hasFiveHourQuota(account) && fiveHourQuotaIsNearLimit(account),
+    );
+
+  if (!effectivePool.length) {
+    return {
+      account: null,
+      provider,
+      candidateCount: candidates.length,
+      eligibleCount: 0,
+      nearLimitCount,
+    };
+  }
 
   const sorted = [...effectivePool].sort((a, b) => {
+    const aheadroom = accountHeadroom(a);
+    const bheadroom = accountHeadroom(b);
     const aw = weeklyUsage(a);
     const bw = weeklyUsage(b);
-    // Known weekly usage wins over an account whose usage has not been
-    // fetched yet. This preserves the safe behavior for missing snapshots.
+
+    // Preserve weekly balancing while at least one account has useful
+    // five-hour headroom. Only when every effective account is near its
+    // five-hour limit do we prefer the account with the largest remaining
+    // quota, preventing the smallest weekly usage from burning the tightest
+    // window first.
+    if (allEffectiveAccountsNearLimit) {
+      // An unknown snapshot remains a last resort. This preserves the safe
+      // behavior for accounts whose usage has not been fetched yet.
+      if (aheadroom === undefined && bheadroom !== undefined) return 1;
+      if (aheadroom !== undefined && bheadroom === undefined) return -1;
+      if (aheadroom !== undefined && bheadroom !== undefined && aheadroom !== bheadroom) {
+        return bheadroom - aheadroom;
+      }
+    }
+
     if (aw === undefined && bw !== undefined) return 1;
     if (aw !== undefined && bw === undefined) return -1;
     if (aw !== undefined && bw !== undefined && aw !== bw) return aw - bw;
@@ -408,35 +486,53 @@ export function chooseAccount(accounts: Account[]): Account | null {
     return a.id.localeCompare(b.id);
   });
 
-  if (!sorted.length) return null;
-
-  // When weekly usage is equal (which is common while snapshots are being
-  // refreshed), alternate between accounts instead of selecting the first
-  // one forever. If usage differs, the sort above still favors the less-used
-  // weekly quota.
-  const provider = normalizeProvider(sorted[0]);
-  const previousId = lastSelectedAccountByProvider.get(provider);
-  const lowestWeeklyUsage = weeklyUsage(sorted[0]);
-  const lowestUsageAccounts = sorted.filter(
-    (account) => weeklyUsage(account) === lowestWeeklyUsage,
+  // When the effective headroom is equal, alternate between accounts instead
+  // of selecting the first one forever. This keeps traffic balanced without
+  // overriding a better quota headroom score.
+  const selectedHeadroom = accountHeadroom(sorted[0]);
+  const selectedWeeklyUsage = weeklyUsage(sorted[0]);
+  const tiedAccounts = sorted.filter(
+    (account) =>
+      allEffectiveAccountsNearLimit
+        ? accountHeadroom(account) === selectedHeadroom
+        : weeklyUsage(account) === selectedWeeklyUsage,
   );
+  const previousId = lastSelectedAccountByProvider.get(provider);
   const previousIndex = previousId
-    ? lowestUsageAccounts.findIndex((account) => account.id === previousId)
+    ? tiedAccounts.findIndex((account) => account.id === previousId)
     : -1;
   const winner =
     previousIndex >= 0
-      ? lowestUsageAccounts[(previousIndex + 1) % lowestUsageAccounts.length]
+      ? tiedAccounts[(previousIndex + 1) % tiedAccounts.length]
       : sorted[0];
   lastSelectedAccountByProvider.set(provider, winner.id);
 
-  return winner;
+  return {
+    account: winner,
+    provider,
+    candidateCount: candidates.length,
+    eligibleCount: effectivePool.length,
+    nearLimitCount,
+    ...accountSelectionMetrics(winner),
+  };
 }
 
 export function chooseAccountForProvider(
   accounts: Account[],
   provider: ProviderId,
 ): Account | null {
-  return chooseAccount(accounts.filter((a) => normalizeProvider(a) === provider));
+  return selectAccountForProvider(accounts, provider).account;
+}
+
+export function selectAccountForProvider(
+  accounts: Account[],
+  provider: ProviderId,
+): AccountSelectionDecision {
+  const matching = accounts.filter(
+    (account) => normalizeProvider(account) === provider,
+  );
+  const decision = selectAccount(matching);
+  return matching.length ? decision : { ...decision, provider };
 }
 
 export function isUsageRefreshNeeded(

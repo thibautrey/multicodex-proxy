@@ -532,6 +532,17 @@ test("stream traces are durable at start and finalized without duplicate stats",
       skipped: 3,
       asynchronous: 1,
     },
+    accountSelection: {
+      reason: "quota-headroom",
+      provider: "openai",
+      candidateCount: 4,
+      eligibleCount: 2,
+      nearLimitCount: 2,
+      rotated: true,
+      selectedHeadroomPercent: 28,
+      selectedWeeklyRemainingPercent: 61,
+      selectedFiveHourRemainingPercent: 28,
+    },
     inputContext: {
       compactionItemCount: 1,
       itemsBeforeLatestCompaction: 8,
@@ -568,6 +579,17 @@ test("stream traces are durable at start and finalized without duplicate stats",
   assert.deepEqual(traces[0].accountPreparation, {
     skipped: 3,
     asynchronous: 1,
+  });
+  assert.deepEqual(traces[0].accountSelection, {
+    reason: "quota-headroom",
+    provider: "openai",
+    candidateCount: 4,
+    eligibleCount: 2,
+    nearLimitCount: 2,
+    rotated: true,
+    selectedHeadroomPercent: 28,
+    selectedWeeklyRemainingPercent: 61,
+    selectedFiveHourRemainingPercent: 28,
   });
   assert.deepEqual(traces[0].inputContext, {
     compactionItemCount: 1,
