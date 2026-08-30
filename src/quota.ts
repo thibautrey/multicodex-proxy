@@ -5,6 +5,7 @@ import {
   EMPTY_RESPONSE_WINDOW_MS,
   MODEL_NOT_FOUND_BLOCK_DURATION_MS,
 } from "./config.js";
+import { openCodeUsageUrl } from "./opencode.js";
 
 export const USAGE_CACHE_TTL_MS = Number(process.env.USAGE_CACHE_TTL_MS ?? 300_000);
 const USAGE_TIMEOUT_MS = Number(process.env.USAGE_TIMEOUT_MS ?? 10_000);
@@ -22,6 +23,7 @@ const lastSelectedAccountByProvider = new Map<ProviderId, string>();
 
 export function normalizeProvider(account?: Pick<Account, "provider">): ProviderId {
   if (account?.provider === "openai-compatible") return "openai-compatible";
+  if (account?.provider === "opencode") return "opencode";
   if (account?.provider === "mistral") return "mistral";
   if (account?.provider === "zai") return "zai";
   if (account?.provider === "xai") return "xai";
@@ -88,6 +90,57 @@ function parseUsage(data: any): UsageSnapshot {
 
 function parseOpenAIUsage(data: any): UsageSnapshot {
   return parseUsage(data);
+}
+
+export function parseOpenCodeUsage(data: any): UsageSnapshot {
+  const usage = data?.usage && typeof data.usage === "object" ? data.usage : data;
+  const toWindow = (window: any, windowSeconds?: number) => {
+    if (!window || typeof window !== "object") return undefined;
+    const usedPercent = pickFirstNumber(
+      window.percent,
+      window.usedPercent,
+      window.used_percent,
+    );
+    const resetAt = parseResetAt(
+      window.resetsAt ?? window.resetAt ?? window.reset_at,
+    );
+    if (usedPercent === undefined && resetAt === undefined) return undefined;
+    return {
+      usedPercent:
+        usedPercent === undefined
+          ? undefined
+          : Math.max(0, Math.min(100, usedPercent)),
+      resetAt,
+      windowSeconds,
+    };
+  };
+  return {
+    primary: toWindow(usage?.rolling, FIVE_HOUR_WINDOW_SECONDS),
+    secondary: toWindow(usage?.weekly, WEEKLY_WINDOW_SECONDS),
+    monthly: toWindow(usage?.monthly),
+    quotaStatus: "available",
+    fetchedAt: Date.now(),
+  };
+}
+
+function markOpenCodeQuotaUnsupported(account: Account): Account {
+  const isProbeAvailabilityError = (message?: string) =>
+    /^OpenCode usage probe failed (403|404)\b/.test(message ?? "");
+  account.usage = {
+    ...account.usage,
+    quotaStatus: "unsupported",
+    fetchedAt: Date.now(),
+  };
+  account.state = {
+    ...account.state,
+    lastError: isProbeAvailabilityError(account.state?.lastError)
+      ? undefined
+      : account.state?.lastError,
+    recentErrors: account.state?.recentErrors?.filter(
+      (error) => !isProbeAvailabilityError(error.message),
+    ),
+  };
+  return account;
 }
 
 function bearerToken(token: string): string {
@@ -248,9 +301,11 @@ export function weeklyResetAt(usage?: UsageSnapshot): number | undefined {
 }
 
 export function nextResetAt(usage?: UsageSnapshot): number | undefined {
-  const list = [usage?.primary?.resetAt, usage?.secondary?.resetAt].filter(
-    (x): x is number => typeof x === "number" && Number.isFinite(x),
-  );
+  const list = [
+    usage?.primary?.resetAt,
+    usage?.secondary?.resetAt,
+    usage?.monthly?.resetAt,
+  ].filter((x): x is number => typeof x === "number" && Number.isFinite(x));
   return list.length ? Math.min(...list) : undefined;
 }
 
@@ -414,6 +469,24 @@ export async function refreshUsageIfNeeded(account: Account, chatgptBaseUrl: str
       authorization: bearerToken(account.accessToken),
       accept: "application/json",
     };
+
+    if (provider === "opencode") {
+      const res = await fetch(openCodeUsageUrl(chatgptBaseUrl), {
+        headers,
+        signal: controller.signal,
+      });
+      // OpenCode exposes this endpoint only for eligible Go subscriptions.
+      // Zen, balance-backed, and some OAuth accounts return 403/404 even
+      // though inference remains fully usable.
+      if (res.status === 403 || res.status === 404) {
+        return markOpenCodeQuotaUnsupported(account);
+      }
+      if (!res.ok) throw new Error(`OpenCode usage probe failed ${res.status}`);
+      const json = await res.json();
+      account.usage = parseOpenCodeUsage(json);
+      account.state = { ...account.state, lastError: undefined };
+      return account;
+    }
 
     if (shouldUseZaiQuotaEndpoint) {
       const usageUrl = zaiQuotaUrl(chatgptBaseUrl);

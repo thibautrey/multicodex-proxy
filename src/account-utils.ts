@@ -7,8 +7,10 @@ import {
 } from "./quota.js";
 import type { Account } from "./types.js";
 import { refreshXaiAccessToken } from "./xai.js";
+import { refreshOpenCodeAccessToken } from "./opencode.js";
 
 const xaiRefreshes = new Map<string, Promise<Account>>();
+const openCodeRefreshes = new Map<string, Promise<Account>>();
 
 export function isTokenRefreshNeeded(
   account: Account,
@@ -16,7 +18,7 @@ export function isTokenRefreshNeeded(
 ): account is Account & { expiresAt: number; refreshToken: string } {
   const provider = normalizeProvider(account);
   return (
-    (provider === "openai" || provider === "xai") &&
+    (provider === "openai" || provider === "opencode" || provider === "xai") &&
     typeof account.expiresAt === "number" &&
     account.expiresAt > 0 &&
     now >= account.expiresAt - 5 * 60_000 &&
@@ -64,6 +66,41 @@ export async function ensureValidToken(
         xaiRefreshes.delete(account.id);
       });
     xaiRefreshes.set(account.id, refresh);
+    return refresh;
+  }
+
+  if (normalizeProvider(account) === "opencode") {
+    const current = openCodeRefreshes.get(account.id);
+    if (current) return current;
+    const refresh = refreshOpenCodeAccessToken(account)
+      .then((token) => ({
+        ...account,
+        accessToken: token.accessToken,
+        refreshToken: token.refreshToken ?? account.refreshToken,
+        expiresAt: token.expiresAt ?? account.expiresAt,
+        state: {
+          ...account.state,
+          needsTokenRefresh: false,
+          authBlockedUntil: undefined,
+        },
+      }))
+      .catch((err: any) => {
+        const failed = { ...account };
+        rememberError(
+          failed,
+          `OpenCode refresh token failed: ${err?.message ?? String(err)}`,
+        );
+        failed.state = {
+          ...failed.state,
+          needsTokenRefresh: true,
+          authBlockedUntil: Date.now() + 60_000,
+        };
+        return failed;
+      })
+      .finally(() => {
+        openCodeRefreshes.delete(account.id);
+      });
+    openCodeRefreshes.set(account.id, refresh);
     return refresh;
   }
 

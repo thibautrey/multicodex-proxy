@@ -50,6 +50,13 @@ export const REALTIME_REQUEST_TIMEOUT_MS = Math.max(
 );
 export const MISTRAL_BASE_URL =
   process.env.MISTRAL_BASE_URL ?? "https://api.mistral.ai";
+// Provider routes append `/v1/...`, so this is the API root before `/v1`.
+export const OPENCODE_BASE_URL =
+  process.env.OPENCODE_BASE_URL ?? "https://opencode.ai/zen";
+export const OPENCODE_CONSOLE_URL =
+  process.env.OPENCODE_CONSOLE_URL ?? "https://opencode.ai/console";
+export const OPENCODE_OAUTH_CLIENT_ID =
+  process.env.OPENCODE_OAUTH_CLIENT_ID ?? "opencode-cli";
 export const UPSTREAM_PATH =
   process.env.UPSTREAM_PATH ?? "/backend-api/codex/responses";
 export const UPSTREAM_COMPACT_PATH =

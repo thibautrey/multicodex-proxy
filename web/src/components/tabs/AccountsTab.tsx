@@ -24,7 +24,7 @@ type Props = {
     email: string,
     accountId?: string,
     method?: OAuthMethod,
-    provider?: "openai" | "xai",
+    provider?: "openai" | "opencode" | "xai",
   ) => Promise<any>;
   pollDeviceOAuth: (flowId: string) => Promise<any>;
   completeOAuth: (flowId: string, input: string) => Promise<any>;
@@ -34,6 +34,7 @@ type Props = {
 type AccountProvider =
   | "openai"
   | "openai-compatible"
+  | "opencode"
   | "mistral"
   | "zai"
   | "xai";
@@ -75,7 +76,7 @@ type OAuthDialogState = {
   accountId?: string;
   pendingPriority?: number;
   pendingEnabled?: boolean;
-  provider: "openai" | "xai";
+  provider: "openai" | "opencode" | "xai";
 };
 
 function isOAuthProvider(provider: AccountProvider) {
@@ -83,11 +84,12 @@ function isOAuthProvider(provider: AccountProvider) {
 }
 
 function isManualTokenProvider(provider: AccountProvider) {
-  return provider === "mistral" || provider === "openai-compatible" || provider === "zai";
+  return provider === "mistral" || provider === "openai-compatible" || provider === "opencode" || provider === "zai";
 }
 
 function providerFavicon(provider?: string) {
   if (provider === "mistral") return "https://mistral.ai/favicon.ico";
+  if (provider === "opencode") return "https://opencode.ai/favicon-v3.svg";
   if (provider === "zai") return "https://z.ai/favicon.ico";
   if (provider === "xai") return "https://grok.com/favicon.ico";
   return "https://openai.com/favicon.ico";
@@ -95,8 +97,15 @@ function providerFavicon(provider?: string) {
 
 function providerLabel(provider?: string) {
   if (provider === "mistral") return "Mistral";
+  if (provider === "opencode") return "OpenCode";
   if (provider === "openai-compatible") return "OpenAI-compatible";
   if (provider === "zai") return "z.ai";
+  if (provider === "xai") return "Grok Build";
+  return "OpenAI";
+}
+
+function oauthProviderLabel(provider: "openai" | "opencode" | "xai") {
+  if (provider === "opencode") return "OpenCode";
   if (provider === "xai") return "Grok Build";
   return "OpenAI";
 }
@@ -339,7 +348,7 @@ export function AccountsTab(props: Props) {
   const openOAuthDialog = async (options: {
     email: string;
     method: OAuthMethod;
-    provider: "openai" | "xai";
+    provider: "openai" | "opencode" | "xai";
     mode: "create" | "reauth";
     accountId?: string;
     pendingPriority?: number;
@@ -461,6 +470,8 @@ export function AccountsTab(props: Props) {
         ? "mistral"
         : account.provider === "zai"
           ? "zai"
+        : account.provider === "opencode"
+          ? "opencode"
         : account.provider === "xai"
           ? "xai"
         : account.provider === "openai-compatible"
@@ -628,6 +639,23 @@ export function AccountsTab(props: Props) {
     }
   };
 
+  const reauthOpenCodeAccount = async (account: Account) => {
+    setOpenMenu(null);
+    if (account.provider !== "opencode") return;
+    setOauthBusyId(account.id);
+    try {
+      await openOAuthDialog({
+        email: account.email?.trim() ?? "",
+        method: "device",
+        provider: "opencode",
+        mode: "reauth",
+        accountId: account.id,
+      });
+    } finally {
+      setOauthBusyId(null);
+    }
+  };
+
   const openAiCount = accounts.filter(
     (account) => (account.provider ?? "openai") === "openai",
   ).length;
@@ -639,6 +667,9 @@ export function AccountsTab(props: Props) {
   );
   const openAiCompatibleCount = accounts.filter(
     (account) => account.provider === "openai-compatible",
+  ).length;
+  const openCodeCount = accounts.filter(
+    (account) => account.provider === "opencode",
   ).length;
   const mistralCount = accounts.filter(
     (account) => account.provider === "mistral",
@@ -654,16 +685,24 @@ export function AccountsTab(props: Props) {
   ).length;
   const enabledCount = accounts.filter((account) => account.enabled).length;
 
-  const renderUsageCell = (value?: number, resetAt?: number) => {
+  const renderUsageCell = (
+    value?: number,
+    resetAt?: number,
+    unsupported = false,
+  ) => {
     const safeValue =
       typeof value === "number" ? Math.max(0, Math.min(100, value)) : 0;
     return (
       <div className="usage-cell">
         <div className="usage-value-row">
           <strong>
-            {typeof value === "number" ? `${Math.round(value)}%` : "?"}
+            {unsupported
+              ? "N/A"
+              : typeof value === "number"
+                ? `${Math.round(value)}%`
+                : "?"}
           </strong>
-          <small>{fmt(resetAt)}</small>
+          <small>{unsupported ? "Not exposed" : fmt(resetAt)}</small>
         </div>
         <div className="mini-progress">
           <span style={{ width: `${safeValue}%` }} />
@@ -762,6 +801,7 @@ export function AccountsTab(props: Props) {
             <span className="badge">
               {openAiCompatibleCount} OpenAI-compatible
             </span>
+            <span className="badge">{openCodeCount} OpenCode</span>
             <span className="badge">{mistralCount} Mistral</span>
             <span className="badge">{zaiCount} z.ai</span>
             <span className="badge">{xaiCount} Grok Build</span>
@@ -778,6 +818,7 @@ export function AccountsTab(props: Props) {
                 <th>Account</th>
                 <th>5h quota</th>
                 <th>Weekly quota</th>
+                <th>Monthly quota</th>
                 <th>Routing state</th>
                 <th>Last error</th>
                 <th />
@@ -812,6 +853,11 @@ export function AccountsTab(props: Props) {
                       {a.upstreamMode && (
                         <span className="mono muted">
                           upstream: {a.upstreamMode}
+                        </span>
+                      )}
+                      {a.provider === "opencode" && a.opencodeOrgName && (
+                        <span className="mono muted">
+                          organization: {a.opencodeOrgName}
                         </span>
                       )}
                       <span className={a.location === "local" ? "badge badge-live" : "badge"}>
@@ -870,12 +916,21 @@ export function AccountsTab(props: Props) {
                     {renderUsageCell(
                       a.usage?.primary?.usedPercent,
                       a.usage?.primary?.resetAt,
+                      a.usage?.quotaStatus === "unsupported",
                     )}
                   </td>
                   <td>
                     {renderUsageCell(
                       a.usage?.secondary?.usedPercent,
                       a.usage?.secondary?.resetAt,
+                      a.usage?.quotaStatus === "unsupported",
+                    )}
+                  </td>
+                  <td>
+                    {renderUsageCell(
+                      a.usage?.monthly?.usedPercent,
+                      a.usage?.monthly?.resetAt,
+                      a.usage?.quotaStatus === "unsupported",
                     )}
                   </td>
                   <td>
@@ -1001,12 +1056,25 @@ export function AccountsTab(props: Props) {
                                 </button>
                               </>
                             ) : (
-                              <button
-                                className="account-action-item"
-                                onClick={() => openEditModal(a)}
-                              >
-                                Change key
-                              </button>
+                              <>
+                                <button
+                                  className="account-action-item"
+                                  onClick={() => openEditModal(a)}
+                                >
+                                  Change key
+                                </button>
+                                {a.provider === "opencode" && (
+                                  <button
+                                    className="account-action-item"
+                                    disabled={oauthBusyId === a.id}
+                                    onClick={() => void reauthOpenCodeAccount(a)}
+                                  >
+                                    {oauthBusyId === a.id
+                                      ? "Opening..."
+                                      : "OpenCode device reauth"}
+                                  </button>
+                                )}
+                              </>
                             )}
                             <button
                               className="account-action-item account-action-item-danger"
@@ -1027,9 +1095,9 @@ export function AccountsTab(props: Props) {
               })}
               {!accounts.length && (
                 <tr>
-                  <td colSpan={7} className="muted empty-row">
+                  <td colSpan={8} className="muted empty-row">
                     No accounts configured yet. Add an OpenAI,
-                    OpenAI-compatible, Mistral, z.ai, or Grok Build account to expose models and
+                    OpenAI-compatible, OpenCode, Mistral, z.ai, or Grok Build account to expose models and
                     enable routing.
                   </td>
                 </tr>
@@ -1061,6 +1129,7 @@ export function AccountsTab(props: Props) {
                 >
                   <option value="openai">OpenAI</option>
                   <option value="openai-compatible">OpenAI-compatible</option>
+                  <option value="opencode">OpenCode Zen / Go</option>
                   <option value="mistral">Mistral</option>
                   <option value="zai">z.ai</option>
                   <option value="xai">Grok Build (subscription)</option>
@@ -1157,6 +1226,11 @@ export function AccountsTab(props: Props) {
                     : "OpenAI onboarding uses OAuth. Browser callback opens the login page and asks for the callback URL. Device code shows a one-time code and completes automatically after approval."}
                 </div>
               )}
+              {provider === "opencode" && (
+                <div className="muted">
+                  Enter an OpenCode API key, or use the device-login button below to connect an OpenCode Console account. Go quotas are detected automatically.
+                </div>
+              )}
               <label>
                 Priority
                 <input
@@ -1216,6 +1290,25 @@ export function AccountsTab(props: Props) {
                   }}
                 >
                   Import configured auth.json
+                </button>
+              )}
+              {provider === "opencode" && (
+                <button
+                  className="btn ghost"
+                  disabled={isSubmitting}
+                  onClick={() => {
+                    setIsSubmitting(true);
+                    void openOAuthDialog({
+                      email: manualEmail.trim(),
+                      method: "device",
+                      provider: "opencode",
+                      mode: "create",
+                      pendingPriority: Number(manualPriority) || 0,
+                      pendingEnabled: manualEnabled,
+                    }).finally(() => setIsSubmitting(false));
+                  }}
+                >
+                  Connect OpenCode account
                 </button>
               )}
               <button className="btn ghost" onClick={closeModal}>
@@ -1420,12 +1513,8 @@ export function AccountsTab(props: Props) {
             <div className="inline wrap row-between">
               <h2>
                 {oauthDialog.mode === "create"
-                  ? `Complete ${
-                      oauthDialog.provider === "xai" ? "Grok Build" : "OpenAI"
-                    } OAuth`
-                  : `Complete ${
-                      oauthDialog.provider === "xai" ? "Grok Build" : "OpenAI"
-                    } reauth`}
+                  ? `Complete ${oauthProviderLabel(oauthDialog.provider)} OAuth`
+                  : `Complete ${oauthProviderLabel(oauthDialog.provider)} reauth`}
               </h2>
               <button className="btn ghost" onClick={closeOauthDialog}>
                 Close
@@ -1433,7 +1522,7 @@ export function AccountsTab(props: Props) {
             </div>
             <div className="grid modal-grid">
               <label>
-                Email {oauthDialog.provider === "xai" ? "(from xAI after approval)" : ""}
+                Email {oauthDialog.provider !== "openai" ? "(from provider after approval)" : ""}
                 <input value={oauthDialog.email} disabled />
               </label>
               {oauthDialog.method === "device" ? (
@@ -1478,7 +1567,11 @@ export function AccountsTab(props: Props) {
             <div className="muted">
               {oauthDialog.method === "device"
                 ? `Open the verification URL, enter the one-time code, and approve the ${
-                    oauthDialog.provider === "xai" ? "xAI" : "OpenAI"
+                    oauthDialog.provider === "xai"
+                      ? "xAI"
+                      : oauthDialog.provider === "opencode"
+                        ? "OpenCode"
+                        : "OpenAI"
                   } login. This dialog will complete automatically after approval. Do not share this code.`
                 : "Complete the OpenAI login in the opened browser tab. When the browser reaches the callback page, copy the full URL and paste it here. Do not paste access or refresh tokens."}
             </div>

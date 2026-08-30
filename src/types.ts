@@ -1,6 +1,7 @@
 export type ProviderId =
   | "openai"
   | "openai-compatible"
+  | "opencode"
   | "mistral"
   | "zai"
   | "xai";
@@ -39,6 +40,8 @@ export type UsageWindow = {
 export type UsageSnapshot = {
   primary?: UsageWindow; // normalized ~5h window
   secondary?: UsageWindow; // normalized weekly window
+  monthly?: UsageWindow; // normalized monthly window when exposed by a provider
+  quotaStatus?: "available" | "unsupported";
   fetchedAt: number;
 };
 
@@ -75,6 +78,10 @@ export type Account = {
   refreshToken?: string;
   expiresAt?: number;
   chatgptAccountId?: string;
+  opencodeAccountId?: string;
+  opencodeOrgId?: string;
+  opencodeOrgName?: string;
+  opencodeConsoleUrl?: string;
   xaiUserId?: string;
   xaiAuthScope?: string;
   oidcIssuer?: string;
@@ -205,7 +212,7 @@ export type OAuthFlowState = {
   codeVerifier: string;
   createdAt: number;
   method?: "browser" | "device";
-  provider?: "openai" | "xai";
+  provider?: "openai" | "opencode" | "xai";
   targetAccountId?: string;
   status: "pending" | "success" | "error";
   error?: string;

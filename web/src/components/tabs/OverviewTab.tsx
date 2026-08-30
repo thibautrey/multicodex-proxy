@@ -14,7 +14,7 @@ type Props = {
 
 export function OverviewTab({ stats, usageStats, traceStats, storageInfo, models }: Props) {
   const [providerTab, setProviderTab] = useState<
-    "all" | "openai" | "openai-compatible" | "mistral" | "zai" | "xai"
+    "all" | "openai" | "openai-compatible" | "opencode" | "mistral" | "zai" | "xai"
   >("all");
 
   const filteredModels = useMemo(() => {
@@ -90,6 +90,7 @@ export function OverviewTab({ stats, usageStats, traceStats, storageInfo, models
             <button className={providerTab === "all" ? "tab active" : "tab"} onClick={() => setProviderTab("all")}>All</button>
             <button className={providerTab === "openai" ? "tab active" : "tab"} onClick={() => setProviderTab("openai")}>OpenAI</button>
             <button className={providerTab === "openai-compatible" ? "tab active" : "tab"} onClick={() => setProviderTab("openai-compatible")}>OpenAI-compatible</button>
+            <button className={providerTab === "opencode" ? "tab active" : "tab"} onClick={() => setProviderTab("opencode")}>OpenCode</button>
             <button className={providerTab === "mistral" ? "tab active" : "tab"} onClick={() => setProviderTab("mistral")}>Mistral</button>
             <button className={providerTab === "zai" ? "tab active" : "tab"} onClick={() => setProviderTab("zai")}>z.ai</button>
             <button className={providerTab === "xai" ? "tab active" : "tab"} onClick={() => setProviderTab("xai")}>Grok Build</button>

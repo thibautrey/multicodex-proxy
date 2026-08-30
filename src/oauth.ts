@@ -50,7 +50,7 @@ export function createOAuthState(
   email: string,
   targetAccountId?: string,
   method: "browser" | "device" = "browser",
-  provider: "openai" | "xai" = "openai",
+  provider: "openai" | "opencode" | "xai" = "openai",
 ): OAuthFlowState {
   return {
     id: randomUUID(),

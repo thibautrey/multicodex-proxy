@@ -557,7 +557,7 @@ export default function App() {
     email: string,
     accountId?: string,
     method: "browser" | "device" = "browser",
-    provider: "openai" | "xai" = "openai",
+    provider: "openai" | "opencode" | "xai" = "openai",
   ) => {
     return api("/admin/oauth/start", {
       method: "POST",

@@ -7,6 +7,7 @@ import {
   MAX_ACCOUNT_RETRY_ATTEMPTS,
   MODELS_CACHE_MS,
   MODELS_CLIENT_VERSION,
+  OPENCODE_BASE_URL,
   MODELS_STALE_MAX_AGE_MS,
   MODELS_STALE_WHILE_REVALIDATE,
   PI_USER_AGENT,
@@ -592,6 +593,9 @@ function accountBaseUrl(
   if (provider === "openai-compatible") {
     return trimTrailingSlash(String(account.baseUrl ?? ""));
   }
+  if (provider === "opencode") {
+    return trimTrailingSlash(account.baseUrl ?? OPENCODE_BASE_URL);
+  }
   if (provider === "mistral") return mistralBaseUrl;
   if (provider === "zai") return zaiBaseUrl;
   if (provider === "xai") {
@@ -808,7 +812,9 @@ function supportedToolTypesForRoute(
   }
 
   // OpenAI-compatible providers vary widely; default conservatively.
-  if (provider === "openai-compatible") return new Set(["function"]);
+  if (provider === "openai-compatible" || provider === "opencode") {
+    return new Set(["function"]);
+  }
 
   return new Set(["function"]);
 }
@@ -1397,6 +1403,7 @@ function buildRoutingCandidates(
     const tryProviders: ProviderId[] = [
       "openai",
       "openai-compatible",
+      "opencode",
       "mistral",
       "zai",
       "xai",
@@ -2308,7 +2315,11 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           : isChatCompletions
             ? chatCompletionsToResponsesPayload(req.body, sessionId)
             : normalizeResponsesPayload(req.body, sessionId);
-        if (shouldSendChatCompletions && candidate.provider === "openai-compatible") {
+        if (
+          shouldSendChatCompletions &&
+          (candidate.provider === "openai-compatible" ||
+            candidate.provider === "opencode")
+        ) {
           payloadToUpstream = sanitizeGenericChatCompletionsPayload(
             payloadToUpstream,
           );
@@ -2515,7 +2526,10 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             upstreamPath = isResponsesCompactPath
               ? mistralCompactUpstreamPath
               : mistralUpstreamPath;
-          } else if (candidate.provider === "openai-compatible") {
+          } else if (
+            candidate.provider === "openai-compatible" ||
+            candidate.provider === "opencode"
+          ) {
             upstreamPath = shouldSendChatCompletions
               ? "/v1/chat/completions"
               : "/v1/responses";
