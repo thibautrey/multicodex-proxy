@@ -155,6 +155,37 @@ export function TracingTab(props: Props) {
     "var(--chart-4)",
     "var(--chart-5)",
   ];
+  const accountSelectionSummary = React.useMemo(() => {
+    const selections = traces
+      .map((trace) => trace.accountSelection)
+      .filter((selection): selection is NonNullable<Trace["accountSelection"]> => Boolean(selection));
+    const reasonCounts = selections.reduce(
+      (counts, selection) => {
+        counts[selection.reason] += 1;
+        return counts;
+      },
+      {
+        sticky: 0,
+        "policy-preferred": 0,
+        "quota-headroom": 0,
+      },
+    );
+    const headrooms = selections
+      .map((selection) => selection.selectedHeadroomPercent)
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+    return {
+      attempts: selections.length,
+      rotations: selections.filter((selection) => selection.rotated).length,
+      maxNearLimit: selections.reduce(
+        (max, selection) => Math.max(max, selection.nearLimitCount),
+        0,
+      ),
+      averageHeadroom: headrooms.length
+        ? headrooms.reduce((sum, value) => sum + value, 0) / headrooms.length
+        : undefined,
+      reasonCounts,
+    };
+  }, [traces]);
 
   return (
     <>
@@ -188,6 +219,53 @@ export function TracingTab(props: Props) {
         <Metric title="Inference speed" value={formatTokenRate(traceStats.totals.inferenceTokensPerSecond)} detail={`${traceStats.totals.inferenceRequests} measurable requests`} />
         <Metric title="Total cost" value={usd(traceStats.totals.costUsd)} detail={`${traceStats.totals.requestsWithCost} priced · ${traceStats.totals.unpricedRequests} unpriced`} tone={traceStats.totals.unpricedRequests > 0 ? "warning" : "default"} />
         <Metric title="Avg latency" value={`${Math.round(traceStats.totals.latencyAvgMs)}ms`} detail="Average end-to-end latency" />
+      </section>
+
+      <section className="panel">
+        <div className="section-split-header">
+          <div>
+            <h2>Account routing</h2>
+            <p className="muted">
+              Selection telemetry for the traces currently loaded in this range.
+            </p>
+          </div>
+          <span className="badge">{accountSelectionSummary.attempts} attempts</span>
+        </div>
+        <div className="grid cards4">
+          <Metric
+            title="Account swaps"
+            value={`${accountSelectionSummary.rotations}`}
+            detail="Attempts that moved to another account"
+            tone={accountSelectionSummary.rotations > 0 ? "warning" : "default"}
+          />
+          <Metric
+            title="Sticky selections"
+            value={`${accountSelectionSummary.reasonCounts.sticky}`}
+            detail="Kept session affinity when eligible"
+          />
+          <Metric
+            title="Quota selections"
+            value={`${accountSelectionSummary.reasonCounts["quota-headroom"]}`}
+            detail="Chosen by quota headroom"
+          />
+          <Metric
+            title="Average headroom"
+            value={
+              typeof accountSelectionSummary.averageHeadroom === "number"
+                ? `${Math.round(accountSelectionSummary.averageHeadroom)}%`
+                : "-"
+            }
+            detail={`Max near-limit candidates: ${accountSelectionSummary.maxNearLimit}`}
+          />
+        </div>
+        <div className="inline wrap">
+          <span className="badge">
+            Policy-preferred: {accountSelectionSummary.reasonCounts["policy-preferred"]}
+          </span>
+          <span className="badge">
+            Quota headroom: {accountSelectionSummary.reasonCounts["quota-headroom"]}
+          </span>
+        </div>
       </section>
 
       <section className="grid cards2">

@@ -38,8 +38,8 @@ import type {
 } from "../../types.js";
 import {
   accountSelectionPool,
+  accountHeadroom,
   accountUsable,
-  chooseAccountForProvider,
   clearEmptyResponseHistory,
   getZaiBlockDuration,
   isQuotaErrorText,
@@ -49,6 +49,7 @@ import {
   normalizeProvider,
   parseZaiErrorCode,
   rememberError,
+  selectAccountForProvider,
   shouldBlockAccountForZaiError,
 } from "../../quota.js";
 import {
@@ -2359,11 +2360,44 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             )
           : undefined;
 
+        const quotaSelection = selectAccountForProvider(
+          usableAccounts,
+          candidate.provider,
+        );
         const selected =
           preferSessionAffinityAccount(affinityAccount, preferredAccount) ??
-          chooseAccountForProvider(usableAccounts, candidate.provider);
+          quotaSelection.account;
 
         if (!selected) break;
+
+        const selectionReason = affinityAccount
+          ? "sticky"
+          : preferredAccount
+            ? "policy-preferred"
+            : "quota-headroom";
+        const previousAttemptAccountId = completedRoutingAccountId;
+        const selectedWeeklyRemainingPercent =
+          typeof selected.usage?.secondary?.usedPercent === "number"
+            ? 100 - Math.max(0, Math.min(100, selected.usage.secondary.usedPercent))
+            : undefined;
+        const selectedFiveHourRemainingPercent =
+          typeof selected.usage?.primary?.usedPercent === "number"
+            ? 100 - Math.max(0, Math.min(100, selected.usage.primary.usedPercent))
+            : undefined;
+        const accountSelection = {
+          reason: selectionReason,
+          provider: candidate.provider,
+          candidateCount: quotaSelection.candidateCount,
+          eligibleCount: quotaSelection.eligibleCount,
+          nearLimitCount: quotaSelection.nearLimitCount,
+          rotated: Boolean(
+            previousAttemptAccountId &&
+              previousAttemptAccountId !== selected.id,
+          ),
+          selectedHeadroomPercent: accountHeadroom(selected),
+          selectedWeeklyRemainingPercent,
+          selectedFiveHourRemainingPercent,
+        } as const;
 
         if (sessionAffinityEnabled && codexSessionId) {
           // Remember the last selected eligible account. If it fails and the
@@ -2534,6 +2568,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           accountPreparationTrace.asynchronous
             ? { accountPreparation: accountPreparationTrace }
             : {}),
+          accountSelection,
           ...(compactionItemCount
             ? {
                 inputContext: {

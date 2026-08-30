@@ -45,6 +45,23 @@ export type UsageSnapshot = {
   fetchedAt: number;
 };
 
+export type AccountSelectionReason =
+  | "sticky"
+  | "policy-preferred"
+  | "quota-headroom";
+
+export type AccountSelectionTelemetry = {
+  reason: AccountSelectionReason;
+  provider: ProviderId;
+  candidateCount: number;
+  eligibleCount: number;
+  nearLimitCount: number;
+  rotated: boolean;
+  selectedHeadroomPercent?: number;
+  selectedWeeklyRemainingPercent?: number;
+  selectedFiveHourRemainingPercent?: number;
+};
+
 export type AccountError = {
   at: number;
   message: string;
