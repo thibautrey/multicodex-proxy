@@ -248,7 +248,9 @@ export function weeklyResetAt(usage?: UsageSnapshot): number | undefined {
 }
 
 export function nextResetAt(usage?: UsageSnapshot): number | undefined {
-  const list = [usage?.primary?.resetAt, usage?.secondary?.resetAt].filter((x): x is number => typeof x === "number");
+  const list = [usage?.primary?.resetAt, usage?.secondary?.resetAt].filter(
+    (x): x is number => typeof x === "number" && Number.isFinite(x),
+  );
   return list.length ? Math.min(...list) : undefined;
 }
 

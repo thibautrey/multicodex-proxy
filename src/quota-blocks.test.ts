@@ -278,6 +278,36 @@ test("non-finite quota snapshot values cannot create an invalid block timestamp"
   );
 });
 
+test("non-finite fallback reset values use the fallback block duration", () => {
+  const account = makeAccount();
+  const before = Date.now();
+
+  account.usage = {
+    fetchedAt: before,
+    primary: {
+      usedPercent: 20,
+      resetAt: Number.NaN,
+    },
+    secondary: {
+      usedPercent: 30,
+      resetAt: Number.POSITIVE_INFINITY,
+    },
+  };
+
+  markQuotaHit(
+    account,
+    MODEL,
+    "quota/rate-limit: 402",
+    '{"error":{"message":"billing quota response"}}',
+  );
+
+  const block = account.state?.modelBlocks?.[MODEL];
+
+  assert.ok(block);
+  assert.ok(Number.isFinite(block.until));
+  assert.ok(block.until > before);
+});
+
 test("clearing empty-response history tolerates a malformed block without a reason", () => {
   const account = makeAccount();
 
