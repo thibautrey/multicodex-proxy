@@ -174,6 +174,49 @@ test("refreshes OpenCode quotas from the account's Go usage endpoint", async () 
   }
 });
 
+test("refreshes a fresh snapshot after a quota window reset has passed", async () => {
+  const originalFetch = globalThis.fetch;
+  let fetches = 0;
+  globalThis.fetch = async (input) => {
+    fetches += 1;
+    assert.equal(String(input), "https://chatgpt.example/backend-api/wham/usage");
+    return Response.json({
+      rate_limit: {
+        primary_window: {
+          used_percent: 0,
+          reset_at: Math.floor((Date.now() + 5 * 60 * 60_000) / 1000),
+          limit_window_seconds: 5 * 60 * 60,
+        },
+      },
+    });
+  };
+  const accountWithExpiredWindow: Account = {
+    id: "expired-window",
+    provider: "openai",
+    accessToken: "token-expired-window",
+    enabled: true,
+    usage: {
+      fetchedAt: Date.now(),
+      primary: {
+        usedPercent: 100,
+        resetAt: Date.now() - 1_000,
+        windowSeconds: 5 * 60 * 60,
+      },
+    },
+  };
+
+  try {
+    const refreshed = await refreshUsageIfNeeded(
+      accountWithExpiredWindow,
+      "https://chatgpt.example",
+    );
+    assert.equal(fetches, 1);
+    assert.equal(refreshed.usage?.primary?.usedPercent, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("treats unavailable OpenCode Go quotas as unsupported instead of an account error", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () =>

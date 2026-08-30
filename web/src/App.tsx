@@ -232,6 +232,11 @@ export default function App() {
     setModels((mdl.data ?? []) as ExposedModel[]);
   };
 
+  const refreshStaleUsage = async () => {
+    const result = await api("/admin/usage/refresh-stale", { method: "POST" });
+    setAccounts((result.accounts ?? []) as Account[]);
+  };
+
   useEffect(() => {
     if (!models.length) {
       if (chatModel) setChatModel("");
@@ -446,6 +451,14 @@ export default function App() {
     }, 30_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (authenticated !== true) return;
+    const timer = window.setInterval(() => {
+      void refreshStaleUsage().catch(handleError);
+    }, 60_000);
+    return () => window.clearInterval(timer);
+  }, [authenticated]);
 
   const patch = async (id: string, body: any) => {
     await api(`/admin/accounts/${id}`, { method: "PATCH", body: JSON.stringify(body) });
