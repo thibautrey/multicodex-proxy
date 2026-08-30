@@ -5,14 +5,21 @@ import express from "express";
 import { createProxyRouter, waitForHangRetry } from "./index.js";
 import type { Account } from "../../types.js";
 
-test("ends the global hang retry cleanly when the client aborts", async () => {
+test(
+  "ends the global hang retry cleanly when the client aborts",
+  { concurrency: false },
+  async () => {
   const controller = new AbortController();
   const waiting = waitForHangRetry(60_000, controller.signal);
   controller.abort();
   assert.equal(await waiting, false);
-});
+  },
+);
 
-test("aborts an upstream request when the client disconnects before headers", async (t) => {
+test(
+  "aborts an upstream request when the client disconnects before headers",
+  { concurrency: false },
+  async (t) => {
   const account: Account = {
     id: "account-disconnect",
     provider: "openai",
@@ -135,11 +142,15 @@ test("aborts an upstream request when the client disconnects before headers", as
     ),
   ]);
   assert.equal(upstreamAttempts, 1);
-});
+  },
+);
 
-test("does not leak a rejected stream cancellation when the client disconnects", async (t) => {
+test(
+  "does not leak a rejected stream cancellation when the client disconnects",
+  { concurrency: false },
+  async (t) => {
   const account: Account = {
-    id: "account-stream-disconnect",
+    id: "account-disconnect",
     provider: "openai",
     accessToken: "token-stream-disconnect",
     enabled: true,
@@ -236,6 +247,8 @@ test("does not leak a rejected stream cancellation when the client disconnects",
     stream: true,
     input: "disconnect me after headers",
   });
+  let clientResponseStatus: number | undefined;
+  let clientResponseBody = "";
   const clientRequest = http.request({
     hostname: "127.0.0.1",
     port: address.port,
@@ -247,12 +260,24 @@ test("does not leak a rejected stream cancellation when the client disconnects",
     },
   });
   clientRequest.on("error", () => undefined);
+  clientRequest.on("response", (response) => {
+    clientResponseStatus = response.statusCode;
+    response.setEncoding("utf8");
+    response.on("data", (chunk) => {
+      clientResponseBody += chunk;
+    });
+    response.resume();
+  });
   clientRequest.end(payload);
 
   for (let i = 0; i < 100 && !upstreamStarted; i += 1) {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  assert.equal(upstreamStarted, true);
+  assert.equal(
+    upstreamStarted,
+    true,
+    `upstream did not start (client response status: ${clientResponseStatus ?? "none"}, body: ${clientResponseBody})`,
+  );
   clientRequest.destroy();
   await Promise.race([
     aborted,
@@ -262,4 +287,5 @@ test("does not leak a rejected stream cancellation when the client disconnects",
   ]);
   await new Promise((resolve) => setTimeout(resolve, 50));
   assert.deepEqual(unhandledRejections, []);
-});
+  },
+);
