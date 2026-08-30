@@ -284,7 +284,7 @@ test("returns an SSE error when a native Responses stream is interrupted", async
   assert.match(response.body, /event: error\ndata: .*stream_interrupted/);
   assert.equal(completedTraces[0].status, 599);
   assert.equal(completedTraces[0].lifecycleState, "interrupted");
-  assert.equal(typeof completedTraces[0].ttftMs, "number");
+  assert.equal(completedTraces[0].ttftMs, undefined);
 });
 
 test("converts a z.ai chat completion SSE to a completed Responses stream", async (t) => {
