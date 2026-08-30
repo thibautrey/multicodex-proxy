@@ -4093,38 +4093,46 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                   ? await nativeStreamTracePromise
                   : undefined);
               if (traceId) {
-                await completeTrace(traceId, {
+                try {
+                  await completeTrace(traceId, {
+                    at: Date.now(),
+                    startedAt,
+                    route: req.path,
+                    accountId: selected.id,
+                    accountEmail: selected.email,
+                    model: tracedModel,
+                    ...traceModelResolution,
+                    status: 499,
+                    stream: true,
+                    latencyMs: Date.now() - startedAt,
+                    error: "client disconnected before upstream completion",
+                    requestBody,
+                    ...traceImage,
+                    lifecycleState: "interrupted",
+                  });
+                } catch (traceError) {
+                  console.error("failed to record client disconnect", traceError);
+                }
+              }
+            } else {
+              try {
+                recordTrace({
                   at: Date.now(),
-                  startedAt,
                   route: req.path,
                   accountId: selected.id,
                   accountEmail: selected.email,
                   model: tracedModel,
                   ...traceModelResolution,
                   status: 499,
-                  stream: true,
+                  stream: false,
                   latencyMs: Date.now() - startedAt,
                   error: "client disconnected before upstream completion",
                   requestBody,
                   ...traceImage,
-                  lifecycleState: "interrupted",
                 });
+              } catch (traceError) {
+                console.error("failed to record client disconnect", traceError);
               }
-            } else {
-              recordTrace({
-                at: Date.now(),
-                route: req.path,
-                accountId: selected.id,
-                accountEmail: selected.email,
-                model: tracedModel,
-                ...traceModelResolution,
-                status: 499,
-                stream: false,
-                latencyMs: Date.now() - startedAt,
-                error: "client disconnected before upstream completion",
-                requestBody,
-                ...traceImage,
-              });
             }
             return;
           }
