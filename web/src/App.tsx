@@ -99,6 +99,7 @@ export default function App() {
   const [loginBusy, setLoginBusy] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>(initialThemeMode);
   const [storageInfo, setStorageInfo] = useState<any>(null);
+  const [usageCacheTtlMs, setUsageCacheTtlMs] = useState(300_000);
   const [oauthRedirectUri, setOauthRedirectUri] = useState("");
   const [chatPrompt, setChatPrompt] = useState("Give me a one-line hello");
   const [chatModel, setChatModel] = useState("");
@@ -222,6 +223,9 @@ export default function App() {
     ]);
     setAccounts((acc.accounts ?? []) as Account[]);
     setStorageInfo(cfg.storage ?? null);
+    if (Number.isFinite(Number(cfg.usageCacheTtlMs)) && Number(cfg.usageCacheTtlMs) > 0) {
+      setUsageCacheTtlMs(Number(cfg.usageCacheTtlMs));
+    }
     setOauthRedirectUri(String(cfg.oauthRedirectUri ?? ""));
     setModels((mdl.data ?? []) as ExposedModel[]);
     setAliases((aliasRes.modelAliases ?? []) as ModelAlias[]);
@@ -906,6 +910,7 @@ export default function App() {
           <AccountsTab
             traceStats={filteredTraceStats}
             accounts={accounts}
+            usageCacheTtlMs={usageCacheTtlMs}
             settings={settings}
             sanitized={sanitized}
             patch={patch}

@@ -8,6 +8,7 @@ import { createPortal } from "react-dom";
 type Props = {
   traceStats: TraceStats;
   accounts: Account[];
+  usageCacheTtlMs: number;
   settings: StoreSettings;
   sanitized: boolean;
   patch: (id: string, body: any) => Promise<void>;
@@ -122,10 +123,38 @@ function activeModelBlocks(account: Account) {
   );
 }
 
+function usageAgeLabel(fetchedAt?: number) {
+  if (typeof fetchedAt !== "number" || !Number.isFinite(fetchedAt)) {
+    return "Usage not checked";
+  }
+  const ageMs = Math.max(0, Date.now() - fetchedAt);
+  if (ageMs < 60_000) return "Checked less than a minute ago";
+  const ageMinutes = Math.floor(ageMs / 60_000);
+  if (ageMinutes < 60) return `Checked ${ageMinutes}m ago`;
+  const ageHours = Math.floor(ageMinutes / 60);
+  return `Checked ${ageHours}h ago`;
+}
+
+function usageStatusLabel(account: Account, usageCacheTtlMs: number) {
+  if (!account.usage) return "Usage not checked";
+  if (account.usage.quotaStatus === "unsupported") return "Usage not exposed";
+  if (
+    typeof account.usage.fetchedAt === "number" &&
+    Date.now() - account.usage.fetchedAt >= usageCacheTtlMs
+  ) {
+    return "Refresh pending";
+  }
+  const primary = account.usage.primary?.usedPercent;
+  const secondary = account.usage.secondary?.usedPercent;
+  if (primary === 0 && secondary === 0) return "No usage reported";
+  return "Usage checked";
+}
+
 export function AccountsTab(props: Props) {
   const {
     traceStats,
     accounts,
+    usageCacheTtlMs,
     settings,
     sanitized,
     patch,
@@ -684,6 +713,16 @@ export function AccountsTab(props: Props) {
     (account) => activeModelBlocks(account).length > 0,
   ).length;
   const enabledCount = accounts.filter((account) => account.enabled).length;
+  const usageCheckedCount = accounts.filter((account) => Boolean(account.usage)).length;
+  const usageUnsupportedCount = accounts.filter(
+    (account) => account.usage?.quotaStatus === "unsupported",
+  ).length;
+  const usageRefreshPendingCount = accounts.filter(
+    (account) =>
+      account.usage?.quotaStatus !== "unsupported" &&
+      typeof account.usage?.fetchedAt === "number" &&
+      Date.now() - account.usage.fetchedAt >= usageCacheTtlMs,
+  ).length;
 
   const renderUsageCell = (
     value?: number,
@@ -805,6 +844,19 @@ export function AccountsTab(props: Props) {
             <span className="badge">{mistralCount} Mistral</span>
             <span className="badge">{zaiCount} z.ai</span>
             <span className="badge">{xaiCount} Grok Build</span>
+            <span className="badge">
+              {usageCheckedCount}/{accounts.length} usage checked
+            </span>
+            {usageUnsupportedCount > 0 && (
+              <span className="badge">
+                {usageUnsupportedCount} usage not exposed
+              </span>
+            )}
+            {usageRefreshPendingCount > 0 && (
+              <span className="badge badge-warn">
+                {usageRefreshPendingCount} refresh pending
+              </span>
+            )}
             <button className="btn" onClick={() => setShowAddAccount(true)}>
               Add account
             </button>
@@ -862,6 +914,9 @@ export function AccountsTab(props: Props) {
                       )}
                       <span className={a.location === "local" ? "badge badge-live" : "badge"}>
                         {a.location ?? "cloud"}
+                      </span>
+                      <span className="mono muted">
+                        {usageStatusLabel(a, usageCacheTtlMs)} · {usageAgeLabel(a.usage?.fetchedAt)}
                       </span>
                       {a.capacityProfile && (
                         <span className="mono muted">

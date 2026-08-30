@@ -1900,7 +1900,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     const startedAt = Date.now();
     const requestAbortController = new AbortController();
     const abortRequest = () => {
-      if (res.writableEnded) return;
+      if (res.writableEnded || requestAbortController.signal.aborted) return;
       requestAbortController.abort();
     };
     const cleanupRequestCancellation = () => {
@@ -2833,7 +2833,9 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               let streamError: Error | undefined;
               const abortOnDisconnect = () => {
                 clientDisconnected = !res.writableEnded;
-                if (clientDisconnected) void reader.cancel();
+                if (clientDisconnected) {
+                  void reader.cancel().catch(() => undefined);
+                }
               };
               res.once("close", abortOnDisconnect);
               const streamTap = createSSEStreamTap((frame) => {
@@ -2982,7 +2984,9 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 let clientDisconnected = false;
                 const abortOnDisconnect = () => {
                   clientDisconnected = !res.writableEnded;
-                  if (clientDisconnected) void reader.cancel();
+                  if (clientDisconnected) {
+                    void reader.cancel().catch(() => undefined);
+                  }
                 };
                 res.once("close", abortOnDisconnect);
                 const keepaliveTimer = setInterval(() => {
@@ -3138,7 +3142,9 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               let streamError: Error | undefined;
               const abortOnDisconnect = () => {
                 clientDisconnected = !res.writableEnded;
-                if (clientDisconnected) void reader.cancel();
+                if (clientDisconnected) {
+                  void reader.cancel().catch(() => undefined);
+                }
               };
               res.once("close", abortOnDisconnect);
               const keepaliveTimer = setInterval(() => {
