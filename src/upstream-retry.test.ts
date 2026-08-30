@@ -133,6 +133,57 @@ test("keeps retrying transport failures but not quota exceptions", async () => {
   assert.equal(quotaAttempts, 1);
 });
 
+test("does not start an upstream attempt when the request is already aborted", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  let attempts = 0;
+
+  await assert.rejects(
+    fetchUpstreamWithRetry(
+      "https://example.invalid/responses",
+      { method: "POST", signal: controller.signal },
+      {
+        fetchFn: async () => {
+          attempts += 1;
+          return new Response("unexpected", { status: 200 });
+        },
+      },
+    ),
+    /aborted/i,
+  );
+  assert.equal(attempts, 0);
+});
+
+test("stops retry backoff when the request is aborted", async () => {
+  const controller = new AbortController();
+  let attempts = 0;
+  let receivedSignal: AbortSignal | undefined;
+
+  await assert.rejects(
+    fetchUpstreamWithRetry(
+      "https://example.invalid/responses",
+      { method: "POST", signal: controller.signal },
+      {
+        maxRetries: 2,
+        baseDelayMs: 10_000,
+        randomFn: () => 0,
+        fetchFn: async () => {
+          attempts += 1;
+          throw new Error("connection refused");
+        },
+        sleepFn: async (_ms, signal) => {
+          receivedSignal = signal;
+          controller.abort();
+        },
+      },
+    ),
+    /aborted/i,
+  );
+
+  assert.equal(attempts, 1);
+  assert.equal(receivedSignal, controller.signal);
+});
+
 test("same-account retry classification separates quota from outages", () => {
   assert.equal(shouldRetryUpstreamOnSameAccount(429, ""), false);
   assert.equal(

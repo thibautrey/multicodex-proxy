@@ -6,14 +6,39 @@ import { isQuotaErrorText } from "./quota.js";
 
 type UpstreamRetryRuntime = {
   fetchFn?: typeof fetch;
-  sleepFn?: (ms: number) => Promise<void>;
+  sleepFn?: (ms: number, signal?: AbortSignal) => Promise<void>;
   randomFn?: () => number;
   maxRetries?: number;
   baseDelayMs?: number;
 };
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function abortError(signal?: AbortSignal): Error {
+  const reason = signal?.reason;
+  if (reason instanceof Error) return reason;
+  return new DOMException("The operation was aborted", "AbortError");
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw abortError(signal);
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(abortError(signal));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      reject(abortError(signal));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function parseRetryAfter(response: Response): number | undefined {
@@ -52,9 +77,11 @@ export async function fetchUpstreamWithRetry(
   const randomFn = runtime.randomFn ?? Math.random;
   const maxRetries = runtime.maxRetries ?? MAX_UPSTREAM_RETRIES;
   const baseDelayMs = runtime.baseDelayMs ?? UPSTREAM_BASE_DELAY_MS;
+  const signal = init.signal ?? undefined;
   let lastError: Error | undefined;
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    throwIfAborted(signal);
     try {
       const response = await fetchFn(url, init);
       if (response.ok) return response;
@@ -69,19 +96,20 @@ export async function fetchUpstreamWithRetry(
         const retryAfter = parseRetryAfter(response);
         const backoff = baseDelayMs * 2 ** attempt;
         const jitter = randomFn() * 500;
-        await sleepFn(Math.max(retryAfter ?? 0, backoff) + jitter);
+        await sleepFn(Math.max(retryAfter ?? 0, backoff) + jitter, signal);
         continue;
       }
       return response;
     } catch (error: any) {
       lastError = error instanceof Error ? error : new Error(String(error));
+      if (signal?.aborted) throw abortError(signal);
       if (
         attempt < maxRetries &&
         !isQuotaErrorText(lastError.message)
       ) {
         const backoff = baseDelayMs * 2 ** attempt;
         const jitter = randomFn() * 500;
-        await sleepFn(backoff + jitter);
+        await sleepFn(backoff + jitter, signal);
         continue;
       }
       throw lastError;
