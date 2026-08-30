@@ -13,6 +13,7 @@ import {
   isUsageRefreshNeeded,
   normalizeProvider,
   refreshUsageIfNeeded,
+  USAGE_CACHE_TTL_MS,
 } from "../../quota.js";
 import {
   accountFromOAuth,
@@ -558,6 +559,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       ok: true,
       oauthRedirectUri: oauthConfig.redirectUri,
       xaiAuthPath: XAI_AUTH_PATH,
+      usageCacheTtlMs: USAGE_CACHE_TTL_MS,
       storage: {
         accountsPath: storagePaths.accountsPath,
         oauthStatePath: storagePaths.oauthStatePath,
