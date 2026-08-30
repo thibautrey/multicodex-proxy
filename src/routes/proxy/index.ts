@@ -3928,7 +3928,12 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             upstream.status === 429 ||
             isQuotaErrorText(text)
           ) {
-            markQuotaHit(selected, blockModel, `quota/rate-limit: ${upstream.status}`);
+            markQuotaHit(
+              selected,
+              blockModel,
+              `quota/rate-limit: ${upstream.status}`,
+              text,
+            );
             await store.upsertAccount(selected);
             continue;
           }

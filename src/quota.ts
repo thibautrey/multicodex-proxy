@@ -305,7 +305,7 @@ export function nextResetAt(usage?: UsageSnapshot): number | undefined {
     usage?.primary?.resetAt,
     usage?.secondary?.resetAt,
     usage?.monthly?.resetAt,
-  ].filter((x): x is number => typeof x === "number");
+  ].filter((x): x is number => typeof x === "number" && Number.isFinite(x));
   return list.length ? Math.min(...list) : undefined;
 }
 
@@ -345,7 +345,15 @@ export function clearEmptyResponseHistory(account: Account, model?: string) {
   const modelKey = model?.toLowerCase();
   if (modelKey) {
     const modelBlocks = { ...account.state?.modelBlocks };
-    delete modelBlocks[modelKey];
+    const block = modelBlocks[modelKey];
+
+    // A successful response should only clear a block created by
+    // empty-response detection. Quota/rate-limit/model-specific blocks may
+    // have been created concurrently by another request and must survive.
+    if (block?.reason?.startsWith("empty responses (")) {
+      delete modelBlocks[modelKey];
+    }
+
     account.state = {
       ...account.state,
       recentEmptyResponses: [],
@@ -509,12 +517,61 @@ export async function refreshUsageIfNeeded(account: Account, chatgptBaseUrl: str
 }
 
 const RATE_LIMIT_BLOCK_MS = Number(process.env.RATE_LIMIT_BLOCK_MS ?? 60_000);
+const QUOTA_RESET_GRACE_MS = 60_000;
 
-export function markQuotaHit(account: Account, model: string, message: string) {
+function exhaustedQuotaResetAt(
+  account: Account,
+  now = Date.now(),
+): number | undefined {
+  const resetAts = [account.usage?.primary, account.usage?.secondary].flatMap(
+    (window) => {
+      if (
+        !window ||
+        typeof window.usedPercent !== "number" ||
+        !Number.isFinite(window.usedPercent) ||
+        window.usedPercent < 99 ||
+        typeof window.resetAt !== "number" ||
+        !Number.isFinite(window.resetAt) ||
+        window.resetAt <= now
+      ) {
+        return [];
+      }
+
+      return [window.resetAt];
+    },
+  );
+
+  if (!resetAts.length) return undefined;
+
+  // If multiple quota windows are exhausted, the account remains unusable
+  // until all of them have reset.
+  return Math.max(...resetAts);
+}
+
+export function markQuotaHit(
+  account: Account,
+  model: string,
+  message: string,
+  upstreamErrorText = "",
+) {
+  const now = Date.now();
   const isRateLimit = /\b429\b/.test(message);
-  const until = isRateLimit
-    ? Date.now() + RATE_LIMIT_BLOCK_MS
-    : (nextResetAt(account.usage) ?? Date.now() + BLOCK_FALLBACK_MS);
+  const isUsageLimit =
+    /usage[_ -]?limit[_ -]?reached|usage\s+limit\s+has\s+been\s+reached|quota\s+(?:exhausted|exceeded)|limit\s+exhausted/i.test(
+      upstreamErrorText,
+    );
+
+  const quotaResetAt = isUsageLimit
+    ? exhaustedQuotaResetAt(account, now)
+    : undefined;
+
+  const until =
+    quotaResetAt !== undefined
+      ? quotaResetAt + QUOTA_RESET_GRACE_MS
+      : isRateLimit
+        ? now + RATE_LIMIT_BLOCK_MS
+        : (nextResetAt(account.usage) ?? now + BLOCK_FALLBACK_MS);
+
   setModelBlock(account, model, until, message);
   rememberError(account, message);
 }

@@ -255,7 +255,12 @@ async function forwardRealtimeCall(
       lastError = errorText || `Realtime upstream returned ${upstream.status}`;
 
       if (!upstream.ok && isQuotaErrorText(`${upstream.status} ${errorText}`)) {
-        markQuotaHit(prepared, "realtime", lastError);
+        markQuotaHit(
+          prepared,
+          "realtime",
+          `quota/rate-limit: ${upstream.status}`,
+          errorText,
+        );
         await options.store.upsertAccount(prepared);
         continue;
       }
