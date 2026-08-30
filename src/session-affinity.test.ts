@@ -299,6 +299,7 @@ test("failover replaces affinity and does not bounce back when the old account r
     findSessionAffinityAccount(
       cache,
       true,
+      "default",
       "thread-one",
       "openai",
       [second],
