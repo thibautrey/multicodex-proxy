@@ -69,6 +69,8 @@ export const CODEX_SESSION_FORWARD_HEADER =
  */
 export const CODEX_PROJECT_ROOT_FORWARD_HEADER =
   "x-multicodex-project-root";
+export const CODEX_PROJECT_HOST_FORWARD_HEADER =
+  "x-multicodex-project-host";
 export const LITELLM_KEY_ALIAS_HEADER = "x-litellm-key-alias";
 
 function boundedString(value: unknown, maxLength: number): string | undefined {
@@ -246,6 +248,25 @@ export function extractCodexProjectRoot(
   );
 }
 
+export function extractCodexProjectHost(
+  headers: http.IncomingHttpHeaders | Record<string, unknown>,
+): string | undefined {
+  const normalized = headers as Record<string, unknown>;
+  const forwarded = headerValue(normalized, TRACE_HEADERS_FORWARD_HEADER);
+  if (forwarded) {
+    try {
+      const candidate = extractCodexProjectHost(JSON.parse(forwarded));
+      if (candidate) return candidate;
+    } catch {
+      // Fall through to headers present on the current request.
+    }
+  }
+  return boundedString(
+    headerValue(normalized, CODEX_PROJECT_HOST_FORWARD_HEADER),
+    255,
+  );
+}
+
 export function extractLiteLLMProjectAttribution(
   headers: http.IncomingHttpHeaders | Record<string, unknown>,
 ): CodexProjectAttribution | undefined {
@@ -346,17 +367,25 @@ export class CodexProjectRegistry {
   /** Resolve a project only when the supplied root identifies one project. */
   resolveByProjectRoot(
     projectRoot: string | undefined,
+    projectHost: string | undefined,
   ): CodexProjectAttribution | undefined {
     const normalizedRoot = normalizeCodexProjectRoot(projectRoot);
-    if (!normalizedRoot) return undefined;
+    const normalizedHost = boundedString(projectHost, 255);
+    if (!normalizedRoot || !normalizedHost) return undefined;
 
     const projectIds = new Set<string>();
     for (const session of this.sessions.values()) {
-      if (normalizeCodexProjectRoot(session.projectRoot) !== normalizedRoot) continue;
+      if (
+        normalizeCodexProjectRoot(session.projectRoot) !== normalizedRoot ||
+        session.host !== normalizedHost
+      ) continue;
       if (this.projects.has(session.projectId)) projectIds.add(session.projectId);
     }
     for (const project of this.projects.values()) {
-      if (normalizeCodexProjectRoot(project.root) === normalizedRoot) {
+      if (
+        normalizeCodexProjectRoot(project.root) === normalizedRoot &&
+        project.host === normalizedHost
+      ) {
         projectIds.add(project.id);
       }
     }
@@ -366,7 +395,9 @@ export class CodexProjectRegistry {
     const projectId = projectIds.values().next().value;
     if (typeof projectId !== "string") return undefined;
     const project = this.projects.get(projectId);
-    return project ? this.attributionFor(project, normalizedRoot) : undefined;
+    return project
+      ? this.attributionFor(project, normalizedRoot, normalizedHost)
+      : undefined;
   }
 
   /**
@@ -376,6 +407,7 @@ export class CodexProjectRegistry {
   resolve(
     sessionId: string | undefined,
     projectRoot?: string,
+    projectHost?: string,
   ): CodexProjectAttribution | undefined {
     if (sessionId) {
       const session = this.sessions.get(sessionId);
@@ -390,7 +422,7 @@ export class CodexProjectRegistry {
         }
       }
     }
-    return this.resolveByProjectRoot(projectRoot);
+    return this.resolveByProjectRoot(projectRoot, projectHost);
   }
 
   listProjects() {

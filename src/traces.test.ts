@@ -168,12 +168,14 @@ test("passes the project-root context to fallback resolution without persisting 
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-traces-"));
   let resolvedSession: string | undefined;
   let resolvedRoot: string | undefined;
+  let resolvedHost: string | undefined;
   const manager = createTraceManager({
     filePath: path.join(directory, "traces.jsonl"),
     historyFilePath: path.join(directory, "history.jsonl"),
-    resolveCodexProject: (sessionId, projectRoot) => {
+    resolveCodexProject: (sessionId, projectRoot, projectHost) => {
       resolvedSession = sessionId;
       resolvedRoot = projectRoot;
+      resolvedHost = projectHost;
       return projectRoot === "/workspace/system"
         ? {
             projectId: "prj_system",
@@ -190,6 +192,7 @@ test("passes the project-root context to fallback resolution without persisting 
     route: "/responses",
     codexSessionId: "system-session",
     codexProjectRoot: "/workspace/system",
+    codexProjectHost: "builder-a",
     status: 200,
     stream: false,
     latencyMs: 10,
@@ -198,12 +201,15 @@ test("passes the project-root context to fallback resolution without persisting 
 
   assert.equal(resolvedSession, "system-session");
   assert.equal(resolvedRoot, "/workspace/system");
+  assert.equal(resolvedHost, "builder-a");
   const [trace] = await manager.readTraceWindow();
   assert.equal(trace.projectId, "prj_system");
   assert.equal(trace.codexProjectRoot, undefined);
+  assert.equal(trace.codexProjectHost, undefined);
   const [history] = await manager.readStatsHistory();
   assert.equal(history.projectId, "prj_system");
   assert.equal(history.codexProjectRoot, undefined);
+  assert.equal(history.codexProjectHost, undefined);
 });
 
 test("explicit LiteLLM project attribution takes precedence over the Codex session", async () => {

@@ -20,6 +20,7 @@ import {
 import type { TraceManager } from "./traces.js";
 import { traceHeadersForRequest } from "./trace-headers.js";
 import {
+  extractCodexProjectHost,
   extractCodexProjectRoot,
   extractCodexSessionId,
   extractLiteLLMProjectAttribution,
@@ -201,6 +202,7 @@ async function forwardRealtimeCall(
     ? traceHeadersForRequest(req.headers)
     : undefined;
   const codexSessionId = extractCodexSessionId(req.headers);
+  const codexProjectHost = extractCodexProjectHost(req.headers);
   const codexProjectRoot = extractCodexProjectRoot(req.headers);
   const projectAttribution = extractLiteLLMProjectAttribution(req.headers);
   const body = incomingBody(req);
@@ -276,6 +278,7 @@ async function forwardRealtimeCall(
         route,
         application,
         codexSessionId,
+        codexProjectHost,
         codexProjectRoot,
         requestHeaders,
         accountId: prepared.id,
@@ -302,6 +305,7 @@ async function forwardRealtimeCall(
     route,
     application,
     codexSessionId,
+    codexProjectHost,
     codexProjectRoot,
     requestHeaders,
     model: "realtime",
@@ -334,6 +338,7 @@ async function forwardVoiceCatalog(
     ? traceHeadersForRequest(req.headers)
     : undefined;
   const codexSessionId = extractCodexSessionId(req.headers);
+  const codexProjectHost = extractCodexProjectHost(req.headers);
   const codexProjectRoot = extractCodexProjectRoot(req.headers);
   const projectAttribution = extractLiteLLMProjectAttribution(req.headers);
   const selected = chooseAccountForProvider(
@@ -347,6 +352,7 @@ async function forwardVoiceCatalog(
       route,
       application,
       codexSessionId,
+      codexProjectHost,
       codexProjectRoot,
       requestHeaders,
       model: "realtime-voices",
@@ -385,6 +391,7 @@ async function forwardVoiceCatalog(
       route,
       application,
       codexSessionId,
+      codexProjectHost,
       codexProjectRoot,
       requestHeaders,
       accountId: prepared.id,
@@ -410,6 +417,7 @@ async function forwardVoiceCatalog(
       route,
       application,
       codexSessionId,
+      codexProjectHost,
       codexProjectRoot,
       requestHeaders,
       accountId: prepared.id,

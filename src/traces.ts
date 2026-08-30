@@ -15,6 +15,8 @@ export type TraceEntry = {
   codexSessionId?: string;
   /** Untrusted request context used only for registry fallback resolution. */
   codexProjectRoot?: string;
+  /** Stable execution-host context paired with codexProjectRoot. */
+  codexProjectHost?: string;
   projectId?: string;
   projectName?: string;
   projectRemote?: string;
@@ -205,6 +207,7 @@ export type TraceManagerConfig = {
   resolveCodexProject?: (
     sessionId: string | undefined,
     projectRoot?: string,
+    projectHost?: string,
   ) => CodexProjectAttribution | undefined;
 };
 
@@ -1209,6 +1212,7 @@ export function createTraceManager(config: TraceManagerConfig) {
       requestHeaders: _requestHeaders,
       codexSessionId: _codexSessionId,
       codexProjectRoot: _codexProjectRoot,
+      codexProjectHost: _codexProjectHost,
       usage: _usage,
       error: _error,
       upstreamError: _upstreamError,
@@ -1490,8 +1494,16 @@ export function createTraceManager(config: TraceManagerConfig) {
   function materializeTrace(entry: TraceInput, id: string = randomUUID()): TraceEntry {
     const project = entry.projectId
       ? undefined
-      : resolveCodexProject?.(entry.codexSessionId, entry.codexProjectRoot);
-    const { codexProjectRoot: _codexProjectRoot, ...traceEntry } = entry;
+      : resolveCodexProject?.(
+          entry.codexSessionId,
+          entry.codexProjectRoot,
+          entry.codexProjectHost,
+        );
+    const {
+      codexProjectRoot: _codexProjectRoot,
+      codexProjectHost: _codexProjectHost,
+      ...traceEntry
+    } = entry;
     const normalizedTokens = normalizeTokenFields(entry.usage);
     const hasMeasuredTokens = [
       normalizedTokens.tokensInput,

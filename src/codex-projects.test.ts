@@ -4,8 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+  CODEX_PROJECT_HOST_FORWARD_HEADER,
   CODEX_PROJECT_ROOT_FORWARD_HEADER,
   CodexProjectRegistry,
+  extractCodexProjectHost,
   extractCodexProjectRoot,
   extractCodexSessionId,
   extractLiteLLMProjectAttribution,
@@ -82,6 +84,21 @@ test("extracts the deterministic Codex project root header", () => {
   );
 });
 
+test("extracts the stable Codex project host header", () => {
+  assert.equal(
+    extractCodexProjectHost({ [CODEX_PROJECT_HOST_FORWARD_HEADER]: " builder-a " }),
+    "builder-a",
+  );
+  assert.equal(
+    extractCodexProjectHost({
+      [TRACE_HEADERS_FORWARD_HEADER]: JSON.stringify({
+        [CODEX_PROJECT_HOST_FORWARD_HEADER]: "builder-b",
+      }),
+    }),
+    "builder-b",
+  );
+});
+
 test("derives stable project attribution from the LiteLLM key alias", () => {
   const direct = extractLiteLLMProjectAttribution({
     "X-LiteLLM-Key-Alias": "project-alpha",
@@ -141,9 +158,10 @@ test("keeps exact session mapping ahead of project-root fallback", async () => {
     projectRoot: "/workspace/known",
     projectName: "known",
     remote: "git@github.com:acme/known.git",
+    host: "builder-a",
   });
 
-  const resolved = registry.resolve("known-session", "/workspace/other");
+  const resolved = registry.resolve("known-session", "/workspace/other", "builder-b");
   assert.equal(resolved?.projectId, registration.project.id);
   assert.equal(resolved?.projectRoot, "/workspace/known");
 });
@@ -158,9 +176,14 @@ test("falls back to a uniquely registered project root for unknown sessions", as
     projectRoot: "/workspace/project",
     projectName: "project",
     remote: "git@github.com:acme/project.git",
+    host: "builder-a",
   });
 
-  const resolved = registry.resolve("system-session", "/workspace/project/");
+  const resolved = registry.resolve(
+    "system-session",
+    "/workspace/project/",
+    "builder-a",
+  );
   assert.equal(resolved?.projectId, registration.project.id);
   assert.equal(resolved?.projectName, "project");
   assert.equal(resolved?.projectRoot, "/workspace/project");
@@ -176,10 +199,11 @@ test("leaves unknown sessions unattributed when the root does not match", async 
     projectRoot: "/workspace/project",
     projectName: "project",
     remote: "git@github.com:acme/project.git",
+    host: "builder-a",
   });
 
   assert.equal(
-    registry.resolve("system-session", "/workspace/missing"),
+    registry.resolve("system-session", "/workspace/missing", "builder-a"),
     undefined,
   );
 });
@@ -194,6 +218,7 @@ test("does not guess when a project root is shared by multiple projects", async 
     projectRoot: "/workspace/shared",
     projectName: "first",
     remote: "git@github.com:acme/first.git",
+    host: "builder-a",
   });
   await registry.register({
     sessionId: "second-session",
@@ -201,10 +226,11 @@ test("does not guess when a project root is shared by multiple projects", async 
     projectRoot: "/workspace/shared",
     projectName: "second",
     remote: "git@github.com:acme/second.git",
+    host: "builder-a",
   });
 
   assert.equal(
-    registry.resolve("system-session", "/workspace/shared"),
+    registry.resolve("system-session", "/workspace/shared", "builder-a"),
     undefined,
   );
   assert.equal(
@@ -223,14 +249,49 @@ test("attributes a system request with no session mapping from its project root"
     projectRoot: "/workspace/project",
     projectName: "project",
     remote: "git@github.com:acme/project.git",
+    host: "builder-a",
   });
 
-  const systemAttribution = registry.resolve(undefined, "/workspace/project");
+  const systemAttribution = registry.resolve(
+    undefined,
+    "/workspace/project",
+    "builder-a",
+  );
   assert.deepEqual(systemAttribution, {
     projectId: registration.project.id,
     projectName: "project",
     projectRemote: "github.com/acme/project",
     projectRoot: "/workspace/project",
-    projectHost: undefined,
+    projectHost: "builder-a",
   });
+});
+
+test("distinguishes identical project roots on different hosts", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multicodex-projects-"));
+  const registry = new CodexProjectRegistry(path.join(directory, "projects.json"));
+  await registry.init();
+  const first = await registry.register({
+    sessionId: "first-session",
+    cwd: "/workspace/project",
+    projectRoot: "/workspace/project",
+    projectName: "first",
+    host: "builder-a",
+  });
+  const second = await registry.register({
+    sessionId: "second-session",
+    cwd: "/workspace/project",
+    projectRoot: "/workspace/project",
+    projectName: "second",
+    host: "builder-b",
+  });
+
+  assert.equal(
+    registry.resolve(undefined, "/workspace/project", "builder-a")?.projectId,
+    first.project.id,
+  );
+  assert.equal(
+    registry.resolve(undefined, "/workspace/project", "builder-b")?.projectId,
+    second.project.id,
+  );
+  assert.equal(registry.resolve(undefined, "/workspace/project"), undefined);
 });
