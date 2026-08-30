@@ -226,4 +226,10 @@ test("rotates to the next account when a 429 is returned as SSE", async (t) => {
     ),
     true,
   );
+  const rotatedTrace = traces.find(
+    (trace) => trace.accountId === "account-two" && trace.status === 200,
+  );
+  assert.equal(rotatedTrace?.accountSelection?.reason, "quota-headroom");
+  assert.equal(rotatedTrace?.accountSelection?.rotated, true);
+  assert.equal(rotatedTrace?.accountSelection?.candidateCount, 1);
 });
