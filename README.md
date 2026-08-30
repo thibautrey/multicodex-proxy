@@ -755,12 +755,15 @@ npm run start
 
 ---
 
-## 📈 Star history
+## Star History
 
-<a href="https://star-history.com/#thibautrey/multicodex-proxy&Date">
-  <img src="https://api.star-history.com/svg?repos=thibautrey/multicodex-proxy&type=Date" alt="Star History Chart" />
+<a href="https://www.star-history.com/?type=date&repos=thibautrey%2Fmulticodex-proxy">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=thibautrey/multicodex-proxy&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=thibautrey/multicodex-proxy&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=thibautrey/multicodex-proxy&type=date&legend=top-left" />
+ </picture>
 </a>
-
 ---
 
 ## 🤝 Contributing
