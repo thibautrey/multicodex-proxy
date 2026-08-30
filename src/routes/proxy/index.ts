@@ -1743,7 +1743,7 @@ function renderBufferedResponsesStream(
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
-      reject(signal.reason ?? new DOMException("The operation was aborted", "AbortError"));
+      reject(signal?.reason ?? new DOMException("The operation was aborted", "AbortError"));
       return;
     }
     let timer: ReturnType<typeof setTimeout>;
