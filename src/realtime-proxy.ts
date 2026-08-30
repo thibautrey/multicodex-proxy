@@ -20,6 +20,8 @@ import {
 import type { TraceManager } from "./traces.js";
 import { traceHeadersForRequest } from "./trace-headers.js";
 import {
+  extractCodexProjectHost,
+  extractCodexProjectRoot,
   extractCodexSessionId,
   extractLiteLLMProjectAttribution,
 } from "./codex-projects.js";
@@ -200,6 +202,8 @@ async function forwardRealtimeCall(
     ? traceHeadersForRequest(req.headers)
     : undefined;
   const codexSessionId = extractCodexSessionId(req.headers);
+  const codexProjectHost = extractCodexProjectHost(req.headers);
+  const codexProjectRoot = extractCodexProjectRoot(req.headers);
   const projectAttribution = extractLiteLLMProjectAttribution(req.headers);
   const body = incomingBody(req);
   if (!contentTypeAccepted(req)) {
@@ -279,6 +283,8 @@ async function forwardRealtimeCall(
         route,
         application,
         codexSessionId,
+        codexProjectHost,
+        codexProjectRoot,
         requestHeaders,
         accountId: prepared.id,
         accountEmail: prepared.email,
@@ -304,6 +310,8 @@ async function forwardRealtimeCall(
     route,
     application,
     codexSessionId,
+    codexProjectHost,
+    codexProjectRoot,
     requestHeaders,
     model: "realtime",
     status: lastStatus,
@@ -335,6 +343,8 @@ async function forwardVoiceCatalog(
     ? traceHeadersForRequest(req.headers)
     : undefined;
   const codexSessionId = extractCodexSessionId(req.headers);
+  const codexProjectHost = extractCodexProjectHost(req.headers);
+  const codexProjectRoot = extractCodexProjectRoot(req.headers);
   const projectAttribution = extractLiteLLMProjectAttribution(req.headers);
   const selected = chooseAccountForProvider(
     candidateAccounts({ ...options, provider: "openai" }),
@@ -347,6 +357,8 @@ async function forwardVoiceCatalog(
       route,
       application,
       codexSessionId,
+      codexProjectHost,
+      codexProjectRoot,
       requestHeaders,
       model: "realtime-voices",
       status: 503,
@@ -384,6 +396,8 @@ async function forwardVoiceCatalog(
       route,
       application,
       codexSessionId,
+      codexProjectHost,
+      codexProjectRoot,
       requestHeaders,
       accountId: prepared.id,
       accountEmail: prepared.email,
@@ -408,6 +422,8 @@ async function forwardVoiceCatalog(
       route,
       application,
       codexSessionId,
+      codexProjectHost,
+      codexProjectRoot,
       requestHeaders,
       accountId: prepared.id,
       accountEmail: prepared.email,

@@ -59,12 +59,36 @@ const EMPTY_REGISTRY: RegistryFile = {
 
 export const CODEX_SESSION_FORWARD_HEADER =
   "x-multicodex-codex-session-id";
+/**
+ * Project context supplied by the Codex model provider on every request.
+ *
+ * This is intentionally separate from the SessionStart hook. Codex can emit
+ * internal/system requests with a new session id before (or without) running
+ * the user-level hook, while the provider header remains deterministic for
+ * the process' project root.
+ */
+export const CODEX_PROJECT_ROOT_FORWARD_HEADER =
+  "x-multicodex-project-root";
+export const CODEX_PROJECT_HOST_FORWARD_HEADER =
+  "x-multicodex-project-host";
 export const LITELLM_KEY_ALIAS_HEADER = "x-litellm-key-alias";
 
 function boundedString(value: unknown, maxLength: number): string | undefined {
   if (typeof value !== "string") return undefined;
   const normalized = value.trim().replace(/[\u0000-\u001f\u007f]/g, "");
   return normalized ? normalized.slice(0, maxLength) : undefined;
+}
+
+/**
+ * Normalize a project root for comparison without resolving it on the proxy
+ * host. The value is an opaque client path; only harmless separator cleanup
+ * is performed so `/repo` and `/repo/` address the same registered root.
+ */
+export function normalizeCodexProjectRoot(value: unknown): string | undefined {
+  const raw = boundedString(value, 2048);
+  if (!raw) return undefined;
+  const normalized = raw.replace(/[\\/]+/g, "/").replace(/\/$/, "");
+  return normalized || "/";
 }
 
 export function sanitizeGitRemote(value: unknown): string | undefined {
@@ -120,7 +144,10 @@ export function normalizeCodexSessionRegistration(
   }
   if (!cwd) throw new Error("cwd required");
 
-  const root = boundedString(input.projectRoot, 2048) ?? cwd;
+  const root =
+    normalizeCodexProjectRoot(input.projectRoot) ??
+    normalizeCodexProjectRoot(cwd) ??
+    cwd;
   const host = boundedString(input.host, 255);
   const remote = sanitizeGitRemote(input.remote);
   const name =
@@ -200,6 +227,44 @@ export function extractCodexSessionId(
   } catch {
     return undefined;
   }
+}
+
+export function extractCodexProjectRoot(
+  headers: http.IncomingHttpHeaders | Record<string, unknown>,
+): string | undefined {
+  const normalized = headers as Record<string, unknown>;
+  const forwarded = headerValue(normalized, TRACE_HEADERS_FORWARD_HEADER);
+  if (forwarded) {
+    try {
+      const candidate = extractCodexProjectRoot(JSON.parse(forwarded));
+      if (candidate) return candidate;
+    } catch {
+      // Fall through to headers present on the current request.
+    }
+  }
+
+  return normalizeCodexProjectRoot(
+    headerValue(normalized, CODEX_PROJECT_ROOT_FORWARD_HEADER),
+  );
+}
+
+export function extractCodexProjectHost(
+  headers: http.IncomingHttpHeaders | Record<string, unknown>,
+): string | undefined {
+  const normalized = headers as Record<string, unknown>;
+  const forwarded = headerValue(normalized, TRACE_HEADERS_FORWARD_HEADER);
+  if (forwarded) {
+    try {
+      const candidate = extractCodexProjectHost(JSON.parse(forwarded));
+      if (candidate) return candidate;
+    } catch {
+      // Fall through to headers present on the current request.
+    }
+  }
+  return boundedString(
+    headerValue(normalized, CODEX_PROJECT_HOST_FORWARD_HEADER),
+    255,
+  );
 }
 
 export function extractLiteLLMProjectAttribution(
@@ -285,19 +350,79 @@ export class CodexProjectRegistry {
     return { project: storedProject, session: storedSession };
   }
 
-  resolve(sessionId: string | undefined): CodexProjectAttribution | undefined {
-    if (!sessionId) return undefined;
-    const session = this.sessions.get(sessionId);
-    if (!session) return undefined;
-    const project = this.projects.get(session.projectId);
-    if (!project) return undefined;
+  private attributionFor(
+    project: CodexProject,
+    projectRoot?: string,
+    projectHost?: string,
+  ): CodexProjectAttribution {
     return {
       projectId: project.id,
       projectName: project.name,
       projectRemote: project.remote,
-      projectRoot: session.projectRoot ?? project.root,
-      projectHost: session.host ?? project.host,
+      projectRoot: projectRoot ?? project.root,
+      projectHost: projectHost ?? project.host,
     };
+  }
+
+  /** Resolve a project only when the supplied root identifies one project. */
+  resolveByProjectRoot(
+    projectRoot: string | undefined,
+    projectHost: string | undefined,
+  ): CodexProjectAttribution | undefined {
+    const normalizedRoot = normalizeCodexProjectRoot(projectRoot);
+    const normalizedHost = boundedString(projectHost, 255);
+    if (!normalizedRoot || !normalizedHost) return undefined;
+
+    const projectIds = new Set<string>();
+    for (const session of this.sessions.values()) {
+      if (
+        normalizeCodexProjectRoot(session.projectRoot) !== normalizedRoot ||
+        session.host !== normalizedHost
+      ) continue;
+      if (this.projects.has(session.projectId)) projectIds.add(session.projectId);
+    }
+    for (const project of this.projects.values()) {
+      if (
+        normalizeCodexProjectRoot(project.root) === normalizedRoot &&
+        project.host === normalizedHost
+      ) {
+        projectIds.add(project.id);
+      }
+    }
+
+    // A root shared by multiple registered projects is not safe to attribute.
+    if (projectIds.size !== 1) return undefined;
+    const projectId = projectIds.values().next().value;
+    if (typeof projectId !== "string") return undefined;
+    const project = this.projects.get(projectId);
+    return project
+      ? this.attributionFor(project, normalizedRoot, normalizedHost)
+      : undefined;
+  }
+
+  /**
+   * Resolve the exact session first. The explicit project-root header is only
+   * a fallback for unknown/internal session ids and never overrides a match.
+   */
+  resolve(
+    sessionId: string | undefined,
+    projectRoot?: string,
+    projectHost?: string,
+  ): CodexProjectAttribution | undefined {
+    if (sessionId) {
+      const session = this.sessions.get(sessionId);
+      if (session) {
+        const project = this.projects.get(session.projectId);
+        if (project) {
+          return this.attributionFor(
+            project,
+            session.projectRoot ?? project.root,
+            session.host ?? project.host,
+          );
+        }
+      }
+    }
+    return this.resolveByProjectRoot(projectRoot, projectHost);
   }
 
   listProjects() {
