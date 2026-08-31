@@ -186,6 +186,17 @@ const modelsRefreshCoordinator =
 // Internal routing metadata. It is intentionally not exposed in /models.
 const modelAvailabilityByProvider: ModelAvailabilityByProvider = new Map();
 
+type RevisionedAccountStore = AccountStore & {
+  getRevision?: () => number;
+};
+
+function accountStoreRevision(store: AccountStore): number {
+  const revisionedStore = store as RevisionedAccountStore;
+  return typeof revisionedStore.getRevision === "function"
+    ? revisionedStore.getRevision()
+    : 0;
+}
+
 // Separate cache for fast O(1) model validation using Set
 const modelsValidationCache: {
   at: number;
@@ -872,7 +883,7 @@ async function refreshModels(
   mistralBaseUrl: string,
   zaiBaseUrl: string,
 ): Promise<ExposedModel[]> {
-  const sourceRevision = store.getRevision();
+  const sourceRevision = accountStoreRevision(store);
   try {
     const accounts = await store.listAccounts();
     const byId = new Map<string, ExposedModel>();
@@ -1108,7 +1119,7 @@ export async function discoverModels(
   options: DiscoverModelsOptions = {},
 ): Promise<ExposedModel[]> {
   const cacheAgeMs = Math.max(0, Date.now() - modelsCache.at);
-  const storeRevision = store.getRevision();
+  const storeRevision = accountStoreRevision(store);
   const hasCurrentSnapshot =
     modelsCache.models.length > 0 &&
     modelsCache.store === store &&
@@ -1153,7 +1164,8 @@ export async function discoverModels(
   // callers so a newly connected provider is visible immediately.
   if (
     prepared.mode === "blocking" &&
-    (modelsCache.store !== store || modelsCache.revision !== store.getRevision())
+    (modelsCache.store !== store ||
+      modelsCache.revision !== accountStoreRevision(store))
   ) {
     return discoverModels(
       store,
