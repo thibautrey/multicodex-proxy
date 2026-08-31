@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
 import http from "node:http";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import express from "express";
 process.env.HANG_RETRY_MAX_DURATION_MS = "5000";
 process.env.HANG_RETRY_INTERVAL_MS = "1000";
+process.env.MAX_UPSTREAM_RETRIES = "0";
 const { createProxyRouter } = await import("./index.js");
 import type { Account } from "../../types.js";
+const { AccountStore } = await import("../../store.js");
 
 function postJson(
   port: number,
@@ -252,6 +257,19 @@ test("rotates native Responses stream to the next account after upstream 429", a
     true,
   );
 
+  const failedAttempt = traces.find(
+    (trace) => trace.accountId === "account-one" && trace.status === 429,
+  );
+  assert.equal(failedAttempt?.accountSelection?.reason, "quota-headroom");
+  assert.equal(failedAttempt?.accountSelection?.provider, "openai");
+  assert.equal(failedAttempt?.accountSelection?.rotated, false);
+
+  const successfulAttempt = traces.find(
+    (trace) => trace.accountId === "account-two" && trace.status === 200,
+  );
+  assert.equal(successfulAttempt?.accountSelection?.reason, "quota-headroom");
+  assert.equal(successfulAttempt?.accountSelection?.rotated, true);
+
   assert.equal(begunTraces, 2);
   assert.equal(modelDiscoveryRequests, accounts.length);
 });
@@ -422,6 +440,13 @@ test("native Responses stream terminates cleanly when 429 exhausts all accounts"
     true,
   );
 
+  const failedAttempt = traces.find(
+    (trace) => trace.accountId === "account-one" && trace.status === 429,
+  );
+  assert.equal(failedAttempt?.accountSelection?.reason, "quota-headroom");
+  assert.equal(failedAttempt?.accountSelection?.provider, "openai");
+  assert.equal(failedAttempt?.accountSelection?.rotated, false);
+
   assert.equal(
     traces.some(
       (trace) =>
@@ -435,4 +460,100 @@ test("native Responses stream terminates cleanly when 429 exhausts all accounts"
   // One trace for the failed account attempt and a fresh trace for the
   // terminal "all accounts exhausted" result.
   assert.equal(begunTraces, 2);
+});
+
+test("native Responses stream preserves selection telemetry on a terminal upstream error", async (t) => {
+  const dir = await fs.mkdtemp(
+    path.join(os.tmpdir(), "multivibe-native-stream-error-"),
+  );
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const store = new AccountStore(path.join(dir, "accounts.json"));
+  await store.init();
+  await store.addOrUpdate({
+    id: "account-one",
+    provider: "openai",
+    accessToken: "terminal-error-token",
+    enabled: true,
+    expiresAt: Date.now() + 60 * 60_000,
+    usage: {
+      fetchedAt: Date.now(),
+      primary: { usedPercent: 15 },
+      secondary: { usedPercent: 25 },
+    },
+  });
+
+  const traces: any[] = [];
+  let upstreamRequests = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    if (String(input).includes("/backend-api/codex/models")) {
+      return Response.json({
+        models: [
+          {
+            slug: "gpt-5.6-sol",
+            supported_tool_types: ["function"],
+          },
+        ],
+      });
+    }
+    upstreamRequests += 1;
+    return Response.json(
+      { error: { message: "temporary upstream failure" } },
+      { status: 500 },
+    );
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const traceManager = {
+    recordTrace: (entry: any) => traces.push(entry),
+    beginTrace: async () => "terminal-error-trace",
+    completeTrace: async (_id: string, entry: any) => traces.push(entry),
+  };
+  const app = express();
+  app.use(express.json());
+  app.use(
+    "/v1",
+    createProxyRouter({
+      store,
+      traceManager: traceManager as any,
+      openaiBaseUrl: "https://chatgpt.example",
+      mistralBaseUrl: "https://mistral.example",
+      mistralUpstreamPath: "/v1/responses",
+      mistralCompactUpstreamPath: "/v1/responses/compact",
+      zaiBaseUrl: "https://zai.example",
+      zaiUpstreamPath: "/v1/chat/completions",
+      zaiCompactUpstreamPath: "/v1/chat/completions",
+      oauthConfig: {} as any,
+    }),
+  );
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) =>
+    server.listen(0, "127.0.0.1", resolve),
+  );
+  t.after(
+    () =>
+      new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      ),
+  );
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const response = await postJson(address.port, "/v1/responses", {
+    stream: true,
+    input: "hello",
+  });
+  assert.equal(response.status, 200);
+  assert.match(response.body, /event: error/);
+  assert.equal(upstreamRequests, 1);
+
+  const failedTrace = traces.find(
+    (trace) =>
+      trace.accountId === "account-one" && trace.status === 500,
+  );
+  assert.equal(failedTrace?.accountSelection?.reason, "quota-headroom");
+  assert.equal(failedTrace?.accountSelection?.provider, "openai");
+  assert.equal(failedTrace?.accountSelection?.candidateCount, 1);
+  assert.equal(failedTrace?.accountSelection?.rotated, false);
 });

@@ -1,4 +1,9 @@
-import type { Account, ProviderId, UsageSnapshot } from "./types.js";
+import type {
+  Account,
+  AccountSelectionTelemetry,
+  ProviderId,
+  UsageSnapshot,
+} from "./types.js";
 import {
   EMPTY_RESPONSE_BLOCK_THRESHOLD,
   EMPTY_RESPONSE_BLOCK_DURATION_MS,
@@ -71,6 +76,10 @@ export type AccountSelectionDecision = {
   selectedFiveHourRemainingPercent?: number;
 };
 
+export type AccountSelectionOptions = {
+  advanceCursor?: boolean;
+};
+
 export function accountHeadroom(account: Account): number | undefined {
   const windows = [
     remainingPercent(account.usage?.primary?.usedPercent),
@@ -91,6 +100,23 @@ function accountSelectionMetrics(account: Account) {
     selectedHeadroomPercent: accountHeadroom(account),
     selectedWeeklyRemainingPercent,
     selectedFiveHourRemainingPercent,
+  };
+}
+
+export function buildAccountSelectionTelemetry(
+  decision: AccountSelectionDecision,
+  selected: Account | null,
+  reason: AccountSelectionTelemetry["reason"],
+  rotated = false,
+): AccountSelectionTelemetry {
+  return {
+    reason,
+    provider: decision.provider,
+    candidateCount: decision.candidateCount,
+    eligibleCount: decision.eligibleCount,
+    nearLimitCount: decision.nearLimitCount,
+    rotated,
+    ...(selected ? accountSelectionMetrics(selected) : {}),
   };
 }
 
@@ -427,7 +453,10 @@ export function chooseAccount(accounts: Account[]): Account | null {
   return selectAccount(accounts).account;
 }
 
-export function selectAccount(accounts: Account[]): AccountSelectionDecision {
+export function selectAccount(
+  accounts: Account[],
+  options: AccountSelectionOptions = {},
+): AccountSelectionDecision {
   const provider = normalizeProvider(accounts[0]);
   const candidates = accounts.filter((account) => account.enabled);
   const effectivePool = accountSelectionPool(accounts);
@@ -505,7 +534,9 @@ export function selectAccount(accounts: Account[]): AccountSelectionDecision {
     previousIndex >= 0
       ? tiedAccounts[(previousIndex + 1) % tiedAccounts.length]
       : sorted[0];
-  lastSelectedAccountByProvider.set(provider, winner.id);
+  if (options.advanceCursor !== false) {
+    lastSelectedAccountByProvider.set(provider, winner.id);
+  }
 
   return {
     account: winner,
@@ -527,12 +558,17 @@ export function chooseAccountForProvider(
 export function selectAccountForProvider(
   accounts: Account[],
   provider: ProviderId,
+  options: AccountSelectionOptions = {},
 ): AccountSelectionDecision {
   const matching = accounts.filter(
     (account) => normalizeProvider(account) === provider,
   );
-  const decision = selectAccount(matching);
+  const decision = selectAccount(matching, options);
   return matching.length ? decision : { ...decision, provider };
+}
+
+export function commitAccountSelection(provider: ProviderId, accountId: string): void {
+  lastSelectedAccountByProvider.set(provider, accountId);
 }
 
 export function isUsageRefreshNeeded(
