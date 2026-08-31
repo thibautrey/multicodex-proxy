@@ -152,6 +152,17 @@ export type TraceStats = {
     confidence: "low" | "sufficient";
     rank?: number;
   }>;
+  accountSelection: {
+    attempts: number;
+    rotations: number;
+    maxNearLimit: number;
+    averageHeadroom?: number;
+    reasonCounts: {
+      sticky: number;
+      "policy-preferred": number;
+      "quota-headroom": number;
+    };
+  };
 };
 
 export type TracePagination = {

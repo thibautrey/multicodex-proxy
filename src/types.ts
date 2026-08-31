@@ -62,6 +62,14 @@ export type AccountSelectionTelemetry = {
   selectedFiveHourRemainingPercent?: number;
 };
 
+export type AccountSelectionSummary = {
+  attempts: number;
+  rotations: number;
+  maxNearLimit: number;
+  averageHeadroom?: number;
+  reasonCounts: Record<AccountSelectionReason, number>;
+};
+
 export type AccountError = {
   at: number;
   message: string;
