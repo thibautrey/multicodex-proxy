@@ -67,6 +67,7 @@ test("adapts z.ai models to the native Codex catalog", () => {
     slug: "glm-5.3-flash",
     display_name: "glm-5.3-flash",
     description: "z.ai model glm-5.3-flash",
+    supported_reasoning_levels: [],
     visibility: "list",
     supported_in_api: true,
   });
@@ -88,6 +89,7 @@ test("adapts z.ai models to the native Codex catalog", () => {
       slug: "glm-5.3-flash",
       display_name: "glm-5.3-flash",
       description: "z.ai model glm-5.3-flash",
+      supported_reasoning_levels: [],
       visibility: "list",
       supported_in_api: true,
     },
