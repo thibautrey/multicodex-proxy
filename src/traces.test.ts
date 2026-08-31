@@ -71,6 +71,66 @@ test("trace stats calculate inference speed from request start and end", () => {
   );
 });
 
+test("trace stats aggregate account selection across the selected range", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-traces-"));
+  const manager = createTraceManager({
+    filePath: path.join(directory, "traces.jsonl"),
+    historyFilePath: path.join(directory, "history.jsonl"),
+  });
+  const firstAt = 1_728_000_000_000;
+
+  await manager.appendTrace({
+    at: firstAt,
+    route: "/responses",
+    status: 429,
+    stream: false,
+    latencyMs: 10,
+    accountSelection: {
+      reason: "quota-headroom",
+      provider: "openai",
+      candidateCount: 2,
+      eligibleCount: 1,
+      nearLimitCount: 1,
+      rotated: false,
+      selectedHeadroomPercent: 20,
+    },
+  });
+  await manager.appendTrace({
+    at: firstAt + 3_600_000,
+    route: "/responses",
+    status: 200,
+    stream: false,
+    latencyMs: 10,
+    accountSelection: {
+      reason: "sticky",
+      provider: "openai",
+      candidateCount: 1,
+      eligibleCount: 1,
+      nearLimitCount: 0,
+      rotated: true,
+      selectedHeadroomPercent: 80,
+    },
+  });
+
+  const { stats } = await manager.getTraceStats(
+    firstAt,
+    firstAt + 3_600_000,
+  );
+  assert.deepEqual(stats.accountSelection, {
+    attempts: 2,
+    rotations: 1,
+    maxNearLimit: 1,
+    averageHeadroom: 50,
+    reasonCounts: {
+      sticky: 1,
+      "policy-preferred": 0,
+      "quota-headroom": 1,
+    },
+  });
+
+  await fs.rm(directory, { recursive: true, force: true });
+});
+
 test("TTFT stats group successful streams by provider, model, and input size", () => {
   const manager = createTraceManager({
     filePath: "/tmp/multivibe-ttft-traces.jsonl",

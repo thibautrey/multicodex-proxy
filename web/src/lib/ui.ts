@@ -23,6 +23,17 @@ export const EMPTY_TRACE_STATS: TraceStats = {
   models: [],
   timeseries: [],
   ttftByProviderModel: [],
+  accountSelection: {
+    attempts: 0,
+    rotations: 0,
+    maxNearLimit: 0,
+    averageHeadroom: undefined,
+    reasonCounts: {
+      sticky: 0,
+      "policy-preferred": 0,
+      "quota-headroom": 0,
+    },
+  },
 };
 
 export const EMPTY_TRACE_PAGINATION: TracePagination = {

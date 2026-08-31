@@ -6,7 +6,12 @@ import path from "node:path";
 import { createInterface } from "node:readline";
 import { normalizeTraceHeaders } from "./trace-headers.js";
 import type { CodexProjectAttribution } from "./codex-projects.js";
-import type { AccountSelectionTelemetry, ProviderId } from "./types.js";
+import type {
+  AccountSelectionReason,
+  AccountSelectionSummary,
+  AccountSelectionTelemetry,
+  ProviderId,
+} from "./types.js";
 
 function normalizeSelectionProvider(value: unknown): ProviderId {
   return value === "openai" ||
@@ -206,6 +211,7 @@ export type TraceStats = {
   models: TraceModelStats[];
   timeseries: TraceTimeseriesBucket[];
   ttftByProviderModel: TraceTtftStats[];
+  accountSelection: AccountSelectionSummary;
 };
 
 export type UsageTokenTotals = {
@@ -259,7 +265,81 @@ type TraceBucketAggregate = {
   inferenceSpeeds: number[];
   models: Map<string, TraceModelStats>;
   ttftGroups: Map<string, MutableTraceTtftStats>;
+  accountSelection: MutableAccountSelectionSummary;
 };
+
+type MutableAccountSelectionSummary = {
+  attempts: number;
+  rotations: number;
+  maxNearLimit: number;
+  headroomTotal: number;
+  headroomSamples: number;
+  reasonCounts: Record<AccountSelectionReason, number>;
+};
+
+const ACCOUNT_SELECTION_REASONS: AccountSelectionReason[] = [
+  "sticky",
+  "policy-preferred",
+  "quota-headroom",
+];
+
+function createAccountSelectionSummary(): MutableAccountSelectionSummary {
+  return {
+    attempts: 0,
+    rotations: 0,
+    maxNearLimit: 0,
+    headroomTotal: 0,
+    headroomSamples: 0,
+    reasonCounts: {
+      sticky: 0,
+      "policy-preferred": 0,
+      "quota-headroom": 0,
+    },
+  };
+}
+
+function addAccountSelection(
+  summary: MutableAccountSelectionSummary,
+  selection: AccountSelectionTelemetry | undefined,
+) {
+  if (!selection) return;
+  summary.attempts += 1;
+  if (selection.rotated) summary.rotations += 1;
+  summary.maxNearLimit = Math.max(summary.maxNearLimit, selection.nearLimitCount);
+  summary.reasonCounts[selection.reason] += 1;
+  if (typeof selection.selectedHeadroomPercent === "number") {
+    summary.headroomTotal += selection.selectedHeadroomPercent;
+    summary.headroomSamples += 1;
+  }
+}
+
+function mergeAccountSelection(
+  target: MutableAccountSelectionSummary,
+  source: MutableAccountSelectionSummary,
+) {
+  target.attempts += source.attempts;
+  target.rotations += source.rotations;
+  target.maxNearLimit = Math.max(target.maxNearLimit, source.maxNearLimit);
+  target.headroomTotal += source.headroomTotal;
+  target.headroomSamples += source.headroomSamples;
+  for (const reason of ACCOUNT_SELECTION_REASONS) {
+    target.reasonCounts[reason] += source.reasonCounts[reason];
+  }
+}
+
+function finalizeAccountSelection(
+  summary: MutableAccountSelectionSummary,
+): AccountSelectionSummary {
+  return {
+    attempts: summary.attempts,
+    rotations: summary.rotations,
+    maxNearLimit: summary.maxNearLimit,
+    averageHeadroom: summary.headroomSamples
+      ? summary.headroomTotal / summary.headroomSamples
+      : undefined,
+    reasonCounts: summary.reasonCounts,
+  };
+}
 
 type MutableTraceTtftStats = {
   provider: ProviderId;
@@ -969,6 +1049,10 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
   const errorRate = requests ? errors / requests : 0;
   const ttftGroups = new Map<string, MutableTraceTtftStats>();
   for (const trace of traces) addTtftSample(ttftGroups, trace);
+  const accountSelection = createAccountSelectionSummary();
+  for (const trace of traces) {
+    addAccountSelection(accountSelection, trace.accountSelection);
+  }
 
   const modelMap = new Map<string, TraceModelStats>();
   for (const trace of traces) {
@@ -1096,6 +1180,7 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
     models,
     timeseries,
     ttftByProviderModel: finalizeTtftGroups(ttftGroups),
+    accountSelection: finalizeAccountSelection(accountSelection),
   };
 }
 
@@ -1117,6 +1202,7 @@ function createEmptyBucket(at: number): TraceBucketAggregate {
     inferenceSpeeds: [],
     models: new Map(),
     ttftGroups: new Map(),
+    accountSelection: createAccountSelectionSummary(),
   };
 }
 
@@ -1168,6 +1254,7 @@ function addTraceToBucket(bucket: TraceBucketAggregate, trace: TraceEntry) {
   bucket.latencyMsTotal += Number.isFinite(trace.latencyMs) ? trace.latencyMs : 0;
   addLatencySample(bucket, trace.latencyMs);
   addTtftSample(bucket.ttftGroups, trace);
+  addAccountSelection(bucket.accountSelection, trace.accountSelection);
 
   const existing = bucket.models.get(model);
   if (existing) {
@@ -1600,6 +1687,7 @@ export function createTraceManager(config: TraceManagerConfig) {
 
     const modelMap = new Map<string, TraceModelStats>();
     const ttftGroups = new Map<string, MutableTraceTtftStats>();
+    const accountSelection = createAccountSelectionSummary();
     let requests = 0;
     let requestsWithUsage = 0;
     let requestsWithCost = 0;
@@ -1634,6 +1722,7 @@ export function createTraceManager(config: TraceManagerConfig) {
       for (const group of bucket.ttftGroups.values()) {
         mergeTtftGroup(ttftGroups, group);
       }
+      mergeAccountSelection(accountSelection, bucket.accountSelection);
 
       for (const model of bucket.models.values()) {
         const existing = modelMap.get(model.model);
@@ -1691,6 +1780,7 @@ export function createTraceManager(config: TraceManagerConfig) {
         models: Array.from(modelMap.values()).sort((a, b) => b.count - a.count),
         timeseries,
         ttftByProviderModel: finalizeTtftGroups(ttftGroups),
+        accountSelection: finalizeAccountSelection(accountSelection),
       },
     };
   }

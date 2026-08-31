@@ -155,37 +155,7 @@ export function TracingTab(props: Props) {
     "var(--chart-4)",
     "var(--chart-5)",
   ];
-  const accountSelectionSummary = React.useMemo(() => {
-    const selections = traces
-      .map((trace) => trace.accountSelection)
-      .filter((selection): selection is NonNullable<Trace["accountSelection"]> => Boolean(selection));
-    const reasonCounts = selections.reduce(
-      (counts, selection) => {
-        counts[selection.reason] += 1;
-        return counts;
-      },
-      {
-        sticky: 0,
-        "policy-preferred": 0,
-        "quota-headroom": 0,
-      },
-    );
-    const headrooms = selections
-      .map((selection) => selection.selectedHeadroomPercent)
-      .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-    return {
-      attempts: selections.length,
-      rotations: selections.filter((selection) => selection.rotated).length,
-      maxNearLimit: selections.reduce(
-        (max, selection) => Math.max(max, selection.nearLimitCount),
-        0,
-      ),
-      averageHeadroom: headrooms.length
-        ? headrooms.reduce((sum, value) => sum + value, 0) / headrooms.length
-        : undefined,
-      reasonCounts,
-    };
-  }, [traces]);
+  const accountSelectionSummary = traceStats.accountSelection;
 
   return (
     <>
