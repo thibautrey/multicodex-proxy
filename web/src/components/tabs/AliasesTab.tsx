@@ -295,7 +295,7 @@ export function AliasesTab({
                   </td>
                 </tr>
               ))}
-              {!aliases.length && <tr><td colSpan={5} className="muted empty-row">No policy yet. Create one for the future local Mac or a cloud fallback.</td></tr>}
+              {!aliases.length && <tr><td colSpan={5} className="muted empty-row">No policy yet. Create one to redirect a model or add fallback routing.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -312,7 +312,7 @@ export function AliasesTab({
             </p>
           </div>
           {(originalId || creationScenario === "advanced") && <div className="inline wrap">
-            {!originalId && <button className="btn ghost" type="button" onClick={() => selectDraft()}>Back to guided setup</button>}
+            {!originalId && <button className="btn ghost" type="button" onClick={() => selectDraft()} title="Discard this draft and choose a new goal">Start over</button>}
             <button className={`btn ${editorMode === "visual" ? "" : "ghost"}`} type="button" onClick={() => switchMode("visual")} title="Edit the policy with form fields">Visual</button>
             <button className={`btn ${editorMode === "json" ? "" : "ghost"}`} type="button" onClick={() => switchMode("json")} title="Edit the complete schema v2 document directly">JSON</button>
           </div>}
