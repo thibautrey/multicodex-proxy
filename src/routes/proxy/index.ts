@@ -2856,6 +2856,17 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               res.write(
                 `event: error\ndata: ${JSON.stringify({ error: upstreamError })}\n\n`,
               );
+              res.write(
+                responseObjectToSSE({
+                  id: `resp_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
+                  object: "response",
+                  created_at: Math.floor(Date.now() / 1000),
+                  model: tracedModel,
+                  status: "failed",
+                  error: upstreamError,
+                  output: [],
+                }),
+              );
               res.end();
             }
             const traceId = await nativeStreamTracePromise!;
