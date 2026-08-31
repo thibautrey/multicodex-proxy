@@ -29,6 +29,7 @@ export function toCodexModelShape(model: ModelWithOptionalCodexInfo) {
     display_name: model.id,
     description: `z.ai model ${model.id}`,
     supported_reasoning_levels: [],
+    shell_type: "shell_command",
     visibility: "list",
     supported_in_api: true,
   };
