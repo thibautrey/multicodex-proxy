@@ -171,9 +171,15 @@ type ProxyRoutesOptions = {
   sessionAffinityEnabled?: boolean;
 };
 
-const modelsCache: { at: number; models: ExposedModel[] } = {
+const modelsCache: {
+  at: number;
+  models: ExposedModel[];
+  store?: AccountStore;
+  revision: number;
+} = {
   at: 0,
   models: [],
+  revision: -1,
 };
 const modelsRefreshCoordinator =
   new AsyncRefreshCoordinator<ExposedModel[]>();
@@ -866,6 +872,7 @@ async function refreshModels(
   mistralBaseUrl: string,
   zaiBaseUrl: string,
 ): Promise<ExposedModel[]> {
+  const sourceRevision = store.getRevision();
   try {
     const accounts = await store.listAccounts();
     const byId = new Map<string, ExposedModel>();
@@ -1068,6 +1075,8 @@ async function refreshModels(
     const merged = Array.from(byId.values());
     modelsCache.at = Date.now();
     modelsCache.models = merged;
+    modelsCache.store = store;
+    modelsCache.revision = sourceRevision;
     updateValidationCache(merged, catalogComplete);
     return merged;
   } catch {
@@ -1075,6 +1084,8 @@ async function refreshModels(
     const fallback = fallbackModelCatalog();
     modelsCache.at = Date.now();
     modelsCache.models = fallback;
+    modelsCache.store = store;
+    modelsCache.revision = sourceRevision;
     updateValidationCache(fallback, false);
     return fallback;
   }
@@ -1097,7 +1108,12 @@ export async function discoverModels(
   options: DiscoverModelsOptions = {},
 ): Promise<ExposedModel[]> {
   const cacheAgeMs = Math.max(0, Date.now() - modelsCache.at);
-  if (cacheAgeMs < MODELS_CACHE_MS && modelsCache.models.length) {
+  const storeRevision = store.getRevision();
+  const hasCurrentSnapshot =
+    modelsCache.models.length > 0 &&
+    modelsCache.store === store &&
+    modelsCache.revision === storeRevision;
+  if (cacheAgeMs < MODELS_CACHE_MS && hasCurrentSnapshot) {
     options.onPrepared?.("fresh", false);
     return modelsCache.models;
   }
@@ -1120,7 +1136,7 @@ export async function discoverModels(
 
   const canUseStale = canServeStaleSnapshot({
     enabled: Boolean(options.staleWhileRevalidate),
-    hasSnapshot: modelsCache.models.length > 0,
+    hasSnapshot: hasCurrentSnapshot,
     ageMs: cacheAgeMs,
     maxAgeMs: options.maxStaleAgeMs ?? Infinity,
   });
@@ -1131,6 +1147,22 @@ export async function discoverModels(
       refreshModels(store, openaiBaseUrl, mistralBaseUrl, zaiBaseUrl),
   });
   options.onPrepared?.(prepared.mode, prepared.shared);
+
+  // If the shared refresh started before an account or alias mutation, it
+  // published a catalog for an older store revision. Retry for blocking
+  // callers so a newly connected provider is visible immediately.
+  if (
+    prepared.mode === "blocking" &&
+    (modelsCache.store !== store || modelsCache.revision !== store.getRevision())
+  ) {
+    return discoverModels(
+      store,
+      openaiBaseUrl,
+      mistralBaseUrl,
+      zaiBaseUrl,
+      options,
+    );
+  }
   return prepared.value;
 }
 

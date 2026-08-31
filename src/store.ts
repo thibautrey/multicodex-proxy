@@ -167,6 +167,10 @@ export class AccountStore {
     };
   }
 
+  getRevision(): number {
+    return this.revision;
+  }
+
   getCachedAccounts(): Account[] {
     return [...this.inMemoryAccounts];
   }
