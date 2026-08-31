@@ -4,7 +4,7 @@ import {
   scenarioNeedsFallback,
   type AliasCreationScenario,
   type GuidedAliasScenario,
-} from "../../alias-policy-presets";
+} from "../../../../src/alias-policy-presets";
 import type { ExposedModel, ModelAlias, RoutingRule } from "../../types";
 import { ModelSelector } from "../ui/ModelSelector";
 

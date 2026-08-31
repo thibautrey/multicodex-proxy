@@ -1,4 +1,4 @@
-import type { ModelAlias, RoutingCandidate, RoutingRule } from "./types";
+import type { ModelAlias, RoutingCandidateConfig, RoutingRule } from "./types.js";
 
 export type AliasCreationScenario =
   | "redirect"
@@ -96,7 +96,7 @@ export function withScenarioModels(
   primaryModel: string,
   fallbackModel: string,
 ): ModelAlias {
-  const candidates: RoutingCandidate[] = [];
+  const candidates: RoutingCandidateConfig[] = [];
   const primary = primaryModel.trim();
   const fallback = fallbackModel.trim();
 

@@ -13,7 +13,7 @@ import {
   withScenarioModels,
   type AliasCreationScenario,
   type GuidedAliasScenario,
-} from "../../alias-policy-presets";
+} from "../../../../src/alias-policy-presets";
 import {
   AliasScenarioPicker,
   GuidedAliasCreation,

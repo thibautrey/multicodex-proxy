@@ -4,7 +4,7 @@ import {
   createAliasScenarioDraft,
   isGuidedScenarioComplete,
   withScenarioModels,
-} from "../web/src/alias-policy-presets.js";
+} from "./alias-policy-presets.js";
 
 test("redirect preset maps one requested model name to one destination", () => {
   const draft = createAliasScenarioDraft("redirect");
