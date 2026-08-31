@@ -6,16 +6,21 @@ import {
   TRACE_INCLUDE_HEADERS,
 } from "./config.js";
 import type { OAuthConfig } from "./oauth.js";
-import type { Account, ProviderId } from "./types.js";
+import type {
+  Account,
+  AccountSelectionTelemetry,
+  ProviderId,
+} from "./types.js";
 import { AccountStore } from "./store.js";
 import { ensureValidToken } from "./account-utils.js";
 import {
   accountUsable,
-  chooseAccountForProvider,
+  buildAccountSelectionTelemetry,
   isQuotaErrorText,
   markQuotaHit,
   normalizeProvider,
   rememberError,
+  selectAccountForProvider,
 } from "./quota.js";
 import type { TraceManager } from "./traces.js";
 import { traceHeadersForRequest } from "./trace-headers.js";
@@ -228,10 +233,23 @@ async function forwardRealtimeCall(
   const remaining = candidateAccounts(options);
   let lastStatus = 503;
   let lastError = "no eligible realtime account configured";
+  let previousSelectedAccountId: string | undefined;
+  let lastAccountSelection: AccountSelectionTelemetry | undefined;
 
   while (remaining.length) {
-    const selected = chooseAccountForProvider(remaining, options.provider);
+    const quotaSelection = selectAccountForProvider(remaining, options.provider);
+    const selected = quotaSelection.account;
     if (!selected) break;
+    lastAccountSelection = buildAccountSelectionTelemetry(
+      quotaSelection,
+      selected,
+      "quota-headroom",
+      Boolean(
+        previousSelectedAccountId &&
+          previousSelectedAccountId !== selected.id,
+      ),
+    );
+    previousSelectedAccountId = selected.id;
     remaining.splice(
       remaining.findIndex((account) => account.id === selected.id),
       1,
@@ -288,6 +306,7 @@ async function forwardRealtimeCall(
         requestHeaders,
         accountId: prepared.id,
         accountEmail: prepared.email,
+        accountSelection: lastAccountSelection,
         model: "realtime",
         status: upstream.status,
         stream: false,
@@ -313,6 +332,15 @@ async function forwardRealtimeCall(
     codexProjectHost,
     codexProjectRoot,
     requestHeaders,
+    accountSelection:
+      lastAccountSelection ??
+      buildAccountSelectionTelemetry(
+        selectAccountForProvider([], options.provider, {
+          advanceCursor: false,
+        }),
+        null,
+        "quota-headroom",
+      ),
     model: "realtime",
     status: lastStatus,
     stream: false,
@@ -346,9 +374,15 @@ async function forwardVoiceCatalog(
   const codexProjectHost = extractCodexProjectHost(req.headers);
   const codexProjectRoot = extractCodexProjectRoot(req.headers);
   const projectAttribution = extractLiteLLMProjectAttribution(req.headers);
-  const selected = chooseAccountForProvider(
+  const quotaSelection = selectAccountForProvider(
     candidateAccounts({ ...options, provider: "openai" }),
     "openai",
+  );
+  const selected = quotaSelection.account;
+  const accountSelection = buildAccountSelectionTelemetry(
+    quotaSelection,
+    selected,
+    "quota-headroom",
   );
   if (!selected) {
     options.traceManager.recordTrace({
@@ -360,6 +394,7 @@ async function forwardVoiceCatalog(
       codexProjectHost,
       codexProjectRoot,
       requestHeaders,
+      accountSelection,
       model: "realtime-voices",
       status: 503,
       stream: false,
@@ -401,6 +436,7 @@ async function forwardVoiceCatalog(
       requestHeaders,
       accountId: prepared.id,
       accountEmail: prepared.email,
+      accountSelection,
       model: "realtime-voices",
       status: upstream.status,
       stream: false,
@@ -427,6 +463,7 @@ async function forwardVoiceCatalog(
       requestHeaders,
       accountId: prepared.id,
       accountEmail: prepared.email,
+      accountSelection,
       model: "realtime-voices",
       status,
       stream: false,

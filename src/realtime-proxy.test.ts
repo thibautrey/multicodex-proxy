@@ -219,6 +219,7 @@ test("POST realtime/calls rotates accounts after a quota response", async (t) =>
     globalThis.fetch = originalFetch;
   });
   const attempted: string[] = [];
+  const traces: Array<Record<string, any>> = [];
   globalThis.fetch = async (_input, init) => {
     const token = new Headers(init?.headers).get("authorization") ?? "";
     attempted.push(token);
@@ -233,7 +234,17 @@ test("POST realtime/calls rotates accounts after a quota response", async (t) =>
     });
   };
   const app = express();
-  app.use(createRealtimeRouter(options(store)));
+  app.use(
+    createRealtimeRouter(
+      options(store, {
+        traceManager: {
+          recordTrace(entry: Record<string, unknown>) {
+            traces.push(entry);
+          },
+        } as unknown as TraceManager,
+      }),
+    ),
+  );
   const server = await listen(app);
   t.after(server.close);
   const response = await originalFetch(`${server.url}/realtime/calls`, {
@@ -244,6 +255,11 @@ test("POST realtime/calls rotates accounts after a quota response", async (t) =>
   assert.equal(response.status, 200);
   assert.equal(await response.text(), "answer");
   assert.deepEqual(attempted, ["Bearer token-a", "Bearer token-b"]);
+  assert.equal(traces.length, 1);
+  assert.equal(traces[0]?.accountSelection?.reason, "quota-headroom");
+  assert.equal(traces[0]?.accountSelection?.provider, "openai");
+  assert.equal(traces[0]?.accountSelection?.candidateCount, 1);
+  assert.equal(traces[0]?.accountSelection?.rotated, true);
 });
 
 test("POST realtime/calls rejects missing and unsupported bodies before upstream", async (t) => {
@@ -269,6 +285,43 @@ test("POST realtime/calls rejects missing and unsupported bodies before upstream
   assert.equal(unsupported.status, 415);
 });
 
+test("POST realtime/calls traces an empty account selection", async (t) => {
+  const { store, dir } = await makeStore([]);
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const traces: any[] = [];
+  const app = express();
+  app.use(
+    "/v1",
+    createRealtimeRouter(
+      options(store, {
+        traceManager: {
+          recordTrace(entry: Record<string, unknown>) {
+            traces.push(entry);
+          },
+        } as unknown as TraceManager,
+      }),
+    ),
+  );
+  const server = await listen(app);
+  t.after(server.close);
+
+  const response = await fetch(`${server.url}/v1/realtime/calls`, {
+    method: "POST",
+    headers: { "content-type": "application/sdp" },
+    body: "offer",
+  });
+  assert.equal(response.status, 503);
+  assert.equal(traces.length, 1);
+  assert.deepEqual(traces[0]?.accountSelection, {
+    reason: "quota-headroom",
+    provider: "openai",
+    candidateCount: 0,
+    eligibleCount: 0,
+    nearLimitCount: 0,
+    rotated: false,
+  });
+});
+
 test("GET settings/voices forwards the eligibility query to ChatGPT", async (t) => {
   const { store, dir } = await makeStore([
     { id: "a", provider: "openai", accessToken: "token-a", enabled: true },
@@ -279,7 +332,7 @@ test("GET settings/voices forwards the eligibility query to ChatGPT", async (t) 
     globalThis.fetch = originalFetch;
   });
   let upstreamUrl = "";
-  const traces: Array<Record<string, unknown>> = [];
+  const traces: any[] = [];
   globalThis.fetch = async (input) => {
     upstreamUrl = String(input);
     return Response.json({ selected: "cove", voices: ["cove"] });
@@ -314,4 +367,42 @@ test("GET settings/voices forwards the eligibility query to ChatGPT", async (t) 
   assert.equal(traces.length, 1);
   assert.equal(traces[0]?.status, 200);
   assert.equal(traces[0]?.model, "realtime-voices");
+  assert.equal(traces[0]?.accountSelection?.reason, "quota-headroom");
+  assert.equal(traces[0]?.accountSelection?.provider, "openai");
+  assert.equal(traces[0]?.accountSelection?.candidateCount, 1);
+  assert.equal(traces[0]?.accountSelection?.eligibleCount, 1);
+  assert.equal(traces[0]?.accountSelection?.rotated, false);
+});
+
+test("GET settings/voices traces an empty account selection", async (t) => {
+  const { store, dir } = await makeStore([]);
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const traces: Array<Record<string, any>> = [];
+  const app = express();
+  app.use(
+    "/v1",
+    createRealtimeRouter(
+      options(store, {
+        traceManager: {
+          recordTrace(entry: Record<string, unknown>) {
+            traces.push(entry);
+          },
+        } as unknown as TraceManager,
+      }),
+    ),
+  );
+  const server = await listen(app);
+  t.after(server.close);
+
+  const response = await fetch(`${server.url}/v1/settings/voices`);
+  assert.equal(response.status, 503);
+  assert.equal(traces.length, 1);
+  assert.deepEqual(traces[0]?.accountSelection, {
+    reason: "quota-headroom",
+    provider: "openai",
+    candidateCount: 0,
+    eligibleCount: 0,
+    nearLimitCount: 0,
+    rotated: false,
+  });
 });
