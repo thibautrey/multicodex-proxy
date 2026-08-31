@@ -73,6 +73,7 @@ test("adapts z.ai models to the native Codex catalog", () => {
     supported_in_api: true,
     priority: 100,
     support_verbosity: false,
+    truncation_policy: { mode: "tokens", limit: 10000 },
   });
 
   const response = buildModelsListResponse([exposedModel, zaiModel]);
@@ -98,6 +99,7 @@ test("adapts z.ai models to the native Codex catalog", () => {
       supported_in_api: true,
       priority: 100,
       support_verbosity: false,
+      truncation_policy: { mode: "tokens", limit: 10000 },
     },
   ]);
 });

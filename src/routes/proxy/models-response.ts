@@ -34,6 +34,7 @@ export function toCodexModelShape(model: ModelWithOptionalCodexInfo) {
     supported_in_api: true,
     priority: 100,
     support_verbosity: false,
+    truncation_policy: { mode: "tokens", limit: 10000 },
   };
 }
 
