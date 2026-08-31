@@ -7,6 +7,17 @@ import type {
   RoutingRule,
   StoreSettings,
 } from "../../types";
+import {
+  createAliasScenarioDraft,
+  isGuidedScenarioComplete,
+  withScenarioModels,
+  type AliasCreationScenario,
+  type GuidedAliasScenario,
+} from "../../alias-policy-presets";
+import {
+  AliasScenarioPicker,
+  GuidedAliasCreation,
+} from "../aliases/AliasCreationWizard";
 import { ModelSelector } from "../ui/ModelSelector";
 
 const PRIORITIES: PriorityClass[] = ["critical", "interactive", "standard", "batch"];
@@ -66,6 +77,8 @@ export function AliasesTab({
 }: Props) {
   const [draft, setDraft] = useState<ModelAlias>(() => blankAlias());
   const [originalId, setOriginalId] = useState<string>();
+  const [creationScenario, setCreationScenario] = useState<AliasCreationScenario>();
+  const [guidedModels, setGuidedModels] = useState({ primary: "", fallback: "" });
   const [activeSection, setActiveSection] = useState<AliasSection>("policies");
   const [editorMode, setEditorMode] = useState<"visual" | "json">("visual");
   const [jsonDraft, setJsonDraft] = useState(JSON.stringify(blankAlias(), null, 2));
@@ -87,10 +100,47 @@ export function AliasesTab({
     const next = alias ? structuredClone(alias) : blankAlias();
     setDraft(next);
     setOriginalId(alias?.id);
+    setCreationScenario(alias ? "advanced" : undefined);
+    setGuidedModels({ primary: "", fallback: "" });
+    setEditorMode("visual");
     setJsonDraft(JSON.stringify(next, null, 2));
     setJsonError(undefined);
     setSimulation(undefined);
     setCapacity(undefined);
+  };
+
+  const chooseCreationScenario = (scenario: AliasCreationScenario) => {
+    if (scenario === "advanced") {
+      const next = blankAlias();
+      setDraft(next);
+      setCreationScenario("advanced");
+      setGuidedModels({ primary: "", fallback: "" });
+      setJsonDraft(JSON.stringify(next, null, 2));
+      return;
+    }
+    const next = createAliasScenarioDraft(scenario);
+    setDraft(next);
+    setCreationScenario(scenario);
+    setGuidedModels({ primary: "", fallback: "" });
+    setJsonDraft(JSON.stringify(next, null, 2));
+  };
+
+  const updateGuidedModel = (field: "primary" | "fallback", model: string) => {
+    if (!creationScenario || creationScenario === "advanced") return;
+    const nextModels = { ...guidedModels, [field]: model };
+    setGuidedModels(nextModels);
+    setDraft((current) => withScenarioModels(
+      current,
+      creationScenario,
+      nextModels.primary,
+      nextModels.fallback,
+    ));
+  };
+
+  const openAdvancedEditor = () => {
+    setCreationScenario("advanced");
+    setJsonDraft(JSON.stringify(draft, null, 2));
+    setEditorMode("visual");
   };
 
   const updateRule = (index: number, update: (rule: RoutingRule) => RoutingRule) => {
@@ -158,7 +208,11 @@ export function AliasesTab({
   };
 
   const save = async () => {
-    if (!draft.id.trim() || !draft.rules.length || draft.rules.some((rule) => !rule.candidates.length)) return;
+    if (
+      !draft.id.trim()
+      || !draft.rules.length
+      || draft.rules.some((rule) => !rule.candidates.length || rule.candidates.some((candidate) => !candidate.model.trim()))
+    ) return;
     setSaving(true);
     try {
       const normalized = { ...draft, id: draft.id.trim() };
@@ -170,6 +224,23 @@ export function AliasesTab({
       setSaving(false);
     }
   };
+
+  const guidedScenario = creationScenario && creationScenario !== "advanced"
+    ? creationScenario as GuidedAliasScenario
+    : undefined;
+  const guidedComplete = guidedScenario
+    ? isGuidedScenarioComplete(
+      guidedScenario,
+      draft.id,
+      guidedModels.primary,
+      guidedModels.fallback,
+    )
+    : false;
+  const draftComplete = Boolean(
+    draft.id.trim()
+    && draft.rules.length
+    && draft.rules.every((rule) => rule.candidates.length && rule.candidates.every((candidate) => candidate.model.trim())),
+  );
 
   return (
     <>
@@ -232,13 +303,40 @@ export function AliasesTab({
 
       {activeSection === "editor" && <section className="panel smart-alias-editor" id="alias-panel-editor" role="tabpanel">
         <div className="section-split-header">
-          <div><h2>{originalId ? `Edit ${originalId}` : "Policy builder"}</h2><p className="muted">Rules run top to bottom. Candidate order breaks score ties.</p></div>
-          <div className="inline wrap">
-            <button className={`btn ${editorMode === "visual" ? "" : "ghost"}`} type="button" onClick={() => switchMode("visual")} title="Edit the policy with guided form fields">Visual</button>
-            <button className={`btn ${editorMode === "json" ? "" : "ghost"}`} type="button" onClick={() => switchMode("json")} title="Edit the complete schema v2 document directly">JSON</button>
+          <div>
+            <h2>{originalId ? `Edit ${originalId}` : creationScenario ? "Configure your policy" : "Create a policy"}</h2>
+            <p className="muted">
+              {originalId || creationScenario === "advanced"
+                ? "Rules run top to bottom. Candidate order breaks score ties."
+                : "Start with the outcome you want. MultiVibe will prepare the routing policy."}
+            </p>
           </div>
+          {(originalId || creationScenario === "advanced") && <div className="inline wrap">
+            {!originalId && <button className="btn ghost" type="button" onClick={() => selectDraft()}>Back to guided setup</button>}
+            <button className={`btn ${editorMode === "visual" ? "" : "ghost"}`} type="button" onClick={() => switchMode("visual")} title="Edit the policy with form fields">Visual</button>
+            <button className={`btn ${editorMode === "json" ? "" : "ghost"}`} type="button" onClick={() => switchMode("json")} title="Edit the complete schema v2 document directly">JSON</button>
+          </div>}
         </div>
 
+        {!originalId && !creationScenario ? (
+          <AliasScenarioPicker onSelect={chooseCreationScenario} />
+        ) : guidedScenario ? (
+          <GuidedAliasCreation
+            scenario={guidedScenario}
+            draft={draft}
+            models={availableModels}
+            primaryModel={guidedModels.primary}
+            fallbackModel={guidedModels.fallback}
+            complete={guidedComplete}
+            saving={saving}
+            onDraftChange={setDraft}
+            onPrimaryModelChange={(model) => updateGuidedModel("primary", model)}
+            onFallbackModelChange={(model) => updateGuidedModel("fallback", model)}
+            onChangeGoal={() => selectDraft()}
+            onAdvanced={openAdvancedEditor}
+            onCreate={() => void save()}
+          />
+        ) : <>
         {editorMode === "json" ? (
           <label><span className="field-label">Validated schema v2 JSON <HelpTooltip text="Use JSON when you need access to every supported routing option. Changes are checked while you type." /></span>
             <textarea className="smart-json-editor mono" value={jsonDraft} onChange={(event) => parseJson(event.target.value)} />
@@ -316,9 +414,10 @@ export function AliasesTab({
           </>
         )}
         <div className="inline wrap smart-save-row">
-          <button className="btn" type="button" disabled={saving || Boolean(jsonError) || !draft.id || draft.rules.some((rule) => !rule.candidates.length)} onClick={() => void save()} title="Save this policy and return to the policy list">{saving ? "Saving…" : originalId ? "Save policy" : "Create policy"}</button>
+          <button className="btn" type="button" disabled={saving || Boolean(jsonError) || !draftComplete} onClick={() => void save()} title="Save this policy and return to the policy list">{saving ? "Saving…" : originalId ? "Save policy" : "Create policy"}</button>
           <button className="btn ghost" type="button" onClick={() => selectDraft()} title="Discard unsaved changes and start over">Reset</button>
         </div>
+        </>}
       </section>}
 
       {activeSection === "simulation" && <section className="smart-routing-observability" id="alias-panel-simulation" role="tabpanel">

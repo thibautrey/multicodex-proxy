@@ -1612,6 +1612,220 @@ details summary {
   gap: 1rem;
 }
 
+.alias-wizard {
+  display: grid;
+  gap: 22px;
+  padding: 4px 0 2px;
+}
+
+.alias-wizard-progress {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.alias-wizard-progress li {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.alias-wizard-progress li:not(:last-child)::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  margin: 0 10px;
+  background: var(--line);
+}
+
+.alias-wizard-progress li span {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--surface-muted);
+  font-size: 11px;
+}
+
+.alias-wizard-progress li.active {
+  color: var(--text);
+}
+
+.alias-wizard-progress li.active span {
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--line));
+  background: var(--primary-soft);
+  color: var(--primary-strong);
+}
+
+.alias-wizard-intro {
+  display: grid;
+  gap: 6px;
+  max-width: 720px;
+}
+
+.alias-wizard-intro h3,
+.alias-wizard-selected-goal h3,
+.alias-route-preview h4 {
+  margin: 0;
+  color: var(--text);
+}
+
+.alias-scenario-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.alias-scenario-card {
+  display: grid;
+  gap: 10px;
+  min-height: 190px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--muted-strong);
+  font-weight: 560;
+  line-height: 1.45;
+  text-align: left;
+  box-shadow: var(--shadow-xs);
+}
+
+.alias-scenario-card:hover {
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--line));
+  background: color-mix(in srgb, var(--primary-soft) 45%, var(--surface));
+  box-shadow: var(--shadow-sm);
+}
+
+.alias-scenario-card.advanced {
+  border-style: dashed;
+  background: var(--surface-muted);
+}
+
+.alias-scenario-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text);
+  font-size: 15px;
+}
+
+.alias-scenario-card small {
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+
+.alias-scenario-action {
+  align-self: end;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.alias-wizard-selected-goal {
+  padding: 15px;
+  border: 1px solid color-mix(in srgb, var(--primary) 25%, var(--line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--primary-soft) 50%, var(--panel));
+}
+
+.alias-wizard-selected-goal > div {
+  display: grid;
+  gap: 5px;
+}
+
+.alias-guided-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
+  align-items: start;
+  gap: 22px;
+}
+
+.alias-guided-fields {
+  display: grid;
+  gap: 17px;
+}
+
+.alias-guided-fields label {
+  display: grid;
+  gap: 7px;
+}
+
+.alias-guided-fields label > small {
+  font-weight: 520;
+}
+
+.field-error {
+  color: var(--danger);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.alias-route-preview {
+  position: sticky;
+  top: 16px;
+  display: grid;
+  gap: 12px;
+  padding: 17px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-muted);
+}
+
+.alias-route-flow {
+  display: grid;
+  gap: 7px;
+}
+
+.alias-route-step {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.alias-route-step.active {
+  border-color: color-mix(in srgb, var(--primary) 38%, var(--line));
+}
+
+.alias-route-step strong {
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.alias-route-arrow {
+  padding-left: 12px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.alias-wizard-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 17px;
+  border-top: 1px solid var(--line);
+}
+
 .smart-alias-basics,
 .smart-rule-grid {
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
@@ -1703,6 +1917,40 @@ details summary {
 
   .smart-candidate {
     grid-template-columns: 1fr;
+  }
+
+  .alias-guided-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .alias-route-preview {
+    position: static;
+  }
+}
+
+@media (max-width: 620px) {
+  .alias-scenario-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .alias-wizard-progress li {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 5px;
+    font-size: 10px;
+  }
+
+  .alias-wizard-progress li:not(:last-child)::after {
+    position: absolute;
+    top: 12px;
+    right: 8px;
+    left: 34px;
+    margin: 0;
+  }
+
+  .alias-wizard-actions {
+    align-items: stretch;
+    flex-direction: column-reverse;
   }
 }
 
