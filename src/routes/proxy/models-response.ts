@@ -32,6 +32,7 @@ export function toCodexModelShape(model: ModelWithOptionalCodexInfo) {
     shell_type: "shell_command",
     visibility: "list",
     supported_in_api: true,
+    priority: 100,
   };
 }
 
