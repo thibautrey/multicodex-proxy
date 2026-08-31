@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildModelsListResponse,
+  toCodexModelShape,
   toOpenAiModelShape,
 } from "./models-response.js";
 
@@ -31,19 +32,64 @@ test("keeps the OpenAI model shape free of native Codex metadata", () => {
 });
 
 test("serves OpenAI and Codex model catalogs in one response", () => {
+  const openAiCompatibleModel = {
+    id: "third-party-model",
+    object: "model",
+    created: 0,
+    owned_by: "openai-compatible",
+    metadata: { provider: "openai-compatible" },
+  };
+
   const response = buildModelsListResponse([
     exposedModel,
-    {
-      id: "third-party-model",
-      object: "model",
-      created: 0,
-      owned_by: "zai",
-      metadata: { provider: "zai" },
-    },
+    openAiCompatibleModel,
   ]);
 
   assert.equal(response.object, "list");
   assert.equal(response.data.length, 2);
   assert.equal("codexModelInfo" in response.data[0], false);
   assert.deepEqual(response.models, [codexModelInfo]);
+});
+
+test("adapts z.ai models to the native Codex catalog", () => {
+  const zaiModel = {
+    id: "glm-5.3-flash",
+    object: "model" as const,
+    created: 0,
+    owned_by: "zai",
+    metadata: {
+      provider: "zai",
+      supported_tool_types: ["function"],
+    },
+  };
+
+  assert.deepEqual(toCodexModelShape(zaiModel), {
+    slug: "glm-5.3-flash",
+    display_name: "glm-5.3-flash",
+    description: "z.ai model glm-5.3-flash",
+    visibility: "list",
+    supported_in_api: true,
+  });
+
+  const response = buildModelsListResponse([exposedModel, zaiModel]);
+  assert.deepEqual(response.data[1], {
+    id: "glm-5.3-flash",
+    object: "model",
+    created: 0,
+    owned_by: "zai",
+    metadata: {
+      provider: "zai",
+      supported_tool_types: ["function"],
+    },
+  });
+  assert.deepEqual(response.models, [
+    codexModelInfo,
+    {
+      slug: "glm-5.3-flash",
+      display_name: "glm-5.3-flash",
+      description: "z.ai model glm-5.3-flash",
+      visibility: "list",
+      supported_in_api: true,
+    },
+  ]);
 });

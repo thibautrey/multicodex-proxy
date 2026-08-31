@@ -1,11 +1,36 @@
 type ModelWithOptionalCodexInfo = {
+  id: string;
   codexModelInfo?: Record<string, unknown>;
+  metadata?: {
+    provider?: string;
+  };
   [key: string]: unknown;
 };
 
 export function toOpenAiModelShape(model: ModelWithOptionalCodexInfo) {
   const { codexModelInfo: _codexModelInfo, ...openAiModel } = model;
   return openAiModel;
+}
+
+/**
+ * Return the native model entry consumed by Codex CLI.
+ *
+ * OpenAI accounts already provide this object upstream. z.ai exposes an
+ * OpenAI-compatible model list, so synthesize the small native entry Codex
+ * needs to list and select the model while keeping the provider metadata out
+ * of the OpenAI-compatible `data` entry.
+ */
+export function toCodexModelShape(model: ModelWithOptionalCodexInfo) {
+  if (model.codexModelInfo) return model.codexModelInfo;
+  if (model.metadata?.provider !== "zai") return undefined;
+
+  return {
+    slug: model.id,
+    display_name: model.id,
+    description: `z.ai model ${model.id}`,
+    visibility: "list",
+    supported_in_api: true,
+  };
 }
 
 /**
@@ -20,8 +45,9 @@ export function buildModelsListResponse(
   return {
     object: "list" as const,
     data: exposedModels.map(toOpenAiModelShape),
-    models: exposedModels.flatMap((model) =>
-      model.codexModelInfo ? [model.codexModelInfo] : [],
-    ),
+    models: exposedModels.flatMap((model) => {
+      const codexModel = toCodexModelShape(model);
+      return codexModel ? [codexModel] : [];
+    }),
   };
 }
