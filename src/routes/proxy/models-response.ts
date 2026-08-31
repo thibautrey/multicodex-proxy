@@ -28,6 +28,7 @@ export function toCodexModelShape(model: ModelWithOptionalCodexInfo) {
     slug: model.id,
     display_name: model.id,
     description: `z.ai model ${model.id}`,
+    base_instructions: "",
     supported_reasoning_levels: [],
     shell_type: "shell_command",
     visibility: "list",
