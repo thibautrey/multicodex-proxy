@@ -72,6 +72,7 @@ test("adapts z.ai models to the native Codex catalog", () => {
     visibility: "list",
     supported_in_api: true,
     priority: 100,
+    support_verbosity: false,
   });
 
   const response = buildModelsListResponse([exposedModel, zaiModel]);
@@ -96,6 +97,7 @@ test("adapts z.ai models to the native Codex catalog", () => {
       visibility: "list",
       supported_in_api: true,
       priority: 100,
+      support_verbosity: false,
     },
   ]);
 });

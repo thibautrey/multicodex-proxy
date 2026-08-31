@@ -33,6 +33,7 @@ export function toCodexModelShape(model: ModelWithOptionalCodexInfo) {
     visibility: "list",
     supported_in_api: true,
     priority: 100,
+    support_verbosity: false,
   };
 }
 
