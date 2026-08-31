@@ -944,7 +944,18 @@ async function refreshModels(
             catalogComplete = false;
             continue;
           }
-          url = `${baseUrl}${provider === "zai" ? ZAI_MODELS_PATH : "/v1/models"}`;
+          if (
+            provider === "opencode" &&
+            /^https:\/\/opencode\.ai\/inference\/openai$/i.test(baseUrl)
+          ) {
+            // OpenCode OAuth routes inference through this account-specific
+            // base, but it does not expose a model-list endpoint there. Use
+            // the public Zen catalog for discovery; inference still uses the
+            // account base URL below.
+            url = `${trimTrailingSlash(OPENCODE_BASE_URL)}/v1/models`;
+          } else {
+            url = `${baseUrl}${provider === "zai" ? ZAI_MODELS_PATH : "/v1/models"}`;
+          }
         }
 
         const r = await fetch(url, { headers });

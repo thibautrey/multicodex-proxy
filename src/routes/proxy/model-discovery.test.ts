@@ -57,7 +57,7 @@ test("refreshes the model catalog after an account is connected", async (t) => {
     id: "opencode-account",
     provider: "opencode",
     accessToken: "test-access-token",
-    baseUrl: "https://opencode.ai/zen",
+    baseUrl: "https://opencode.ai/inference/openai",
     enabled: true,
     location: "cloud",
   };
