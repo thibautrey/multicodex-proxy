@@ -309,6 +309,19 @@ test("client close after response.completed is classified as success", () => {
     clientDisconnected: true,
     error: "client disconnected before stream completion",
   });
+  assert.deepEqual(
+    classifyNativeStreamCompletion(
+      true,
+      true,
+      new Error("upstream reader aborted after completion"),
+    ),
+    {
+      interrupted: false,
+      status: 200,
+      clientDisconnected: undefined,
+      error: undefined,
+    },
+  );
 });
 
 test("model validation fails open until discovery has populated the cache", () => {

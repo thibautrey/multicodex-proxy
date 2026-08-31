@@ -1869,20 +1869,24 @@ export function classifyNativeStreamCompletion(
   streamError?: Error,
 ) {
   const interrupted =
-    Boolean(streamError) ||
-    (clientDisconnected && !sawResponseCompleted);
+    !sawResponseCompleted &&
+    (Boolean(streamError) || clientDisconnected);
   return {
     interrupted,
-    status: streamError
+    status: sawResponseCompleted
+      ? 200
+      : streamError
       ? 599
-      : clientDisconnected && !sawResponseCompleted
+      : clientDisconnected
         ? 499
         : 200,
     clientDisconnected:
       clientDisconnected && !sawResponseCompleted ? true : undefined,
-    error: clientDisconnected && !sawResponseCompleted
-      ? "client disconnected before stream completion"
-      : streamError?.message,
+    error: sawResponseCompleted
+      ? undefined
+      : clientDisconnected
+        ? "client disconnected before stream completion"
+        : streamError?.message,
   };
 }
 
@@ -2972,7 +2976,12 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 diagnostics.sawResponseCompleted,
                 streamError,
               );
-              if (streamError && !clientDisconnected && !res.writableEnded) {
+              if (
+                streamError &&
+                !diagnostics.sawResponseCompleted &&
+                !clientDisconnected &&
+                !res.writableEnded
+              ) {
                 res.write(
                   `event: error\ndata: ${JSON.stringify({
                     error: {
