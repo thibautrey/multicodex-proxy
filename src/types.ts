@@ -82,6 +82,8 @@ export type Account = {
   opencodeOrgId?: string;
   opencodeOrgName?: string;
   opencodeConsoleUrl?: string;
+  opencodeApiKey?: string;
+  opencodeHeaders?: Record<string, string>;
   xaiUserId?: string;
   xaiAuthScope?: string;
   oidcIssuer?: string;

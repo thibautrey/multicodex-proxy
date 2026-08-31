@@ -30,6 +30,8 @@ type OpenCodeProfile = {
   orgId?: string;
   orgName?: string;
   apiRoot?: string;
+  apiKey?: string;
+  headers?: Record<string, string>;
 };
 
 function configuredConsoleUrl(): string {
@@ -205,11 +207,28 @@ async function fetchOpenCodeProfile(token: string): Promise<OpenCodeProfile> {
     .slice()
     .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id))[0];
   let apiRoot: string | undefined;
+  let apiKey: string | undefined;
+  let headers: Record<string, string> | undefined;
   try {
     const remote = await getConsole<any>(server, "/api/config", token, org?.id);
     const provider = remote?.config?.provider?.opencode;
     if (typeof provider?.api === "string" && provider.api.trim()) {
       apiRoot = normalizeOpenCodeApiRoot(provider.api);
+    }
+    const configuredApiKey = provider?.options?.apiKey;
+    const configuredHeaders = provider?.options?.headers;
+    if (typeof configuredApiKey === "string" && configuredApiKey.trim()) {
+      apiKey = configuredApiKey;
+    }
+    if (
+      configuredHeaders &&
+      typeof configuredHeaders === "object" &&
+      !Array.isArray(configuredHeaders)
+    ) {
+      const entries = Object.entries(configuredHeaders).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      );
+      if (entries.length) headers = Object.fromEntries(entries);
     }
   } catch {
     // Model routing can use the public OpenCode Zen endpoint if config discovery
@@ -221,6 +240,8 @@ async function fetchOpenCodeProfile(token: string): Promise<OpenCodeProfile> {
     orgId: org?.id,
     orgName: org?.name,
     apiRoot,
+    apiKey,
+    headers,
   };
 }
 
@@ -256,6 +277,8 @@ export async function accountFromOpenCodeOAuth(
     opencodeOrgId: profile.orgId,
     opencodeOrgName: profile.orgName,
     opencodeConsoleUrl: configuredConsoleUrl(),
+    opencodeApiKey: profile.apiKey ?? existing?.opencodeApiKey,
+    opencodeHeaders: profile.headers ?? existing?.opencodeHeaders,
     baseUrl: profile.apiRoot ?? existing?.baseUrl,
     enabled: existing?.enabled ?? true,
     priority: existing?.priority ?? 0,

@@ -268,17 +268,17 @@ test("non-OpenAI requests retain the Pi identity", () => {
 
 test("OpenCode requests include the selected workspace", () => {
   const headers = buildUpstreamRequestHeaders("opencode", "test-token", {
-    opencodeOrgId: "org_123",
+    opencodeHeaders: { "x-opencode-org-id": "org_123" },
   });
 
   assert.equal(headers.authorization, "Bearer test-token");
-  assert.equal(headers["x-org-id"], "org_123");
+  assert.equal(headers["x-opencode-org-id"], "org_123");
 });
 
 test("OpenCode requests omit an empty workspace header", () => {
   const headers = buildUpstreamRequestHeaders("opencode", "test-token");
 
-  assert.equal(headers["x-org-id"], undefined);
+  assert.equal(headers["x-opencode-org-id"], undefined);
 });
 
 test("OpenAI Responses streams without a content-type header are relayed live", () => {

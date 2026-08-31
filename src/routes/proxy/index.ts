@@ -285,7 +285,7 @@ export function buildUpstreamRequestHeaders(
   options: {
     model?: string;
     conversationId?: string;
-    opencodeOrgId?: string;
+    opencodeHeaders?: Record<string, string>;
   } = {},
 ): Record<string, string> {
   if (provider === "xai") {
@@ -299,8 +299,8 @@ export function buildUpstreamRequestHeaders(
     originator: isOpenAI ? CODEX_CLI_ORIGINATOR : "pi",
     "User-Agent": isOpenAI ? CODEX_CLI_USER_AGENT : PI_USER_AGENT,
     ...(isOpenAI ? { version: MODELS_CLIENT_VERSION } : {}),
-    ...(provider === "opencode" && options.opencodeOrgId
-      ? { "x-org-id": options.opencodeOrgId }
+    ...(provider === "opencode" && options.opencodeHeaders
+      ? options.opencodeHeaders
       : {}),
   };
 }
@@ -2675,11 +2675,13 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
 
         const headers = buildUpstreamRequestHeaders(
           candidate.provider,
-          selected.accessToken,
+          candidate.provider === "opencode"
+            ? selected.opencodeApiKey ?? selected.accessToken
+            : selected.accessToken,
           {
             model: candidate.resolvedModel,
             conversationId: sessionId,
-            opencodeOrgId: selected.opencodeOrgId,
+            opencodeHeaders: selected.opencodeHeaders,
           },
         );
         if (candidate.provider === "openai") {

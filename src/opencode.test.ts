@@ -105,7 +105,13 @@ test("creates an OpenCode account and discovers its Go API root", async () => {
       return Response.json({
         config: {
           provider: {
-            opencode: { api: "https://opencode.ai/zen/go/v1" },
+            opencode: {
+              api: "https://opencode.ai/zen/go/v1",
+              options: {
+                apiKey: "inference-key",
+                headers: { "x-opencode-org-id": "org_123" },
+              },
+            },
           },
         },
       });
@@ -137,6 +143,8 @@ test("creates an OpenCode account and discovers its Go API root", async () => {
     assert.equal(account.opencodeOrgId, "org_123");
     assert.equal(account.opencodeOrgName, "Example Org");
     assert.equal(account.baseUrl, "https://opencode.ai/zen/go");
+    assert.equal(account.opencodeApiKey, "inference-key");
+    assert.deepEqual(account.opencodeHeaders, { "x-opencode-org-id": "org_123" });
     assert.equal(account.upstreamMode, "responses");
   } finally {
     globalThis.fetch = originalFetch;
