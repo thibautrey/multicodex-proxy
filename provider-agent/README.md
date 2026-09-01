@@ -16,6 +16,13 @@ full Core runtime list and keeps every adapter manual except the two literal
 IPv4/IPv6 LM Studio loopback candidates. The agent itself refuses to listen on
 anything other than literal `127.0.0.1` or `::1` port `1460`.
 
+`GET /v1/detected-models` performs an on-demand local inventory through those
+reviewed candidates only. Catalog calls are credential-free, redirect-free,
+deadline- and size-bounded, and the response contains only the adapter ID and
+validated model identifiers. Unavailable candidates expose no local error or
+network details. The inventory remains local and does not select, enroll,
+advertise or upload a model.
+
 The live Cloud enrollment, dedicated-tailnet `tsnet` transport, mutually authenticated HTTP/2/WebSocket fallback, signed metering envelopes, and remote workload handling remain fail-closed until their credentials, protocol and Cloud gates are implemented and verified. The current binary does not enroll, advertise capacity, accept community work, or create compensation eligibility.
 
 Core starts the embedded process with a closed environment allowlist containing
