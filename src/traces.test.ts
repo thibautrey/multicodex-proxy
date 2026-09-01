@@ -3,8 +3,236 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { createTraceManager } from "./traces.js";
+import {
+  createTraceManager,
+  isHiddenTraceRoute,
+  isInferenceTraceRoute,
+} from "./traces.js";
 import type { TraceEntry } from "./traces.js";
+
+test("classifies inference and control-plane routes before router mounting", () => {
+  for (const route of [
+    "POST /responses",
+    "POST /v1/responses?beta=true",
+    "POST /chat/completions",
+    "POST /v1/messages",
+    "POST /responses/compact",
+  ]) {
+    assert.equal(isInferenceTraceRoute(route), true, route);
+    assert.equal(isHiddenTraceRoute(route), false, route);
+  }
+
+  for (const route of [
+    "GET /health",
+    "GET /admin/stats/traces?sinceMs=1",
+    "POST /admin/usage/refresh-stale",
+    "GET /v1/models?client_version=0.151.0",
+    "GET /models/gpt-5.6-sol",
+    "GET /api/v1/models",
+    "GET /api/tags",
+    "GET /assets/index.js",
+  ]) {
+    assert.equal(isHiddenTraceRoute(route), true, route);
+    assert.equal(isInferenceTraceRoute(route), false, route);
+  }
+});
+
+test("trace stats count client outcomes separately from provider attempts", () => {
+  const manager = createTraceManager({
+    filePath: "/tmp/multivibe-client-outcome-traces.jsonl",
+  });
+  const base = 1_728_000_000_000;
+  const traces: TraceEntry[] = [
+    {
+      id: "retry-first",
+      clientRequestId: "request-recovered",
+      traceKind: "upstream-attempt",
+      upstreamAttempt: 1,
+      at: base,
+      route: "/responses",
+      status: 429,
+      isError: true,
+      stream: false,
+      latencyMs: 100,
+      accountId: "account-one",
+    },
+    {
+      id: "retry-success",
+      clientRequestId: "request-recovered",
+      traceKind: "upstream-attempt",
+      upstreamAttempt: 2,
+      at: base + 10,
+      route: "/responses",
+      status: 200,
+      isError: false,
+      stream: false,
+      latencyMs: 250,
+      accountId: "account-two",
+      usageStatus: "measured",
+      tokensInput: 10,
+      tokensOutput: 1,
+      tokensTotal: 11,
+      costUsd: 0.01,
+    },
+    {
+      id: "final-failure",
+      clientRequestId: "request-failed",
+      traceKind: "upstream-attempt",
+      upstreamAttempt: 1,
+      at: base + 20,
+      route: "/responses",
+      status: 429,
+      isError: true,
+      stream: false,
+      latencyMs: 300,
+      accountId: "account-three",
+    },
+    {
+      id: "recovered-client",
+      clientRequestId: "request-recovered",
+      traceKind: "client-request",
+      providerAttempts: 2,
+      recoveredRetry: true,
+      at: base + 11,
+      route: "POST /v1/responses",
+      status: 200,
+      isError: false,
+      stream: false,
+      latencyMs: 250,
+    },
+    {
+      id: "failed-client",
+      clientRequestId: "request-failed",
+      traceKind: "client-request",
+      providerAttempts: 1,
+      at: base + 21,
+      route: "POST /v1/responses",
+      status: 429,
+      isError: true,
+      stream: false,
+      latencyMs: 300,
+    },
+    {
+      id: "preparation-failure",
+      clientRequestId: "request-rejected",
+      traceKind: "client-request",
+      providerAttempts: 0,
+      at: base + 30,
+      route: "POST /v1/responses",
+      status: 400,
+      isError: true,
+      stream: false,
+      latencyMs: 5,
+    },
+    {
+      id: "diagnostic-only",
+      clientRequestId: "request-rejected",
+      traceKind: "diagnostic",
+      at: base + 29,
+      route: "/responses",
+      status: 503,
+      isError: true,
+      stream: false,
+      latencyMs: 4,
+    },
+  ];
+
+  const stats = manager.buildTraceStats(traces);
+  assert.equal(stats.totals.requests, 3);
+  assert.equal(stats.totals.upstreamAttempts, 3);
+  assert.equal(stats.totals.retriedRequests, 1);
+  assert.equal(stats.totals.recoveredRequests, 1);
+  assert.equal(stats.totals.errors, 2);
+  assert.equal(stats.totals.errorRate, 2 / 3);
+  assert.equal(stats.totals.requestsWithUsage, 1);
+  assert.equal(stats.totals.requestsWithCost, 1);
+  assert.equal(stats.totals.latencyAvgMs, 185);
+  assert.equal(stats.timeseries[0]?.requests, 3);
+  assert.equal(stats.timeseries[0]?.upstreamAttempts, 3);
+  assert.equal(stats.timeseries[0]?.recoveredRequests, 1);
+});
+
+test("historical stats exclude control traffic and use explicit client outcomes", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-traces-"));
+  const manager = createTraceManager({
+    filePath: path.join(directory, "traces.jsonl"),
+    historyFilePath: path.join(directory, "history.jsonl"),
+  });
+  const at = 1_728_000_000_000;
+
+  for (const route of [
+    "GET /admin/stats/traces",
+    "GET /v1/models",
+    "GET /health",
+  ]) {
+    await manager.appendTrace({
+      at,
+      route,
+      status: 200,
+      stream: false,
+      latencyMs: 1,
+    });
+  }
+  await manager.appendTrace({
+    at: at + 10,
+    route: "/responses",
+    clientRequestId: "durable-retry",
+    traceKind: "upstream-attempt",
+    upstreamAttempt: 1,
+    accountId: "one",
+    status: 429,
+    stream: false,
+    latencyMs: 10,
+  });
+  await manager.appendTrace({
+    at: at + 20,
+    route: "/responses",
+    clientRequestId: "durable-retry",
+    traceKind: "upstream-attempt",
+    upstreamAttempt: 2,
+    accountId: "two",
+    status: 200,
+    stream: false,
+    latencyMs: 20,
+  });
+  await manager.appendTrace({
+    at: at + 30,
+    route: "POST /v1/responses",
+    clientRequestId: "durable-retry",
+    traceKind: "client-request",
+    providerAttempts: 2,
+    recoveredRetry: true,
+    status: 200,
+    stream: false,
+    latencyMs: 20,
+  });
+  await manager.appendTrace({
+    at: at + 40,
+    route: "/responses",
+    clientRequestId: "durable-retry",
+    traceKind: "diagnostic",
+    status: 500,
+    stream: false,
+    latencyMs: 1,
+  });
+
+  const { matched, stats } = await manager.getTraceStats();
+  assert.equal(matched, 1);
+  assert.equal(stats.totals.requests, 1);
+  assert.equal(stats.totals.upstreamAttempts, 2);
+  assert.equal(stats.totals.retriedRequests, 1);
+  assert.equal(stats.totals.recoveredRequests, 1);
+  assert.equal(stats.totals.errors, 0);
+  assert.equal(stats.totals.latencyAvgMs, 20);
+  assert.equal(
+    (await manager.readStatsHistory()).some(
+      (trace) => trace.traceKind === "diagnostic",
+    ),
+    false,
+  );
+
+  await fs.rm(directory, { recursive: true, force: true });
+});
 
 test("trace stats calculate inference speed from request start and end", () => {
   const manager = createTraceManager({

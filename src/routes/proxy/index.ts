@@ -1979,6 +1979,15 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     res: express.Response,
   ) {
     const startedAt = Date.now();
+    const clientRequestId =
+      typeof res.locals.multivibeClientRequestId === "string"
+        ? res.locals.multivibeClientRequestId
+        : randomUUID();
+    res.locals.multivibeClientRequestId = clientRequestId;
+    let currentUpstreamAttempt: number | undefined;
+    let upstreamAttemptCount = 0;
+    res.locals.multivibeProviderAttempts = 0;
+    res.locals.multivibeSawFailedProviderAttempt = false;
     const requestAbortController = new AbortController();
     const abortRequest = () => {
       if (res.writableEnded || requestAbortController.signal.aborted) return;
@@ -2029,8 +2038,17 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       entry: Parameters<typeof traceManager.recordTrace>[0],
     ) => {
       observeCapacityUsage(entry.usage);
+      if (currentUpstreamAttempt !== undefined && entry.status >= 400) {
+        res.locals.multivibeSawFailedProviderAttempt = true;
+      }
       return traceManager.recordTrace({
         ...entry,
+        clientRequestId,
+        traceKind:
+          currentUpstreamAttempt === undefined
+            ? "diagnostic"
+            : "upstream-attempt",
+        upstreamAttempt: currentUpstreamAttempt,
         ...projectAttribution,
         application,
         codexSessionId,
@@ -2044,6 +2062,12 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     ) =>
       traceManager.beginTrace({
         ...entry,
+        clientRequestId,
+        traceKind:
+          currentUpstreamAttempt === undefined
+            ? "diagnostic"
+            : "upstream-attempt",
+        upstreamAttempt: currentUpstreamAttempt,
         ...projectAttribution,
         application,
         codexSessionId,
@@ -2056,8 +2080,17 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       entry: Parameters<typeof traceManager.completeTrace>[1],
     ) => {
       observeCapacityUsage(entry.usage);
+      if (currentUpstreamAttempt !== undefined && entry.status >= 400) {
+        res.locals.multivibeSawFailedProviderAttempt = true;
+      }
       return traceManager.completeTrace(id, {
         ...entry,
+        clientRequestId,
+        traceKind:
+          currentUpstreamAttempt === undefined
+            ? "diagnostic"
+            : "upstream-attempt",
+        upstreamAttempt: currentUpstreamAttempt,
         ...projectAttribution,
         application,
         codexSessionId,
@@ -2408,6 +2441,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         maxAttempts,
       );
       for (let i = 0; i < attemptsForProvider; i++) {
+        currentUpstreamAttempt = undefined;
         if (requestSignal.aborted) return;
         const usableAccounts = providerAccounts.filter(
           (account) =>
@@ -2815,6 +2849,8 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           const redirect = isDiscoveredLocalRuntimeAccount(selected)
             ? "manual"
             : "follow";
+          currentUpstreamAttempt = ++upstreamAttemptCount;
+          res.locals.multivibeProviderAttempts = upstreamAttemptCount;
           let upstream = await fetchUpstreamWithRetry(
             upstreamUrl,
             {

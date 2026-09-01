@@ -453,7 +453,14 @@ export const ENDPOINTS: ApiEndpoint[] = [
       totalStored: 128,
       matched: 128,
       stats: {
-        totals: { requests: 128, errors: 2, latencyAvgMs: 842 },
+        totals: {
+          requests: 128,
+          upstreamAttempts: 134,
+          retriedRequests: 6,
+          recoveredRequests: 4,
+          errors: 2,
+          latencyAvgMs: 842,
+        },
         models: [],
         timeseries: [],
         accountSelection: { attempts: 128, rotations: 3 },
