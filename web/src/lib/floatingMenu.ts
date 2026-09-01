@@ -24,6 +24,25 @@ export type FloatingMenuPlacement = {
   side: "above" | "below";
 };
 
+export type FloatingViewportEventSource = {
+  addEventListener(type: "resize" | "scroll", listener: EventListener): void;
+  removeEventListener(type: "resize" | "scroll", listener: EventListener): void;
+};
+
+export function observeFloatingViewportChanges(
+  viewport: FloatingViewportEventSource | null | undefined,
+  onChange: EventListener,
+) {
+  if (!viewport) return () => undefined;
+
+  viewport.addEventListener("resize", onChange);
+  viewport.addEventListener("scroll", onChange);
+  return () => {
+    viewport.removeEventListener("resize", onChange);
+    viewport.removeEventListener("scroll", onChange);
+  };
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }

@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { placeFloatingMenu } from "../src/lib/floatingMenu.js";
+import {
+  observeFloatingViewportChanges,
+  placeFloatingMenu,
+} from "../src/lib/floatingMenu.js";
 
 const viewport = { top: 0, left: 0, width: 400, height: 800 };
 
@@ -65,4 +68,22 @@ test("keeps the menu inside horizontal visual-viewport margins", () => {
   assert.equal(placement.left, 32);
   assert.equal(placement.maxWidth, 296);
   assert.equal(placement.top, 148);
+});
+
+test("observes and cleans up visual-viewport changes", () => {
+  const viewport = new EventTarget();
+  let changeCount = 0;
+  const stopObserving = observeFloatingViewportChanges(
+    viewport,
+    () => changeCount += 1,
+  );
+
+  viewport.dispatchEvent(new Event("resize"));
+  viewport.dispatchEvent(new Event("scroll"));
+  assert.equal(changeCount, 2);
+
+  stopObserving();
+  viewport.dispatchEvent(new Event("resize"));
+  viewport.dispatchEvent(new Event("scroll"));
+  assert.equal(changeCount, 2);
 });

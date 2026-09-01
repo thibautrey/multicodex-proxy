@@ -2,6 +2,7 @@ import type { Account, StoreSettings, TraceStats } from "../../types";
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { fmt, maskEmail, maskId } from "../../lib/ui";
 import {
+  observeFloatingViewportChanges,
   placeFloatingMenu,
   type FloatingMenuAnchor,
   type FloatingMenuPlacement,
@@ -269,10 +270,15 @@ export function AccountsTab(props: Props) {
     window.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", onResize);
+    const stopObservingVisualViewport = observeFloatingViewportChanges(
+      window.visualViewport,
+      closeMenu,
+    );
     return () => {
       window.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", onResize);
+      stopObservingVisualViewport();
     };
   }, []);
 
