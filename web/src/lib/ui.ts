@@ -50,8 +50,39 @@ export const clampPct = (v: number) => Math.max(0, Math.min(100, v));
 export const compactNumber = (v: number) =>
   new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(v);
 export const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
-export const usd = (v: number) =>
-  new Intl.NumberFormat(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(v);
+
+const usdFormatter = new Intl.NumberFormat(undefined, {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 4,
+});
+const compactUsdFormatter = new Intl.NumberFormat(undefined, {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 1,
+});
+const costUnits = [
+  { value: 1_000_000_000, suffix: "B" },
+  { value: 1_000_000, suffix: "M" },
+  { value: 1_000, suffix: "K" },
+];
+
+export const usd = (v: number) => {
+  const absoluteValue = Math.abs(v);
+  const unitIndex = costUnits.findIndex((unit) => absoluteValue >= unit.value);
+  if (unitIndex === -1) return usdFormatter.format(v);
+
+  let unit = costUnits[unitIndex];
+  let scaledValue = v / unit.value;
+  if (Math.abs(Math.round(scaledValue * 10) / 10) >= 1_000 && unitIndex > 0) {
+    unit = costUnits[unitIndex - 1];
+    scaledValue = v / unit.value;
+  }
+
+  return `${compactUsdFormatter.format(scaledValue)}${unit.suffix}`;
+};
 
 export function formatTokenCount(v: number): string {
   const n = Number.isFinite(v) ? Math.max(0, v) : 0;
