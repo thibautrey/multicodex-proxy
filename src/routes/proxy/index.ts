@@ -113,6 +113,10 @@ import {
 } from "../../async-refresh.js";
 import { fetchUpstreamWithRetry } from "../../upstream-retry.js";
 import {
+  authorizationForAccountRequest,
+  isDiscoveredLocalRuntimeAccount,
+} from "../../local-runtime-discovery.js";
+import {
   createResponseStreamDiagnostics,
   extractSSEFrameUsage,
   inspectResponseStreamEvent,
@@ -296,7 +300,7 @@ export function buildUpstreamRequestHeaders(
   const isOpenAI = provider === "openai";
   return {
     "content-type": "application/json",
-    authorization: `Bearer ${accessToken}`,
+    ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}),
     accept: "text/event-stream",
     originator: isOpenAI ? CODEX_CLI_ORIGINATOR : "pi",
     "User-Agent": isOpenAI ? CODEX_CLI_USER_AGENT : PI_USER_AGENT,
@@ -893,7 +897,12 @@ async function refreshModels(
   try {
     const accounts = await store.listAccounts();
     const byId = new Map<string, ExposedModel>();
-    const activeAccounts = accounts.filter((a) => a.enabled && a.accessToken);
+    const activeAccounts = accounts.filter(
+      (account) =>
+        account.enabled &&
+        (Boolean(account.accessToken) ||
+          isDiscoveredLocalRuntimeAccount(account)),
+    );
     const discoveredAvailabilityByProvider: ModelAvailabilityByProvider =
       new Map();
     for (const account of activeAccounts) {
@@ -915,7 +924,6 @@ async function refreshModels(
                 accept: "application/json",
               })
             : {
-                authorization: `Bearer ${account.accessToken}`,
                 accept: "application/json",
               };
         let url = "";
@@ -964,7 +972,15 @@ async function refreshModels(
           }
         }
 
-        const r = await fetch(url, { headers });
+        const authorization = authorizationForAccountRequest(account, url);
+        if (authorization) headers.authorization = authorization;
+        else delete headers.authorization;
+        const r = await fetch(url, {
+          headers,
+          redirect: isDiscoveredLocalRuntimeAccount(account)
+            ? "manual"
+            : "follow",
+        });
         if (!r.ok) {
           catalogComplete = false;
           continue;
@@ -2784,13 +2800,24 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           }
           const upstreamStartedAt = Date.now();
           latencyBreakdown.preparationMs = upstreamStartedAt - startedAt;
+          const upstreamUrl = `${upstreamBaseUrl}${upstreamPath}`;
+          const authorization = authorizationForAccountRequest(
+            selected,
+            upstreamUrl,
+          );
+          if (authorization) headers.authorization = authorization;
+          else delete headers.authorization;
+          const redirect = isDiscoveredLocalRuntimeAccount(selected)
+            ? "manual"
+            : "follow";
           let upstream = await fetchUpstreamWithRetry(
-            `${upstreamBaseUrl}${upstreamPath}`,
+            upstreamUrl,
             {
               method: "POST",
               headers,
               body: serializeUpstreamPayload(payloadToUpstream),
               signal: requestSignal,
+              redirect,
             },
           );
           if (upstream.status === 400) {
@@ -2804,12 +2831,13 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 `[proxy] Retrying ${candidate.resolvedModel ?? "model"} after correcting unsupported value ${correction.from} -> ${correction.to}`,
               );
               upstream = await fetchUpstreamWithRetry(
-                `${upstreamBaseUrl}${upstreamPath}`,
+                upstreamUrl,
                 {
                   method: "POST",
                   headers,
                   body: serializeUpstreamPayload(payloadToUpstream),
                   signal: requestSignal,
+                  redirect,
                 },
               );
             } else {

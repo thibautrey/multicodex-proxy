@@ -75,3 +75,66 @@ test("refreshes the model catalog after an account is connected", async (t) => {
   );
   assert.equal(modelRequests, 1);
 });
+
+test("discovers models from an explicitly classified tokenless local runtime", async (t) => {
+  const dataDir = await fs.mkdtemp(
+    path.join(os.tmpdir(), "multivibe-local-models-"),
+  );
+  t.after(async () => {
+    await fs.rm(dataDir, { recursive: true, force: true });
+  });
+
+  const store = new AccountStore(path.join(dataDir, "accounts.json"));
+  await store.init();
+  await store.addOrUpdate({
+    id: "local-runtime-lm-studio",
+    provider: "openai-compatible",
+    upstreamMode: "chat/completions",
+    accessToken: "",
+    baseUrl: "http://127.0.0.1:1234",
+    enabled: true,
+    location: "local",
+    localRuntime: {
+      source: "multivibe-local-discovery",
+      adapter: "lm-studio",
+      endpoint: "http://127.0.0.1:1234",
+      confirmedModelIds: ["lmstudio-discovered-only"],
+      authentication: "none",
+    },
+  });
+
+  const originalFetch = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = async (input, init) => {
+    requests += 1;
+    assert.equal(String(input), "http://127.0.0.1:1234/v1/models");
+    assert.equal(new Headers(init?.headers).get("authorization"), null);
+    assert.equal(init?.redirect, "manual");
+    return Response.json({
+      object: "list",
+      data: [
+        {
+          id: "lmstudio-discovered-only",
+          object: "model",
+          created: 0,
+          owned_by: "local",
+        },
+      ],
+    });
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const models = await discoverModels(
+    store,
+    "https://chatgpt.com/backend-api",
+    "https://api.mistral.ai",
+    "https://api.z.ai",
+  );
+  assert.equal(
+    models.some((model) => model.id === "lmstudio-discovered-only"),
+    true,
+  );
+  assert.equal(requests, 1);
+});
