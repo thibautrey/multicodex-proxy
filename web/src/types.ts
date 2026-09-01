@@ -143,7 +143,14 @@ export type TraceStats = {
   ttftByProviderModel: Array<{
     provider: "openai" | "openai-compatible" | "opencode" | "mistral" | "zai" | "xai";
     model: string;
-    inputTokenBucket: "lt1k" | "1k-8k" | "8k-32k" | "32k+" | "unknown";
+    inputTokenBucket:
+      | "lt1k"
+      | "1k-8k"
+      | "8k-32k"
+      | "32k-64k"
+      | "64k-128k"
+      | "128k-plus"
+      | "unknown";
     samples: number;
     ttftP50Ms: number;
     ttftP95Ms: number;

@@ -191,7 +191,18 @@ export type TraceTimeseriesBucket = {
   latencyP95Ms: number;
 };
 
-export type TtftInputTokenBucket = "lt1k" | "1k-8k" | "8k-32k" | "32k+" | "unknown";
+export const TTFT_INPUT_TOKEN_BUCKETS = [
+  "lt1k",
+  "1k-8k",
+  "8k-32k",
+  "32k-64k",
+  "64k-128k",
+  "128k-plus",
+] as const;
+
+export type TtftInputTokenBucket =
+  | (typeof TTFT_INPUT_TOKEN_BUCKETS)[number]
+  | "unknown";
 
 export type TraceTtftStats = {
   provider: ProviderId;
@@ -720,7 +731,9 @@ function ttftInputTokenBucket(
   if (tokensInput < 1_000) return "lt1k";
   if (tokensInput < 8_000) return "1k-8k";
   if (tokensInput < 32_000) return "8k-32k";
-  return "32k+";
+  if (tokensInput < 64_000) return "32k-64k";
+  if (tokensInput < 128_000) return "64k-128k";
+  return "128k-plus";
 }
 
 function isTtftAggregateCandidate(trace: TraceEntry): boolean {
@@ -759,10 +772,10 @@ function addTtftSample(
   };
   group.samples += 1;
   if (group.ttftSamples.length < MAX_LATENCY_SAMPLES_PER_BUCKET) {
-    group.ttftSamples.push(trace.ttftMs!);
+    group.ttftSamples.push(trace.ttftMs);
   } else {
     group.ttftSamples[group.samples % MAX_LATENCY_SAMPLES_PER_BUCKET] =
-      trace.ttftMs!;
+      trace.ttftMs;
   }
   if (
     typeof trace.tokensInput === "number" &&
@@ -830,12 +843,12 @@ function finalizeTtftGroups(
       : undefined,
     cachedInputRatio:
       group.totalInputTokens > 0
-        ? Math.min(1, group.cachedInputTokens / group.totalInputTokens)
+        ? Math.max(0, Math.min(1, group.cachedInputTokens / group.totalInputTokens))
         : undefined,
     confidence: group.samples >= 10 ? ("sufficient" as const) : ("low" as const),
   }));
 
-  for (const bucket of ["lt1k", "1k-8k", "8k-32k", "32k+"] as const) {
+  for (const bucket of TTFT_INPUT_TOKEN_BUCKETS) {
     finalized
       .filter(
         (group) =>
