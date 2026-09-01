@@ -107,12 +107,11 @@ func providerHandler(core *url.URL, models []string, client *http.Client) http.H
 		_, _ = response.Write([]byte("{\"ok\":true}\n"))
 	})
 	mux.HandleFunc("GET /health/ready", func(response http.ResponseWriter, request *http.Request) {
-		probe, probeErr := http.NewRequestWithContext(request.Context(), http.MethodGet, core.String()+"/v1/models", nil)
+		probe, probeErr := http.NewRequestWithContext(request.Context(), http.MethodGet, core.String()+"/health", nil)
 		if probeErr != nil {
 			http.Error(response, "not ready", http.StatusServiceUnavailable)
 			return
 		}
-		probe.Header.Set("authorization", "Bearer "+os.Getenv("PROXY_API_KEY"))
 		upstream, probeErr := client.Do(probe)
 		if probeErr != nil || upstream.StatusCode != http.StatusOK {
 			if upstream != nil {
