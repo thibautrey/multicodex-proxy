@@ -125,6 +125,7 @@ Everything important is file-based and survives restart (if `/data` is mounted):
 - `/data/oauth-state.json`
 - `/data/requests-trace.jsonl`
 - `/data/requests-stats-history.jsonl`
+- `/data/anonymous-usage-state.json` (mode `0600`, retry envelope only)
 - `/data/jobs.sqlite` (WAL, mode `0600`)
 
 Recent trace retention defaults to the latest **1000** entries and can be changed with `TRACE_RETENTION_MAX`.
@@ -134,6 +135,14 @@ SQLite volume. Consumed or webhook-delivered results have a one-hour grace
 period; unretrieved content is purged after 30 days.
 
 > Docker compose already mounts `./data:/data`.
+
+### Anonymous model-demand sharing
+
+Anonymous sharing is enabled by default for new and upgraded installations and can be changed immediately in the **Tracing** tab. The activation timestamp is materialized during upgrade, so historical usage from before activation is never backfilled. Re-enabling creates a new activation timestamp.
+
+For each completed UTC day, Core first downloads the public hosted-inference allowlist. It then reads the lightweight local trace history and prepares at most 50 contributions containing only an exact allowlisted canonical model ID and output-token volume rounded down to thousands, capped at one billion tokens per model. The envelope also contains the UTC-day window and a random event UUID used only to retry that day safely.
+
+Core never shares prompts, responses, input-token volumes, projects, accounts, emails, hardware, hostnames, request headers, fine-grained timestamps, or a stable installation ID. If the allowlist or Cloud API is unavailable, the cycle fails closed and inference continues normally. Unchecking the control aborts future sends and deletes any unsent envelope immediately.
 
 ---
 
@@ -661,6 +670,8 @@ directly through `POST /admin/accounts` with `provider: "opencode"`.
 | `OAUTH_STATE_PATH`                | `/data/oauth-state.json`                  | OAuth flow state                                                    |
 | `TRACE_FILE_PATH`                 | `/data/requests-trace.jsonl`              | Recent request trace file                                           |
 | `TRACE_STATS_HISTORY_PATH`        | `/data/requests-stats-history.jsonl`      | Lightweight request history for long-term stats                     |
+| `ANONYMOUS_USAGE_STATE_PATH`      | `/data/anonymous-usage-state.json`        | Mode-0600 daily retry envelope with no stable installation ID       |
+| `ANONYMOUS_USAGE_API_BASE_URL`    | `https://api.multivibe.cloud`             | Public allowlist and anonymous daily aggregate API                  |
 | `CODEX_PROJECTS_PATH`             | `/data/codex-projects.json`               | Persistent Codex session-to-project registry                        |
 | `TRACE_RETENTION_MAX`             | `1000`                                    | Number of recent full traces to retain; minimum effective value is 100 |
 | `TRACE_INCLUDE_BODY`              | `false`                                   | Persist full request payloads when explicitly enabled; trace stats still work when disabled |

@@ -585,7 +585,7 @@ export const ENDPOINTS: ApiEndpoint[] = [
     method: "GET",
     path: "/admin/settings",
     title: "Get proxy settings",
-    summary: "Read persisted routing and passthrough settings.",
+    summary: "Read persisted routing, passthrough and anonymous-demand settings.",
     description:
       "Returns operator-managed defaults such as passthrough-account and image-routing overrides.",
     responseExample: json({
@@ -593,6 +593,8 @@ export const ENDPOINTS: ApiEndpoint[] = [
       settings: {
         defaultPassthroughAccountId: "...",
         imageRequestModelOverride: "...",
+        anonymousUsageSharingEnabled: true,
+        anonymousUsageSharingEnabledAt: "2026-09-01T12:00:00.000Z",
       },
     }),
   },

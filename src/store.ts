@@ -62,7 +62,10 @@ export class AccountStore {
   private revision = 0;
   private lastFlushError: { at: number; message: string } | undefined;
 
-  constructor(private filePath: string) {}
+  constructor(
+    private filePath: string,
+    private readonly clock: () => Date = () => new Date(),
+  ) {}
 
   async init() {
     await ensureFile(this.filePath, DEFAULT_FILE);
@@ -103,6 +106,18 @@ export class AccountStore {
       data.settings && typeof data.settings === "object"
         ? { ...data.settings }
         : {};
+    const enabledAt = Date.parse(this.inMemorySettings.anonymousUsageSharingEnabledAt ?? "");
+    if (typeof this.inMemorySettings.anonymousUsageSharingEnabled !== "boolean") {
+      this.inMemorySettings.anonymousUsageSharingEnabled = true;
+      this.inMemorySettings.anonymousUsageSharingEnabledAt = this.clock().toISOString();
+      migrated = true;
+    } else if (
+      this.inMemorySettings.anonymousUsageSharingEnabled &&
+      (!Number.isFinite(enabledAt) || enabledAt > this.clock().getTime())
+    ) {
+      this.inMemorySettings.anonymousUsageSharingEnabledAt = this.clock().toISOString();
+      migrated = true;
+    }
     this.dirty = migrated;
     if (migrated) {
       this.revision += 1;
@@ -188,10 +203,21 @@ export class AccountStore {
   }
 
   async patchSettings(patch: Partial<StoreSettings>): Promise<StoreSettings> {
+    const wasSharingEnabled = this.inMemorySettings.anonymousUsageSharingEnabled !== false;
     this.inMemorySettings = {
       ...this.inMemorySettings,
       ...patch,
     };
+    if ("anonymousUsageSharingEnabled" in patch) {
+      if (patch.anonymousUsageSharingEnabled === true) {
+        this.inMemorySettings.anonymousUsageSharingEnabled = true;
+        if (!wasSharingEnabled) {
+          this.inMemorySettings.anonymousUsageSharingEnabledAt = this.clock().toISOString();
+        }
+      } else if (patch.anonymousUsageSharingEnabled === false) {
+        this.inMemorySettings.anonymousUsageSharingEnabled = false;
+      }
+    }
     if (!this.inMemorySettings.defaultPassthroughAccountId) {
       delete this.inMemorySettings.defaultPassthroughAccountId;
     }

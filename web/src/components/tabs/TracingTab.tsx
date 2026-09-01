@@ -20,7 +20,7 @@ import { fmt, formatTokenCount, formatTokenRate, maskEmail, maskId, pct, routeLa
 import { api } from "../../lib/api";
 import { copyTextToClipboard } from "../../lib/clipboard";
 import { Metric } from "../Metric";
-import type { Account, ProjectUsageStats, Trace, TracePagination, TraceRangePreset, TraceStats } from "../../types";
+import type { Account, ProjectUsageStats, StoreSettings, Trace, TracePagination, TraceRangePreset, TraceStats } from "../../types";
 
 type Props = {
   accounts: Account[];
@@ -38,6 +38,8 @@ type Props = {
   expandedTraceLoading: boolean;
   toggleExpandedTrace: (id: string) => Promise<void>;
   sanitized: boolean;
+  settings: StoreSettings;
+  patchSettings: (body: Partial<StoreSettings>) => Promise<void>;
 };
 
 const TTFT_BUCKET_ORDER = ["lt1k", "1k-8k", "8k-32k", "32k-64k", "64k-128k", "128k-plus", "unknown"] as const;
@@ -298,6 +300,8 @@ function TracingTabContent(props: Props) {
     expandedTraceLoading,
     toggleExpandedTrace,
     sanitized,
+    settings,
+    patchSettings,
   } = props;
   const accountProviderById = React.useMemo(
     () => new Map(accounts.map((account) => [account.id, account.provider])),
@@ -305,6 +309,8 @@ function TracingTabContent(props: Props) {
   );
   const [installHookBusy, setInstallHookBusy] = React.useState(false);
   const [installHookNotice, setInstallHookNotice] = React.useState<string | null>(null);
+  const [sharingBusy, setSharingBusy] = React.useState(false);
+  const [sharingNotice, setSharingNotice] = React.useState<string | null>(null);
   const installHookNoticeTimer = React.useRef<number | undefined>(undefined);
 
   React.useEffect(
@@ -342,6 +348,19 @@ function TracingTabContent(props: Props) {
       showInstallHookNotice(error?.message ?? String(error));
     } finally {
       setInstallHookBusy(false);
+    }
+  };
+
+  const setAnonymousUsageSharing = async (enabled: boolean) => {
+    setSharingBusy(true);
+    setSharingNotice(null);
+    try {
+      await patchSettings({ anonymousUsageSharingEnabled: enabled });
+      setSharingNotice(enabled ? "Anonymous model demand sharing is enabled for future usage." : "Sharing stopped and unsent data was deleted.");
+    } catch (error: any) {
+      setSharingNotice(error?.message ?? String(error));
+    } finally {
+      setSharingBusy(false);
     }
   };
 
@@ -421,6 +440,30 @@ function TracingTabContent(props: Props) {
             </button>
           ))}
         </nav>
+        <div className="trace-sharing-setting">
+          <div>
+            <span className="eyebrow">Anonymous model demand</span>
+            <h2>Help rank useful self-hosted models</h2>
+            <p id="anonymous-usage-sharing-description" className="muted">
+              Once per completed UTC day, MultiVibe can share only exact public model IDs from the hosted-inference allowlist, output-token totals rounded down to thousands and capped at one billion tokens per model, a random per-day event ID, and the daily window. It never sends prompts, responses, input-token totals, projects, accounts, emails, hardware, hostnames, headers, or a stable installation ID. Only usage after activation is eligible.
+            </p>
+          </div>
+          <div className="trace-sharing-action">
+            <label className="inline" htmlFor="anonymous-usage-sharing-enabled">
+              <input
+                id="anonymous-usage-sharing-enabled"
+                type="checkbox"
+                checked={settings.anonymousUsageSharingEnabled !== false}
+                disabled={sharingBusy}
+                aria-describedby="anonymous-usage-sharing-description anonymous-usage-sharing-default"
+                onChange={(event) => void setAnonymousUsageSharing(event.target.checked)}
+              />
+              <span>Share anonymous model demand</span>
+            </label>
+            <small id="anonymous-usage-sharing-default" className="muted">Enabled by default. Uncheck to stop immediately and delete any unsent envelope.</small>
+            <span className="muted" role="status" aria-live="polite">{sharingNotice}</span>
+          </div>
+        </div>
       </section>
 
       {activeView === "overview" && (

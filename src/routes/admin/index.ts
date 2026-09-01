@@ -8,7 +8,9 @@ import type {
   ModelAlias,
   ApplicationWebhook,
   UpstreamMode,
+  StoreSettings,
 } from "../../types.js";
+import type { AnonymousUsageSharingController } from "../../anonymous-usage-sharing.js";
 import {
   isUsageRefreshNeeded,
   normalizeProvider,
@@ -88,6 +90,7 @@ export type AdminRoutesOptions = {
   configuredProxyApiKeys: ProxyApiKey[];
   storagePaths: StoragePaths;
   smartRouting?: SmartRoutingCoordinator;
+  anonymousUsageSharing?: AnonymousUsageSharingController;
 };
 
 function proxyApiKeyPreview(key: string): string {
@@ -675,7 +678,15 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     const patch: {
       defaultPassthroughAccountId?: string | undefined;
       imageRequestModelOverride?: string | undefined;
+      anonymousUsageSharingEnabled?: boolean;
     } = {};
+
+    if ("anonymousUsageSharingEnabled" in body) {
+      if (typeof body.anonymousUsageSharingEnabled !== "boolean") {
+        return res.status(400).json({ error: "anonymousUsageSharingEnabled must be a boolean" });
+      }
+      patch.anonymousUsageSharingEnabled = body.anonymousUsageSharingEnabled;
+    }
 
     if ("defaultPassthroughAccountId" in body) {
       const accountId = String(body.defaultPassthroughAccountId ?? "").trim();
@@ -723,7 +734,16 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       }
     }
 
-    const settings = await store.patchSettings(patch);
+    const settings: StoreSettings = await store.patchSettings(patch);
+    if ("anonymousUsageSharingEnabled" in patch && options.anonymousUsageSharing) {
+      try {
+        await options.anonymousUsageSharing.applySettings(settings);
+      } catch {
+        return res.status(500).json({
+          error: "Anonymous usage sharing was disabled, but its unsent state could not be removed",
+        });
+      }
+    }
     res.json({ ok: true, settings });
   });
 
