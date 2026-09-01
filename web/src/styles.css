@@ -35,6 +35,7 @@
   --chart-3: #dda15e;
   --chart-4: #8d79d6;
   --chart-5: #d96270;
+  --brand-wordmark: url("/brand/multivibe-logo-name-light-outlined.svg");
 }
 
 @media (prefers-color-scheme: dark) {
@@ -70,6 +71,7 @@
     --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.18);
     --shadow-sm: 0 10px 28px rgba(0, 0, 0, 0.22);
     --shadow-md: 0 24px 58px rgba(0, 0, 0, 0.42);
+    --brand-wordmark: url("/brand/multivibe-logo-name-dark-outlined.svg");
   }
 }
 
@@ -105,10 +107,23 @@
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.18);
   --shadow-sm: 0 10px 28px rgba(0, 0, 0, 0.22);
   --shadow-md: 0 24px 58px rgba(0, 0, 0, 0.42);
+  --brand-wordmark: url("/brand/multivibe-logo-name-dark-outlined.svg");
 }
 
 * {
   box-sizing: border-box;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
 }
 
 html {
@@ -222,20 +237,12 @@ body,
   border-bottom: 1px solid var(--sidebar-line);
 }
 
-.brand-mark,
-.auth-brand-mark {
-  display: grid;
-  place-items: center;
+.brand-mark {
+  display: block;
   flex: 0 0 auto;
   width: 38px;
   height: 38px;
-  border-radius: 12px;
-  background: linear-gradient(145deg, #25a99b, #116e66 62%, #d59652);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 900;
-  letter-spacing: -0.02em;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 8px 18px rgba(6, 73, 66, 0.25);
+  filter: drop-shadow(0 8px 18px rgba(6, 73, 66, 0.25));
 }
 
 .brand-copy {
@@ -2045,21 +2052,14 @@ details summary {
   box-shadow: var(--shadow-md);
 }
 
-.auth-shell h1 {
-  margin: 5px 0 8px;
-  font-size: 2.2rem;
-  line-height: 1;
-  letter-spacing: -0.06em;
-}
-
 .auth-shell .btn {
   min-height: 41px;
 }
 
-.auth-brand-mark {
-  width: 46px;
-  height: 46px;
-  border-radius: 14px;
+.auth-wordmark {
+  width: min(290px, 100%);
+  aspect-ratio: 1280 / 420;
+  background: var(--brand-wordmark) left center / contain no-repeat;
 }
 
 .auth-error {

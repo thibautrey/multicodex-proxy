@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">MultiVibe</title>
+  <desc id="desc">A fused M and V monogram with one highlighted route.</desc>
+  <rect x="24" y="24" width="464" height="464" rx="112" fill="#101C19"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="48">
+  <path d="M112 356 V158 L256 322 L400 158 V356" stroke="#55C7B8"/>
+  <path d="M256 322 L400 158" stroke="#EFB26F"/>
+</g>
+</svg>

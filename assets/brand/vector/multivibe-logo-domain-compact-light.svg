@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1480 420" role="img" aria-labelledby="title desc">
+  <title id="title">multivibe.cloud</title>
+  <desc id="desc">MultiVibe logo: a fused M and V monogram with one highlighted route.</desc>
+  <g transform="translate(10 -76) scale(.78)">
+          <g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="48">
+  <path d="M112 356 V158 L256 322 L400 158 V356" stroke="#147D72"/>
+  <path d="M256 322 L400 158" stroke="#DD984D"/>
+</g>
+        </g>
+  <text x="410" y="270" font-family="Inter, Avenir Next, Segoe UI, system-ui, sans-serif" font-size="154" letter-spacing="-6">
+    <tspan fill="#14231F" font-weight="800">multi</tspan><tspan fill="#147D72" font-weight="800">vibe</tspan><tspan fill="#6B7D77" font-weight="500" letter-spacing="-4">.cloud</tspan>
+  </text>
+</svg>

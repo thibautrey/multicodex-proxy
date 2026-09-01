@@ -780,10 +780,10 @@ export default function App() {
     return (
       <div className="auth-page">
         <div className="auth-shell panel">
-          <div className="auth-brand-mark" aria-hidden="true">MV</div>
+          <div className="auth-wordmark" aria-hidden="true" />
           <div>
+            <h1 className="sr-only">MultiVibe</h1>
             <span className="eyebrow">Multi-provider routing</span>
-            <h1>MultiVibe</h1>
             <p className="muted">Checking your admin session...</p>
           </div>
           <div className="auth-loading" aria-label="Loading" />
@@ -796,10 +796,10 @@ export default function App() {
     return (
       <div className="auth-page">
         <form className="auth-shell panel" onSubmit={login}>
-          <div className="auth-brand-mark" aria-hidden="true">MV</div>
+          <div className="auth-wordmark" aria-hidden="true" />
           <div>
+            <h1 className="sr-only">MultiVibe</h1>
             <span className="eyebrow">Admin workspace</span>
-            <h1>MultiVibe</h1>
             <p className="muted">Sign in to manage routing, providers and request activity.</p>
           </div>
           <label className="control-field">
@@ -827,7 +827,7 @@ export default function App() {
       <div className="shell app-shell">
         <aside className="sidebar">
           <div className="sidebar-brand">
-            <div className="brand-mark" aria-hidden="true">MV</div>
+            <img className="brand-mark" src="/brand/multivibe-app-icon.svg" alt="" />
             <div className="brand-copy">
               <strong>MultiVibe</strong>
               <span>Proxy control plane</span>

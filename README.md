@@ -1,4 +1,10 @@
-# MultiVibe
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/brand/vector/multivibe-logo-domain-dark-outlined.svg" />
+    <source media="(prefers-color-scheme: light)" srcset="./assets/brand/vector/multivibe-logo-domain-light-outlined.svg" />
+    <img alt="MultiVibe.cloud" src="./assets/brand/vector/multivibe-logo-domain-light-outlined.svg" width="560" />
+  </picture>
+</p>
 
 <p align="center">
   <strong>OpenAI-compatible multi-provider router</strong><br/>
@@ -10,6 +16,10 @@
   <a href="https://github.com/thibautrey/multivibe/network/members"><img alt="GitHub forks" src="https://img.shields.io/github/forks/thibautrey/multivibe?style=for-the-badge"/></a>
   <a href="https://github.com/thibautrey/multivibe/issues"><img alt="GitHub issues" src="https://img.shields.io/github/issues/thibautrey/multivibe?style=for-the-badge"/></a>
 </p>
+
+---
+
+The complete logo kit, color palette, usage guidance, and export variants are available in [`assets/brand`](./assets/brand/README.md).
 
 ---
 
