@@ -738,3 +738,28 @@ Benchmark reports and targeted performance investigations are available in
 Focused pull requests and issues are welcome. For UI changes, include a
 before/after description and screenshots. For behavior changes, add or update
 tests and report the validation commands you ran.
+
+---
+
+## 👥 Contributors
+
+<a href="https://github.com/thibautrey/multivibe/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=thibautrey/multivibe" alt="MultiVibe contributors" />
+</a>
+
+Thanks to everyone who has helped improve MultiVibe. This gallery is generated
+from GitHub's contributor graph and updates automatically.
+
+[View all contributors and their commits](https://github.com/thibautrey/multivibe/graphs/contributors).
+
+---
+
+## ⭐ Star history
+
+<a href="https://www.star-history.com/#thibautrey/multivibe&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=thibautrey/multivibe&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=thibautrey/multivibe&type=Date&theme=light" />
+    <img alt="MultiVibe Star History chart" src="https://api.star-history.com/svg?repos=thibautrey/multivibe&type=Date&theme=light" />
+  </picture>
+</a>
