@@ -75,22 +75,6 @@ export function ApiKeysTab({
 
   return (
     <>
-      <section className="panel api-key-intro">
-        <div className="section-split-header">
-          <div>
-            <h2>Application API keys</h2>
-            <p className="muted">
-              Give each client its own credential to authenticate proxy requests and attribute traces.
-            </p>
-          </div>
-          <span className="badge badge-live">{apiKeys.length} active</span>
-        </div>
-        <div className="api-key-notice">
-          <strong>Keys are secrets.</strong>
-          <span>New keys are shown once. Store them in your application's secret manager.</span>
-        </div>
-      </section>
-
       <section className="panel">
         <div className="section-split-header">
           <div>
