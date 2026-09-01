@@ -1158,6 +1158,11 @@ td .muted {
   gap: 7px;
 }
 
+/* Wrapped routing-state messages are cards, not single-line pills. */
+.state-stack .badge {
+  border-radius: 10px;
+}
+
 .account-cell {
   min-width: 170px;
 }
