@@ -6,6 +6,7 @@ import express from "express";
 import {
   createInferenceIdempotencyMiddleware,
   hashInferencePayload,
+  InferenceIdempotencyCache,
   INFERENCE_IDEMPOTENCY_STATUS_HEADER,
   type InferenceIdempotencyOptions,
 } from "./inference-idempotency.js";
@@ -286,6 +287,35 @@ test("evicts completed responses within the global byte budget", async (t) => {
   assert.equal(secondReplay.idempotencyStatus, "replayed");
   assert.equal(firstAgain.idempotencyStatus, "created");
   assert.equal(calls, 3);
+});
+
+test("byte eviction preserves seen-key conflict protection", () => {
+  const cache = new InferenceIdempotencyCache({
+    ...DEFAULT_OPTIONS,
+    maxEntries: 10,
+    maxBytes: 80,
+    maxResponseBytes: 80,
+  });
+  const response = (id: string) => ({
+    status: 200,
+    headers: { "content-type": "application/json" },
+    body: Buffer.from(JSON.stringify({ id, output: "x".repeat(35) })),
+  });
+
+  const seen = cache.claim("seen-key", "hash-a");
+  assert.equal(seen.kind, "leader");
+  if (seen.kind !== "leader") return;
+  cache.fail(seen.entry);
+
+  for (const scope of ["cached-a", "cached-b"]) {
+    const claim = cache.claim(scope, scope);
+    assert.equal(claim.kind, "leader");
+    if (claim.kind === "leader") cache.complete(claim.entry, response(scope));
+  }
+
+  assert.equal(cache.claim("seen-key", "different-hash").kind, "conflict");
+  assert.equal(cache.claim("cached-b", "cached-b").kind, "replay");
+  assert.equal(cache.claim("cached-a", "cached-a").kind, "leader");
 });
 
 test("bypasses streaming, tools, multimodal, and unauthenticated applications", async (t) => {

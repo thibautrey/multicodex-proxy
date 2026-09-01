@@ -338,6 +338,16 @@ export class InferenceIdempotencyCache {
     return false;
   }
 
+  private evictOldestCompleted(): boolean {
+    for (const [scope, entry] of this.entries) {
+      if (entry.state === "completed") {
+        this.remove(scope, entry);
+        return true;
+      }
+    }
+    return false;
+  }
+
   private makeEntryRoom(): boolean {
     while (this.entries.size >= this.options.maxEntries) {
       if (!this.evictOldestRetained()) return false;
@@ -400,7 +410,7 @@ export class InferenceIdempotencyCache {
           this.completedBytes + response.body.byteLength >
           this.options.maxBytes
         ) {
-          if (!this.evictOldestRetained(entry)) break;
+          if (!this.evictOldestCompleted()) break;
         }
         if (
           this.completedBytes + response.body.byteLength <=
