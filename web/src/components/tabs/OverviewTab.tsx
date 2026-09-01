@@ -56,7 +56,7 @@ export function OverviewTab({
         <Metric title="Input tokens" value={formatTokenCount(traceStats.totals.tokensInput)} detail="Prompt tokens sent to providers" />
         <Metric title="Output tokens" value={formatTokenCount(traceStats.totals.tokensOutput)} detail="Generated tokens returned by providers" />
         <Metric title="Inference speed" value={formatTokenRate(traceStats.totals.inferenceTokensPerSecond)} detail={`${traceStats.totals.inferenceRequests} measurable requests`} />
-        <Metric title="Estimated cost" value={usd(traceStats.totals.costUsd)} detail="Derived from model pricing" />
+        <Metric title="Estimated cost" value={usd(traceStats.totals.costUsd)} detail={`No-cache estimate: ${usd(traceStats.totals.costUsdWithoutCache)}`} />
         <Metric title="Avg latency" value={`${Math.round(traceStats.totals.latencyAvgMs)}ms`} detail="Mean response time across traced calls" />
       </section>
 

@@ -135,3 +135,18 @@ export function estimateCostUsd(
   const outCost = (Math.max(0, tokensOutput) / 1_000_000) * rate.outputPer1M;
   return inCost + outCost;
 }
+
+export function estimateCostUsdWithoutCache(
+  model: string | undefined,
+  tokensInput = 0,
+  tokensOutput = 0,
+  tokensInputCacheWrite = 0,
+): number | undefined {
+  return estimateCostUsd(
+    model,
+    tokensInput,
+    tokensOutput,
+    0,
+    tokensInputCacheWrite,
+  );
+}

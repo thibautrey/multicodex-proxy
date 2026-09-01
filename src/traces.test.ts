@@ -812,3 +812,33 @@ test("trace storage compacts physical lifecycle records and retains active start
 
   await fs.rm(directory, { recursive: true, force: true });
 });
+
+test("reports the no-cache equivalent alongside provider cost", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-traces-"));
+  const manager = createTraceManager({
+    filePath: path.join(directory, "traces.jsonl"),
+    historyFilePath: path.join(directory, "history.jsonl"),
+  });
+  await manager.appendTrace({
+    at: 1_728_000_000_000,
+    route: "/responses",
+    model: "gpt-5.6-sol",
+    status: 200,
+    stream: false,
+    latencyMs: 10,
+    usage: {
+      input_tokens: 1_000_000,
+      input_tokens_details: { cached_tokens: 200_000, cache_write_tokens: 300_000 },
+      output_tokens: 0,
+      total_tokens: 1_000_000,
+    },
+  });
+  const [trace] = await manager.readTraceWindow();
+  assert.equal(manager.buildTraceStats([trace]).totals.costUsd, 4.475);
+  assert.equal(manager.buildTraceStats([trace]).totals.costUsdWithoutCache, 5.375);
+
+  const { stats } = await manager.getTraceStats();
+  assert.equal(stats.totals.costUsd, 4.475);
+  assert.equal(stats.totals.costUsdWithoutCache, 5.375);
+  await fs.rm(directory, { recursive: true, force: true });
+});

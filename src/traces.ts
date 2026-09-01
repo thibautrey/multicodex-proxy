@@ -1,4 +1,8 @@
-import { estimateCostUsd, MODEL_PRICING_VERSION } from "./model-pricing.js";
+import {
+  estimateCostUsd,
+  estimateCostUsdWithoutCache,
+  MODEL_PRICING_VERSION,
+} from "./model-pricing.js";
 import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import { randomUUID } from "node:crypto";
@@ -113,6 +117,26 @@ export type TraceEntry = {
   clientDisconnected?: boolean;
 };
 
+function estimateTraceCostWithoutCache(trace: TraceEntry): number | undefined {
+  const cachedInput = Math.max(0, trace.tokensInputCached ?? 0);
+  if (cachedInput === 0 && typeof trace.costUsd === "number") {
+    return trace.costUsd;
+  }
+  const hasMeasuredUsage =
+    trace.usageStatus === "measured" ||
+    Boolean(trace.usage) ||
+    typeof trace.tokensInput === "number" ||
+    typeof trace.tokensOutput === "number" ||
+    typeof trace.tokensTotal === "number";
+  if (!hasMeasuredUsage) return undefined;
+  return estimateCostUsdWithoutCache(
+    trace.model,
+    trace.tokensInput ?? 0,
+    trace.tokensOutput ?? 0,
+    trace.tokensInputCacheWrite ?? 0,
+  );
+}
+
 export type ResponseStreamDiagnostics = {
   eventCount: number;
   eventTypes: Record<string, number>;
@@ -162,6 +186,7 @@ export type TraceTotals = {
   inferenceTokensPerSecond: number;
   inferenceRequests: number;
   costUsd: number;
+  costUsdWithoutCache: number;
   latencyAvgMs: number;
 };
 
@@ -271,6 +296,7 @@ type TraceBucketAggregate = {
   tokensOutput: number;
   tokensTotal: number;
   costUsd: number;
+  costUsdWithoutCache: number;
   latencyMsTotal: number;
   latencies: number[];
   inferenceSpeeds: number[];
@@ -1056,6 +1082,10 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
       ) ?? 0)
     );
   }, 0);
+  const costUsdWithoutCache = traces.reduce(
+    (sum, trace) => sum + (estimateTraceCostWithoutCache(trace) ?? 0),
+    0,
+  );
   const latencyAvgMs = requests
     ? traces.reduce((sum, t) => sum + t.latencyMs, 0) / requests
     : 0;
@@ -1188,6 +1218,7 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
       inferenceTokensPerSecond: average(inferenceSpeeds),
       inferenceRequests: inferenceSpeeds.length,
       costUsd,
+      costUsdWithoutCache,
       latencyAvgMs,
     },
     models,
@@ -1210,6 +1241,7 @@ function createEmptyBucket(at: number): TraceBucketAggregate {
     tokensOutput: 0,
     tokensTotal: 0,
     costUsd: 0,
+    costUsdWithoutCache: 0,
     latencyMsTotal: 0,
     latencies: [],
     inferenceSpeeds: [],
@@ -1245,6 +1277,7 @@ function addTraceToBucket(bucket: TraceBucketAggregate, trace: TraceEntry) {
           trace.tokensInputCached ?? 0,
           trace.tokensInputCacheWrite ?? 0,
         ) ?? 0);
+  const traceCostWithoutCache = estimateTraceCostWithoutCache(trace);
   const traceTokensTotal =
     trace.tokensTotal ?? (trace.tokensInput ?? 0) + (trace.tokensOutput ?? 0);
 
@@ -1265,6 +1298,7 @@ function addTraceToBucket(bucket: TraceBucketAggregate, trace: TraceEntry) {
   }
   bucket.costUsd += traceCost;
   bucket.latencyMsTotal += Number.isFinite(trace.latencyMs) ? trace.latencyMs : 0;
+  bucket.costUsdWithoutCache += traceCostWithoutCache ?? 0;
   addLatencySample(bucket, trace.latencyMs);
   addTtftSample(bucket.ttftGroups, trace);
   addAccountSelection(bucket.accountSelection, trace.accountSelection);
@@ -1713,6 +1747,7 @@ export function createTraceManager(config: TraceManagerConfig) {
     let inferenceSpeedTotal = 0;
     let inferenceRequests = 0;
     let costUsd = 0;
+    let costUsdWithoutCache = 0;
     let latencyWeightedTotal = 0;
 
     const timeseries = selectedBuckets.map((bucket) => {
@@ -1731,6 +1766,7 @@ export function createTraceManager(config: TraceManagerConfig) {
       );
       inferenceRequests += bucket.inferenceSpeeds.length;
       costUsd += bucket.costUsd;
+      costUsdWithoutCache += bucket.costUsdWithoutCache;
       latencyWeightedTotal += bucket.latencyMsTotal;
       for (const group of bucket.ttftGroups.values()) {
         mergeTtftGroup(ttftGroups, group);
@@ -1787,6 +1823,7 @@ export function createTraceManager(config: TraceManagerConfig) {
             ? inferenceSpeedTotal / inferenceRequests
             : 0,
           inferenceRequests,
+          costUsdWithoutCache,
           costUsd,
           latencyAvgMs: requests ? latencyWeightedTotal / requests : 0,
         },

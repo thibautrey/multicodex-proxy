@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { estimateCostUsd, getModelPricing } from "./model-pricing.js";
+import { estimateCostUsd, estimateCostUsdWithoutCache, getModelPricing } from "./model-pricing.js";
 
 const expected: Record<string, [number, number, number, number?]> = {
   "gpt-5.6-sol": [5, 0.5, 30, 6.25],
@@ -52,4 +52,16 @@ test("charges GPT-5.6 cache writes at 1.25x without double-counting input", () =
     300_000,
   );
   assert.equal(cost, 4.475);
+});
+
+test("prices cached input at the standard rate for the no-cache equivalent", () => {
+  assert.equal(
+    estimateCostUsdWithoutCache(
+      "gpt-5.6-sol",
+      1_000_000,
+      0,
+      300_000,
+    ),
+    5.375,
+  );
 });
