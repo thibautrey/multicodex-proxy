@@ -1,0 +1,115 @@
+package main
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"time"
+)
+
+type manifest struct {
+	ProtocolVersion string   `json:"protocol_version"`
+	State           string   `json:"state"`
+	SelectedModels  []string `json:"selected_models"`
+}
+
+func loopbackCoreURL(raw string) (*url.URL, error) {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "http" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return nil, errors.New("core URL must be credential-free loopback HTTP")
+	}
+	host := parsed.Hostname()
+	if host != "127.0.0.1" && host != "::1" {
+		return nil, errors.New("core URL must use literal loopback")
+	}
+	if parsed.Port() != "1455" {
+		return nil, errors.New("core URL must use the packaged Core port")
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	return parsed, nil
+}
+
+func selectedModels() ([]string, error) {
+	raw := strings.TrimSpace(os.Getenv("MULTIVIBE_PROVIDER_SELECTED_MODELS"))
+	if raw == "" {
+		return []string{}, nil
+	}
+	var models []string
+	if err := json.Unmarshal([]byte(raw), &models); err != nil || len(models) > 1000 {
+		return nil, errors.New("selected model allowlist is invalid")
+	}
+	for _, model := range models {
+		if model == "" || len(model) > 512 || strings.TrimSpace(model) != model {
+			return nil, errors.New("selected model allowlist contains an invalid id")
+		}
+	}
+	return models, nil
+}
+
+func main() {
+	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	core, err := loopbackCoreURL(envDefault("MULTIVIBE_CORE_LOOPBACK_URL", "http://127.0.0.1:1455"))
+	if err != nil {
+		logger.Error("provider_agent_configuration_invalid", "error", err.Error())
+		os.Exit(2)
+	}
+	models, err := selectedModels()
+	if err != nil {
+		logger.Error("provider_agent_configuration_invalid", "error", err.Error())
+		os.Exit(2)
+	}
+	client := &http.Client{Timeout: 2 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health/live", func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("content-type", "application/json")
+		_, _ = response.Write([]byte("{\"ok\":true}\n"))
+	})
+	mux.HandleFunc("GET /health/ready", func(response http.ResponseWriter, request *http.Request) {
+		probe, probeErr := http.NewRequestWithContext(request.Context(), http.MethodGet, core.String()+"/v1/models", nil)
+		if probeErr != nil {
+			http.Error(response, "not ready", http.StatusServiceUnavailable)
+			return
+		}
+		probe.Header.Set("authorization", "Bearer "+os.Getenv("PROXY_API_KEY"))
+		upstream, probeErr := client.Do(probe)
+		if probeErr != nil || upstream.StatusCode != http.StatusOK {
+			if upstream != nil {
+				_ = upstream.Body.Close()
+			}
+			http.Error(response, "not ready", http.StatusServiceUnavailable)
+			return
+		}
+		_ = upstream.Body.Close()
+		response.Header().Set("content-type", "application/json")
+		_, _ = response.Write([]byte("{\"ok\":true}\n"))
+	})
+	mux.HandleFunc("GET /v1/manifest", func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("cache-control", "no-store")
+		response.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(response).Encode(manifest{ProtocolVersion: "provider-agent-v1", State: string(StateSelected), SelectedModels: models})
+	})
+	listener, err := net.Listen("tcp", envDefault("MULTIVIBE_PROVIDER_AGENT_LISTEN", "127.0.0.1:1460"))
+	if err != nil {
+		logger.Error("provider_agent_listen_failed", "error", err.Error())
+		os.Exit(1)
+	}
+	logger.Info("provider_agent_started", "address", listener.Addr().String(), "selected_model_count", len(models))
+	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second}
+	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		logger.Error("provider_agent_failed", "error", fmt.Sprint(err))
+		os.Exit(1)
+	}
+}
+
+func envDefault(name, fallback string) string {
+	if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+		return value
+	}
+	return fallback
+}
