@@ -772,10 +772,10 @@ function addTtftSample(
   };
   group.samples += 1;
   if (group.ttftSamples.length < MAX_LATENCY_SAMPLES_PER_BUCKET) {
-    group.ttftSamples.push(trace.ttftMs);
+    group.ttftSamples.push(trace.ttftMs!);
   } else {
     group.ttftSamples[group.samples % MAX_LATENCY_SAMPLES_PER_BUCKET] =
-      trace.ttftMs;
+      trace.ttftMs!;
   }
   if (
     typeof trace.tokensInput === "number" &&

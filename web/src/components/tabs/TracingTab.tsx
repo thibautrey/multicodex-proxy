@@ -1,6 +1,47 @@
-import React from "react";
-import { useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import type { CSSProperties } from "react";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Legend,
+  Line,
+  LineChart,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import { estimateCostUsd } from "../../model-pricing";
+import { fmt, formatTokenCount, formatTokenRate, maskEmail, maskId, pct, routeLabel, usd } from "../../lib/ui";
+import { api } from "../../lib/api";
+import { copyTextToClipboard } from "../../lib/clipboard";
+import { Metric } from "../Metric";
+import type { Account, ProjectUsageStats, Trace, TracePagination, TraceRangePreset, TraceStats } from "../../types";
+
+type Props = {
+  accounts: Account[];
+  traceStats: TraceStats;
+  tokensTimeseries: Array<any>;
+  modelChartData: Array<any>;
+  modelCostChartData: Array<any>;
+  tracePagination: TracePagination;
+  gotoTracePage: (page: number) => Promise<void>;
+  traceRange: TraceRangePreset;
+  setTraceRange: (range: TraceRangePreset) => void;
+  traces: Trace[];
+  projectUsageStats: ProjectUsageStats;
+  expandedTraceId: string | null;
+  expandedTrace: Trace | null;
+  expandedTraceLoading: boolean;
+  toggleExpandedTrace: (id: string) => Promise<void>;
+  sanitized: boolean;
+  exportTracesZip: () => Promise<void>;
+  exportInProgress: boolean;
+};
 
 const TTFT_BUCKET_ORDER = ["lt1k", "1k-8k", "8k-32k", "32k-64k", "64k-128k", "128k-plus", "unknown"] as const;
 
