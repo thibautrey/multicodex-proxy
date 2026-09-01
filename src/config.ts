@@ -1,4 +1,5 @@
 import os from "node:os";
+import path from "node:path";
 
 export const PORT = Number(process.env.PORT ?? 1455);
 export const PROVIDER_AGENT_ENABLED =
@@ -6,6 +7,8 @@ export const PROVIDER_AGENT_ENABLED =
 export const PROVIDER_AGENT_BINARY =
   process.env.PROVIDER_AGENT_BINARY ?? "/opt/multivibe/bin/multivibe-provider-agent";
 export const STORE_PATH = process.env.STORE_PATH ?? "/data/accounts.json";
+export const PROVIDER_AGENT_STATE_PATH =
+  process.env.PROVIDER_AGENT_STATE_PATH ?? path.resolve(path.dirname(STORE_PATH), "provider-agent-selection.json");
 export const OAUTH_STATE_PATH =
   process.env.OAUTH_STATE_PATH ?? "/data/oauth-state.json";
 export const TRACE_FILE_PATH =

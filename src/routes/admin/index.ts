@@ -68,6 +68,11 @@ import {
 } from "../../smart-routing.js";
 import type { SmartRoutingCoordinator } from "../../smart-routing-routes.js";
 import { discoverAndPersistLocalRuntimes } from "../../local-runtime-discovery.js";
+import {
+  isValidProviderSelectedModelId,
+  ProviderAgentControlRequestError,
+  type ProviderAgentControl,
+} from "../../provider-agent-supervisor.js";
 
 type StoragePaths = {
   accountsPath: string;
@@ -91,6 +96,7 @@ export type AdminRoutesOptions = {
   storagePaths: StoragePaths;
   smartRouting?: SmartRoutingCoordinator;
   anonymousUsageSharing?: AnonymousUsageSharingController;
+  providerAgent?: ProviderAgentControl;
 };
 
 function proxyApiKeyPreview(key: string): string {
@@ -616,6 +622,44 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       });
     } catch (error: any) {
       res.status(500).json({ error: error?.message ?? String(error) });
+    }
+  });
+
+  router.get("/provider-agent/selection", async (_req, res) => {
+    if (!options.providerAgent?.enabled) return res.status(503).json({ error: "provider_agent_unavailable" });
+    try {
+      res.json(await options.providerAgent.getSelection());
+    } catch {
+      res.status(503).json({ error: "provider_agent_unavailable" });
+    }
+  });
+
+  router.put("/provider-agent/selection", async (req, res) => {
+    if (!options.providerAgent?.enabled) return res.status(503).json({ error: "provider_agent_unavailable" });
+    const revision = Number(req.body?.revision);
+    const selectedModels = req.body?.selected_models;
+    if (!Number.isSafeInteger(revision) || revision < 1 || !Array.isArray(selectedModels)
+      || selectedModels.length > 100 || selectedModels.some((value) => !isValidProviderSelectedModelId(value))
+      || new Set(selectedModels).size !== selectedModels.length) {
+      return res.status(400).json({ error: "invalid_provider_selection" });
+    }
+    try {
+      const result = await options.providerAgent.replaceSelection(revision, selectedModels);
+      res.status(result.conflict ? 409 : 200).json(result.selection);
+    } catch (error) {
+      if (error instanceof ProviderAgentControlRequestError && error.status === 400) {
+        return res.status(400).json({ error: "invalid_provider_selection" });
+      }
+      res.status(503).json({ error: "provider_agent_unavailable" });
+    }
+  });
+
+  router.get("/provider-agent/detected-models", async (_req, res) => {
+    if (!options.providerAgent?.enabled) return res.status(503).json({ error: "provider_agent_unavailable" });
+    try {
+      res.json(await options.providerAgent.detectModels());
+    } catch {
+      res.status(503).json({ error: "provider_agent_unavailable" });
     }
   });
 

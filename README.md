@@ -126,6 +126,7 @@ Everything important is file-based and survives restart (if `/data` is mounted):
 - `/data/requests-trace.jsonl`
 - `/data/requests-stats-history.jsonl`
 - `/data/anonymous-usage-state.json` (mode `0600`, retry envelope only)
+- `/data/provider-agent-selection.json` (mode `0600`, local explicit model selection only)
 - `/data/jobs.sqlite` (WAL, mode `0600`)
 
 Recent trace retention defaults to the latest **1000** entries and can be changed with `TRACE_RETENTION_MAX`.
@@ -135,6 +136,17 @@ SQLite volume. Consumed or webhook-delivered results have a one-hour grace
 period; unretrieved content is purged after 30 days.
 
 > Docker compose already mounts `./data:/data`.
+
+### Embedded provider-agent preview
+
+Set `PROVIDER_AGENT_ENABLED=true` to let Core supervise the packaged provider
+agent. `PROVIDER_AGENT_BINARY` selects its absolute binary path and
+`PROVIDER_AGENT_STATE_PATH` selects the clean absolute local selection file;
+by default the file is placed beside `STORE_PATH` as
+`provider-agent-selection.json`. The current admin APIs can inventory the
+reviewed loopback candidates and persist an explicit model selection locally.
+They do not enroll a node, send the inventory to Cloud, advertise capacity,
+accept community workloads, or enable earnings and payouts.
 
 ### Anonymous model-demand sharing
 
