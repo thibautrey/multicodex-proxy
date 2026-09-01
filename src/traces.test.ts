@@ -187,6 +187,50 @@ test("TTFT stats group successful streams by provider, model, and input size", (
   assert.equal(groups.some((group) => group.provider === "opencode"), false);
 });
 
+test("TTFT input context buckets split large and unknown contexts", () => {
+  const manager = createTraceManager({
+    filePath: "/tmp/multivibe-ttft-context-traces.jsonl",
+  });
+  const base = 1_728_000_000_000;
+  const expectations = [
+    { tokensInput: 500, bucket: "lt1k" },
+    { tokensInput: 5_000, bucket: "1k-8k" },
+    { tokensInput: 20_000, bucket: "8k-32k" },
+    { tokensInput: 40_000, bucket: "32k-64k" },
+    { tokensInput: 90_000, bucket: "64k-128k" },
+    { tokensInput: 160_000, bucket: "128k-plus" },
+  ] as const;
+
+  const traces = expectations.map(({ tokensInput }, index): TraceEntry => ({
+    id: `ttft-context-${index}`,
+    at: base + index,
+    route: "/responses",
+    provider: "openai",
+    model: "context-model",
+    status: 200,
+    isError: false,
+    stream: true,
+    latencyMs: 1_000,
+    lifecycleState: "completed",
+    tokensInput,
+    ttftMs: index,
+  }));
+
+  const groups = manager
+    .buildTraceStats(traces)
+    .ttftByProviderModel
+    .filter((group) => group.provider === "openai");
+  assert.equal(groups.length, expectations.length);
+  for (const expected of expectations) {
+    assert.equal(
+      groups.find((group) => group.medianInputTokens === expected.tokensInput)
+        ?.inputTokenBucket,
+      expected.bucket,
+      expected.bucket,
+    );
+  }
+});
+
 test("trace initialization warms the cache before the first durable stream", async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-traces-"));
   const filePath = path.join(directory, "nested", "traces.jsonl");

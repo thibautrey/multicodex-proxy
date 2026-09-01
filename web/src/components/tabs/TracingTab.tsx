@@ -1,48 +1,243 @@
 import React from "react";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  Legend,
-  Line,
-  LineChart,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
-import { estimateCostUsd } from "../../model-pricing";
-import { fmt, formatTokenCount, formatTokenRate, maskEmail, maskId, pct, routeLabel, usd } from "../../lib/ui";
-import { api } from "../../lib/api";
-import { copyTextToClipboard } from "../../lib/clipboard";
-import { Metric } from "../Metric";
-import type { Account, ProjectUsageStats, Trace, TracePagination, TraceRangePreset, TraceStats } from "../../types";
+import { useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 
-type Props = {
-  accounts: Account[];
-  traceStats: TraceStats;
-  tokensTimeseries: Array<any>;
-  modelChartData: Array<any>;
-  modelCostChartData: Array<any>;
-  tracePagination: TracePagination;
-  gotoTracePage: (page: number) => Promise<void>;
-  traceRange: TraceRangePreset;
-  setTraceRange: (range: TraceRangePreset) => void;
-  traces: Trace[];
-  projectUsageStats: ProjectUsageStats;
-  expandedTraceId: string | null;
-  expandedTrace: Trace | null;
-  expandedTraceLoading: boolean;
-  toggleExpandedTrace: (id: string) => Promise<void>;
-  sanitized: boolean;
-  exportTracesZip: () => Promise<void>;
-  exportInProgress: boolean;
+const TTFT_BUCKET_ORDER = ["lt1k", "1k-8k", "8k-32k", "32k-64k", "64k-128k", "128k-plus", "unknown"] as const;
+
+type TtftBucket = (typeof TTFT_BUCKET_ORDER)[number];
+
+type TtftModelGroup = {
+  key: string;
+  provider: string;
+  model: string;
+  rows: TraceStats["ttftByProviderModel"];
 };
 
+const TTFT_PROVIDER_LABELS: Record<string, string> = {
+  openai: "OpenAI",
+  "openai-compatible": "OpenAI-compatible",
+  opencode: "OpenCode",
+  mistral: "Mistral",
+  zai: "z.ai",
+  xai: "Grok Build",
+};
+
+const TTFT_PROVIDER_FAVICONS: Record<string, string> = {
+  openai: "https://openai.com/favicon.ico",
+  "openai-compatible": "https://openai.com/favicon.ico",
+  opencode: "https://opencode.ai/favicon-v3.svg",
+  mistral: "https://mistral.ai/favicon.ico",
+  zai: "https://z.ai/favicon.png",
+  xai: "https://grok.com/favicon.ico",
+};
+
+const TTFT_CONTEXT_LABELS: Record<TtftBucket, string> = {
+  lt1k: "<1K",
+  "1k-8k": "1K–8K",
+  "8k-32k": "8K–32K",
+  "32k-64k": "32K–64K",
+  "64k-128k": "64K–128K",
+  "128k-plus": ">128K",
+  unknown: "Unknown",
+};
+
+function formatTtftDuration(value: number): string {
+  if (!Number.isFinite(value) || value < 0) return "—";
+  if (value >= 10_000) return `${(value / 1000).toFixed(value >= 100_000 ? 0 : 1)}s`;
+  return `${Math.round(value)}ms`;
+}
+
+export function TtftLatencyBoard({ traceStats }: { traceStats: TraceStats }) {
+  const groups = traceStats.ttftByProviderModel;
+  const activeBucket = groups.some((group) => group.inputTokenBucket === "1k-8k")
+    ? "1k-8k"
+    : TTFT_BUCKET_ORDER.find((bucket) => groups.some((group) => group.inputTokenBucket === bucket)) ?? "1k-8k";
+  const [selectedBucket, setSelectedBucket] = useState<TtftBucket>(activeBucket);
+  const selectedGroups = groups.filter((group) => group.inputTokenBucket === selectedBucket);
+  const providerGroups = useMemo(() => {
+    const map = new Map<string, TtftModelGroup>();
+    for (const row of selectedGroups) {
+      const key = `${row.provider}:${row.model}`;
+      const existing = map.get(key);
+      if (existing) existing.rows.push(row);
+      else map.set(key, { key, provider: row.provider, model: row.model, rows: [row] });
+    }
+    return Array.from(map.values()).map((group) => ({
+      ...group,
+      rows: [...group.rows].sort((left, right) => (left.rank ?? 99) - (right.rank ?? 99)),
+    }));
+  }, [selectedGroups]);
+  const scaleMax = Math.max(2_000, ...selectedGroups.map((group) => group.ttftP95Ms));
+  const totalSamples = selectedGroups.reduce((sum, group) => sum + group.samples, 0);
+  const fastest = selectedGroups.reduce((fastest, group) => Math.min(fastest, group.ttftP50Ms), Number.POSITIVE_INFINITY);
+  const lowSamples = selectedGroups.filter((group) => group.confidence === "low").length;
+  const bucketCounts = TTFT_BUCKET_ORDER.map((bucket) => ({
+    bucket,
+    label: TTFT_CONTEXT_LABELS[bucket],
+    samples: groups.filter((group) => group.inputTokenBucket === bucket).reduce((sum, group) => sum + group.samples, 0),
+  })).filter((entry) => entry.samples > 0);
+
+  if (!groups.length) {
+    return (
+      <section className="panel ttft-board">
+        <div className="section-split-header">
+          <div>
+            <h2>Time to first token</h2>
+            <p className="muted">Completed HTTP SSE requests grouped by provider and context.</p>
+          </div>
+          <span className="badge">No measurements</span>
+        </div>
+        <div className="ttft-empty">No measured TTFT in this range yet.</div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="panel ttft-board">
+      <div className="section-split-header">
+        <div>
+          <h2>Time to first token</h2>
+          <p className="muted">Completed HTTP SSE requests grouped by provider and context.</p>
+        </div>
+        <div className="ttft-context-picker" role="tablist" aria-label="Input context range">
+          {bucketCounts.map(({ bucket, label, samples }) => (
+            <button
+              key={bucket}
+              type="button"
+              role="tab"
+              aria-selected={bucket === selectedBucket}
+              className={`ttft-context-pill${bucket === selectedBucket ? " active" : ""}`}
+              onClick={() => setSelectedBucket(bucket)}
+            >
+              <span>{label}</span>
+              <small>{samples}</small>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="ttft-kpis" aria-label="Selected context summary">
+        <div><small>Models</small><strong>{providerGroups.length}</strong></div>
+        <div><small>Requests</small><strong>{totalSamples.toLocaleString()}</strong></div>
+        <div><small>Fastest p50</small><strong>{Number.isFinite(fastest) ? formatTtftDuration(fastest) : "—"}</strong></div>
+        <div><small>Scale</small><strong>0–{formatTtftDuration(scaleMax)}</strong></div>
+        <div><small>Low confidence</small><strong>{lowSamples}</strong></div>
+      </div>
+
+      {selectedGroups.length ? (
+        <div className="ttft-groups">
+          {providerGroups.map((modelGroup) => {
+            const representative = modelGroup.rows[0];
+            const groupSamples = modelGroup.rows.reduce((sum, row) => sum + row.samples, 0);
+            const groupP50 = modelGroup.rows.reduce((sum, row) => sum + row.ttftP50Ms * row.samples, 0) / Math.max(1, groupSamples);
+            const providerClass = modelGroup.provider === "mistral"
+              ? "provider-mistral"
+              : modelGroup.provider === "opencode"
+                ? "provider-opencode"
+                : modelGroup.provider === "zai"
+                  ? "provider-zai"
+                  : modelGroup.provider === "xai"
+                    ? "provider-xai"
+                    : "provider-openai";
+            return (
+              <section key={modelGroup.key} className={`ttft-provider-group ${providerClass}`} aria-label={`${TTFT_PROVIDER_LABELS[modelGroup.provider] ?? modelGroup.provider} — ${modelGroup.model}`}>
+                <header className="ttft-provider-head">
+                  <span className="ttft-provider-name">
+                    <img src={TTFT_PROVIDER_FAVICONS[modelGroup.provider] ?? TTFT_PROVIDER_FAVICONS.openai} alt="" loading="lazy" />
+                    {TTFT_PROVIDER_LABELS[modelGroup.provider] ?? modelGroup.provider}
+                  </span>
+                  <span className="ttft-provider-meta mono">{modelGroup.model}</span>
+                </header>
+                {modelGroup.rows.map((row) => {
+                  const left = Math.min(100, Math.max(0, (row.ttftP50Ms / scaleMax) * 100));
+                  const width = Math.max(1.5, Math.min(100 - left, ((row.ttftP95Ms - row.ttftP50Ms) / scaleMax) * 100));
+                  const barStyle = { "--range-left": `${left}%`, "--range-width": `${width}%` } as CSSProperties;
+                  return (
+                    <div key={`${row.provider}:${row.model}:${row.inputTokenBucket}`} className="ttft-row">
+                      <div className="ttft-row-label">
+                        <strong className="mono">{modelGroup.model}</strong>
+                        <small>{row.samples.toLocaleString()} samples · {row.cachedInputRatio === undefined ? "cache n/a" : `${Math.round(row.cachedInputRatio * 100)}% cached`}</small>
+                      </div>
+                      <div className="ttft-measure">
+                        <div className="ttft-track" style={barStyle}>
+                          <span className="ttft-range" />
+                          <span className="ttft-p50" />
+                        </div>
+                        <div className="ttft-values">
+                          <strong>{formatTtftDuration(row.ttftP50Ms)}</strong>
+                          <small>p95 {formatTtftDuration(row.ttftP95Ms)} · median {row.medianInputTokens === undefined ? "—" : formatTokenCount(row.medianInputTokens)}</small>
+                        </div>
+                      </div>
+                      <span className={`ttft-confidence ${row.confidence === "low" ? "low" : "sufficient"}`} title={row.rank ? `Rank ${row.rank}` : "Below ranking threshold"}>
+                        {row.confidence === "low" ? "Low n" : `#${row.rank ?? "—"}`}
+                      </span>
+                    </div>
+                  );
+                })}
+                <footer className="ttft-provider-footer">
+                  <span>{representative.rank ? `Rank ${representative.rank}` : "Unranked (<10 samples)"}</span>
+                  <span>{groupSamples.toLocaleString()} samples · weighted p50 {formatTtftDuration(groupP50)}</span>
+                </footer>
+              </section>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="ttft-empty">No measured TTFT in {TTFT_CONTEXT_LABELS[selectedBucket]} in this range yet.</div>
+      )}
+
+      <div className="ttft-legend" aria-hidden="true">
+        <span className="ttft-legend-range" /> <span>p50 → p95</span>
+        <span className="ttft-legend-dot" /> <span>Low sample confidence</span>
+        <span className="ttft-scale">0</span><span>{formatTtftDuration(scaleMax / 4)}</span><span>{formatTtftDuration(scaleMax / 2)}</span><span>{formatTtftDuration((scaleMax * 3) / 4)}</span><span>{formatTtftDuration(scaleMax)}</span>
+      </div>
+    </section>
+  );
+}
+
+function TtftLatencyDetails({ traceStats }: { traceStats: TraceStats }) {
+  return (
+    <section className="panel ttft-details-panel">
+      <details className="ttft-details">
+        <summary>Full TTFT metrics and rankings</summary>
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead>
+              <tr><th>Rank</th><th>Provider</th><th>Model</th><th>Input bucket</th><th>Samples</th><th>p50 TTFT</th><th>p95 TTFT</th><th>Median input</th><th>Cached input</th><th>Confidence</th></tr>
+            </thead>
+            <tbody>
+              {traceStats.ttftByProviderModel.map((group) => (
+                <tr key={`${group.provider}:${group.model}:${group.inputTokenBucket}`}>
+                  <td>{group.rank ?? "—"}</td>
+                  <td>
+                    <span className="provider-badge">
+                      <img className="provider-icon" src={TTFT_PROVIDER_FAVICONS[group.provider] ?? TTFT_PROVIDER_FAVICONS.openai} alt="" loading="lazy" />
+                      {TTFT_PROVIDER_LABELS[group.provider] ?? group.provider}
+                    </span>
+                  </td>
+                  <td className="mono">{group.model}</td>
+                  <td>{TTFT_CONTEXT_LABELS[group.inputTokenBucket as TtftBucket] ?? "Unknown"}</td>
+                  <td>{group.samples}</td>
+                  <td>{formatTtftDuration(group.ttftP50Ms)}</td>
+                  <td>{formatTtftDuration(group.ttftP95Ms)}</td>
+                  <td>{group.medianInputTokens === undefined ? "—" : formatTokenCount(group.medianInputTokens)}</td>
+                  <td>{group.cachedInputRatio === undefined ? "—" : pct(group.cachedInputRatio)}</td>
+                  <td><span className={group.confidence === "low" ? "badge badge-warn" : "badge badge-live"}>{group.confidence === "low" ? "Low" : "Sufficient"}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </section>
+  );
+}
+
 export function TracingTab(props: Props) {
+  return <TracingTabContent {...props} />;
+}
+
+function TracingTabContent(props: Props) {
   const {
     accounts,
     traceStats,
@@ -114,40 +309,30 @@ export function TracingTab(props: Props) {
       ? "https://mistral.ai/favicon.ico"
       : provider === "opencode"
         ? "https://opencode.ai/favicon-v3.svg"
-      : provider === "zai"
-        ? "https://z.ai/favicon.png"
-        : provider === "xai"
-          ? "https://grok.com/favicon.ico"
-        : "https://openai.com/favicon.ico";
+        : provider === "zai"
+          ? "https://z.ai/favicon.png"
+          : provider === "xai"
+            ? "https://grok.com/favicon.ico"
+            : "https://openai.com/favicon.ico";
 
   const providerLabel = (provider?: string) =>
     provider === "mistral"
       ? "Mistral"
       : provider === "opencode"
         ? "OpenCode"
-      : provider === "openai-compatible"
-        ? "OpenAI-compatible"
-        : provider === "zai"
-          ? "z.ai"
-          : provider === "xai"
-            ? "Grok Build"
-          : "OpenAI";
+        : provider === "openai-compatible"
+          ? "OpenAI-compatible"
+          : provider === "zai"
+            ? "z.ai"
+            : provider === "xai"
+              ? "Grok Build"
+              : "OpenAI";
 
   const formatTokenChartValue = (value: number | string | undefined) => formatTokenCount(Number(value ?? 0));
 
   const formatTooltipValue = (value: any) => formatTokenChartValue(value?.[0] ?? value ?? 0);
 
   const formatPieTokenLabel = ({ value }: { value?: number }) => formatTokenChartValue(value);
-  const ttftBucketLabel = (bucket: string) =>
-    bucket === "lt1k"
-      ? "<1K"
-      : bucket === "1k-8k"
-        ? "1K–8K"
-        : bucket === "8k-32k"
-          ? "8K–32K"
-          : bucket === "32k+"
-            ? "32K+"
-            : "Unknown";
   const chartColors = [
     "var(--chart-1)",
     "var(--chart-2)",
@@ -500,64 +685,9 @@ export function TracingTab(props: Props) {
         </div>
       )}
 
-      <section className="panel">
-        <div className="section-split-header">
-          <h2>Time to first token by provider and model</h2>
-          <span className="badge">Completed HTTP SSE requests</span>
-        </div>
-        <p className="muted">
-          Client-perceived TTFT grouped by input size. Rankings require at least 10 samples within a bucket.
-        </p>
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Rank</th>
-                <th>Provider</th>
-                <th>Model</th>
-                <th>Input bucket</th>
-                <th>Samples</th>
-                <th>p50 TTFT</th>
-                <th>p95 TTFT</th>
-                <th>Median input</th>
-                <th>Cached input</th>
-                <th>Confidence</th>
-              </tr>
-            </thead>
-            <tbody>
-              {traceStats.ttftByProviderModel.length ? (
-                traceStats.ttftByProviderModel.map((group) => (
-                  <tr key={`${group.provider}:${group.model}:${group.inputTokenBucket}`}>
-                    <td>{group.rank ?? "—"}</td>
-                    <td>
-                      <span className="provider-badge">
-                        <img className="provider-icon" src={providerFavicon(group.provider)} alt="" loading="lazy" />
-                        {providerLabel(group.provider)}
-                      </span>
-                    </td>
-                    <td className="mono">{group.model}</td>
-                    <td>{ttftBucketLabel(group.inputTokenBucket)}</td>
-                    <td>{group.samples}</td>
-                    <td>{Math.round(group.ttftP50Ms)}ms</td>
-                    <td>{Math.round(group.ttftP95Ms)}ms</td>
-                    <td>{group.medianInputTokens === undefined ? "—" : formatTokenCount(group.medianInputTokens)}</td>
-                    <td>{group.cachedInputRatio === undefined ? "—" : pct(group.cachedInputRatio)}</td>
-                    <td>
-                      <span className={group.confidence === "low" ? "badge badge-warn" : "badge badge-live"}>
-                        {group.confidence === "low" ? "Low" : "Sufficient"}
-                      </span>
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={10} className="muted">No measured TTFT in this range yet.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <TtftLatencyBoard traceStats={traceStats} />
+
+      <TtftLatencyDetails traceStats={traceStats} />
 
       <section className="panel">
         <div className="section-split-header">
