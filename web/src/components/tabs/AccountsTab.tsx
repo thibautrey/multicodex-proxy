@@ -123,6 +123,15 @@ function activeModelBlocks(account: Account) {
   );
 }
 
+const dialogFocusableSelector = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  '[tabindex]:not([tabindex="-1"])',
+].join(",");
+
 function usageAgeLabel(fetchedAt?: number) {
   if (typeof fetchedAt !== "number" || !Number.isFinite(fetchedAt)) {
     return "Usage not checked";
@@ -208,6 +217,11 @@ export function AccountsTab(props: Props) {
     top: number;
     left: number;
   } | null>(null);
+  const [makeMoneyPreviewAccount, setMakeMoneyPreviewAccount] =
+    useState<Account | null>(null);
+  const makeMoneyDialogRef = useRef<HTMLDivElement | null>(null);
+  const makeMoneyTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const makeMoneyCloseRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     const closeMenu = () => setOpenMenu(null);
@@ -232,6 +246,64 @@ export function AccountsTab(props: Props) {
       window.removeEventListener("resize", onResize);
     };
   }, []);
+
+  useEffect(() => {
+    if (!makeMoneyPreviewAccount) return;
+
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    const previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusFrame = window.requestAnimationFrame(() => {
+      makeMoneyCloseRef.current?.focus();
+    });
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setMakeMoneyPreviewAccount(null);
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const dialog = makeMoneyDialogRef.current;
+      if (!dialog) return;
+      const focusable = Array.from(
+        dialog.querySelectorAll<HTMLElement>(dialogFocusableSelector),
+      );
+      if (!focusable.length) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (
+        !event.shiftKey &&
+        (document.activeElement === last || !dialog.contains(document.activeElement))
+      ) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousBodyOverflow;
+      window.requestAnimationFrame(() => {
+        const focusTarget = makeMoneyTriggerRef.current ?? previouslyFocused;
+        if (focusTarget?.isConnected) focusTarget.focus();
+      });
+    };
+  }, [makeMoneyPreviewAccount]);
 
   useEffect(() => {
     if (!oauthDialog) return;
@@ -927,6 +999,21 @@ export function AccountsTab(props: Props) {
                       <span className={a.location === "local" ? "badge badge-live" : "badge"}>
                         {a.location ?? "cloud"}
                       </span>
+                      {a.location === "local" && (
+                        <button
+                          type="button"
+                          className="btn secondary make-money-preview-trigger"
+                          aria-haspopup="dialog"
+                          aria-controls="make-money-preview-dialog"
+                          onClick={(event) => {
+                            makeMoneyTriggerRef.current = event.currentTarget;
+                            setOpenMenu(null);
+                            setMakeMoneyPreviewAccount(a);
+                          }}
+                        >
+                          Make money · Preview
+                        </button>
+                      )}
                       <span className="mono muted">
                         {usageStatusLabel(a, usageCacheTtlMs)} · {usageAgeLabel(a.usage?.fetchedAt)}
                       </span>
@@ -1173,6 +1260,124 @@ export function AccountsTab(props: Props) {
           </table>
         </div>
       </section>
+
+      {makeMoneyPreviewAccount && (
+        <div
+          className="modal-backdrop make-money-preview-backdrop"
+          role="presentation"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              setMakeMoneyPreviewAccount(null);
+            }
+          }}
+        >
+          <div
+            id="make-money-preview-dialog"
+            ref={makeMoneyDialogRef}
+            className="modal panel make-money-preview-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="make-money-preview-title"
+            aria-describedby="make-money-preview-summary make-money-preview-status"
+            tabIndex={-1}
+          >
+            <div className="modal-title-row make-money-preview-header">
+              <div>
+                <span className="badge badge-warn">
+                  {providerLabel(makeMoneyPreviewAccount.provider)} local · Preview
+                </span>
+                <h2 id="make-money-preview-title">Share capacity on your terms</h2>
+                <p id="make-money-preview-summary" className="muted">
+                  MultiVibe Cloud is a separate, optional service built on top of
+                  the public MultiVibe Core. This local provider keeps working
+                  without a Cloud account.
+                </p>
+              </div>
+              <button
+                ref={makeMoneyCloseRef}
+                type="button"
+                className="btn ghost modal-close-button"
+                aria-label="Close Make money preview"
+                onClick={() => setMakeMoneyPreviewAccount(null)}
+              >
+                Close
+              </button>
+            </div>
+
+            <div id="make-money-preview-status" className="make-money-preview-status">
+              <strong>Preview only.</strong> Provider enrollment, customer
+              workloads, earnings, payouts and Cloud credits are not active yet.
+              Opening this window does not install, discover, collect or share
+              anything from this machine.
+            </div>
+
+            <div className="make-money-preview-grid">
+              <section className="make-money-preview-card" aria-labelledby="make-money-route-title">
+                <h3 id="make-money-route-title">A compartmentalized route</h3>
+                <p>
+                  No customer or other provider connects directly to your
+                  machine. In the planned design, only MultiVibe&apos;s authenticated
+                  relay can reach a dedicated agent, and each bounded request is
+                  forwarded only to an allowlisted local inference endpoint.
+                </p>
+              </section>
+
+              <section className="make-money-preview-card" aria-labelledby="make-money-boundary-title">
+                <h3 id="make-money-boundary-title">No general machine access</h3>
+                <p>
+                  The dedicated agent exposes no shell, filesystem, arbitrary URL
+                  or general network access. This is a security target that must
+                  pass independent review, negative authorization tests and
+                  containment exercises before activation. A local runtime may
+                  still have its own logging behavior, which must be disclosed.
+                </p>
+              </section>
+
+              <section className="make-money-preview-card" aria-labelledby="make-money-control-title">
+                <h3 id="make-money-control-title">You stay in control</h3>
+                <p>
+                  Sharing will require explicit opt-in. Planned controls include
+                  immediate pause, recurring availability windows and idle-aware
+                  sharing when your machine has spare capacity. Manual pause will
+                  always win. None of these controls is active in this preview.
+                </p>
+              </section>
+
+              <section className="make-money-preview-card" aria-labelledby="make-money-earnings-title">
+                <h3 id="make-money-earnings-title">Verified earnings, not promises</h3>
+                <p>
+                  If every marketplace gate passes, eligible cleared earnings are
+                  planned for monthly Stripe Connect payouts in real money. You
+                  may instead choose to convert eligible cleared earnings into
+                  Cloud credits for eligible model calls. Earnings are never
+                  guaranteed: accepted work or estimated usage is not payable.
+                </p>
+              </section>
+            </div>
+
+            <p className="make-money-preview-fineprint">
+              Identity, capacity rights, tax, verified usage, ledger, dispute and
+              authoritative settlement checks must all pass before compensation.
+              This preview creates no Cloud request, provider enrollment, route,
+              workload, payable, payout or Cloud credit, and it does not change
+              this account.
+            </p>
+
+            <div className="modal-actions make-money-preview-actions">
+              <span className="muted">
+                Information only · no Cloud connection or collection
+              </span>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => setMakeMoneyPreviewAccount(null)}
+              >
+                Got it
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showAddAccount && (
         <div className="modal-backdrop" onClick={closeModal}>
