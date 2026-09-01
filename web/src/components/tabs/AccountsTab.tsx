@@ -1261,8 +1261,9 @@ export function AccountsTab(props: Props) {
         </div>
       </section>
 
-      {makeMoneyPreviewAccount && (
-        <div
+      {makeMoneyPreviewAccount &&
+        createPortal(
+          <div
           className="modal-backdrop make-money-preview-backdrop"
           role="presentation"
           onClick={(event) => {
@@ -1376,8 +1377,9 @@ export function AccountsTab(props: Props) {
               </button>
             </div>
           </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
 
       {showAddAccount && (
         <div className="modal-backdrop" onClick={closeModal}>
