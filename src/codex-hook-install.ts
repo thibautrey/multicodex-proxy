@@ -32,10 +32,10 @@ export function buildCodexHookInstallCommand(baseUrl: unknown, token: string): s
 
   const installerUrl = `${normalizedBaseUrl}${INSTALLER_PATH}`;
   return [
-    `(multicodex_installer="$(curl -fsSL ${shellQuote(installerUrl)})"`,
-    `&& printf '%s\\n' "$multicodex_installer"`,
-    `| MULTICODEX_URL=${shellQuote(normalizedBaseUrl)}`,
-    `MULTICODEX_PROJECT_TOKEN=${shellQuote(token)} sh)`,
+    `(multivibe_installer="$(curl -fsSL ${shellQuote(installerUrl)})"`,
+    `&& printf '%s\\n' "$multivibe_installer"`,
+    `| MULTIVIBE_URL=${shellQuote(normalizedBaseUrl)}`,
+    `MULTIVIBE_PROJECT_TOKEN=${shellQuote(token)} sh)`,
   ].join(" ");
 }
 

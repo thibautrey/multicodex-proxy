@@ -58,7 +58,7 @@ const EMPTY_REGISTRY: RegistryFile = {
 };
 
 export const CODEX_SESSION_FORWARD_HEADER =
-  "x-multicodex-codex-session-id";
+  "x-multivibe-codex-session-id";
 /**
  * Project context supplied by the Codex model provider on every request.
  *
@@ -68,9 +68,9 @@ export const CODEX_SESSION_FORWARD_HEADER =
  * the process' project root.
  */
 export const CODEX_PROJECT_ROOT_FORWARD_HEADER =
-  "x-multicodex-project-root";
+  "x-multivibe-project-root";
 export const CODEX_PROJECT_HOST_FORWARD_HEADER =
-  "x-multicodex-project-host";
+  "x-multivibe-project-host";
 export const LITELLM_KEY_ALIAS_HEADER = "x-litellm-key-alias";
 
 function boundedString(value: unknown, maxLength: number): string | undefined {

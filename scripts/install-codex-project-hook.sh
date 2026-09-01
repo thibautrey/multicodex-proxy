@@ -1,31 +1,31 @@
 #!/bin/sh
 set -eu
 
-if [ -z "${MULTICODEX_URL:-}" ]; then
-  echo "MULTICODEX_URL is required" >&2
+if [ -z "${MULTIVIBE_URL:-}" ]; then
+  echo "MULTIVIBE_URL is required" >&2
   exit 1
 fi
-if [ -z "${MULTICODEX_PROJECT_TOKEN:-}" ]; then
-  echo "MULTICODEX_PROJECT_TOKEN is required" >&2
+if [ -z "${MULTIVIBE_PROJECT_TOKEN:-}" ]; then
+  echo "MULTIVIBE_PROJECT_TOKEN is required" >&2
   exit 1
 fi
 if ! command -v curl >/dev/null 2>&1; then
-  echo "curl is required to install the MultiCodex hook" >&2
+  echo "curl is required to install the MultiVibe hook" >&2
   exit 1
 fi
 if ! command -v node >/dev/null 2>&1; then
-  echo "Node.js is required to install and run the MultiCodex hook" >&2
+  echo "Node.js is required to install and run the MultiVibe hook" >&2
   exit 1
 fi
 
-multicodex_base_url=${MULTICODEX_URL%/}
-multicodex_tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/multicodex-hook.XXXXXX")
-trap 'rm -rf "$multicodex_tmp_dir"' EXIT HUP INT TERM
+multivibe_base_url=${MULTIVIBE_URL%/}
+multivibe_tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/multivibe-hook.XXXXXX")
+trap 'rm -rf "$multivibe_tmp_dir"' EXIT HUP INT TERM
 
-curl -fsSL "$multicodex_base_url/install-codex-project-hook.mjs" \
-  -o "$multicodex_tmp_dir/install-codex-project-hook.mjs"
-curl -fsSL "$multicodex_base_url/codex-project-hook.mjs" \
-  -o "$multicodex_tmp_dir/codex-project-hook.mjs"
+curl -fsSL "$multivibe_base_url/install-codex-project-hook.mjs" \
+  -o "$multivibe_tmp_dir/install-codex-project-hook.mjs"
+curl -fsSL "$multivibe_base_url/codex-project-hook.mjs" \
+  -o "$multivibe_tmp_dir/codex-project-hook.mjs"
 
-node "$multicodex_tmp_dir/install-codex-project-hook.mjs" --url "$multicodex_base_url"
+node "$multivibe_tmp_dir/install-codex-project-hook.mjs" --url "$multivibe_base_url"
 
