@@ -6,9 +6,10 @@ type Props = {
   value: string;
   onChange: (v: string) => void;
   disabled?: boolean;
+  allowCustom?: boolean;
 };
 
-export function ModelSelector({ models, value, onChange, disabled }: Props) {
+export function ModelSelector({ models, value, onChange, disabled, allowCustom }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -75,7 +76,11 @@ export function ModelSelector({ models, value, onChange, disabled }: Props) {
             ref={inputRef}
             className="model-selector-input"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              const nextValue = e.target.value;
+              setQuery(nextValue);
+              if (allowCustom) onChange(nextValue);
+            }}
             onClick={(e) => e.stopPropagation()}
             placeholder="Search models..."
             disabled={disabled}

@@ -130,18 +130,9 @@ export function GuidedAliasCreation({
         <div className="alias-guided-fields">
           <label>
             <span className="field-label">Model name requested by your application</span>
-            <input
-              autoFocus
-              list="alias-requested-models"
-              value={draft.id}
-              onChange={(event) => onDraftChange({ ...draft, id: event.target.value })}
-              placeholder={scenario === "redirect" ? "gpt-5.4" : "my-model-alias"}
-            />
+            <ModelSelector models={models} value={draft.id} onChange={(value) => onDraftChange({ ...draft, id: value })} allowCustom />
             <small>{copy.requestedNameHelp}</small>
           </label>
-          <datalist id="alias-requested-models">
-            {models.map((model) => <option key={model.id} value={model.id} />)}
-          </datalist>
 
           <label>
             <span className="field-label">{copy.primaryLabel}</span>
