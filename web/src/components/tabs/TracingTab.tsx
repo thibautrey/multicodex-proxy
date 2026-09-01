@@ -20,7 +20,7 @@ import { fmt, formatTokenCount, formatTokenRate, maskEmail, maskId, pct, routeLa
 import { api } from "../../lib/api";
 import { copyTextToClipboard } from "../../lib/clipboard";
 import { Metric } from "../Metric";
-import type { Account, ProjectUsageStats, Trace, TracePagination, TraceRangePreset, TraceStats } from "../../types";
+import type { Account, ProjectUsageStats, Trace, TracePagination, TraceStats } from "../../types";
 
 type Props = {
   accounts: Account[];
@@ -30,8 +30,6 @@ type Props = {
   modelCostChartData: Array<any>;
   tracePagination: TracePagination;
   gotoTracePage: (page: number) => Promise<void>;
-  traceRange: TraceRangePreset;
-  setTraceRange: (range: TraceRangePreset) => void;
   traces: Trace[];
   projectUsageStats: ProjectUsageStats;
   expandedTraceId: string | null;
@@ -39,8 +37,6 @@ type Props = {
   expandedTraceLoading: boolean;
   toggleExpandedTrace: (id: string) => Promise<void>;
   sanitized: boolean;
-  exportTracesZip: () => Promise<void>;
-  exportInProgress: boolean;
 };
 
 const TTFT_BUCKET_ORDER = ["lt1k", "1k-8k", "8k-32k", "32k-64k", "64k-128k", "128k-plus", "unknown"] as const;
@@ -293,8 +289,6 @@ function TracingTabContent(props: Props) {
     modelCostChartData,
     tracePagination,
     gotoTracePage,
-    traceRange,
-    setTraceRange,
     traces,
     projectUsageStats,
     expandedTraceId,
@@ -302,8 +296,6 @@ function TracingTabContent(props: Props) {
     expandedTraceLoading,
     toggleExpandedTrace,
     sanitized,
-    exportTracesZip,
-    exportInProgress,
   } = props;
   const accountProviderById = React.useMemo(
     () => new Map(accounts.map((account) => [account.id, account.provider])),
@@ -416,26 +408,6 @@ function TracingTabContent(props: Props) {
               <h2>Tracing</h2>
               <p className="muted">Understand traffic, performance and cost without losing the request-level detail.</p>
             </div>
-          </div>
-          <div className="trace-range-controls">
-            <label className="trace-range-field">
-              <span>Time range</span>
-              <select
-                value={traceRange}
-                onChange={(e) => {
-                  setTraceRange(e.target.value as TraceRangePreset);
-                }}
-                aria-label="Trace time range"
-              >
-                <option value="24h">Last 24h</option>
-                <option value="7d">Last 7d</option>
-                <option value="30d">Last 30d</option>
-                <option value="all">All time</option>
-              </select>
-            </label>
-            <button className="btn secondary" onClick={() => void exportTracesZip()} disabled={exportInProgress}>
-              {exportInProgress ? "Exporting..." : "Export all (.zip)"}
-            </button>
           </div>
         </div>
         <nav className="trace-view-tabs" role="tablist" aria-label="Tracing views">

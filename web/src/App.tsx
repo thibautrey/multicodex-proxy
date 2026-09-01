@@ -881,6 +881,28 @@ export default function App() {
                 <span className="status-dot" />
                 {sanitized ? "Sanitized" : "Live"}
               </span>
+              {tab === "tracing" && (
+                <div className="trace-range-controls topbar-trace-controls">
+                  <label className="trace-range-field">
+                    <span>Time range</span>
+                    <select
+                      value={traceRange}
+                      onChange={(e) => {
+                        setTraceRange(e.target.value as TraceRangePreset);
+                      }}
+                      aria-label="Trace time range"
+                    >
+                      <option value="24h">Last 24h</option>
+                      <option value="7d">Last 7d</option>
+                      <option value="30d">Last 30d</option>
+                      <option value="all">All time</option>
+                    </select>
+                  </label>
+                  <button className="btn secondary" onClick={() => void exportTracesZip()} disabled={traceExportInProgress}>
+                    {traceExportInProgress ? "Exporting..." : "Export all (.zip)"}
+                  </button>
+                </div>
+              )}
               <button className="btn secondary topbar-button" onClick={() => void refreshData()}>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7h-5V2"/><path d="M20 7a9 9 0 1 0 2 7"/></svg>
                 Refresh
@@ -966,8 +988,6 @@ export default function App() {
             modelCostChartData={modelCostChartData}
             tracePagination={tracePagination}
             gotoTracePage={gotoTracePage}
-            traceRange={traceRange}
-            setTraceRange={setTraceRange}
             traces={traces}
             projectUsageStats={projectUsageStats}
             expandedTraceId={expandedTraceId}
@@ -975,8 +995,6 @@ export default function App() {
             expandedTraceLoading={expandedTraceLoading}
             toggleExpandedTrace={toggleExpandedTrace}
             sanitized={sanitized}
-            exportTracesZip={exportTracesZip}
-            exportInProgress={traceExportInProgress}
           />
         )}
 
