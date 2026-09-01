@@ -773,7 +773,6 @@ function TracingTabContent(props: Props) {
         <div id="trace-view-requests" role="tabpanel" aria-labelledby="trace-tab-requests" className="trace-view-content">
           <header className="trace-view-heading">
             <div>
-              <span className="eyebrow">Request explorer</span>
               <h2>Individual traces</h2>
               <p className="muted">Scan outcomes quickly, then inspect request payloads and sanitized headers only when needed.</p>
             </div>
