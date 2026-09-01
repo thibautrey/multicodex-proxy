@@ -46,7 +46,7 @@ const TAB_ITEMS: Array<{ id: Tab; label: string; description: string }> = [
   { id: "api-keys", label: "API keys", description: "Application access and credentials" },
   { id: "tracing", label: "Tracing", description: "Requests, cost and latency" },
   { id: "playground", label: "Playground", description: "Test the proxy interactively" },
-  { id: "docs", label: "API reference", description: "Endpoints and integration notes" },
+  { id: "docs", label: "API reference", description: "Professional reference and live request console" },
 ];
 
 const USAGE_REFRESH_MIN_INTERVAL_MS = 50_000;
@@ -1008,9 +1008,7 @@ export default function App() {
           />
         )}
 
-        {tab === "docs" && (
-          <DocsTab totalTraceCostFromRows={totalTraceCostFromRows} />
-        )}
+        {tab === "docs" && <DocsTab models={models} />}
           </main>
         </div>
       </div>
