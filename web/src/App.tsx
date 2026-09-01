@@ -873,7 +873,6 @@ export default function App() {
         <div className="workspace">
           <header className="topbar">
             <div className="topbar-title">
-              <span className="eyebrow">Control plane</span>
               <h1>{TAB_ITEMS.find((item) => item.id === tab)?.label}</h1>
               <p className="muted">{TAB_ITEMS.find((item) => item.id === tab)?.description}</p>
             </div>
