@@ -8,11 +8,10 @@ type Props = {
   stats: { total: number; enabled: number; blocked: number };
   usageStats: { primaryAvg: number; secondaryAvg: number; primaryCount: number; secondaryCount: number };
   traceStats: TraceStats;
-  storageInfo: any;
   models: ExposedModel[];
 };
 
-export function OverviewTab({ stats, usageStats, traceStats, storageInfo, models }: Props) {
+export function OverviewTab({ stats, usageStats, traceStats, models }: Props) {
   const [providerTab, setProviderTab] = useState<
     "all" | "openai" | "openai-compatible" | "opencode" | "mistral" | "zai" | "xai"
   >("all");
@@ -54,7 +53,6 @@ export function OverviewTab({ stats, usageStats, traceStats, storageInfo, models
         <Metric title="Avg latency" value={`${Math.round(traceStats.totals.latencyAvgMs)}ms`} detail="Mean response time across traced calls" />
       </section>
 
-      <section className="grid cards2">
         <section className="panel">
           <div className="section-split-header">
             <h2>Aggregated usage</h2>
@@ -63,25 +61,6 @@ export function OverviewTab({ stats, usageStats, traceStats, storageInfo, models
           <ProgressStat label="5h average" value={usageStats.primaryAvg} count={usageStats.primaryCount} />
           <ProgressStat label="Weekly average" value={usageStats.secondaryAvg} count={usageStats.secondaryCount} />
         </section>
-
-        <section className="panel">
-          <div className="section-split-header">
-            <h2>Persistence</h2>
-            {storageInfo && (
-              <span className={storageInfo.persistenceLikelyEnabled ? "badge badge-live" : "badge badge-warn"}>
-                {storageInfo.persistenceLikelyEnabled ? "Detected" : "Not guaranteed"}
-              </span>
-            )}
-          </div>
-          {storageInfo && (
-            <ul className="clean-list">
-              <li className="mono">accounts: {storageInfo.accountsPath}</li>
-              <li className="mono">oauth: {storageInfo.oauthStatePath}</li>
-              <li className="mono">trace: {storageInfo.tracePath}</li>
-            </ul>
-          )}
-        </section>
-      </section>
 
       <section className="panel">
         <div className="section-split-header">

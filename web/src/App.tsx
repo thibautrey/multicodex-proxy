@@ -98,7 +98,6 @@ export default function App() {
   const [loginToken, setLoginToken] = useState("");
   const [loginBusy, setLoginBusy] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>(initialThemeMode);
-  const [storageInfo, setStorageInfo] = useState<any>(null);
   const [usageCacheTtlMs, setUsageCacheTtlMs] = useState(300_000);
   const [oauthRedirectUri, setOauthRedirectUri] = useState("");
   const [chatPrompt, setChatPrompt] = useState("Give me a one-line hello");
@@ -222,7 +221,6 @@ export default function App() {
       api("/admin/application-policies"),
     ]);
     setAccounts((acc.accounts ?? []) as Account[]);
-    setStorageInfo(cfg.storage ?? null);
     if (Number.isFinite(Number(cfg.usageCacheTtlMs)) && Number(cfg.usageCacheTtlMs) > 0) {
       setUsageCacheTtlMs(Number(cfg.usageCacheTtlMs));
     }
@@ -922,7 +920,6 @@ export default function App() {
             stats={stats}
             usageStats={usageStats}
             traceStats={filteredTraceStats}
-            storageInfo={storageInfo}
             models={models}
           />
         )}
