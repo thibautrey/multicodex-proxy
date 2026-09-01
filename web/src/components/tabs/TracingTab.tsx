@@ -629,7 +629,6 @@ function TracingTabContent(props: Props) {
         <div id="trace-view-usage" role="tabpanel" aria-labelledby="trace-tab-usage" className="trace-view-content">
           <header className="trace-view-heading">
             <div>
-              <span className="eyebrow">Consumption</span>
               <h2>Usage & cost</h2>
               <p className="muted">See where tokens and budget went, from models down to Codex projects.</p>
             </div>
