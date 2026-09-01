@@ -119,7 +119,7 @@ test("derives stable project attribution from the LiteLLM key alias", () => {
 });
 
 test("persists registrations and resolves project attribution", async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multicodex-projects-"));
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-projects-"));
   const filePath = path.join(directory, "projects.json");
   const registry = new CodexProjectRegistry(filePath);
   await registry.init();
@@ -149,7 +149,7 @@ test("persists registrations and resolves project attribution", async () => {
 });
 
 test("keeps exact session mapping ahead of project-root fallback", async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multicodex-projects-"));
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-projects-"));
   const registry = new CodexProjectRegistry(path.join(directory, "projects.json"));
   await registry.init();
   const registration = await registry.register({
@@ -167,7 +167,7 @@ test("keeps exact session mapping ahead of project-root fallback", async () => {
 });
 
 test("falls back to a uniquely registered project root for unknown sessions", async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multicodex-projects-"));
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-projects-"));
   const registry = new CodexProjectRegistry(path.join(directory, "projects.json"));
   await registry.init();
   const registration = await registry.register({
@@ -190,7 +190,7 @@ test("falls back to a uniquely registered project root for unknown sessions", as
 });
 
 test("leaves unknown sessions unattributed when the root does not match", async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multicodex-projects-"));
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-projects-"));
   const registry = new CodexProjectRegistry(path.join(directory, "projects.json"));
   await registry.init();
   await registry.register({
@@ -209,7 +209,7 @@ test("leaves unknown sessions unattributed when the root does not match", async 
 });
 
 test("does not guess when a project root is shared by multiple projects", async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multicodex-projects-"));
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-projects-"));
   const registry = new CodexProjectRegistry(path.join(directory, "projects.json"));
   await registry.init();
   const first = await registry.register({
@@ -240,7 +240,7 @@ test("does not guess when a project root is shared by multiple projects", async 
 });
 
 test("attributes a system request with no session mapping from its project root", async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multicodex-projects-"));
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-projects-"));
   const registry = new CodexProjectRegistry(path.join(directory, "projects.json"));
   await registry.init();
   const registration = await registry.register({
@@ -267,7 +267,7 @@ test("attributes a system request with no session mapping from its project root"
 });
 
 test("distinguishes identical project roots on different hosts", async () => {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multicodex-projects-"));
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-projects-"));
   const registry = new CodexProjectRegistry(path.join(directory, "projects.json"));
   await registry.init();
   const first = await registry.register({

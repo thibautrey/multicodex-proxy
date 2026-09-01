@@ -23,19 +23,19 @@ async function writeAtomic(filePath, value, mode) {
 }
 
 async function main() {
-  const url = argument("--url") || process.env.MULTICODEX_URL;
-  const token = process.env.MULTICODEX_PROJECT_TOKEN;
+  const url = argument("--url") || process.env.MULTIVIBE_URL;
+  const token = process.env.MULTIVIBE_PROJECT_TOKEN;
   const targetCodexHome =
     argument("--codex-home") ||
     process.env.CODEX_HOME ||
     path.join(os.homedir(), ".codex");
-  if (!url) throw new Error("Pass --url http://multicodex:1455 or set MULTICODEX_URL");
-  if (!token) throw new Error("Set MULTICODEX_PROJECT_TOKEN before running the installer");
+  if (!url) throw new Error("Pass --url http://multivibe:1455 or set MULTIVIBE_URL");
+  if (!token) throw new Error("Set MULTIVIBE_PROJECT_TOKEN before running the installer");
 
   const sourceScript = fileURLToPath(new URL("./codex-project-hook.mjs", import.meta.url));
   const hooksDirectory = path.join(targetCodexHome, "hooks");
-  const targetScript = path.join(hooksDirectory, "multicodex-project-hook.mjs");
-  const projectConfigPath = path.join(targetCodexHome, "multicodex-project.json");
+  const targetScript = path.join(hooksDirectory, "multivibe-project-hook.mjs");
+  const projectConfigPath = path.join(targetCodexHome, "multivibe-project.json");
   const hooksPath = path.join(targetCodexHome, "hooks.json");
   await fs.mkdir(hooksDirectory, { recursive: true });
   await fs.copyFile(sourceScript, targetScript);
@@ -61,10 +61,10 @@ async function main() {
   const sessionStart = Array.isArray(manifest.hooks.SessionStart)
     ? manifest.hooks.SessionStart
     : [];
-  const command = `MULTICODEX_PROJECT_CONFIG=${shellQuote(projectConfigPath)} ${shellQuote(process.execPath)} ${shellQuote(targetScript)}`;
+  const command = `MULTIVIBE_PROJECT_CONFIG=${shellQuote(projectConfigPath)} ${shellQuote(process.execPath)} ${shellQuote(targetScript)}`;
   const alreadyInstalled = sessionStart.some((group) =>
     Array.isArray(group?.hooks) &&
-    group.hooks.some((handler) => String(handler?.command || "").includes("multicodex-project-hook.mjs")),
+    group.hooks.some((handler) => String(handler?.command || "").includes("multivibe-project-hook.mjs")),
   );
   if (!alreadyInstalled) {
     sessionStart.push({
@@ -83,7 +83,7 @@ async function main() {
   await writeAtomic(hooksPath, `${JSON.stringify(manifest, null, 2)}\n`, 0o600);
   process.stdout.write(
     [
-      `Installed MultiCodex project attribution hook in ${hooksPath}`,
+      `Installed MultiVibe project attribution hook in ${hooksPath}`,
       "Approval required: open Codex on this execution host, run /hooks,",
       "review the SessionStart hook, and press t to trust it.",
       "Codex skips new or changed hooks until they are trusted. Start or resume a session afterwards.",

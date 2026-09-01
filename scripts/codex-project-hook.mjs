@@ -4,10 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
-const debug = process.env.MULTICODEX_PROJECT_DEBUG === "1";
+const debug = process.env.MULTIVIBE_PROJECT_DEBUG === "1";
 
 function report(error) {
-  if (debug) process.stderr.write(`[multicodex-project] ${error instanceof Error ? error.message : String(error)}\n`);
+  if (debug) process.stderr.write(`[multivibe-project] ${error instanceof Error ? error.message : String(error)}\n`);
 }
 
 function codexHome() {
@@ -55,8 +55,8 @@ function sanitizeRemote(value) {
 
 async function loadConfig() {
   const configPath =
-    process.env.MULTICODEX_PROJECT_CONFIG ||
-    path.join(codexHome(), "multicodex-project.json");
+    process.env.MULTIVIBE_PROJECT_CONFIG ||
+    path.join(codexHome(), "multivibe-project.json");
   return JSON.parse(await fs.readFile(configPath, "utf8"));
 }
 

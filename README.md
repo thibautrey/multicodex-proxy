@@ -6,9 +6,9 @@
 </p>
 
 <p align="center">
-<a href="https://github.com/thibautrey/multicodex-proxy/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/thibautrey/multicodex-proxy?style=for-the-badge"/></a>
-  <a href="https://github.com/thibautrey/multicodex-proxy/network/members"><img alt="GitHub forks" src="https://img.shields.io/github/forks/thibautrey/multicodex-proxy?style=for-the-badge"/></a>
-  <a href="https://github.com/thibautrey/multicodex-proxy/issues"><img alt="GitHub issues" src="https://img.shields.io/github/issues/thibautrey/multicodex-proxy?style=for-the-badge"/></a>
+<a href="https://github.com/thibautrey/multivibe/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/thibautrey/multivibe?style=for-the-badge"/></a>
+  <a href="https://github.com/thibautrey/multivibe/network/members"><img alt="GitHub forks" src="https://img.shields.io/github/forks/thibautrey/multivibe?style=for-the-badge"/></a>
+  <a href="https://github.com/thibautrey/multivibe/issues"><img alt="GitHub issues" src="https://img.shields.io/github/issues/thibautrey/multivibe?style=for-the-badge"/></a>
 </p>
 
 ---
@@ -494,10 +494,10 @@ long-term stats history.
 
 ### Attribute Codex usage by repository
 
-MultiCodex can correlate Codex Desktop sessions with Git repositories without
+MultiVibe can correlate Codex Desktop sessions with Git repositories without
 patching Codex. A user-level official `SessionStart` hook sends the Codex
 `session_id`, working directory, sanitized Git remote, and worktree metadata to
-MultiCodex. Incoming traces carry the same id in `thread-id`, so project
+MultiVibe. Incoming traces carry the same id in `thread-id`, so project
 attribution is stored directly in recent traces and long-term usage history.
 
 Codex can also send the deterministic project root on every provider request,
@@ -507,15 +507,15 @@ following header:
 
 ```toml
 [model_providers.multivibe]
-env_http_headers = { "X-MultiCodex-Project-Root" = "MULTICODEX_PROJECT_ROOT", "X-MultiCodex-Project-Host" = "MULTICODEX_PROJECT_HOST" }
+env_http_headers = { "X-MultiVibe-Project-Root" = "MULTIVIBE_PROJECT_ROOT", "X-MultiVibe-Project-Host" = "MULTIVIBE_PROJECT_HOST" }
 ```
 
 Set that variable before starting Codex from a checkout (the fallback to the
 current directory also supports non-Git workspaces):
 
 ```bash
-export MULTICODEX_PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)"
-export MULTICODEX_PROJECT_HOST="$(hostname)"
+export MULTIVIBE_PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)"
+export MULTIVIBE_PROJECT_HOST="$(hostname)"
 /Applications/ChatGPT.app/Contents/Resources/codex --profile multivibe
 ```
 
@@ -546,10 +546,10 @@ command works on macOS and Linux.
 Install the hook once on every machine or remote execution host that runs Codex:
 
 ```bash
-read -s MULTICODEX_PROJECT_TOKEN
-export MULTICODEX_PROJECT_TOKEN
+read -s MULTIVIBE_PROJECT_TOKEN
+export MULTIVIBE_PROJECT_TOKEN
 node scripts/install-codex-project-hook.mjs --url http://192.0.2.149:1455
-unset MULTICODEX_PROJECT_TOKEN
+unset MULTIVIBE_PROJECT_TOKEN
 ```
 
 For the local macOS Codex app, run the same command in a terminal on the Mac,
@@ -559,13 +559,13 @@ Codex shell only installs the remote hook.
 
 Codex does not run a newly installed or changed user hook until its exact
 definition has been reviewed and trusted. On the same local or remote execution
-host, open Codex, run `/hooks`, select `SessionStart`, review the MultiCodex
+host, open Codex, run `/hooks`, select `SessionStart`, review the MultiVibe
 command, and press `t` to trust it. Then start or resume a session. The hook
 overview must show the `SessionStart` hook as active rather than awaiting
 review.
 
 The installer preserves existing `~/.codex/hooks.json` entries, stores the
-secret in `~/.codex/multicodex-project.json` with mode `0600`, and installs a
+secret in `~/.codex/multivibe-project.json` with mode `0600`, and installs a
 synchronous, fail-open hook. New, resumed, cleared, and compacted sessions are
 registered. See the [official Codex hooks documentation](https://developers.openai.com/codex/hooks/).
 
@@ -757,11 +757,11 @@ npm run start
 
 ## Star History
 
-<a href="https://www.star-history.com/?type=date&repos=thibautrey%2Fmulticodex-proxy">
+<a href="https://www.star-history.com/?type=date&repos=thibautrey%2Fmultivibe">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=thibautrey/multicodex-proxy&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=thibautrey/multicodex-proxy&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=thibautrey/multicodex-proxy&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=thibautrey/multivibe&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=thibautrey/multivibe&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=thibautrey/multivibe&type=date&legend=top-left" />
  </picture>
 </a>
 ---
