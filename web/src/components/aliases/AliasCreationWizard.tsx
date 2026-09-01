@@ -17,9 +17,7 @@ export function AliasScenarioPicker({ onSelect }: ScenarioPickerProps) {
     <div className="alias-wizard">
       <WizardProgress step={1} complete={false} />
       <div className="alias-wizard-intro">
-        <span className="eyebrow">New policy</span>
         <h3>What do you want this alias to do?</h3>
-        <p className="muted">Choose the result you need. We will configure the routing fields for you.</p>
       </div>
       <div className="alias-scenario-grid">
         {ALIAS_CREATION_SCENARIOS.map((scenario) => (
