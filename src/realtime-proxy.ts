@@ -30,6 +30,10 @@ import {
   extractCodexSessionId,
   extractLiteLLMProjectAttribution,
 } from "./codex-projects.js";
+import {
+  authorizationForAccountRequest,
+  isDiscoveredLocalRuntimeAccount,
+} from "./local-runtime-discovery.js";
 
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
@@ -138,9 +142,9 @@ function officialClientUserAgent(value: string | undefined): string {
 function upstreamHeaders(
   req: express.Request,
   account: Account,
+  requestUrl: string,
 ): Record<string, string> {
   const headers: Record<string, string> = {
-    authorization: `Bearer ${account.accessToken}`,
     accept: req.header("accept") || "application/sdp, application/json",
     originator: incomingHeader(req, "originator") ?? CODEX_CLI_ORIGINATOR,
     "User-Agent": officialClientUserAgent(incomingHeader(req, "user-agent")),
@@ -151,6 +155,8 @@ function upstreamHeaders(
   if (account.chatgptAccountId) {
     headers["chatgpt-account-id"] = account.chatgptAccountId;
   }
+  const authorization = authorizationForAccountRequest(account, requestUrl);
+  if (authorization) headers.authorization = authorization;
   for (const name of CLIENT_IDENTITY_HEADERS) {
     const value = incomingHeader(req, name);
     if (value) headers[name] = value;
@@ -261,11 +267,15 @@ async function forwardRealtimeCall(
       const timeout = setTimeout(() => controller.abort(), options.requestTimeoutMs);
       let upstream: Response;
       try {
-        upstream = await fetch(realtimeCallUrl(prepared, options), {
+        const requestUrl = realtimeCallUrl(prepared, options);
+        upstream = await fetch(requestUrl, {
           method: "POST",
-          headers: upstreamHeaders(req, prepared),
+          headers: upstreamHeaders(req, prepared, requestUrl),
           body: bufferBody(body),
           signal: controller.signal,
+          redirect: isDiscoveredLocalRuntimeAccount(prepared)
+            ? "manual"
+            : "follow",
         });
       } finally {
         clearTimeout(timeout);

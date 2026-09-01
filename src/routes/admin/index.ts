@@ -65,6 +65,7 @@ import {
   validateSmartAlias,
 } from "../../smart-routing.js";
 import type { SmartRoutingCoordinator } from "../../smart-routing-routes.js";
+import { discoverAndPersistLocalRuntimes } from "../../local-runtime-discovery.js";
 
 type StoragePaths = {
   accountsPath: string;
@@ -601,6 +602,19 @@ export function createAdminRouter(options: AdminRoutesOptions) {
   router.get("/accounts", async (_req, res) =>
     res.json({ accounts: (await store.listAccounts()).map(redact) }),
   );
+
+  router.post("/local-runtimes/discover", async (_req, res) => {
+    try {
+      const report = await discoverAndPersistLocalRuntimes(store);
+      res.json({
+        ok: true,
+        results: report.results,
+        accounts: report.accounts.map(redact),
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message ?? String(error) });
+    }
+  });
 
   router.post("/grok/import", async (_req, res) => {
     try {

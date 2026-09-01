@@ -93,6 +93,16 @@ export type AccountState = {
   };
 };
 
+export type LocalRuntimeAdapterId = "lm-studio" | "omlx" | "exo" | "mtplx";
+
+export type LocalRuntimeMetadata = {
+  source: "multivibe-local-discovery";
+  adapter: LocalRuntimeAdapterId;
+  endpoint: string;
+  confirmedModelIds: string[];
+  authentication: "none";
+};
+
 export type Account = {
   id: string;
   provider?: ProviderId;
@@ -118,6 +128,7 @@ export type Account = {
   priority?: number;
   location?: ExecutionLocation;
   capacityProfile?: CapacityProfile;
+  localRuntime?: LocalRuntimeMetadata;
   usage?: UsageSnapshot;
   state?: AccountState;
 };
