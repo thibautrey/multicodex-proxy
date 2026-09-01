@@ -55,7 +55,6 @@ type AliasSection = "policies" | "editor" | "simulation" | "settings";
 
 const ALIAS_SECTIONS: Array<{ id: AliasSection; label: string; description: string }> = [
   { id: "policies", label: "Policies", description: "Choose a policy to edit" },
-  { id: "editor", label: "Policy editor", description: "Build matching and fallback rules" },
   { id: "simulation", label: "Simulation", description: "Test routing and capacity" },
   { id: "settings", label: "Settings", description: "Configure image requests" },
 ];
