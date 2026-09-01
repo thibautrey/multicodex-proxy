@@ -134,6 +134,11 @@ func providerHandler(core *url.URL, models []string, client *http.Client) http.H
 		response.Header().Set("content-type", "application/json")
 		_ = json.NewEncoder(response).Encode(runtimeAdapterRegistry())
 	})
+	mux.HandleFunc("GET /v1/detected-models", func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("cache-control", "no-store")
+		response.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(response).Encode(detectedModels(request.Context(), runtimeAdapterRegistry(), client))
+	})
 	return mux
 }
 
