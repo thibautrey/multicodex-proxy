@@ -836,14 +836,26 @@ export function AccountsTab(props: Props) {
         <div className="section-split-header">
           <h2>Accounts</h2>
           <div className="inline wrap">
-            <span className="badge">{openAiCount} OpenAI</span>
-            <span className="badge">
-              {openAiCompatibleCount} OpenAI-compatible
-            </span>
-            <span className="badge">{openCodeCount} OpenCode</span>
-            <span className="badge">{mistralCount} Mistral</span>
-            <span className="badge">{zaiCount} z.ai</span>
-            <span className="badge">{xaiCount} Grok Build</span>
+            {openAiCount > 0 && (
+              <span className="badge">{openAiCount} OpenAI</span>
+            )}
+            {openAiCompatibleCount > 0 && (
+              <span className="badge">
+                {openAiCompatibleCount} OpenAI-compatible
+              </span>
+            )}
+            {openCodeCount > 0 && (
+              <span className="badge">{openCodeCount} OpenCode</span>
+            )}
+            {mistralCount > 0 && (
+              <span className="badge">{mistralCount} Mistral</span>
+            )}
+            {zaiCount > 0 && (
+              <span className="badge">{zaiCount} z.ai</span>
+            )}
+            {xaiCount > 0 && (
+              <span className="badge">{xaiCount} Grok Build</span>
+            )}
             <span className="badge">
               {usageCheckedCount}/{accounts.length} usage checked
             </span>
