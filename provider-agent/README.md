@@ -4,6 +4,11 @@ The provider agent is a bounded Go component shipped with MultiVibe Core. Core s
 
 This foundation exposes loopback health and a consent-bounded manifest containing only explicitly selected model identifiers. It enforces the ordered lifecycle `detected -> selected -> submitted -> approved -> online -> compensation-eligible`, with independent suspension and terminal revocation. It never scans LAN addresses, mDNS, processes, files, command lines, environment variables, or arbitrary ports.
 
+An empty selection remains `detected`; only a non-empty, explicit selection is
+reported as `selected`. Selected identifiers are unique, sorted and bounded to
+100 entries, and URL-, IP- or filesystem-like values are rejected before they
+can enter the consent manifest.
+
 `GET /v1/adapters` exposes the bounded runtime contract embedded in the agent:
 protocol, health and catalog paths, capabilities, authentication, measurement
 dimensions, limits and reviewed automatic candidates. The registry covers the
