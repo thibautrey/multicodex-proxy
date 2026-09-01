@@ -438,6 +438,11 @@
   color: color-mix(in srgb, #6778d9 78%, var(--text));
 }
 
+.docs-method-put {
+  background: color-mix(in srgb, var(--warning) 9%, transparent);
+  color: var(--warning);
+}
+
 .docs-method-delete {
   background: color-mix(in srgb, var(--danger) 9%, transparent);
   color: var(--danger);

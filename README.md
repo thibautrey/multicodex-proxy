@@ -145,6 +145,8 @@ agent. `PROVIDER_AGENT_BINARY` selects its absolute binary path and
 by default the file is placed beside `STORE_PATH` as
 `provider-agent-selection.json`. The current admin APIs can inventory the
 reviewed loopback candidates and persist an explicit model selection locally.
+The local-account **Share models · Preview** experience exposes the same
+inventory and revisioned selection without requiring a separate agent UI.
 They do not enroll a node, send the inventory to Cloud, advertise capacity,
 accept community workloads, or enable earnings and payouts.
 

@@ -1,4 +1,4 @@
-export type HttpMethod = "GET" | "POST" | "DELETE";
+export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE";
 
 export type EndpointGroup =
   | "Models"
@@ -520,6 +520,57 @@ export const ENDPOINTS: ApiEndpoint[] = [
         },
       ],
     }),
+  },
+  {
+    id: "provider-agent-detected-models",
+    group: "Configuration",
+    method: "GET",
+    path: "/admin/provider-agent/detected-models",
+    title: "Detect local provider models",
+    summary: "Probe only the embedded agent's reviewed loopback candidates.",
+    description:
+      "Returns adapter IDs and validated local model identifiers. The inventory stays inside Core and this call does not select, enroll, publish or upload a model.",
+    responseExample: json({
+      schema_version: "provider-detected-models-v1",
+      runtimes: [{ adapter_id: "lm-studio", models: ["publisher/model"] }],
+    }),
+  },
+  {
+    id: "provider-agent-selection",
+    group: "Configuration",
+    method: "GET",
+    path: "/admin/provider-agent/selection",
+    title: "Read local provider selection",
+    summary: "Read the revisioned model consent manifest stored on this machine.",
+    description:
+      "The selected identifiers remain local. A selected state is not a Cloud submission, marketplace approval, active offer or routing permission.",
+    responseExample: json({
+      schema_version: "provider-selection-v1",
+      revision: 3,
+      state: "selected",
+      selected_models: ["publisher/model"],
+    }),
+  },
+  {
+    id: "replace-provider-agent-selection",
+    group: "Configuration",
+    method: "PUT",
+    path: "/admin/provider-agent/selection",
+    title: "Replace local provider selection",
+    summary: "Atomically replace the local selection at an expected revision.",
+    description:
+      "Returns 409 with the current document when the supplied revision is stale. Saving changes only the protected local file and has no Cloud or routing side effect.",
+    requestBody: json({
+      revision: 3,
+      selected_models: ["publisher/model"],
+    }),
+    responseExample: json({
+      schema_version: "provider-selection-v1",
+      revision: 4,
+      state: "selected",
+      selected_models: ["publisher/model"],
+    }),
+    destructive: true,
   },
   {
     id: "list-aliases",
