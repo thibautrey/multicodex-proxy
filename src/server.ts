@@ -34,6 +34,8 @@ import {
   UPSTREAM_PATH,
   OAUTH_STATE_PATH,
   PORT,
+  PROVIDER_AGENT_BINARY,
+  PROVIDER_AGENT_ENABLED,
   PROXY_API_KEY,
   PROXY_API_KEYS,
   REQUEST_BODY_LIMIT,
@@ -64,6 +66,7 @@ import {
   createAdmissionMiddleware,
   createSmartRoutingRouter,
 } from "./smart-routing-routes.js";
+import { startEmbeddedProviderAgent } from "./provider-agent-supervisor.js";
 
 const app = express();
 app.use(createBodyParserMiddleware());
@@ -477,6 +480,10 @@ app.get("*", (req, res, next) => {
 Sentry.setupExpressErrorHandler(app);
 
 const server = http.createServer(app);
+const providerAgent = startEmbeddedProviderAgent({
+  enabled: PROVIDER_AGENT_ENABLED,
+  binaryPath: PROVIDER_AGENT_BINARY,
+});
 
 const jobRunner = new JobRunner(
   jobStore,
@@ -551,6 +558,7 @@ async function shutdown(signal: NodeJS.Signals) {
   shuttingDown = true;
   jobRunner.stop();
   smartRouting.stopHealthMonitoring();
+  await providerAgent.stop();
   console.log(`received ${signal}, flushing persistent state`);
   server.close(async (error) => {
     try {

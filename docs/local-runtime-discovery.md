@@ -15,16 +15,25 @@ of adding a duplicate.
 
 ## Supported discovery
 
-LM Studio is currently the only active adapter. Its official documentation
+LM Studio is currently the only automatic probe. Its official documentation
 describes port `1234`, the OpenAI-compatible `/v1` base, `GET /v1/models`, and
 authentication being disabled by default:
 
 - [OpenAI compatibility endpoints](https://lmstudio.ai/docs/developer/openai-compat)
 - [LM Studio authentication](https://lmstudio.ai/docs/developer/core/authentication)
 
-OMLX, Exo and MTPLX are registered as extension points but have no probe
-candidates yet. MultiVibe does not guess their ports or inspect processes,
-files, service registries, or the LAN.
+The bounded adapter registry also describes Ollama, llama.cpp/llama-server/llama-cpp-python,
+vLLM, SGLang, LocalAI, Hugging Face TGI and Transformers Serve, Xinference,
+MLX-LM, OMLX, MLC LLM, Exo, Jan, GPT4All, KoboldCpp, text-generation-webui,
+Aphrodite, TabbyAPI, llama-box, mistral.rs, NVIDIA NIM, TensorRT-LLM, Triton,
+OpenLLM, BentoML, MTPLX and a manual OpenAI-compatible adapter. Each entry
+declares its protocol, health and catalog contract, capabilities, authentication,
+measurement units and bounded limits. Entries without a reliably identifiable
+official probe remain manual and have no automatic candidates. MultiVibe does
+not guess their ports or inspect processes, files, service registries, or the LAN.
+
+Detection remains local until the user selects models. Cloud receives only the
+selected model identifiers and the metadata allowlist shown before consent.
 
 ## Network and authentication boundary
 
