@@ -23,3 +23,7 @@ only its loopback URL, the agent loopback listen address and the explicitly
 selected model identifiers. Provider credentials, Stripe or OAuth secrets,
 control-plane tokens, API keys and unrelated parent-process variables are never
 inherited by the agent.
+
+Agent readiness calls Core's credential-free loopback `/health` endpoint. It
+never receives or forwards the proxy API key merely to prove that the packaged
+Core process is reachable.
