@@ -426,8 +426,9 @@ async function forwardVoiceCatalog(
     const timeout = setTimeout(() => controller.abort(), options.requestTimeoutMs);
     let upstream: Response;
     try {
-      upstream = await fetch(realtimeVoicesUrl(options.chatgptBaseUrl, req), {
-        headers: upstreamHeaders(req, prepared),
+      const requestUrl = realtimeVoicesUrl(options.chatgptBaseUrl, req);
+      upstream = await fetch(requestUrl, {
+        headers: upstreamHeaders(req, prepared, requestUrl),
         signal: controller.signal,
       });
     } finally {
