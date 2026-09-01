@@ -998,6 +998,27 @@ input[type="checkbox"] {
   color: var(--primary-strong);
 }
 
+.model-docs-link {
+  cursor: pointer;
+  text-align: left;
+}
+
+.model-docs-link:hover {
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--primary) 14%, transparent);
+}
+
+.model-docs-link-icon {
+  color: var(--primary);
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1;
+  transition: transform 0.16s ease;
+}
+
+.model-docs-link:hover .model-docs-link-icon {
+  transform: translateX(2px);
+}
+
 .provider-badge {
   display: inline-flex;
   align-items: center;
@@ -2842,25 +2863,6 @@ details summary {
   text-align: center;
 }
 
-.workspace-playground > .cards2 {
-  grid-template-columns: minmax(320px, 0.85fr) minmax(0, 1.15fr);
-  align-items: stretch;
-}
-
-.workspace-playground > .cards2 > .panel {
-  min-height: 480px;
-}
-
-.workspace-playground > .cards2 > .panel:first-child {
-  background:
-    linear-gradient(145deg, color-mix(in srgb, var(--primary) 5%, transparent), transparent 52%),
-    var(--panel);
-}
-
-.workspace-playground .pre {
-  min-height: 376px;
-}
-
 .workspace-docs > .cards2:first-child {
   grid-template-columns: minmax(280px, 0.8fr) minmax(0, 1.2fr);
 }
@@ -3016,7 +3018,6 @@ details summary {
   .modal-grid,
   .workspace-aliases,
   .workspace-api-keys,
-  .workspace-playground > .cards2,
   .workspace-docs > .cards2:first-child {
     grid-template-columns: 1fr;
   }

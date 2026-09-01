@@ -246,7 +246,6 @@ export type Tab =
   | "aliases"
   | "api-keys"
   | "tracing"
-  | "playground"
   | "docs";
 
 export type ExposedModel = {

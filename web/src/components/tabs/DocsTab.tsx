@@ -19,6 +19,12 @@ type RequestResult = {
   error?: boolean;
 };
 
+type Props = {
+  models: ExposedModel[];
+  initialEndpointId?: string;
+  initialModel?: string;
+};
+
 type IconName =
   | "search"
   | "copy"
@@ -94,9 +100,17 @@ function shellQuote(value: string) {
   return "'" + value.split("'").join("'" + '"' + "'" + '"' + "'") + "'";
 }
 
-export function DocsTab({ models }: { models: ExposedModel[] }) {
-  const defaultModel = models[0]?.id || "gpt-5.3-codex";
-  const [selectedId, setSelectedId] = useState(ENDPOINTS[0].id);
+export function DocsTab({ models, initialEndpointId, initialModel }: Props) {
+  const linkedModel = initialModel?.trim();
+  const defaultModel =
+    linkedModel &&
+    (!models.length || models.some((model) => model.id === linkedModel))
+      ? linkedModel
+      : models[0]?.id || "gpt-5.3-codex";
+  const linkedEndpointId =
+    ENDPOINTS.find((endpoint) => endpoint.id === initialEndpointId)?.id ??
+    ENDPOINTS[0].id;
+  const [selectedId, setSelectedId] = useState(linkedEndpointId);
   const [search, setSearch] = useState("");
   const [activeGroup, setActiveGroup] = useState<EndpointGroup | "All">("All");
   const [pathValues, setPathValues] = useState<Record<string, string>>({});
@@ -128,6 +142,10 @@ export function DocsTab({ models }: { models: ExposedModel[] }) {
         .includes(needle);
     });
   }, [activeGroup, search]);
+
+  useEffect(() => {
+    setSelectedId(linkedEndpointId);
+  }, [linkedEndpointId]);
 
   useEffect(() => {
     setPathValues(

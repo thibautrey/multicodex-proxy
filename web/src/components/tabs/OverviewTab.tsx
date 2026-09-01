@@ -9,9 +9,16 @@ type Props = {
   usageStats: { primaryAvg: number; secondaryAvg: number; primaryCount: number; secondaryCount: number };
   traceStats: TraceStats;
   models: ExposedModel[];
+  openModelInDocs: (modelId: string) => void;
 };
 
-export function OverviewTab({ stats, usageStats, traceStats, models }: Props) {
+export function OverviewTab({
+  stats,
+  usageStats,
+  traceStats,
+  models,
+  openModelInDocs,
+}: Props) {
   const [providerTab, setProviderTab] = useState<
     "all" | "openai" | "openai-compatible" | "opencode" | "mistral" | "zai" | "xai"
   >("all");
@@ -64,7 +71,10 @@ export function OverviewTab({ stats, usageStats, traceStats, models }: Props) {
 
       <section className="panel">
         <div className="section-split-header">
-          <h2>Models exposed</h2>
+          <div>
+            <h2>Models exposed</h2>
+            <small>Select a model to open a prefilled live request.</small>
+          </div>
           <div className="inline wrap">
             <button className={providerTab === "all" ? "tab active" : "tab"} onClick={() => setProviderTab("all")}>All</button>
             <button className={providerTab === "openai" ? "tab active" : "tab"} onClick={() => setProviderTab("openai")}>OpenAI</button>
@@ -77,7 +87,16 @@ export function OverviewTab({ stats, usageStats, traceStats, models }: Props) {
         </div>
         <div className="chips">
           {filteredModels.map((m) => (
-            <span key={m.id} className="chip mono">{m.id}</span>
+            <button
+              key={m.id}
+              className="chip mono model-docs-link"
+              onClick={() => openModelInDocs(m.id)}
+              aria-label={`Test ${m.id} in API reference`}
+              title="Open a prefilled request in API reference"
+            >
+              <span>{m.id}</span>
+              <span className="model-docs-link-icon" aria-hidden="true">→</span>
+            </button>
           ))}
           {!filteredModels.length && <span className="muted">No models exposed.</span>}
         </div>

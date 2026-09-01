@@ -27,7 +27,6 @@ import type {
 import { AccountsTab } from "./components/tabs/AccountsTab";
 import { DocsTab } from "./components/tabs/DocsTab";
 import { OverviewTab } from "./components/tabs/OverviewTab";
-import { PlaygroundTab } from "./components/tabs/PlaygroundTab";
 import { TracingTab } from "./components/tabs/TracingTab";
 import { AliasesTab } from "./components/tabs/AliasesTab";
 import { ApiKeysTab } from "./components/tabs/ApiKeysTab";
@@ -37,17 +36,23 @@ import {
   type ThemeMode,
 } from "./components/ui/ThemeSwitcher";
 
-const q = new URLSearchParams(window.location.search);
-const initialTab = (q.get("tab") as Tab) || "overview";
 const TAB_ITEMS: Array<{ id: Tab; label: string; description: string }> = [
   { id: "overview", label: "Overview", description: "Health and usage at a glance" },
   { id: "accounts", label: "Accounts", description: "Providers, quotas and routing" },
   { id: "aliases", label: "Aliases", description: "Model routing and fallbacks" },
   { id: "api-keys", label: "API keys", description: "Application access and credentials" },
   { id: "tracing", label: "Tracing", description: "Requests, cost and latency" },
-  { id: "playground", label: "Playground", description: "Test the proxy interactively" },
   { id: "docs", label: "API reference", description: "Professional reference and live request console" },
 ];
+
+function tabFromSearch(search: string): Tab {
+  const requestedTab = new URLSearchParams(search).get("tab");
+  return TAB_ITEMS.some((item) => item.id === requestedTab)
+    ? (requestedTab as Tab)
+    : "overview";
+}
+
+const initialTab = tabFromSearch(window.location.search);
 
 const USAGE_REFRESH_MIN_INTERVAL_MS = 50_000;
 const USAGE_REFRESH_MAX_INTERVAL_MS = 60_000;
@@ -67,9 +72,6 @@ function TabIcon({ tab }: { tab: Tab }) {
   }
   if (tab === "tracing") {
     return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17h3l2-7 4 10 3-13 2 10h2"/></svg>;
-  }
-  if (tab === "playground") {
-    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 3-6 9 6 9M15 3l6 9-6 9"/><path d="m14 8-4 8"/></svg>;
   }
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5M8 12h8M8 16h8"/></svg>;
 }
@@ -100,9 +102,6 @@ export default function App() {
   const [themeMode, setThemeMode] = useState<ThemeMode>(initialThemeMode);
   const [usageCacheTtlMs, setUsageCacheTtlMs] = useState(300_000);
   const [oauthRedirectUri, setOauthRedirectUri] = useState("");
-  const [chatPrompt, setChatPrompt] = useState("Give me a one-line hello");
-  const [chatModel, setChatModel] = useState("");
-  const [chatOut, setChatOut] = useState("");
   const [error, setError] = useState("");
   const [expandedTraceId, setExpandedTraceId] = useState<string | null>(null);
   const [expandedTrace, setExpandedTrace] = useState<Trace | null>(null);
@@ -114,6 +113,13 @@ export default function App() {
   const sanitized = useMemo(() => {
     const params = new URLSearchParams(locationSearch);
     return params.get("sanitized") === "1" || params.get("safe") === "1";
+  }, [locationSearch]);
+  const docsLink = useMemo(() => {
+    const params = new URLSearchParams(locationSearch);
+    return {
+      endpointId: params.get("endpoint") ?? undefined,
+      model: params.get("model") ?? undefined,
+    };
   }, [locationSearch]);
 
   useEffect(() => {
@@ -205,10 +211,24 @@ export default function App() {
   }, [tab]);
 
   useEffect(() => {
-    const onPopstate = () => setLocationSearch(window.location.search);
+    const onPopstate = () => {
+      const search = window.location.search;
+      setLocationSearch(search);
+      setTab(tabFromSearch(search));
+    };
     window.addEventListener("popstate", onPopstate);
     return () => window.removeEventListener("popstate", onPopstate);
   }, []);
+
+  const openModelInDocs = (modelId: string) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set("tab", "docs");
+    url.searchParams.set("endpoint", "create-response");
+    url.searchParams.set("model", modelId);
+    window.history.pushState({}, "", url.toString());
+    setLocationSearch(url.search);
+    setTab("docs");
+  };
 
   const loadBase = async () => {
     const [acc, cfg, mdl, aliasRes, settingsRes, apiKeysRes, policiesRes] = await Promise.all([
@@ -241,16 +261,6 @@ export default function App() {
     const result = await api("/admin/usage/refresh-stale", { method: "POST" });
     setAccounts((result.accounts ?? []) as Account[]);
   };
-
-  useEffect(() => {
-    if (!models.length) {
-      if (chatModel) setChatModel("");
-      return;
-    }
-    if (!chatModel || !models.some((model) => model.id === chatModel)) {
-      setChatModel(models[0]?.id ?? "");
-    }
-  }, [chatModel, models]);
 
   const getRangeBounds = (range: TraceRangePreset): { sinceMs?: number; untilMs?: number } => {
     const now = Date.now();
@@ -697,20 +707,6 @@ export default function App() {
     await loadBase();
   };
 
-  const runChatTest = async () => {
-    setChatOut("Running...");
-    const r = await fetch("/v1/chat/completions", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        model: chatModel || models[0]?.id || "gpt-5.3-codex",
-        messages: [{ role: "user", content: chatPrompt }],
-      }),
-    });
-    const j = await r.json();
-    setChatOut((j?.choices?.[0]?.message?.content as string) || JSON.stringify(j, null, 2));
-  };
-
   const gotoTracePage = async (page: number) => {
     try {
       setError("");
@@ -921,6 +917,7 @@ export default function App() {
             usageStats={usageStats}
             traceStats={filteredTraceStats}
             models={models}
+            openModelInDocs={openModelInDocs}
           />
         )}
 
@@ -996,19 +993,13 @@ export default function App() {
           />
         )}
 
-        {tab === "playground" && (
-          <PlaygroundTab
-            chatPrompt={chatPrompt}
-            setChatPrompt={setChatPrompt}
-            chatModel={chatModel}
-            setChatModel={setChatModel}
+        {tab === "docs" && (
+          <DocsTab
             models={models}
-            runChatTest={runChatTest}
-            chatOut={chatOut}
+            initialEndpointId={docsLink.endpointId}
+            initialModel={docsLink.model}
           />
         )}
-
-        {tab === "docs" && <DocsTab models={models} />}
           </main>
         </div>
       </div>

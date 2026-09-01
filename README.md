@@ -70,10 +70,6 @@ MultiVibe acts as an OpenAI-compatible gateway that lets you route requests acro
 
 ![Tracing](./assets/screen-tracing.jpg)
 
-### Playground
-
-![Playground](./assets/screen-playground.jpg)
-
 ### API docs tab
 
 ![Docs](./assets/screen-docs.jpg)
