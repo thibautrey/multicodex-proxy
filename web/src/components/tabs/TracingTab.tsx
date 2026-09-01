@@ -290,6 +290,7 @@ function TracingTabContent(props: Props) {
     modelCostChartData,
     tracePagination,
     gotoTracePage,
+    traceRange,
     traces,
     projectUsageStats,
     expandedTraceId,
