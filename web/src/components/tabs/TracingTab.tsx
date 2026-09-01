@@ -462,7 +462,6 @@ function TracingTabContent(props: Props) {
         <div id="trace-view-overview" role="tabpanel" aria-labelledby="trace-tab-overview" className="trace-view-content">
           <header className="trace-view-heading">
             <div>
-              <span className="eyebrow">Current picture</span>
               <h2>System health at a glance</h2>
               <p className="muted">A concise read of request volume, reliability and spend for {rangeLabel.toLowerCase()}.</p>
             </div>
