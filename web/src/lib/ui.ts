@@ -18,6 +18,7 @@ export const EMPTY_TRACE_STATS: TraceStats = {
     inferenceTokensPerSecond: 0,
     inferenceRequests: 0,
     costUsd: 0,
+    costUsdWithoutCache: 0,
     latencyAvgMs: 0,
   },
   models: [],

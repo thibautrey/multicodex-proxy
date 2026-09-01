@@ -114,6 +114,7 @@ export type TraceStats = {
     inferenceTokensPerSecond: number;
     inferenceRequests: number;
     costUsd: number;
+    costUsdWithoutCache: number;
     latencyAvgMs: number;
   };
   models: Array<{
