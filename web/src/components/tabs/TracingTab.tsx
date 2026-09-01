@@ -20,7 +20,7 @@ import { fmt, formatTokenCount, formatTokenRate, maskEmail, maskId, pct, routeLa
 import { api } from "../../lib/api";
 import { copyTextToClipboard } from "../../lib/clipboard";
 import { Metric } from "../Metric";
-import type { Account, ProjectUsageStats, Trace, TracePagination, TraceStats } from "../../types";
+import type { Account, ProjectUsageStats, Trace, TracePagination, TraceRangePreset, TraceStats } from "../../types";
 
 type Props = {
   accounts: Account[];
@@ -30,6 +30,7 @@ type Props = {
   modelCostChartData: Array<any>;
   tracePagination: TracePagination;
   gotoTracePage: (page: number) => Promise<void>;
+  traceRange: TraceRangePreset;
   traces: Trace[];
   projectUsageStats: ProjectUsageStats;
   expandedTraceId: string | null;

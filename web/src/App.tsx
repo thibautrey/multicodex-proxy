@@ -988,6 +988,7 @@ export default function App() {
             modelCostChartData={modelCostChartData}
             tracePagination={tracePagination}
             gotoTracePage={gotoTracePage}
+            traceRange={traceRange}
             traces={traces}
             projectUsageStats={projectUsageStats}
             expandedTraceId={expandedTraceId}
