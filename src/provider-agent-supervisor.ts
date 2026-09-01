@@ -3,6 +3,23 @@ import path from "node:path";
 
 export type ProviderAgentSupervisor = { stop(): Promise<void> };
 
+const PROVIDER_AGENT_ENVIRONMENT_KEYS = [
+  "MULTIVIBE_CORE_LOOPBACK_URL",
+  "MULTIVIBE_PROVIDER_AGENT_LISTEN",
+  "MULTIVIBE_PROVIDER_SELECTED_MODELS",
+] as const;
+
+export function providerAgentEnvironment(
+  source: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {};
+  for (const key of PROVIDER_AGENT_ENVIRONMENT_KEYS) {
+    const value = source[key];
+    if (value !== undefined) environment[key] = value;
+  }
+  return environment;
+}
+
 export function startEmbeddedProviderAgent(options: {
   enabled: boolean;
   binaryPath: string;
@@ -18,7 +35,7 @@ export function startEmbeddedProviderAgent(options: {
   const launch = () => {
     if (stopped) return;
     child = spawn(options.binaryPath, [], {
-      env: options.environment ?? process.env,
+      env: providerAgentEnvironment(options.environment ?? process.env),
       shell: false,
       stdio: ["ignore", "inherit", "inherit"],
     });

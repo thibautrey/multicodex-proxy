@@ -17,3 +17,9 @@ IPv4/IPv6 LM Studio loopback candidates. The agent itself refuses to listen on
 anything other than literal `127.0.0.1` or `::1` port `1460`.
 
 The live Cloud enrollment, dedicated-tailnet `tsnet` transport, mutually authenticated HTTP/2/WebSocket fallback, signed metering envelopes, and remote workload handling remain fail-closed until their credentials, protocol and Cloud gates are implemented and verified. The current binary does not enroll, advertise capacity, accept community work, or create compensation eligibility.
+
+Core starts the embedded process with a closed environment allowlist containing
+only its loopback URL, the agent loopback listen address and the explicitly
+selected model identifiers. Provider credentials, Stripe or OAuth secrets,
+control-plane tokens, API keys and unrelated parent-process variables are never
+inherited by the agent.
