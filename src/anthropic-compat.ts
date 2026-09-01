@@ -544,7 +544,6 @@ function loopbackHeaders(req: express.Request): Record<string, string> {
     "x-multivibe-execution",
     "x-multivibe-max-wait-ms",
     "x-multivibe-deadline",
-    "x-multivibe-idempotency-key",
     "x-multivibe-webhook",
     "x-multivibe-internal-token",
     "x-multivibe-internal-application",

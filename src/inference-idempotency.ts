@@ -206,6 +206,23 @@ function containsUnsafeResponseContent(value: unknown): boolean {
   );
 }
 
+function containsPartialTerminalReason(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some((item) => containsPartialTerminalReason(item));
+  }
+  if (!value || typeof value !== "object") return false;
+  const object = value as Record<string, unknown>;
+  if (
+    object.finish_reason === "length" ||
+    object.stop_reason === "max_tokens"
+  ) {
+    return true;
+  }
+  return Object.values(object).some((item) =>
+    containsPartialTerminalReason(item),
+  );
+}
+
 function isJsonContentType(value: string | undefined): boolean {
   return Boolean(value?.toLowerCase().includes("json"));
 }
@@ -232,7 +249,10 @@ function isCacheableCompletedResponse(result: StoredResponse): boolean {
   ) {
     return false;
   }
-  return !containsUnsafeResponseContent(parsed);
+  return (
+    !containsUnsafeResponseContent(parsed) &&
+    !containsPartialTerminalReason(parsed)
+  );
 }
 
 function responseBodyBuffer(body: unknown): Buffer | undefined {
@@ -523,7 +543,13 @@ export function createInferenceIdempotencyMiddleware(
       res.setHeader(INFERENCE_IDEMPOTENCY_STATUS_HEADER, "bypass");
       return next();
     }
-    const claim = cache.claim(scope, requestHash);
+    let claim = cache.claim(scope, requestHash);
+    while (claim.kind === "follower") {
+      const response = await claim.promise;
+      if (res.writableEnded || res.destroyed) return;
+      if (response) return sendStoredResponse(res, response, "coalesced");
+      claim = cache.claim(scope, requestHash);
+    }
     if (claim.kind === "conflict") {
       return sendIdempotencyError(
         res,
@@ -535,13 +561,6 @@ export function createInferenceIdempotencyMiddleware(
     }
     if (claim.kind === "replay") {
       return sendStoredResponse(res, claim.response, "replayed");
-    }
-    if (claim.kind === "follower") {
-      const response = await claim.promise;
-      if (res.writableEnded || res.destroyed) return;
-      if (response) return sendStoredResponse(res, response, "coalesced");
-      res.setHeader(INFERENCE_IDEMPOTENCY_STATUS_HEADER, "bypass");
-      return next();
     }
     if (claim.kind === "bypass") {
       res.setHeader(INFERENCE_IDEMPOTENCY_STATUS_HEADER, "bypass");

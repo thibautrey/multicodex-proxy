@@ -3,6 +3,8 @@ import http from "node:http";
 import test from "node:test";
 import express from "express";
 
+import { handleAnthropicMessages } from "./anthropic-compat.js";
+
 import {
   createInferenceIdempotencyMiddleware,
   hashInferencePayload,
@@ -29,10 +31,12 @@ async function startFixture(
   t: test.TestContext,
   handler: express.RequestHandler,
   options: Partial<InferenceIdempotencyOptions> = {},
+  observeRequest?: (req: express.Request) => void,
 ) {
   const app = express();
   app.use(express.json());
   app.use((req, res, next) => {
+    observeRequest?.(req);
     const application = req.header("x-test-application");
     if (application) res.locals.proxyApplication = application;
     next();
@@ -110,13 +114,26 @@ test("coalesces concurrent non-stream inference and replays the result", async (
   const requestStarted = new Promise<void>((resolve) => {
     started = resolve;
   });
-  const baseUrl = await startFixture(t, async (_req, res) => {
-    calls += 1;
-    started();
-    await gate;
-    res.setHeader("X-MultiVibe-Decision", "cloud");
-    res.json({ id: "response-one", object: "response", status: "completed" });
+  let requestCount = 0;
+  let secondArrived!: () => void;
+  const followerArrived = new Promise<void>((resolve) => {
+    secondArrived = resolve;
   });
+  const baseUrl = await startFixture(
+    t,
+    async (_req, res) => {
+      calls += 1;
+      started();
+      await gate;
+      res.setHeader("X-MultiVibe-Decision", "cloud");
+      res.json({ id: "response-one", object: "response", status: "completed" });
+    },
+    {},
+    () => {
+      requestCount += 1;
+      if (requestCount === 2) secondArrived();
+    },
+  );
   const payload = { model: "test", input: "same", stream: false };
 
   const leader = postJson(baseUrl, "/v1/responses", "app-a", "same-key", payload);
@@ -128,7 +145,7 @@ test("coalesces concurrent non-stream inference and replays the result", async (
     "same-key",
     payload,
   );
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await followerArrived;
   release();
   const [first, second] = await Promise.all([leader, follower]);
   const replay = await postJson(
@@ -228,6 +245,280 @@ test("isolates idempotency by application and inference route", async (t) => {
   assert.equal(appA.idempotencyStatus, "created");
   assert.equal(appB.idempotencyStatus, "created");
   assert.equal(chat.idempotencyStatus, "created");
+});
+
+test("keeps messages idempotency isolated from its responses loopback", async (t) => {
+  const app = express();
+  app.use(express.json());
+  app.use((req, res, next) => {
+    if (req.header("x-api-key") === "app-key") {
+      res.locals.proxyApplication = "app-a";
+    }
+    next();
+  });
+  app.use(createInferenceIdempotencyMiddleware(DEFAULT_OPTIONS));
+  let responseCalls = 0;
+  app.post("/v1/responses", (_req, res) => {
+    responseCalls += 1;
+    res.json({
+      id: `response-${responseCalls}`,
+      status: "completed",
+      output: [{
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "ok" }],
+      }],
+      usage: { input_tokens: 1, output_tokens: 1 },
+    });
+  });
+  app.post("/v1/messages", (req, res, next) => {
+    handleAnthropicMessages(req, res).catch(next);
+  });
+
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  t.after(
+    () =>
+      new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      ),
+  );
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const headers = { "x-api-key": "app-key" };
+  const messagesBody = {
+    model: "claude-sonnet-4-5",
+    messages: [{ role: "user", content: "hello" }],
+    max_tokens: 32,
+  };
+  const responsesBody = { model: "test", input: "hello" };
+
+  const messagesFirst = await postJson(
+    baseUrl,
+    "/v1/messages",
+    undefined,
+    "messages-first",
+    messagesBody,
+    headers,
+  );
+  const responsesSecond = await postJson(
+    baseUrl,
+    "/v1/responses",
+    undefined,
+    "messages-first",
+    responsesBody,
+    headers,
+  );
+  const responsesFirst = await postJson(
+    baseUrl,
+    "/v1/responses",
+    undefined,
+    "responses-first",
+    responsesBody,
+    headers,
+  );
+  const messagesSecond = await postJson(
+    baseUrl,
+    "/v1/messages",
+    undefined,
+    "responses-first",
+    messagesBody,
+    headers,
+  );
+
+  assert.equal(messagesFirst.idempotencyStatus, "created");
+  assert.equal(responsesSecond.idempotencyStatus, "created");
+  assert.equal(responsesFirst.idempotencyStatus, "created");
+  assert.equal(messagesSecond.idempotencyStatus, "created");
+  assert.equal(responseCalls, 4);
+});
+
+test("elects one replacement leader after an in-flight timeout", async (t) => {
+  let calls = 0;
+  let firstStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    firstStarted = resolve;
+  });
+  let releaseFirst!: () => void;
+  const firstGate = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  let observedRequests = 0;
+  let allRequestsArrived!: () => void;
+  const requestsArrived = new Promise<void>((resolve) => {
+    allRequestsArrived = resolve;
+  });
+  const baseUrl = await startFixture(
+    t,
+    async (_req, res) => {
+      calls += 1;
+      if (calls === 1) {
+        firstStarted();
+        await firstGate;
+      }
+      res.json({ id: `response-${calls}`, status: "completed" });
+    },
+    { inFlightTimeoutMs: 500 },
+    () => {
+      observedRequests += 1;
+      if (observedRequests === 4) allRequestsArrived();
+    },
+  );
+  const payload = { model: "test", input: "same" };
+  const leader = postJson(baseUrl, "/v1/responses", "app-a", "key", payload);
+  await started;
+  const followers = Array.from({ length: 3 }, () =>
+    postJson(baseUrl, "/v1/responses", "app-a", "key", payload),
+  );
+
+  await requestsArrived;
+  const followerResults = await Promise.all(followers);
+  releaseFirst();
+  const leaderResult = await leader;
+
+  assert.equal(calls, 2);
+  assert.equal(leaderResult.idempotencyStatus, "created");
+  assert.equal(
+    followerResults.filter((result) => result.idempotencyStatus === "created")
+      .length,
+    1,
+  );
+  assert.ok(
+    followerResults
+      .filter((result) => result.idempotencyStatus !== "created")
+      .every((result) =>
+        ["coalesced", "replayed"].includes(String(result.idempotencyStatus)),
+      ),
+  );
+});
+
+test("elects one replacement leader when the original client disconnects", async (t) => {
+  let calls = 0;
+  let firstStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    firstStarted = resolve;
+  });
+  let releaseFirst!: () => void;
+  const firstGate = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  let observedRequests = 0;
+  let allRequestsArrived!: () => void;
+  const requestsArrived = new Promise<void>((resolve) => {
+    allRequestsArrived = resolve;
+  });
+  const baseUrl = await startFixture(
+    t,
+    async (_req, res) => {
+      calls += 1;
+      if (calls === 1) {
+        firstStarted();
+        await firstGate;
+        return;
+      }
+      res.json({ id: `response-${calls}`, status: "completed" });
+    },
+    {},
+    () => {
+      observedRequests += 1;
+      if (observedRequests === 4) allRequestsArrived();
+    },
+  );
+  const payload = { model: "test", input: "same" };
+  const endpoint = new URL("/v1/responses", baseUrl);
+  let abortLeader!: () => void;
+  const leaderClosed = new Promise<void>((resolve, reject) => {
+    const request = http.request(
+      endpoint,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-multivibe-idempotency-key": "key",
+          "x-test-application": "app-a",
+        },
+      },
+      () => reject(new Error("leader unexpectedly received a response")),
+    );
+    request.on("error", () => resolve());
+    request.write(JSON.stringify(payload));
+    request.end();
+    abortLeader = () => request.destroy(new Error("test client disconnect"));
+  });
+  await started;
+  const followers = Array.from({ length: 3 }, () =>
+    postJson(baseUrl, "/v1/responses", "app-a", "key", payload),
+  );
+  await requestsArrived;
+  abortLeader();
+
+  const followerResults = await Promise.all(followers);
+  await leaderClosed;
+  releaseFirst();
+
+  assert.equal(calls, 2);
+  assert.equal(
+    followerResults.filter((result) => result.idempotencyStatus === "created")
+      .length,
+    1,
+  );
+  assert.ok(
+    followerResults
+      .filter((result) => result.idempotencyStatus !== "created")
+      .every((result) =>
+        ["coalesced", "replayed"].includes(String(result.idempotencyStatus)),
+      ),
+  );
+});
+
+test("does not retain protocol-specific truncated responses", async (t) => {
+  const calls = new Map<string, number>();
+  const baseUrl = await startFixture(t, (req, res) => {
+    const count = (calls.get(req.path) ?? 0) + 1;
+    calls.set(req.path, count);
+    if (req.path === "/v1/chat/completions") {
+      return res.json({
+        id: `chat-${count}`,
+        choices: [{
+          index: 0,
+          message: { role: "assistant", content: "partial" },
+          finish_reason: "length",
+        }],
+      });
+    }
+    res.json({
+      id: `message-${count}`,
+      type: "message",
+      role: "assistant",
+      content: [{ type: "text", text: "partial" }],
+      stop_reason: "max_tokens",
+    });
+  });
+
+  for (const [path, body] of [
+    [
+      "/v1/chat/completions",
+      { model: "test", messages: [{ role: "user", content: "hello" }] },
+    ],
+    [
+      "/v1/messages",
+      {
+        model: "test",
+        messages: [{ role: "user", content: "hello" }],
+        max_tokens: 32,
+      },
+    ],
+  ] as const) {
+    const first = await postJson(baseUrl, path, "app-a", `${path}-key`, body);
+    const second = await postJson(baseUrl, path, "app-a", `${path}-key`, body);
+    assert.equal(first.idempotencyStatus, "created");
+    assert.equal(second.idempotencyStatus, "created");
+    assert.notDeepEqual(second.body, first.body);
+  }
+
+  assert.equal(calls.get("/v1/chat/completions"), 2);
+  assert.equal(calls.get("/v1/messages"), 2);
 });
 
 test("expires completed entries deterministically", async (t) => {
