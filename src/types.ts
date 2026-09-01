@@ -93,7 +93,12 @@ export type AccountState = {
   };
 };
 
-export type LocalRuntimeAdapterId = "lm-studio" | "omlx" | "exo" | "mtplx";
+export type LocalRuntimeAdapterId =
+  | "ollama" | "lm-studio" | "llama-cpp" | "vllm" | "sglang" | "localai"
+  | "huggingface-tgi" | "transformers-serve" | "xinference" | "mlx-lm" | "omlx"
+  | "mlc-llm" | "exo" | "jan" | "gpt4all" | "koboldcpp" | "text-generation-webui"
+  | "aphrodite" | "tabbyapi" | "llama-box" | "mistral-rs" | "nvidia-nim"
+  | "tensorrt-llm" | "triton" | "openllm" | "bentoml" | "mtplx" | "manual-openai-compatible";
 
 export type LocalRuntimeMetadata = {
   source: "multivibe-local-discovery";

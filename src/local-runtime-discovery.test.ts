@@ -278,13 +278,9 @@ test("undeclared adapters perform no process, file, port, or network scan", asyn
   });
 
   assert.deepEqual(calls, ["http://127.0.0.1:1234/v1/models"]);
-  assert.deepEqual(
-    results.map((result) => [result.adapter, result.status]),
-    [
-      ["lm-studio", "discovered"],
-      ["omlx", "not-configured"],
-      ["exo", "not-configured"],
-      ["mtplx", "not-configured"],
-    ],
-  );
+  assert.equal(results[0]?.adapter, "lm-studio");
+  assert.equal(results[0]?.status, "discovered");
+  assert.equal(results.slice(1).every((result) => result.status === "not-configured"), true);
+  assert.equal(results.some((result) => result.adapter === "ollama"), true);
+  assert.equal(results.some((result) => result.adapter === "manual-openai-compatible"), true);
 });
