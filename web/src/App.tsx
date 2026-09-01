@@ -100,6 +100,7 @@ export default function App() {
   const [loginToken, setLoginToken] = useState("");
   const [loginBusy, setLoginBusy] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>(initialThemeMode);
+  const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const [usageCacheTtlMs, setUsageCacheTtlMs] = useState(300_000);
   const [oauthRedirectUri, setOauthRedirectUri] = useState("");
   const [error, setError] = useState("");
@@ -110,6 +111,9 @@ export default function App() {
   const [traceExportInProgress, setTraceExportInProgress] = useState(false);
   const tracePageRef = useRef(tracePagination.page);
   const traceRangeRef = useRef(traceRange);
+  const mobileNavigationRef = useRef<HTMLDialogElement>(null);
+  const mobileNavigationTriggerRef = useRef<HTMLButtonElement>(null);
+  const activeTabItem = TAB_ITEMS.find((item) => item.id === tab) ?? TAB_ITEMS[0];
   const sanitized = useMemo(() => {
     const params = new URLSearchParams(locationSearch);
     return params.get("sanitized") === "1" || params.get("safe") === "1";
@@ -124,6 +128,25 @@ export default function App() {
 
   useEffect(() => {
     localStorage.removeItem("adminToken");
+  }, []);
+
+  useEffect(() => {
+    const dialog = mobileNavigationRef.current;
+    if (!dialog) return;
+    if (mobileNavigationOpen && !dialog.open) {
+      dialog.showModal();
+    } else if (!mobileNavigationOpen && dialog.open) {
+      dialog.close();
+    }
+  }, [mobileNavigationOpen]);
+
+  useEffect(() => {
+    const desktopNavigation = window.matchMedia("(min-width: 901px)");
+    const closeOnDesktop = (event: MediaQueryListEvent) => {
+      if (event.matches) setMobileNavigationOpen(false);
+    };
+    desktopNavigation.addEventListener("change", closeOnDesktop);
+    return () => desktopNavigation.removeEventListener("change", closeOnDesktop);
   }, []);
 
   useLayoutEffect(() => {
@@ -834,14 +857,37 @@ export default function App() {
             </div>
           </div>
 
+          <button
+            ref={mobileNavigationTriggerRef}
+            type="button"
+            className="mobile-navigation-trigger"
+            aria-haspopup="dialog"
+            aria-expanded={mobileNavigationOpen}
+            aria-controls="mobile-navigation-dialog"
+            aria-label={`Open navigation. Current section: ${activeTabItem.label}`}
+            onClick={() => setMobileNavigationOpen(true)}
+          >
+            <span className="mobile-navigation-current-icon"><TabIcon tab={tab} /></span>
+            <span className="mobile-navigation-current-copy">
+              <small>Workspace</small>
+              <strong>{activeTabItem.label}</strong>
+            </span>
+            <span className="mobile-navigation-trigger-label">
+              Menu
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
+            </span>
+          </button>
+
           <nav className="sidebar-nav" aria-label="Primary navigation">
             <span className="sidebar-nav-label">Workspace</span>
             {TAB_ITEMS.map((item) => (
               <button
                 key={item.id}
+                type="button"
                 className={tab === item.id ? "nav-tab active" : "nav-tab"}
                 onClick={() => setTab(item.id)}
                 aria-current={tab === item.id ? "page" : undefined}
+                aria-label={`${item.label}: ${item.description}`}
               >
                 <span className="nav-tab-icon"><TabIcon tab={item.id} /></span>
                 <span className="nav-tab-copy">
@@ -864,11 +910,85 @@ export default function App() {
           </div>
         </aside>
 
+        <dialog
+          ref={mobileNavigationRef}
+          id="mobile-navigation-dialog"
+          className="mobile-navigation-dialog"
+          aria-labelledby="mobile-navigation-title"
+          onCancel={(event) => {
+            event.preventDefault();
+            setMobileNavigationOpen(false);
+          }}
+          onClose={() => {
+            setMobileNavigationOpen(false);
+            const trigger = mobileNavigationTriggerRef.current;
+            if (trigger?.getClientRects().length) trigger.focus();
+          }}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              setMobileNavigationOpen(false);
+            }
+          }}
+        >
+          <div className="mobile-navigation-drawer">
+            <header className="mobile-navigation-header">
+              <div className="mobile-navigation-brand">
+                <img className="brand-mark" src="/assets/brand/multivibe-app-icon.svg" alt="" />
+                <div>
+                  <small>MultiVibe</small>
+                  <strong id="mobile-navigation-title">Navigate workspace</strong>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="mobile-navigation-close"
+                aria-label="Close navigation"
+                onClick={() => setMobileNavigationOpen(false)}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+              </button>
+            </header>
+
+            <nav className="mobile-navigation-list" aria-label="Mobile primary navigation">
+              {TAB_ITEMS.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={tab === item.id ? "mobile-navigation-item active" : "mobile-navigation-item"}
+                  aria-current={tab === item.id ? "page" : undefined}
+                  onClick={() => {
+                    setTab(item.id);
+                    setMobileNavigationOpen(false);
+                  }}
+                >
+                  <span className="mobile-navigation-item-icon"><TabIcon tab={item.id} /></span>
+                  <span className="mobile-navigation-item-copy">
+                    <strong>{item.label}</strong>
+                    <small>{item.description}</small>
+                  </span>
+                  {tab === item.id && <span className="mobile-navigation-active-label">Current</span>}
+                </button>
+              ))}
+            </nav>
+
+            <footer className="mobile-navigation-footer">
+              <div className="mobile-navigation-status">
+                <span className="status-dot" />
+                <span>
+                  <strong>{sanitized ? "Sanitized view" : "System online"}</strong>
+                  <small>{accounts.length} accounts · {models.length} models</small>
+                </span>
+              </div>
+              <ThemeSwitcher value={themeMode} onChange={setThemeMode} />
+            </footer>
+          </div>
+        </dialog>
+
         <div className="workspace">
           <header className="topbar">
             <div className="topbar-title">
-              <h1>{TAB_ITEMS.find((item) => item.id === tab)?.label}</h1>
-              <p className="muted">{TAB_ITEMS.find((item) => item.id === tab)?.description}</p>
+              <h1>{activeTabItem.label}</h1>
+              <p className="muted">{activeTabItem.description}</p>
             </div>
             <div className="topbar-actions">
               <span className="badge badge-live">
