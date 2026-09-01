@@ -34,13 +34,39 @@ export type LocalRuntimeCandidate = {
 export type LocalRuntimeAdapter = {
   id: LocalRuntimeAdapterId;
   displayName: string;
+  protocol: "openai-compatible" | "native";
+  healthPath: string;
+  catalogPath: string;
+  capabilities: readonly ("text" | "embeddings" | "image" | "audio" | "tools")[];
+  authentication: "none" | "optional-bearer" | "required-bearer";
+  measurement: readonly ("input_text_token" | "output_text_token" | "request" | "runtime_metrics")[];
+  limits: { maxCatalogModels: number; maxResponseBytes: number; timeoutMs: number };
   candidates: readonly LocalRuntimeCandidate[];
 };
 
+const DEFAULT_ADAPTER_CONTRACT = {
+  protocol: "openai-compatible" as const,
+  healthPath: "/v1/models",
+  catalogPath: "/v1/models",
+  capabilities: ["text", "embeddings", "tools"] as const,
+  authentication: "optional-bearer" as const,
+  measurement: ["input_text_token", "output_text_token", "request"] as const,
+  limits: {
+    maxCatalogModels: 10_000,
+    maxResponseBytes: LOCAL_RUNTIME_MAX_RESPONSE_BYTES,
+    timeoutMs: LOCAL_RUNTIME_DISCOVERY_TIMEOUT_MS,
+  },
+};
+
+function registeredAdapter(id: LocalRuntimeAdapterId, displayName: string): LocalRuntimeAdapter {
+  return { id, displayName, ...DEFAULT_ADAPTER_CONTRACT, candidates: [] };
+}
 export const LOCAL_RUNTIME_ADAPTERS: readonly LocalRuntimeAdapter[] = [
   {
     id: "lm-studio",
     displayName: "LM Studio",
+    ...DEFAULT_ADAPTER_CONTRACT,
+    authentication: "none",
     candidates: [
       {
         endpoint: "http://127.0.0.1:1234",
@@ -52,9 +78,33 @@ export const LOCAL_RUNTIME_ADAPTERS: readonly LocalRuntimeAdapter[] = [
       },
     ],
   },
-  { id: "omlx", displayName: "OMLX", candidates: [] },
-  { id: "exo", displayName: "Exo", candidates: [] },
-  { id: "mtplx", displayName: "MTPLX", candidates: [] },
+  registeredAdapter("ollama", "Ollama"),
+  registeredAdapter("llama-cpp", "llama.cpp / llama-server / llama-cpp-python"),
+  registeredAdapter("vllm", "vLLM"),
+  registeredAdapter("sglang", "SGLang"),
+  registeredAdapter("localai", "LocalAI"),
+  registeredAdapter("huggingface-tgi", "Hugging Face TGI"),
+  registeredAdapter("transformers-serve", "Transformers Serve"),
+  registeredAdapter("xinference", "Xinference"),
+  registeredAdapter("mlx-lm", "MLX-LM"),
+  registeredAdapter("omlx", "OMLX"),
+  registeredAdapter("mlc-llm", "MLC LLM"),
+  registeredAdapter("exo", "Exo"),
+  registeredAdapter("jan", "Jan"),
+  registeredAdapter("gpt4all", "GPT4All"),
+  registeredAdapter("koboldcpp", "KoboldCpp"),
+  registeredAdapter("text-generation-webui", "text-generation-webui"),
+  registeredAdapter("aphrodite", "Aphrodite"),
+  registeredAdapter("tabbyapi", "TabbyAPI"),
+  registeredAdapter("llama-box", "llama-box"),
+  registeredAdapter("mistral-rs", "mistral.rs"),
+  registeredAdapter("nvidia-nim", "NVIDIA NIM"),
+  registeredAdapter("tensorrt-llm", "TensorRT-LLM"),
+  registeredAdapter("triton", "NVIDIA Triton"),
+  registeredAdapter("openllm", "OpenLLM"),
+  registeredAdapter("bentoml", "BentoML"),
+  registeredAdapter("mtplx", "MTPLX"),
+  registeredAdapter("manual-openai-compatible", "Manual OpenAI-compatible server"),
 ];
 
 export type LocalRuntimeProbeSuccess = {

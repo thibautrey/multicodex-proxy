@@ -1,0 +1,21 @@
+[Unit]
+Description=MultiVibe Core with embedded provider agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=PROVIDER_AGENT_ENABLED=true
+Environment=PROVIDER_AGENT_BINARY=/opt/multivibe/bin/multivibe-provider-agent
+EnvironmentFile=-%h/.config/multivibe/environment
+ExecStart=/opt/multivibe/bin/multivibe
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/multivibe
+
+[Install]
+WantedBy=default.target
