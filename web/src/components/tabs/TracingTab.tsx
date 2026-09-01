@@ -535,7 +535,6 @@ function TracingTabContent(props: Props) {
         <div id="trace-view-performance" role="tabpanel" aria-labelledby="trace-tab-performance" className="trace-view-content">
           <header className="trace-view-heading">
             <div>
-              <span className="eyebrow">Responsiveness</span>
               <h2>Performance</h2>
               <p className="muted">Compare first-token delay, full latency, throughput and failure trends.</p>
             </div>
