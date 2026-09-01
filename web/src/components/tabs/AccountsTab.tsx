@@ -1,6 +1,7 @@
 import type { Account, StoreSettings, TraceStats } from "../../types";
 import React, { useEffect, useRef, useState } from "react";
 import { fmt, maskEmail, maskId } from "../../lib/ui";
+import { ApiError, api } from "../../lib/api";
 
 import { Metric } from "../Metric";
 import { createPortal } from "react-dom";
@@ -79,6 +80,26 @@ type OAuthDialogState = {
   pendingEnabled?: boolean;
   provider: "openai" | "opencode" | "xai";
 };
+
+type ProviderAgentSelection = {
+  schema_version: "provider-selection-v1";
+  revision: number;
+  state: "detected" | "selected";
+  selected_models: string[];
+};
+
+type ProviderAgentDetectedModels = {
+  schema_version: "provider-detected-models-v1";
+  runtimes: Array<{ adapter_id: string; models: string[] }>;
+};
+
+type ProviderPreviewStatus =
+  | "idle"
+  | "loading"
+  | "ready"
+  | "saving"
+  | "unavailable"
+  | "error";
 
 function isOAuthProvider(provider: AccountProvider) {
   return provider === "openai" || provider === "xai";
@@ -219,6 +240,14 @@ export function AccountsTab(props: Props) {
   } | null>(null);
   const [makeMoneyPreviewAccount, setMakeMoneyPreviewAccount] =
     useState<Account | null>(null);
+  const [providerPreviewStatus, setProviderPreviewStatus] =
+    useState<ProviderPreviewStatus>("idle");
+  const [providerSelection, setProviderSelection] =
+    useState<ProviderAgentSelection | null>(null);
+  const [providerSelectionDraft, setProviderSelectionDraft] = useState<string[]>([]);
+  const [providerDetectedModels, setProviderDetectedModels] =
+    useState<ProviderAgentDetectedModels | null>(null);
+  const [providerPreviewMessage, setProviderPreviewMessage] = useState("");
   const makeMoneyDialogRef = useRef<HTMLDivElement | null>(null);
   const makeMoneyTriggerRef = useRef<HTMLButtonElement | null>(null);
   const makeMoneyCloseRef = useRef<HTMLButtonElement | null>(null);
@@ -246,6 +275,40 @@ export function AccountsTab(props: Props) {
       window.removeEventListener("resize", onResize);
     };
   }, []);
+
+  useEffect(() => {
+    if (!makeMoneyPreviewAccount) return;
+
+    let cancelled = false;
+    setProviderPreviewStatus("loading");
+    setProviderPreviewMessage("");
+    setProviderSelection(null);
+    setProviderDetectedModels(null);
+
+    void Promise.all([
+      api("/admin/provider-agent/selection"),
+      api("/admin/provider-agent/detected-models"),
+    ]).then(([selection, detected]) => {
+      if (cancelled) return;
+      const nextSelection = selection as ProviderAgentSelection;
+      setProviderSelection(nextSelection);
+      setProviderSelectionDraft([...nextSelection.selected_models].sort());
+      setProviderDetectedModels(detected as ProviderAgentDetectedModels);
+      setProviderPreviewStatus("ready");
+    }).catch((error: unknown) => {
+      if (cancelled) return;
+      setProviderPreviewStatus(error instanceof ApiError && error.status === 503 ? "unavailable" : "error");
+      setProviderPreviewMessage(
+        error instanceof ApiError && error.status === 503
+          ? "The embedded provider agent is not available in this Core installation."
+          : "The bounded local inventory could not be loaded.",
+      );
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [makeMoneyPreviewAccount]);
 
   useEffect(() => {
     if (!makeMoneyPreviewAccount) return;
@@ -304,6 +367,57 @@ export function AccountsTab(props: Props) {
       });
     };
   }, [makeMoneyPreviewAccount]);
+
+  const toggleProviderSelection = (model: string) => {
+    setProviderSelectionDraft((current) =>
+      current.includes(model)
+        ? current.filter((value) => value !== model)
+        : [...current, model].sort(),
+    );
+    setProviderPreviewMessage("");
+  };
+
+  const saveProviderSelection = async () => {
+    if (!providerSelection || providerPreviewStatus === "saving") return;
+    setProviderPreviewStatus("saving");
+    setProviderPreviewMessage("");
+    try {
+      const next = await api("/admin/provider-agent/selection", {
+        method: "PUT",
+        body: JSON.stringify({
+          revision: providerSelection.revision,
+          selected_models: providerSelectionDraft,
+        }),
+      }) as ProviderAgentSelection;
+      setProviderSelection(next);
+      setProviderSelectionDraft([...next.selected_models].sort());
+      setProviderPreviewStatus("ready");
+      setProviderPreviewMessage(
+        next.selected_models.length
+          ? "Local selection saved. Nothing was submitted to MultiVibe Cloud."
+          : "Local selection cleared. Nothing was submitted to MultiVibe Cloud.",
+      );
+    } catch (error: unknown) {
+      if (error instanceof ApiError && error.status === 409) {
+        try {
+          const latest = await api("/admin/provider-agent/selection") as ProviderAgentSelection;
+          setProviderSelection(latest);
+          setProviderSelectionDraft([...latest.selected_models].sort());
+          setProviderPreviewStatus("ready");
+          setProviderPreviewMessage("The selection changed in another session. The latest local revision is shown; review it before saving again.");
+          return;
+        } catch {
+          // Fall through to the bounded unavailable state below.
+        }
+      }
+      setProviderPreviewStatus(error instanceof ApiError && error.status === 503 ? "unavailable" : "error");
+      setProviderPreviewMessage(
+        error instanceof ApiError && error.status === 400
+          ? "The local selection contains an invalid model identifier."
+          : "The local selection could not be saved.",
+      );
+    }
+  };
 
   useEffect(() => {
     if (!oauthDialog) return;
@@ -822,6 +936,18 @@ export function AccountsTab(props: Props) {
     );
   };
 
+  const detectedProviderModelIds = new Set(
+    providerDetectedModels?.runtimes.flatMap((runtime) => runtime.models) ?? [],
+  );
+  const selectedButNotDetected = providerSelectionDraft.filter(
+    (model) => !detectedProviderModelIds.has(model),
+  );
+  const providerSelectionChanged = Boolean(
+    providerSelection &&
+    (providerSelection.selected_models.length !== providerSelectionDraft.length ||
+      providerSelection.selected_models.some((model, index) => model !== providerSelectionDraft[index])),
+  );
+
   return (
     <>
       <section className="grid cards4">
@@ -1011,7 +1137,7 @@ export function AccountsTab(props: Props) {
                             setMakeMoneyPreviewAccount(a);
                           }}
                         >
-                          Make money · Preview
+                          Share models · Preview
                         </button>
                       )}
                       <span className="mono muted">
@@ -1308,9 +1434,111 @@ export function AccountsTab(props: Props) {
             <div id="make-money-preview-status" className="make-money-preview-status">
               <strong>Preview only.</strong> Provider enrollment, customer
               workloads, earnings, payouts and Cloud credits are not active yet.
-              Opening this window does not install, discover, collect or share
-              anything from this machine.
+              Opening this window performs only the agent&apos;s reviewed loopback
+              catalog probes. It does not scan the LAN, inspect processes or
+              files, install anything, or share the result.
             </div>
+
+            <section className="provider-selection-panel" aria-labelledby="provider-selection-title">
+              <div className="provider-selection-heading">
+                <div>
+                  <span className="eyebrow">Local consent manifest</span>
+                  <h3 id="provider-selection-title">Choose models you may want to share</h3>
+                  <p>
+                    Detection and selection stay on this machine. Saving only
+                    updates Core&apos;s protected local selection file; it does not
+                    submit, approve, publish or activate any model.
+                  </p>
+                </div>
+                {providerSelection && (
+                  <span className={providerSelectionDraft.length ? "badge badge-live" : "badge"}>
+                    {providerSelectionDraft.length} selected · revision {providerSelection.revision}
+                  </span>
+                )}
+              </div>
+
+              {providerPreviewStatus === "loading" && (
+                <div className="provider-selection-empty" role="status">
+                  Checking reviewed local runtime endpoints…
+                </div>
+              )}
+
+              {(providerPreviewStatus === "unavailable" || providerPreviewStatus === "error") && (
+                <div className="provider-selection-empty provider-selection-error" role="status">
+                  <strong>{providerPreviewMessage}</strong>
+                  {providerPreviewStatus === "unavailable" && (
+                    <span>Enable the packaged embedded agent to use local detection and selection.</span>
+                  )}
+                </div>
+              )}
+
+              {(providerPreviewStatus === "ready" || providerPreviewStatus === "saving") && providerDetectedModels && (
+                <div className="provider-runtime-list">
+                  {providerDetectedModels.runtimes.map((runtime) => (
+                    <fieldset className="provider-runtime-group" key={runtime.adapter_id}>
+                      <legend>{runtime.adapter_id}</legend>
+                      {runtime.models.map((model) => (
+                        <label className="provider-model-choice" key={`${runtime.adapter_id}:${model}`}>
+                          <input
+                            type="checkbox"
+                            checked={providerSelectionDraft.includes(model)}
+                            disabled={providerPreviewStatus === "saving"}
+                            onChange={() => toggleProviderSelection(model)}
+                          />
+                          <span className="mono">{model}</span>
+                        </label>
+                      ))}
+                    </fieldset>
+                  ))}
+
+                  {selectedButNotDetected.length > 0 && (
+                    <fieldset className="provider-runtime-group provider-runtime-offline">
+                      <legend>Selected but not currently detected</legend>
+                      {selectedButNotDetected.map((model) => (
+                        <label className="provider-model-choice" key={`offline:${model}`}>
+                          <input
+                            type="checkbox"
+                            checked
+                            disabled={providerPreviewStatus === "saving"}
+                            onChange={() => toggleProviderSelection(model)}
+                          />
+                          <span className="mono">{model}</span>
+                        </label>
+                      ))}
+                    </fieldset>
+                  )}
+
+                  {!providerDetectedModels.runtimes.length && !selectedButNotDetected.length && (
+                    <div className="provider-selection-empty">
+                      No model was returned by the reviewed loopback candidates.
+                      Start a supported local runtime, then reopen this preview.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {providerPreviewMessage && providerPreviewStatus === "ready" && (
+                <p className="provider-selection-message" role="status">{providerPreviewMessage}</p>
+              )}
+
+              {(providerPreviewStatus === "ready" || providerPreviewStatus === "saving") && (
+                <div className="provider-selection-actions">
+                  <span className="muted">
+                    {providerSelectionChanged
+                      ? "Unsaved local changes"
+                      : "Local selection is up to date"}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={!providerSelectionChanged || providerPreviewStatus === "saving"}
+                    onClick={() => void saveProviderSelection()}
+                  >
+                    {providerPreviewStatus === "saving" ? "Saving locally…" : "Save local selection"}
+                  </button>
+                </div>
+              )}
+            </section>
 
             <div className="make-money-preview-grid">
               <section className="make-money-preview-card" aria-labelledby="make-money-route-title">
@@ -1368,7 +1596,7 @@ export function AccountsTab(props: Props) {
 
             <div className="modal-actions make-money-preview-actions">
               <span className="muted">
-                Information only · no Cloud connection or collection
+                Local preview only · no Cloud connection or collection
               </span>
               <button
                 type="button"
