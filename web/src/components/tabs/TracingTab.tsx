@@ -115,7 +115,7 @@ export function TracingTab(props: Props) {
       : provider === "opencode"
         ? "https://opencode.ai/favicon-v3.svg"
       : provider === "zai"
-        ? "https://z.ai/favicon.ico"
+        ? "https://z.ai/favicon.png"
         : provider === "xai"
           ? "https://grok.com/favicon.ico"
         : "https://openai.com/favicon.ico";

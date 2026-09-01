@@ -91,7 +91,7 @@ function isManualTokenProvider(provider: AccountProvider) {
 function providerFavicon(provider?: string) {
   if (provider === "mistral") return "https://mistral.ai/favicon.ico";
   if (provider === "opencode") return "https://opencode.ai/favicon-v3.svg";
-  if (provider === "zai") return "https://z.ai/favicon.ico";
+  if (provider === "zai") return "https://z.ai/favicon.png";
   if (provider === "xai") return "https://grok.com/favicon.ico";
   return "https://openai.com/favicon.ico";
 }
