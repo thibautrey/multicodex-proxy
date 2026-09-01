@@ -9,8 +9,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type manifest struct {
@@ -49,15 +52,52 @@ func selectedModels() ([]string, error) {
 		return []string{}, nil
 	}
 	var models []string
-	if err := json.Unmarshal([]byte(raw), &models); err != nil || len(models) > 1000 {
+	if err := json.Unmarshal([]byte(raw), &models); err != nil || len(models) > 100 {
 		return nil, errors.New("selected model allowlist is invalid")
 	}
+	seen := make(map[string]struct{}, len(models))
 	for _, model := range models {
-		if model == "" || len(model) > 512 || strings.TrimSpace(model) != model {
+		if !validSelectedModelID(model) {
 			return nil, errors.New("selected model allowlist contains an invalid id")
 		}
+		if _, exists := seen[model]; exists {
+			return nil, errors.New("selected model allowlist contains duplicate ids")
+		}
+		seen[model] = struct{}{}
 	}
+	sort.Strings(models)
 	return models, nil
+}
+
+var modelURLScheme = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*:/`)
+var windowsAbsolutePath = regexp.MustCompile(`^[A-Za-z]:/`)
+
+func validSelectedModelID(model string) bool {
+	if model == "" || len(model) > 200 || strings.TrimSpace(model) != model || strings.Contains(model, "\\") ||
+		modelURLScheme.MatchString(model) || strings.HasPrefix(model, "/") || windowsAbsolutePath.MatchString(model) {
+		return false
+	}
+	for _, value := range model {
+		if unicode.IsControl(value) {
+			return false
+		}
+	}
+	for _, segment := range strings.Split(model, "/") {
+		if segment == "." || segment == ".." || net.ParseIP(segment) != nil {
+			return false
+		}
+		if strings.HasPrefix(segment, "[") && strings.HasSuffix(segment, "]") && net.ParseIP(strings.TrimSuffix(strings.TrimPrefix(segment, "["), "]")) != nil {
+			return false
+		}
+	}
+	return true
+}
+
+func selectedManifestState(models []string) LifecycleState {
+	if len(models) == 0 {
+		return StateDetected
+	}
+	return StateSelected
 }
 
 func providerHandler(core *url.URL, models []string, client *http.Client) http.Handler {
@@ -88,7 +128,7 @@ func providerHandler(core *url.URL, models []string, client *http.Client) http.H
 	mux.HandleFunc("GET /v1/manifest", func(response http.ResponseWriter, _ *http.Request) {
 		response.Header().Set("cache-control", "no-store")
 		response.Header().Set("content-type", "application/json")
-		_ = json.NewEncoder(response).Encode(manifest{ProtocolVersion: "provider-agent-v1", State: string(StateSelected), SelectedModels: models})
+		_ = json.NewEncoder(response).Encode(manifest{ProtocolVersion: "provider-agent-v1", State: string(selectedManifestState(models)), SelectedModels: models})
 	})
 	mux.HandleFunc("GET /v1/adapters", func(response http.ResponseWriter, _ *http.Request) {
 		response.Header().Set("cache-control", "no-store")
