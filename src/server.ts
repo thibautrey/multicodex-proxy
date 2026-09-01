@@ -39,6 +39,7 @@ import {
   PORT,
   PROVIDER_AGENT_BINARY,
   PROVIDER_AGENT_ENABLED,
+  PROVIDER_AGENT_STATE_PATH,
   PROXY_API_KEY,
   PROXY_API_KEYS,
   REQUEST_BODY_LIMIT,
@@ -123,6 +124,11 @@ await Promise.all([
   codexProjectRegistry.init(),
   traceManager.initialize(),
 ]);
+const providerAgent = startEmbeddedProviderAgent({
+  enabled: PROVIDER_AGENT_ENABLED,
+  binaryPath: PROVIDER_AGENT_BINARY,
+  statePath: PROVIDER_AGENT_STATE_PATH,
+});
 await traceManager.seedStatsHistoryIfMissing();
 const anonymousUsageSharing = createAnonymousUsageSharingWorker({
   settingsStore: store,
@@ -188,6 +194,7 @@ const adminRouter = createAdminRouter({
   configuredProxyApiKeys,
   smartRouting,
   anonymousUsageSharing,
+  providerAgent,
   storagePaths: {
     accountsPath: STORE_PATH,
     oauthStatePath: OAUTH_STATE_PATH,
@@ -491,11 +498,6 @@ app.get("*", (req, res, next) => {
 Sentry.setupExpressErrorHandler(app);
 
 const server = http.createServer(app);
-const providerAgent = startEmbeddedProviderAgent({
-  enabled: PROVIDER_AGENT_ENABLED,
-  binaryPath: PROVIDER_AGENT_BINARY,
-});
-
 const jobRunner = new JobRunner(
   jobStore,
   async (job) => {

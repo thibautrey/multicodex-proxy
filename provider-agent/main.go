@@ -1,16 +1,17 @@
 package main
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -52,21 +53,10 @@ func selectedModels() ([]string, error) {
 		return []string{}, nil
 	}
 	var models []string
-	if err := json.Unmarshal([]byte(raw), &models); err != nil || len(models) > 100 {
+	if err := json.Unmarshal([]byte(raw), &models); err != nil {
 		return nil, errors.New("selected model allowlist is invalid")
 	}
-	seen := make(map[string]struct{}, len(models))
-	for _, model := range models {
-		if !validSelectedModelID(model) {
-			return nil, errors.New("selected model allowlist contains an invalid id")
-		}
-		if _, exists := seen[model]; exists {
-			return nil, errors.New("selected model allowlist contains duplicate ids")
-		}
-		seen[model] = struct{}{}
-	}
-	sort.Strings(models)
-	return models, nil
+	return normalizeSelectedModels(models)
 }
 
 var modelURLScheme = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*:/`)
@@ -101,6 +91,10 @@ func selectedManifestState(models []string) LifecycleState {
 }
 
 func providerHandler(core *url.URL, models []string, client *http.Client) http.Handler {
+	return providerHandlerWithSelection(core, newMemorySelectionStore(models), client, "")
+}
+
+func providerHandlerWithSelection(core *url.URL, selections *selectionStore, client *http.Client, controlToken string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health/live", func(response http.ResponseWriter, _ *http.Request) {
 		response.Header().Set("content-type", "application/json")
@@ -125,9 +119,56 @@ func providerHandler(core *url.URL, models []string, client *http.Client) http.H
 		_, _ = response.Write([]byte("{\"ok\":true}\n"))
 	})
 	mux.HandleFunc("GET /v1/manifest", func(response http.ResponseWriter, _ *http.Request) {
+		document := selections.snapshot()
 		response.Header().Set("cache-control", "no-store")
 		response.Header().Set("content-type", "application/json")
-		_ = json.NewEncoder(response).Encode(manifest{ProtocolVersion: "provider-agent-v1", State: string(selectedManifestState(models)), SelectedModels: models})
+		_ = json.NewEncoder(response).Encode(manifest{ProtocolVersion: "provider-agent-v1", State: document.State, SelectedModels: document.SelectedModels})
+	})
+	mux.HandleFunc("GET /v1/selection", func(response http.ResponseWriter, request *http.Request) {
+		if !authorizeProviderControl(request, controlToken) {
+			http.Error(response, "not found", http.StatusNotFound)
+			return
+		}
+		response.Header().Set("cache-control", "no-store")
+		response.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(response).Encode(selections.snapshot())
+	})
+	mux.HandleFunc("PUT /v1/selection", func(response http.ResponseWriter, request *http.Request) {
+		if !authorizeProviderControl(request, controlToken) {
+			http.Error(response, "not found", http.StatusNotFound)
+			return
+		}
+		mediaType, _, mediaTypeErr := mime.ParseMediaType(request.Header.Get("content-type"))
+		if mediaTypeErr != nil || mediaType != "application/json" {
+			http.Error(response, "invalid request", http.StatusUnsupportedMediaType)
+			return
+		}
+		request.Body = http.MaxBytesReader(response, request.Body, 32*1024)
+		var update struct {
+			Revision       uint64   `json:"revision"`
+			SelectedModels []string `json:"selected_models"`
+		}
+		decoder := json.NewDecoder(request.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&update); err != nil || ensureJSONEOF(decoder) != nil || update.Revision < 1 {
+			http.Error(response, "invalid request", http.StatusBadRequest)
+			return
+		}
+		document, conflict, err := selections.replace(update.Revision, update.SelectedModels)
+		if err != nil {
+			if errors.Is(err, errInvalidSelectedModels) {
+				http.Error(response, "invalid request", http.StatusBadRequest)
+				return
+			}
+			http.Error(response, "selection unavailable", http.StatusInternalServerError)
+			return
+		}
+		response.Header().Set("cache-control", "no-store")
+		response.Header().Set("content-type", "application/json")
+		if conflict {
+			response.WriteHeader(http.StatusConflict)
+		}
+		_ = json.NewEncoder(response).Encode(document)
 	})
 	mux.HandleFunc("GET /v1/adapters", func(response http.ResponseWriter, _ *http.Request) {
 		response.Header().Set("cache-control", "no-store")
@@ -142,6 +183,14 @@ func providerHandler(core *url.URL, models []string, client *http.Client) http.H
 	return mux
 }
 
+func authorizeProviderControl(request *http.Request, expected string) bool {
+	if len(expected) < 32 {
+		return false
+	}
+	provided := strings.TrimPrefix(request.Header.Get("authorization"), "Bearer ")
+	return len(provided) == len(expected) && subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) == 1
+}
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	core, err := loopbackCoreURL(envDefault("MULTIVIBE_CORE_LOOPBACK_URL", "http://127.0.0.1:1455"))
@@ -152,6 +201,20 @@ func main() {
 	models, err := selectedModels()
 	if err != nil {
 		logger.Error("provider_agent_configuration_invalid", "error", err.Error())
+		os.Exit(2)
+	}
+	statePath := strings.TrimSpace(os.Getenv("MULTIVIBE_PROVIDER_STATE_PATH"))
+	selections := newMemorySelectionStore(models)
+	if statePath != "" {
+		selections, err = openSelectionStore(statePath, models)
+		if err != nil {
+			logger.Error("provider_agent_configuration_invalid", "error", err.Error())
+			os.Exit(2)
+		}
+	}
+	controlToken := strings.TrimSpace(os.Getenv("MULTIVIBE_PROVIDER_CONTROL_TOKEN"))
+	if controlToken != "" && len(controlToken) < 32 {
+		logger.Error("provider_agent_configuration_invalid", "error", "provider control token must contain at least 32 characters")
 		os.Exit(2)
 	}
 	listenAddress, err := loopbackAgentAddress(envDefault("MULTIVIBE_PROVIDER_AGENT_LISTEN", "127.0.0.1:1460"))
@@ -169,8 +232,8 @@ func main() {
 		logger.Error("provider_agent_listen_failed", "error", err.Error())
 		os.Exit(1)
 	}
-	logger.Info("provider_agent_started", "address", listener.Addr().String(), "selected_model_count", len(models))
-	server := &http.Server{Handler: providerHandler(core, models, client), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second}
+	logger.Info("provider_agent_started", "address", listener.Addr().String(), "selected_model_count", len(selections.snapshot().SelectedModels), "selection_persistent", statePath != "")
+	server := &http.Server{Handler: providerHandlerWithSelection(core, selections, client, controlToken), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second}
 	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("provider_agent_failed", "error", fmt.Sprint(err))
 		os.Exit(1)
