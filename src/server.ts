@@ -14,6 +14,11 @@ import {
   ADMIN_TOKEN,
   CODEX_PROJECT_REGISTRATION_TOKEN,
   CODEX_PROJECTS_PATH,
+  INFERENCE_IDEMPOTENCY_IN_FLIGHT_TIMEOUT_MS,
+  INFERENCE_IDEMPOTENCY_MAX_BYTES,
+  INFERENCE_IDEMPOTENCY_MAX_ENTRIES,
+  INFERENCE_IDEMPOTENCY_MAX_RESPONSE_BYTES,
+  INFERENCE_IDEMPOTENCY_TTL_MS,
   JOBS_DB_PATH,
   JOB_WORKER_CONCURRENCY,
   CHATGPT_BASE_URL,
@@ -64,6 +69,7 @@ import {
   createAdmissionMiddleware,
   createSmartRoutingRouter,
 } from "./smart-routing-routes.js";
+import { createInferenceIdempotencyMiddleware } from "./inference-idempotency.js";
 
 const app = express();
 app.use(createBodyParserMiddleware());
@@ -446,12 +452,31 @@ app.delete("/admin/session", (req, res) => {
 });
 
 app.use("/admin", adminGuard, adminRouter);
+const inferenceIdempotencyMiddleware = createInferenceIdempotencyMiddleware({
+  ttlMs: INFERENCE_IDEMPOTENCY_TTL_MS,
+  inFlightTimeoutMs: INFERENCE_IDEMPOTENCY_IN_FLIGHT_TIMEOUT_MS,
+  maxEntries: INFERENCE_IDEMPOTENCY_MAX_ENTRIES,
+  maxBytes: INFERENCE_IDEMPOTENCY_MAX_BYTES,
+  maxResponseBytes: INFERENCE_IDEMPOTENCY_MAX_RESPONSE_BYTES,
+});
 const admissionMiddleware = createAdmissionMiddleware(smartRouting);
 const smartRoutingRouter = createSmartRoutingRouter(smartRouting);
-app.use("/v1", proxyGuard, admissionMiddleware, smartRoutingRouter);
+app.use(
+  "/v1",
+  proxyGuard,
+  inferenceIdempotencyMiddleware,
+  admissionMiddleware,
+  smartRoutingRouter,
+);
 app.use("/v1", realtimeRouter);
 app.use("/v1", proxyRouter);
-app.use("/", rootProxyGuard, admissionMiddleware, realtimeRouter);
+app.use(
+  "/",
+  rootProxyGuard,
+  inferenceIdempotencyMiddleware,
+  admissionMiddleware,
+  realtimeRouter,
+);
 app.use("/", proxyRouter);
 
 app.use(express.static(webDist));
