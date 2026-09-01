@@ -1482,8 +1482,11 @@ td .muted {
 .account-action-menu {
   position: fixed;
   z-index: 2000;
-  min-width: 220px;
-  overflow: hidden;
+  width: 220px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   padding: 6px;
   border: 1px solid var(--line-strong);
   border-radius: 12px;
@@ -1501,6 +1504,17 @@ td .muted {
   color: var(--text);
   text-align: left;
   font-size: 12px;
+}
+
+@media (pointer: coarse) {
+  .icon-menu-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .account-action-item {
+    min-height: 44px;
+  }
 }
 
 .account-action-item:hover {

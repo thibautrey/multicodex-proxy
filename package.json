@@ -8,7 +8,7 @@
     "build:api": "tsc -p tsconfig.json",
     "build:web": "npm --prefix web run build",
     "build": "npm run build:web && npm run build:api",
-    "test": "tsx --test \"src/**/*.test.ts\"",
+    "test": "tsx --test \"src/**/*.test.ts\" \"web/test/**/*.test.ts\"",
     "start": "node --import ./dist/instrument.js dist/server.js"
   },
   "dependencies": {
