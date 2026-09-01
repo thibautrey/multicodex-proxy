@@ -1893,11 +1893,11 @@ export function classifyNativeStreamCompletion(
     interrupted,
     status: sawResponseCompleted
       ? 200
-      : streamError
-      ? 599
       : clientDisconnected
         ? 499
-        : 200,
+        : streamError
+          ? 599
+          : 200,
     clientDisconnected:
       clientDisconnected && !sawResponseCompleted ? true : undefined,
     error: sawResponseCompleted
