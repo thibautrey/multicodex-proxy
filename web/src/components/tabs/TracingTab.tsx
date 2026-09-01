@@ -412,7 +412,6 @@ function TracingTabContent(props: Props) {
       <section className="panel trace-workspace-header">
         <div className="trace-command-row">
           <div className="trace-command-intro">
-            <span className="eyebrow">Observability</span>
             <div>
               <h2>Tracing</h2>
               <p className="muted">Understand traffic, performance and cost without losing the request-level detail.</p>
