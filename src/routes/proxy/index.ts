@@ -2090,6 +2090,11 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       (req.originalUrl || "").includes("responses/compact");
     const clientRequestedStream = Boolean(req.body?.stream);
     const sessionId = getSessionId(req);
+    // Native Codex requests identify the conversation with `thread-id`, which
+    // is already used for session affinity and project attribution. Keep the
+    // exact session header authoritative for provider conversation routing, but
+    // use the broader Codex id as a fallback when deriving prompt_cache_key.
+    const promptCacheSessionId = sessionId ?? codexSessionId;
     const isNativeResponsesStream =
       clientRequestedStream && !isChatCompletionsPath;
     let nativeStreamTraceId: string | undefined;
@@ -2544,8 +2549,8 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             ? { ...(req.body ?? {}) }
             : responsesToChatCompletionsPayload(req.body)
           : isChatCompletions
-            ? chatCompletionsToResponsesPayload(req.body, sessionId)
-            : normalizeResponsesPayload(req.body, sessionId);
+            ? chatCompletionsToResponsesPayload(req.body, promptCacheSessionId)
+            : normalizeResponsesPayload(req.body, promptCacheSessionId);
         if (
           shouldSendChatCompletions &&
           (candidate.provider === "openai-compatible" ||
