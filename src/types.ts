@@ -218,6 +218,8 @@ export type LegacyModelAlias = {
 export type StoreSettings = {
   defaultPassthroughAccountId?: string;
   imageRequestModelOverride?: string;
+  anonymousUsageSharingEnabled?: boolean;
+  anonymousUsageSharingEnabledAt?: string;
 };
 
 export type StoredProxyApiKey = {

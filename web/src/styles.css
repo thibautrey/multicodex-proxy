@@ -2574,6 +2574,44 @@ details summary {
   background: color-mix(in srgb, var(--surface-muted) 78%, transparent);
 }
 
+.trace-sharing-setting {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(230px, 0.38fr);
+  gap: 22px;
+  align-items: center;
+  padding: 18px 20px;
+  border-top: 1px solid var(--line);
+}
+
+.trace-sharing-setting h2 {
+  margin: 4px 0 6px;
+  font-size: 1rem;
+}
+
+.trace-sharing-setting p {
+  max-width: 92ch;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.trace-sharing-action {
+  display: grid;
+  gap: 7px;
+  justify-items: start;
+}
+
+.trace-sharing-action .inline {
+  align-items: center;
+  font-weight: 750;
+}
+
+.trace-sharing-action small,
+.trace-sharing-action [role="status"] {
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .trace-view-tab {
   display: grid;
   gap: 2px;
@@ -3666,6 +3704,10 @@ details summary {
 }
 
 @media (max-width: 820px) {
+  .trace-sharing-setting {
+    grid-template-columns: 1fr;
+  }
+
   .trace-command-row {
     align-items: stretch;
     flex-direction: column;

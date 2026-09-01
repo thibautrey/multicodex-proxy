@@ -1337,7 +1337,9 @@ export function AccountsTab(props: Props) {
               <section className="make-money-preview-card" aria-labelledby="make-money-control-title">
                 <h3 id="make-money-control-title">You stay in control</h3>
                 <p>
-                  Sharing will require explicit opt-in. Planned controls include
+                  Offering customer-serving capacity will require explicit opt-in.
+                  This is separate from anonymous model-demand sharing in Tracing.
+                  Planned provider controls include
                   immediate pause, recurring availability windows and idle-aware
                   sharing when your machine has spare capacity. Manual pause will
                   always win. None of these controls is active in this preview.

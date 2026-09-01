@@ -284,6 +284,11 @@ export type TraceManagerConfig = {
   ) => CodexProjectAttribution | undefined;
 };
 
+export type AnonymousModelOutputTotal = {
+  modelId: string;
+  outputTokens: number;
+};
+
 type TraceBucketAggregate = {
   at: number;
   requests: number;
@@ -1686,6 +1691,41 @@ export function createTraceManager(config: TraceManagerConfig) {
     return traces ?? [];
   }
 
+  async function aggregateAnonymousOutputTokens(
+    sinceMs: number,
+    untilMs: number,
+    modelAllowlist: Readonly<Record<string, string>>,
+  ): Promise<AnonymousModelOutputTotal[]> {
+    await ensureCacheReady();
+    const totals = new Map<string, number>();
+    await scanStatsHistory((trace) => {
+      const completedAt = trace.completedAt ?? trace.at;
+      if (
+        trace.lifecycleState !== "completed" ||
+        trace.isError ||
+        completedAt < sinceMs ||
+        completedAt >= untilMs
+      ) {
+        return;
+      }
+      const publicModelId = trace.requestedModel ?? trace.model;
+      if (!publicModelId) return;
+      const canonicalModelId = modelAllowlist[publicModelId];
+      if (!canonicalModelId) return;
+      const outputTokens = Number.isFinite(trace.tokensOutput)
+        ? Math.max(0, Math.floor(trace.tokensOutput ?? 0))
+        : 0;
+      if (!outputTokens) return;
+      totals.set(
+        canonicalModelId,
+        Math.min(1_000_000_000, (totals.get(canonicalModelId) ?? 0) + outputTokens),
+      );
+    });
+    return [...totals]
+      .map(([modelId, outputTokens]) => ({ modelId, outputTokens }))
+      .sort((left, right) => right.outputTokens - left.outputTokens || left.modelId.localeCompare(right.modelId));
+  }
+
   async function seedStatsHistoryIfMissing() {
     await ensureCacheReady();
     for (const entry of traceCache) {
@@ -2037,6 +2077,7 @@ export function createTraceManager(config: TraceManagerConfig) {
     writeTraceWindow,
     readStatsHistory,
     readStatsHistoryRange,
+    aggregateAnonymousOutputTokens,
     seedStatsHistoryIfMissing,
     compactTraceStorageIfNeeded,
     getTraceStats,

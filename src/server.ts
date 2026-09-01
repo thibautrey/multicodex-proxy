@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import * as Sentry from "@sentry/node";
 import crypto from "node:crypto";
 import { AccountStore, OAuthStateStore, cleanupOrphanedTmpFiles } from "./store.js";
+import { createAnonymousUsageSharingWorker } from "./anonymous-usage-sharing.js";
 import { createTraceManager } from "./traces.js";
 import { createAdminRouter } from "./routes/admin/index.js";
 import { createProxyRouter } from "./routes/proxy/index.js";
@@ -28,6 +29,8 @@ import {
   STORE_PATH,
   TRACE_FILE_PATH,
   TRACE_STATS_HISTORY_PATH,
+  ANONYMOUS_USAGE_STATE_PATH,
+  ANONYMOUS_USAGE_API_BASE_URL,
   TRACE_RETENTION_MAX,
   TRACE_INCLUDE_BODY,
   TRACE_INCLUDE_HEADERS,
@@ -121,6 +124,13 @@ await Promise.all([
   traceManager.initialize(),
 ]);
 await traceManager.seedStatsHistoryIfMissing();
+const anonymousUsageSharing = createAnonymousUsageSharingWorker({
+  settingsStore: store,
+  traceSource: traceManager,
+  statePath: ANONYMOUS_USAGE_STATE_PATH,
+  apiBaseUrl: ANONYMOUS_USAGE_API_BASE_URL,
+});
+void anonymousUsageSharing.start();
 startScheduledWeeklyResetMonitor({
   store,
   oauthConfig,
@@ -177,6 +187,7 @@ const adminRouter = createAdminRouter({
   codexProjectRegistrationToken: CODEX_PROJECT_REGISTRATION_TOKEN,
   configuredProxyApiKeys,
   smartRouting,
+  anonymousUsageSharing,
   storagePaths: {
     accountsPath: STORE_PATH,
     oauthStatePath: OAUTH_STATE_PATH,
@@ -558,6 +569,7 @@ async function shutdown(signal: NodeJS.Signals) {
   shuttingDown = true;
   jobRunner.stop();
   smartRouting.stopHealthMonitoring();
+  anonymousUsageSharing.stop();
   await providerAgent.stop();
   console.log(`received ${signal}, flushing persistent state`);
   server.close(async (error) => {

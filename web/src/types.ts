@@ -323,6 +323,8 @@ export type RoutingRule = {
 export type StoreSettings = {
   defaultPassthroughAccountId?: string;
   imageRequestModelOverride?: string;
+  anonymousUsageSharingEnabled?: boolean;
+  anonymousUsageSharingEnabledAt?: string;
 };
 
 export type ProxyApiKey = {

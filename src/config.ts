@@ -12,6 +12,10 @@ export const TRACE_FILE_PATH =
   process.env.TRACE_FILE_PATH ?? "/data/requests-trace.jsonl";
 export const TRACE_STATS_HISTORY_PATH =
   process.env.TRACE_STATS_HISTORY_PATH ?? "/data/requests-stats-history.jsonl";
+export const ANONYMOUS_USAGE_STATE_PATH =
+  process.env.ANONYMOUS_USAGE_STATE_PATH ?? "/data/anonymous-usage-state.json";
+export const ANONYMOUS_USAGE_API_BASE_URL =
+  process.env.ANONYMOUS_USAGE_API_BASE_URL ?? "https://api.multivibe.cloud";
 export const CODEX_PROJECTS_PATH =
   process.env.CODEX_PROJECTS_PATH ?? "/data/codex-projects.json";
 export const JOBS_DB_PATH = process.env.JOBS_DB_PATH ?? "/data/jobs.sqlite";

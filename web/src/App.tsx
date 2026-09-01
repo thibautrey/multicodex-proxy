@@ -990,6 +990,8 @@ export default function App() {
             expandedTraceLoading={expandedTraceLoading}
             toggleExpandedTrace={toggleExpandedTrace}
             sanitized={sanitized}
+            settings={settings}
+            patchSettings={patchSettings}
           />
         )}
 
