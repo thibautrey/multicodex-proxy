@@ -451,6 +451,19 @@ Without opt-in headers, requests retain synchronous behavior unless the selected
 alias defines defaults. Streaming, WebSocket, and Realtime requests cannot be
 deferred. A deferred request returns `202 Accepted` and a `multivibe.job`.
 
+For an authenticated, synchronous JSON inference, the same idempotency header
+also enables a short in-memory single-flight and replay window. The key is
+isolated by application and inference route. Reusing it with a different JSON
+payload returns `409`; concurrent duplicates share one execution. Responses
+include `X-MultiVibe-Idempotency-Status` with `created`, `coalesced`, `replayed`,
+or `bypass`.
+
+Direct inference replay is intentionally limited to text-only, non-streaming,
+stateless requests without tools. Streaming, tool, multimodal, stored,
+background, and conversation-linked requests bypass this layer. Errors,
+partial results, tool-call responses, and responses over the configured byte
+limit are shared only with already waiting followers and are not retained.
+
 ~~~bash
 curl -X POST http://localhost:1455/v1/responses \
   -H "Authorization: Bearer $MULTIVIBE_API_KEY" \
@@ -599,6 +612,11 @@ file before they reach the container.
 | `CODEX_PROJECT_REGISTRATION_TOKEN` | `ADMIN_TOKEN` | Limited project-registration secret |
 | `CODEX_SESSION_AFFINITY` | `false` | In-memory per-session account stickiness |
 | `CODEX_SESSION_AFFINITY_MAX_ENTRIES` | `10000` | Affinity cache limit |
+| `INFERENCE_IDEMPOTENCY_TTL_MS` | `300000` | Completed synchronous inference replay TTL |
+| `INFERENCE_IDEMPOTENCY_IN_FLIGHT_TIMEOUT_MS` | `300000` | Maximum single-flight reservation lifetime |
+| `INFERENCE_IDEMPOTENCY_MAX_ENTRIES` | `1000` | Combined in-flight and completed entry limit |
+| `INFERENCE_IDEMPOTENCY_MAX_BYTES` | `33554432` | Global completed-response memory budget |
+| `INFERENCE_IDEMPOTENCY_MAX_RESPONSE_BYTES` | `1048576` | Per-response replay limit |
 | `PROXY_MODELS` | `gpt-5.3-codex,gpt-5.2-codex,gpt-5-codex` | Fallback model catalog |
 | `MODELS_CLIENT_VERSION` | `0.144.1` | Codex identity used for discovery/runtime requests |
 | `MODELS_CACHE_MS` | `600000` | Model-catalog refresh interval |
