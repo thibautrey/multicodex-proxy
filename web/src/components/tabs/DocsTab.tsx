@@ -73,10 +73,9 @@ function Icon({ name }: { name: IconName }) {
 }
 
 function hydrateExample(value: string | undefined, model: string) {
-  return (value ?? "").replaceAll(
-    "{{model}}",
-    model || "gpt-5.3-codex",
-  );
+  return (value ?? "")
+    .split("{{model}}")
+    .join(model || "gpt-5.3-codex");
 }
 
 function methodClass(method: HttpMethod) {
@@ -92,7 +91,7 @@ function tryFormatJson(value: string) {
 }
 
 function shellQuote(value: string) {
-  return "'" + value.replaceAll("'", "'" + '"' + "'" + '"' + "'") + "'";
+  return "'" + value.split("'").join("'" + '"' + "'" + '"' + "'") + "'";
 }
 
 export function DocsTab({ models }: { models: ExposedModel[] }) {
