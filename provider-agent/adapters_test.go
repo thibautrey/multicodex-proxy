@@ -26,15 +26,21 @@ func TestRuntimeAdapterRegistryIsCompleteAndBounded(t *testing.T) {
 	for _, adapter := range registry.Adapters {
 		actual = append(actual, adapter.ID)
 		automaticCandidates += len(adapter.Candidates)
-		if adapter.ID != "lm-studio" && len(adapter.Candidates) != 0 {
+		if adapter.ID != "ollama" && adapter.ID != "lm-studio" && len(adapter.Candidates) != 0 {
 			t.Fatalf("%s must remain manual until an official probe is reviewed", adapter.ID)
 		}
 	}
 	if !reflect.DeepEqual(actual, expected) {
 		t.Fatalf("unexpected adapter registry: %#v", actual)
 	}
-	if automaticCandidates != 2 {
-		t.Fatalf("expected only the two literal LM Studio loopback candidates, got %d", automaticCandidates)
+	if automaticCandidates != 4 {
+		t.Fatalf("expected only the four literal Ollama and LM Studio loopback candidates, got %d", automaticCandidates)
+	}
+	ollama := registry.Adapters[0]
+	if ollama.Authentication != "none" || len(ollama.Candidates) != 2 ||
+		ollama.Candidates[0].Endpoint != "http://127.0.0.1:11434" ||
+		ollama.Candidates[1].Endpoint != "http://[::1]:11434" {
+		t.Fatalf("unexpected reviewed Ollama contract: %#v", ollama)
 	}
 }
 
@@ -74,6 +80,20 @@ func TestRuntimeAdapterRegistryRejectsRemoteOrArbitraryCandidates(t *testing.T) 
 	}}
 	if err := validateAdapterRegistry(registry); err == nil {
 		t.Fatal("an arbitrary loopback port and path must be rejected")
+	}
+
+	registry = runtimeAdapterRegistry()
+	registry.Adapters = append([]runtimeAdapter(nil), registry.Adapters...)
+	registry.Adapters[0].Candidates = []adapterCandidate{
+		{
+			Endpoint:   "http://127.0.0.1:11435",
+			HealthURL:  "http://127.0.0.1:11435/v1/models",
+			CatalogURL: "http://127.0.0.1:11435/v1/models",
+		},
+		registry.Adapters[0].Candidates[1],
+	}
+	if err := validateAdapterRegistry(registry); err == nil {
+		t.Fatal("an unreviewed Ollama port must be rejected")
 	}
 }
 

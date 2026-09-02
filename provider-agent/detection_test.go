@@ -93,7 +93,17 @@ func TestDetectedModelsEndpointReturnsOnlySuccessfulLoopbackInventory(t *testing
 	calls := 0
 	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		calls++
-		if calls == 1 {
+		if calls <= 2 {
+			expected := []string{"http://127.0.0.1:11434/v1/models", "http://[::1]:11434/v1/models"}[calls-1]
+			if request.URL.String() != expected {
+				t.Fatalf("unexpected Ollama probe: %s", request.URL)
+			}
+			return nil, errors.New("Ollama unavailable")
+		}
+		if calls == 3 {
+			if request.URL.String() != "http://127.0.0.1:1234/v1/models" {
+				t.Fatalf("unexpected LM Studio probe: %s", request.URL)
+			}
 			return nil, errors.New("IPv4 LM Studio unavailable")
 		}
 		if request.URL.String() != "http://[::1]:1234/v1/models" {
@@ -115,7 +125,7 @@ func TestDetectedModelsEndpointReturnsOnlySuccessfulLoopbackInventory(t *testing
 	if response.Body.String() != `{"schema_version":"provider-detected-models-v1","runtimes":[{"adapter_id":"lm-studio","models":["publisher/model"]}]}`+"\n" {
 		t.Fatalf("unexpected bounded inventory: %s", response.Body.String())
 	}
-	if calls != 2 {
-		t.Fatalf("expected exactly two reviewed loopback attempts, got %d", calls)
+	if calls != 4 {
+		t.Fatalf("expected exactly four reviewed loopback attempts, got %d", calls)
 	}
 }

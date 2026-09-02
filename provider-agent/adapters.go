@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const adapterRegistrySchemaVersion = "provider-runtime-registry-v1"
+const adapterRegistrySchemaVersion = "provider-runtime-registry-v2"
 
 type adapterLimits struct {
 	MaxCatalogModels int `json:"max_catalog_models"`
@@ -59,6 +59,21 @@ func manualOpenAIAdapter(id, displayName string) runtimeAdapter {
 }
 
 var runtimeAdapters = func() []runtimeAdapter {
+	ollama := manualOpenAIAdapter("ollama", "Ollama")
+	ollama.Authentication = "none"
+	ollama.Capabilities = []string{"text", "embeddings", "tools", "vision", "reasoning", "responses"}
+	ollama.Candidates = []adapterCandidate{
+		{
+			Endpoint:   "http://127.0.0.1:11434",
+			HealthURL:  "http://127.0.0.1:11434/v1/models",
+			CatalogURL: "http://127.0.0.1:11434/v1/models",
+		},
+		{
+			Endpoint:   "http://[::1]:11434",
+			HealthURL:  "http://[::1]:11434/v1/models",
+			CatalogURL: "http://[::1]:11434/v1/models",
+		},
+	}
 	lmStudio := manualOpenAIAdapter("lm-studio", "LM Studio")
 	lmStudio.Authentication = "none"
 	lmStudio.Candidates = []adapterCandidate{
@@ -74,7 +89,7 @@ var runtimeAdapters = func() []runtimeAdapter {
 		},
 	}
 	return []runtimeAdapter{
-		manualOpenAIAdapter("ollama", "Ollama"),
+		ollama,
 		lmStudio,
 		manualOpenAIAdapter("llama-cpp", "llama.cpp / llama-server / llama-cpp-python"),
 		manualOpenAIAdapter("vllm", "vLLM"),
@@ -139,8 +154,11 @@ func validateAdapterRegistry(registry adapterRegistryDocument) error {
 			adapter.Limits.TimeoutMS < 1 || adapter.Limits.TimeoutMS > 5_000 || len(adapter.Candidates) > 4 {
 			return fmt.Errorf("provider runtime adapter %s has invalid limits", adapter.ID)
 		}
-		if (adapter.ID == "lm-studio" && len(adapter.Candidates) != 2) ||
-			(adapter.ID != "lm-studio" && len(adapter.Candidates) != 0) {
+		expectedCandidates := 0
+		if adapter.ID == "ollama" || adapter.ID == "lm-studio" {
+			expectedCandidates = 2
+		}
+		if len(adapter.Candidates) != expectedCandidates {
 			return fmt.Errorf("provider runtime adapter %s has unreviewed automatic candidates", adapter.ID)
 		}
 		for _, candidate := range adapter.Candidates {
@@ -175,13 +193,19 @@ func validateLoopbackCandidate(adapter runtimeAdapter, candidate adapterCandidat
 	if health.Path != adapter.HealthPath || catalog.Path != adapter.CatalogPath {
 		return fmt.Errorf("provider runtime adapter %s candidate does not match its probe contract", adapter.ID)
 	}
-	approved := (candidate.Endpoint == "http://127.0.0.1:1234" &&
+	approvedLMStudio := (candidate.Endpoint == "http://127.0.0.1:1234" &&
 		candidate.HealthURL == "http://127.0.0.1:1234/v1/models" &&
 		candidate.CatalogURL == "http://127.0.0.1:1234/v1/models") ||
 		(candidate.Endpoint == "http://[::1]:1234" &&
 			candidate.HealthURL == "http://[::1]:1234/v1/models" &&
 			candidate.CatalogURL == "http://[::1]:1234/v1/models")
-	if adapter.ID != "lm-studio" || !approved {
+	approvedOllama := (candidate.Endpoint == "http://127.0.0.1:11434" &&
+		candidate.HealthURL == "http://127.0.0.1:11434/v1/models" &&
+		candidate.CatalogURL == "http://127.0.0.1:11434/v1/models") ||
+		(candidate.Endpoint == "http://[::1]:11434" &&
+			candidate.HealthURL == "http://[::1]:11434/v1/models" &&
+			candidate.CatalogURL == "http://[::1]:11434/v1/models")
+	if (adapter.ID != "lm-studio" || !approvedLMStudio) && (adapter.ID != "ollama" || !approvedOllama) {
 		return fmt.Errorf("provider runtime adapter %s candidate is outside the reviewed port allowlist", adapter.ID)
 	}
 	return nil

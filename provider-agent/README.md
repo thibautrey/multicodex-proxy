@@ -21,9 +21,13 @@ responses or logs.
 `GET /v1/adapters` exposes the bounded runtime contract embedded in the agent:
 protocol, health and catalog paths, capabilities, authentication, measurement
 dimensions, limits and reviewed automatic candidates. The registry covers the
-full Core runtime list and keeps every adapter manual except the two literal
-IPv4/IPv6 LM Studio loopback candidates. The agent itself refuses to listen on
-anything other than literal `127.0.0.1` or `::1` port `1460`.
+full Core runtime list and keeps every adapter manual except the literal
+IPv4/IPv6 Ollama and LM Studio loopback candidates. Ollama uses only its
+official default port `11434` and documented OpenAI-compatible `/v1/models`
+surface; the review source is the official
+[Ollama OpenAI compatibility reference](https://docs.ollama.com/api/openai-compatibility).
+The agent itself refuses to listen on anything other than literal `127.0.0.1`
+or `::1` port `1460`.
 
 `GET /v1/detected-models` performs an on-demand local inventory through those
 reviewed candidates only. Catalog calls are credential-free, redirect-free,
