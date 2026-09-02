@@ -62,6 +62,8 @@ function providerAgentControl(overrides: Partial<ProviderAgentControl> = {}): Pr
     getRuntimeEndpoints: unavailable,
     replaceRuntimeEndpoints: unavailable,
     detectModels: unavailable,
+    getCloudEnrollment: unavailable,
+    enrollCloud: unavailable,
     openRelayShadowSession: unavailable,
     ...overrides,
   };
@@ -237,5 +239,64 @@ test("admin relay shadow route signs only bounded non-commercial session opens",
     });
     assert.equal(denied.status, 400);
     assert.equal(calls, 1);
+  });
+});
+
+test("admin Cloud enrollment forwards explicit consent once and never returns the grant", async () => {
+  const grant = `mve_${"a".repeat(43)}`;
+  let receivedGrant = "";
+  const view = {
+    schema_version: "provider-cloud-enrollment-v1" as const,
+    revision: 1 as const,
+    state: "submitted" as const,
+    provider_id: "10000000-0000-4000-8000-000000000001",
+    node_id: "20000000-0000-4000-8000-000000000002",
+    device_key_id: `ed25519:${"b".repeat(43)}`,
+    credential_epoch: 1,
+    manifest_digest: "c".repeat(64),
+    runtime_family: "omlx" as const,
+    declared_max_concurrency: 4,
+    cloud_api_origin: "https://api.multivibe.cloud",
+    submitted_at: "2026-09-02T12:00:00.000Z",
+    routing_eligible: false as const,
+    compensation_eligible: false as const,
+    safety_profile: "shadow_only_no_routing_no_compensation" as const,
+  };
+  const control = providerAgentControl({
+    getCloudEnrollment: async () => view,
+    enrollCloud: async (request) => {
+      receivedGrant = request.enrollment_token;
+      return view;
+    },
+  });
+  await withAdminServer(control, async (baseUrl) => {
+    const request = {
+      enrollment_token: grant,
+      core_version: "0.2.0",
+      runtime_family: "omlx",
+      selected_models: [{ reported_id: "publisher/model", modalities: ["text"] }],
+      declared_max_concurrency: 4,
+    };
+    const enrolled = await fetch(`${baseUrl}/admin/provider-agent/cloud-shadow/enroll`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(request),
+    });
+    const body = await enrolled.text();
+    assert.equal(enrolled.status, 201);
+    assert.equal(receivedGrant, grant);
+    assert.doesNotMatch(body, /mve_|enrollment_token/);
+    assert.match(body, /"state":"submitted"/);
+    assert.match(body, /"routing_eligible":false/);
+
+    const status = await fetch(`${baseUrl}/admin/provider-agent/cloud-shadow/enrollment`);
+    assert.equal(status.status, 200);
+
+    const invalid = await fetch(`${baseUrl}/admin/provider-agent/cloud-shadow/enroll`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...request, selected_models: [{ reported_id: "publisher/model", modalities: ["text", "text"] }] }),
+    });
+    assert.equal(invalid.status, 400);
   });
 });

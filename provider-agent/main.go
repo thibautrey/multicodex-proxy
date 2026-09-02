@@ -105,6 +105,10 @@ func providerHandlerWithStores(core *url.URL, selections *selectionStore, runtim
 }
 
 func providerHandlerWithStoresAndIdentity(core *url.URL, selections *selectionStore, runtimes *runtimeEndpointStore, identity *deviceIdentity, client *http.Client, controlToken string) http.Handler {
+	return providerHandlerWithServices(core, selections, runtimes, identity, nil, client, controlToken)
+}
+
+func providerHandlerWithServices(core *url.URL, selections *selectionStore, runtimes *runtimeEndpointStore, identity *deviceIdentity, enrollment *cloudEnrollmentService, client *http.Client, controlToken string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health/live", func(response http.ResponseWriter, _ *http.Request) {
 		response.Header().Set("content-type", "application/json")
@@ -130,6 +134,10 @@ func providerHandlerWithStoresAndIdentity(core *url.URL, selections *selectionSt
 	})
 	mux.HandleFunc("GET /v1/manifest", func(response http.ResponseWriter, _ *http.Request) {
 		document := selections.snapshot()
+		state := document.State
+		if enrollment != nil && enrollment.store.snapshot() != nil {
+			state = string(StateSubmitted)
+		}
 		keyID := ""
 		publicKeySPKI := ""
 		if identity != nil {
@@ -138,7 +146,7 @@ func providerHandlerWithStoresAndIdentity(core *url.URL, selections *selectionSt
 		response.Header().Set("cache-control", "no-store")
 		response.Header().Set("content-type", "application/json")
 		_ = json.NewEncoder(response).Encode(manifest{
-			ProtocolVersion: "provider-agent-v1", State: document.State, SelectedModels: document.SelectedModels,
+			ProtocolVersion: "provider-agent-v1", State: state, SelectedModels: document.SelectedModels,
 			DeviceKeyID: keyID, DevicePublicKeySPKI: publicKeySPKI,
 		})
 	})
@@ -154,6 +162,13 @@ func providerHandlerWithStoresAndIdentity(core *url.URL, selections *selectionSt
 	mux.HandleFunc("PUT /v1/selection", func(response http.ResponseWriter, request *http.Request) {
 		if !authorizeProviderControl(request, controlToken) {
 			http.Error(response, "not found", http.StatusNotFound)
+			return
+		}
+		if enrollment != nil && enrollment.store.snapshot() != nil {
+			response.Header().Set("cache-control", "no-store")
+			response.Header().Set("content-type", "application/json")
+			response.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(response).Encode(selections.snapshot())
 			return
 		}
 		mediaType, _, mediaTypeErr := mime.ParseMediaType(request.Header.Get("content-type"))
@@ -279,6 +294,64 @@ func providerHandlerWithStoresAndIdentity(core *url.URL, selections *selectionSt
 		response.Header().Set("content-type", "application/json")
 		_ = json.NewEncoder(response).Encode(envelope)
 	})
+	mux.HandleFunc("GET /v1/cloud-shadow/enrollment", func(response http.ResponseWriter, request *http.Request) {
+		if !authorizeProviderControl(request, controlToken) {
+			http.Error(response, "not found", http.StatusNotFound)
+			return
+		}
+		if enrollment == nil {
+			http.Error(response, "provider Cloud enrollment unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		view := enrollment.store.snapshot()
+		if view == nil {
+			http.Error(response, "provider Cloud enrollment not found", http.StatusNotFound)
+			return
+		}
+		response.Header().Set("cache-control", "no-store")
+		response.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(response).Encode(view)
+	})
+	mux.HandleFunc("POST /v1/cloud-shadow/enroll", func(response http.ResponseWriter, request *http.Request) {
+		if !authorizeProviderControl(request, controlToken) {
+			http.Error(response, "not found", http.StatusNotFound)
+			return
+		}
+		if enrollment == nil {
+			http.Error(response, "provider Cloud enrollment unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		mediaType, _, mediaTypeErr := mime.ParseMediaType(request.Header.Get("content-type"))
+		if mediaTypeErr != nil || mediaType != "application/json" {
+			http.Error(response, "invalid request", http.StatusUnsupportedMediaType)
+			return
+		}
+		request.Body = http.MaxBytesReader(response, request.Body, maxCloudEnrollmentBodyBytes)
+		var input cloudEnrollmentInput
+		decoder := json.NewDecoder(request.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&input); err != nil || ensureJSONEOF(decoder) != nil {
+			http.Error(response, "invalid request", http.StatusBadRequest)
+			return
+		}
+		view, err := enrollment.enroll(request.Context(), input)
+		if err != nil {
+			if errors.Is(err, errInvalidCloudEnrollment) {
+				http.Error(response, "invalid request", http.StatusBadRequest)
+				return
+			}
+			if errors.Is(err, errCloudAlreadyEnrolled) {
+				http.Error(response, "already enrolled", http.StatusConflict)
+				return
+			}
+			http.Error(response, "provider Cloud enrollment failed", http.StatusBadGateway)
+			return
+		}
+		response.Header().Set("cache-control", "no-store")
+		response.Header().Set("content-type", "application/json")
+		response.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(response).Encode(view)
+	})
 	return mux
 }
 
@@ -329,6 +402,20 @@ func main() {
 			os.Exit(2)
 		}
 	}
+	cloudURL, err := cloudAPIURL(envDefault("MULTIVIBE_CLOUD_API_URL", "https://api.multivibe.cloud"))
+	if err != nil {
+		logger.Error("provider_agent_configuration_invalid", "error", err.Error())
+		os.Exit(2)
+	}
+	enrollmentStatePath := strings.TrimSpace(os.Getenv("MULTIVIBE_PROVIDER_ENROLLMENT_STATE_PATH"))
+	enrollmentStore := newMemoryCloudEnrollmentStore()
+	if enrollmentStatePath != "" {
+		enrollmentStore, err = openCloudEnrollmentStore(enrollmentStatePath)
+		if err != nil {
+			logger.Error("provider_agent_configuration_invalid", "error", err.Error())
+			os.Exit(2)
+		}
+	}
 	controlToken := strings.TrimSpace(os.Getenv("MULTIVIBE_PROVIDER_CONTROL_TOKEN"))
 	if controlToken != "" && len(controlToken) < 32 {
 		logger.Error("provider_agent_configuration_invalid", "error", "provider control token must contain at least 32 characters")
@@ -344,13 +431,17 @@ func main() {
 		os.Exit(2)
 	}
 	client := &http.Client{Timeout: 2 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	var enrollment *cloudEnrollmentService
+	if identity != nil {
+		enrollment = newCloudEnrollmentService(cloudURL, client, identity, selections, enrollmentStore)
+	}
 	listener, err := net.Listen("tcp", listenAddress)
 	if err != nil {
 		logger.Error("provider_agent_listen_failed", "error", err.Error())
 		os.Exit(1)
 	}
-	logger.Info("provider_agent_started", "address", listener.Addr().String(), "selected_model_count", len(selections.snapshot().SelectedModels), "selection_persistent", statePath != "", "manual_runtime_count", len(runtimes.snapshot().Endpoints), "runtime_state_persistent", runtimeStatePath != "", "device_identity_persistent", deviceKeyPath != "")
-	server := &http.Server{Handler: providerHandlerWithStoresAndIdentity(core, selections, runtimes, identity, client, controlToken), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second}
+	logger.Info("provider_agent_started", "address", listener.Addr().String(), "selected_model_count", len(selections.snapshot().SelectedModels), "selection_persistent", statePath != "", "manual_runtime_count", len(runtimes.snapshot().Endpoints), "runtime_state_persistent", runtimeStatePath != "", "device_identity_persistent", deviceKeyPath != "", "cloud_enrollment_persistent", enrollmentStatePath != "")
+	server := &http.Server{Handler: providerHandlerWithServices(core, selections, runtimes, identity, enrollment, client, controlToken), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second}
 	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("provider_agent_failed", "error", fmt.Sprint(err))
 		os.Exit(1)
