@@ -40,9 +40,15 @@ var (
 	providerModality             = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,31}$`)
 	providerEnrollmentToken      = regexp.MustCompile(`^mve_[A-Za-z0-9_-]{43}$`)
 	providerDeviceKeyID          = regexp.MustCompile(`^ed25519:[A-Za-z0-9_-]{43}$`)
-	providerRuntimeFamilies      = map[string]bool{"lm-studio": true, "omlx": true, "exo": true, "mtplx": true}
-	errInvalidCloudEnrollment    = errors.New("provider Cloud enrollment request is invalid")
-	errCloudAlreadyEnrolled      = errors.New("provider device is already enrolled")
+	providerRuntimeFamilies      = func() map[string]bool {
+		families := make(map[string]bool, len(runtimeAdapters))
+		for _, adapter := range runtimeAdapters {
+			families[adapter.ID] = true
+		}
+		return families
+	}()
+	errInvalidCloudEnrollment = errors.New("provider Cloud enrollment request is invalid")
+	errCloudAlreadyEnrolled   = errors.New("provider device is already enrolled")
 )
 
 type cloudEnrollmentModel struct {

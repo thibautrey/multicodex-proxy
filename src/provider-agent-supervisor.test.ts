@@ -5,6 +5,7 @@ import {
   isValidProviderRuntimeEndpointInput,
   isValidProviderRelayShadowSessionRequest,
   isValidProviderCloudEnrollmentRequest,
+  PROVIDER_RUNTIME_FAMILIES,
   providerAgentChildEnvironment,
   providerAgentEnvironment,
 } from "./provider-agent-supervisor.js";
@@ -98,7 +99,10 @@ test("provider Cloud enrollment accepts only the exact explicit consent manifest
     declared_max_concurrency: 4,
   };
   assert.equal(isValidProviderCloudEnrollmentRequest(valid), true);
-  assert.equal(isValidProviderCloudEnrollmentRequest({ ...valid, runtime_family: "vllm" }), false);
+  for (const runtime_family of PROVIDER_RUNTIME_FAMILIES) {
+    assert.equal(isValidProviderCloudEnrollmentRequest({ ...valid, runtime_family }), true, runtime_family);
+  }
+  assert.equal(isValidProviderCloudEnrollmentRequest({ ...valid, runtime_family: "unknown-runtime" }), false);
   assert.equal(isValidProviderCloudEnrollmentRequest({ ...valid, enrollment_token: "secret" }), false);
   assert.equal(isValidProviderCloudEnrollmentRequest({ ...valid, selected_models: [] }), false);
   assert.equal(isValidProviderCloudEnrollmentRequest({

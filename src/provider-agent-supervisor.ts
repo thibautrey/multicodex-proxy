@@ -41,10 +41,22 @@ export type SignedProviderRelayShadowSession = {
   signature: { algorithm: "Ed25519"; keyId: string; value: string };
 };
 
+export const PROVIDER_RUNTIME_FAMILIES = [
+  "ollama", "lm-studio", "llama-cpp", "vllm", "sglang", "localai",
+  "huggingface-tgi", "transformers-serve", "xinference", "mlx-lm", "omlx",
+  "mlc-llm", "exo", "jan", "gpt4all", "koboldcpp", "text-generation-webui",
+  "aphrodite", "tabbyapi", "llama-box", "mistral-rs", "nvidia-nim",
+  "tensorrt-llm", "triton", "openllm", "bentoml", "mtplx", "manual-openai-compatible",
+] as const;
+
+export type ProviderRuntimeFamily = typeof PROVIDER_RUNTIME_FAMILIES[number];
+
+const PROVIDER_RUNTIME_FAMILY_SET = new Set<string>(PROVIDER_RUNTIME_FAMILIES);
+
 export type ProviderCloudEnrollmentRequest = {
   enrollment_token: string;
   core_version: string;
-  runtime_family: "lm-studio" | "omlx" | "exo" | "mtplx";
+  runtime_family: ProviderRuntimeFamily;
   selected_models: Array<{ reported_id: string; modalities: string[] }>;
   declared_max_concurrency: number;
 };
@@ -58,7 +70,7 @@ export type ProviderCloudEnrollmentView = {
   device_key_id: string;
   credential_epoch: number;
   manifest_digest: string;
-  runtime_family: "lm-studio" | "omlx" | "exo" | "mtplx";
+  runtime_family: ProviderRuntimeFamily;
   declared_max_concurrency: number;
   cloud_api_origin: string;
   submitted_at: string;
@@ -226,7 +238,7 @@ export function isValidProviderCloudEnrollmentRequest(
   if (Object.keys(request).length !== keys.length || keys.some((key) => !(key in request))) return false;
   if (typeof request.enrollment_token !== "string" || !/^mve_[A-Za-z0-9_-]{43}$/.test(request.enrollment_token)) return false;
   if (typeof request.core_version !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._+:/-]{0,63}$/.test(request.core_version)) return false;
-  if (!new Set(["lm-studio", "omlx", "exo", "mtplx"]).has(String(request.runtime_family))) return false;
+  if (!PROVIDER_RUNTIME_FAMILY_SET.has(String(request.runtime_family))) return false;
   if (!Number.isSafeInteger(request.declared_max_concurrency)
     || (request.declared_max_concurrency as number) < 1 || (request.declared_max_concurrency as number) > 1_000) return false;
   if (!Array.isArray(request.selected_models) || request.selected_models.length < 1 || request.selected_models.length > 100) return false;
