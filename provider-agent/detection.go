@@ -28,14 +28,14 @@ type modelCatalogPayload struct {
 	} `json:"data"`
 }
 
-func detectedModels(ctx context.Context, registry adapterRegistryDocument, client *http.Client) detectedModelsDocument {
+func detectedModels(ctx context.Context, registry adapterRegistryDocument, configured []runtimeEndpoint, client *http.Client) detectedModelsDocument {
 	document := detectedModelsDocument{
 		SchemaVersion: detectedModelsSchemaVersion,
 		Runtimes:      []detectedRuntime{},
 	}
 	for _, adapter := range registry.Adapters {
 		for _, candidate := range adapter.Candidates {
-			models, err := probeRuntimeCatalog(ctx, adapter, candidate, client)
+			models, err := probeRuntimeCatalogAuthenticated(ctx, adapter, candidate, "", client)
 			if err != nil {
 				continue
 			}
@@ -46,12 +46,46 @@ func detectedModels(ctx context.Context, registry adapterRegistryDocument, clien
 			break
 		}
 	}
+	adapters := make(map[string]runtimeAdapter, len(registry.Adapters))
+	for _, adapter := range registry.Adapters {
+		adapters[adapter.ID] = adapter
+	}
+	for _, endpoint := range configured {
+		adapter, exists := adapters[endpoint.AdapterID]
+		if !exists || len(adapter.Candidates) != 0 {
+			continue
+		}
+		candidate := adapterCandidate{
+			Endpoint:   endpoint.Endpoint,
+			HealthURL:  endpoint.Endpoint + adapter.HealthPath,
+			CatalogURL: endpoint.Endpoint + adapter.CatalogPath,
+		}
+		models, err := probeRuntimeCatalogAuthenticated(ctx, adapter, candidate, endpoint.BearerToken, client)
+		if err != nil {
+			continue
+		}
+		document.Runtimes = append(document.Runtimes, detectedRuntime{AdapterID: adapter.ID, Models: models})
+	}
 	return document
 }
 
 func probeRuntimeCatalog(ctx context.Context, adapter runtimeAdapter, candidate adapterCandidate, client *http.Client) ([]string, error) {
+	return probeRuntimeCatalogAuthenticated(ctx, adapter, candidate, "", client)
+}
+
+func probeRuntimeCatalogAuthenticated(ctx context.Context, adapter runtimeAdapter, candidate adapterCandidate, bearerToken string, client *http.Client) ([]string, error) {
 	if err := validateLoopbackCandidate(adapter, candidate); err != nil {
-		return nil, err
+		if len(adapter.Candidates) != 0 {
+			return nil, err
+		}
+		configured, configuredErr := normalizeRuntimeEndpoints([]runtimeEndpoint{{
+			AdapterID: adapter.ID, Endpoint: candidate.Endpoint, BearerToken: bearerToken,
+		}}, runtimeAdapterRegistry())
+		if configuredErr != nil || len(configured) != 1 ||
+			candidate.HealthURL != configured[0].Endpoint+adapter.HealthPath ||
+			candidate.CatalogURL != configured[0].Endpoint+adapter.CatalogPath {
+			return nil, errors.New("provider runtime manual probe is invalid")
+		}
 	}
 	if client == nil {
 		return nil, errors.New("provider runtime probe requires an HTTP client")
@@ -63,6 +97,9 @@ func probeRuntimeCatalog(ctx context.Context, adapter runtimeAdapter, candidate 
 		return nil, errors.New("provider runtime catalog request is invalid")
 	}
 	request.Header.Set("accept", "application/json")
+	if bearerToken != "" {
+		request.Header.Set("authorization", "Bearer "+bearerToken)
+	}
 	probeClient := *client
 	probeClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
 	response, err := probeClient.Do(request)

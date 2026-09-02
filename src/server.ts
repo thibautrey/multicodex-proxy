@@ -39,6 +39,7 @@ import {
   PORT,
   PROVIDER_AGENT_BINARY,
   PROVIDER_AGENT_ENABLED,
+  PROVIDER_AGENT_RUNTIME_STATE_PATH,
   PROVIDER_AGENT_STATE_PATH,
   PROXY_API_KEY,
   PROXY_API_KEYS,
@@ -128,6 +129,7 @@ const providerAgent = startEmbeddedProviderAgent({
   enabled: PROVIDER_AGENT_ENABLED,
   binaryPath: PROVIDER_AGENT_BINARY,
   statePath: PROVIDER_AGENT_STATE_PATH,
+  runtimeStatePath: PROVIDER_AGENT_RUNTIME_STATE_PATH,
 });
 await traceManager.seedStatsHistoryIfMissing();
 const anonymousUsageSharing = createAnonymousUsageSharingWorker({

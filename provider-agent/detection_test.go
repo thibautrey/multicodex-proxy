@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -71,6 +72,23 @@ func TestProbeRuntimeCatalogNeverFollowsRedirects(t *testing.T) {
 	}
 }
 
+func TestManualRuntimeProbeUsesOnlyTheConfiguredBearer(t *testing.T) {
+	adapter := manualRuntimeAdapter(t)
+	candidate := adapterCandidate{
+		Endpoint: "http://127.0.0.1:8080", HealthURL: "http://127.0.0.1:8080/v1/models", CatalogURL: "http://127.0.0.1:8080/v1/models",
+	}
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.String() != candidate.CatalogURL || request.Header.Get("authorization") != "Bearer local-runtime-token" {
+			t.Fatalf("unexpected authenticated probe: %s %#v", request.URL, request.Header)
+		}
+		return catalogResponse(http.StatusOK, `{"data":[{"id":"publisher/model"}]}`), nil
+	})}
+	models, err := probeRuntimeCatalogAuthenticated(context.Background(), adapter, candidate, "local-runtime-token", client)
+	if err != nil || !reflect.DeepEqual(models, []string{"publisher/model"}) {
+		t.Fatalf("unexpected manual probe: models=%#v err=%v", models, err)
+	}
+}
+
 func TestProbeRuntimeCatalogRejectsOversizedAndInvalidPayloads(t *testing.T) {
 	adapter := runtimeAdapterRegistry().Adapters[1]
 	candidate := adapter.Candidates[0]
@@ -115,9 +133,11 @@ func TestDetectedModelsEndpointReturnsOnlySuccessfulLoopbackInventory(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+	token := strings.Repeat("c", 32)
 	request := httptest.NewRequest(http.MethodGet, "/v1/detected-models", nil)
+	request.Header.Set("authorization", "Bearer "+token)
 	response := httptest.NewRecorder()
-	providerHandler(core, []string{}, client).ServeHTTP(response, request)
+	providerHandlerWithStores(core, newMemorySelectionStore([]string{}), newMemoryRuntimeEndpointStore(), client, token).ServeHTTP(response, request)
 
 	if response.Code != http.StatusOK || response.Header().Get("cache-control") != "no-store" {
 		t.Fatalf("unexpected endpoint response: %d %#v", response.Code, response.Header())
