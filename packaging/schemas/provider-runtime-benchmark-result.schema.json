@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://multivibe.cloud/schemas/provider-runtime-benchmark-result.schema.json",
+  "title": "MultiVibe synthetic runtime benchmark result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "result_digest",
+    "benchmark_id",
+    "spec_version",
+    "profile_id",
+    "profile_digest",
+    "catalog_digest",
+    "model_id",
+    "model_content_digest",
+    "hardware_class",
+    "hardware_class_measurement",
+    "runtime_id",
+    "requested_runtime_settings",
+    "runtime_settings_measurement",
+    "observed_runtime_context_tokens",
+    "pass_scope",
+    "profile_compatibility_attested",
+    "dataset",
+    "seed",
+    "temperature_milli",
+    "started_at",
+    "completed_at",
+    "requested_runs",
+    "warmup_runs",
+    "synthetic_terms",
+    "maximum_output_tokens",
+    "observed_prompt_tokens",
+    "observed_output_tokens",
+    "run_timeout_milliseconds",
+    "successful_runs",
+    "stability_basis_points",
+    "passed",
+    "load_milliseconds",
+    "prefill_milliseconds",
+    "prefill_measurement",
+    "generation_timing_measurement",
+    "time_to_first_token_milliseconds",
+    "end_to_end_milliseconds",
+    "tokens_per_second_milli",
+    "memory",
+    "failures"
+  ],
+  "properties": {
+    "schema_version": { "const": "provider-runtime-benchmark-result-v1" },
+    "result_digest": { "$ref": "#/$defs/digest" },
+    "benchmark_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+    "spec_version": { "const": "provider-runtime-benchmark-spec-v1" },
+    "profile_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "profile_digest": { "$ref": "#/$defs/digest" },
+    "catalog_digest": { "$ref": "#/$defs/digest" },
+    "model_id": { "type": "string", "minLength": 1, "maxLength": 192, "pattern": "^(?!(?:https?|file|ftp|ssh|data):)[a-z][a-z0-9-]{0,31}:[a-z0-9][a-z0-9._-]{0,63}/[a-z0-9][a-z0-9._-]{0,127}(/[a-z0-9][a-z0-9._-]{0,127})*$" },
+    "model_content_digest": { "$ref": "#/$defs/digest" },
+    "hardware_class": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "hardware_class_measurement": {
+      "enum": [
+        "profile-declared-only-not-attested",
+        "profile-declared-gpu-use-observed-exact-class-not-attested"
+      ]
+    },
+    "runtime_id": { "const": "ollama-managed" },
+    "requested_runtime_settings": { "$ref": "#/$defs/runtimeSettings" },
+    "runtime_settings_measurement": { "$ref": "#/$defs/runtimeSettingsMeasurement" },
+    "observed_runtime_context_tokens": { "$ref": "#/$defs/distribution" },
+    "pass_scope": { "const": "synthetic-runtime-execution-only" },
+    "profile_compatibility_attested": { "const": false },
+    "dataset": { "const": "multivibe-synthetic-term-sequence-v1" },
+    "seed": { "const": 7 },
+    "temperature_milli": { "const": 0 },
+    "started_at": { "type": "string", "format": "date-time" },
+    "completed_at": { "type": "string", "format": "date-time" },
+    "requested_runs": { "type": "integer", "minimum": 3, "maximum": 50 },
+    "warmup_runs": { "type": "integer", "minimum": 0, "maximum": 10 },
+    "synthetic_terms": { "type": "integer", "minimum": 32, "maximum": 8192 },
+    "maximum_output_tokens": { "type": "integer", "minimum": 8, "maximum": 2048 },
+    "observed_prompt_tokens": { "$ref": "#/$defs/distribution" },
+    "observed_output_tokens": { "$ref": "#/$defs/distribution" },
+    "run_timeout_milliseconds": { "type": "integer", "minimum": 100, "maximum": 1800000 },
+    "successful_runs": { "type": "integer", "minimum": 0, "maximum": 50 },
+    "stability_basis_points": { "type": "integer", "minimum": 0, "maximum": 10000 },
+    "passed": { "type": "boolean" },
+    "load_milliseconds": { "$ref": "#/$defs/distribution" },
+    "prefill_milliseconds": { "$ref": "#/$defs/distribution" },
+    "prefill_measurement": { "enum": ["backend-native", "event-observed", "ttft-fallback", "mixed", "unavailable"] },
+    "generation_timing_measurement": { "enum": ["backend-native", "event-clock", "mixed", "unavailable"] },
+    "time_to_first_token_milliseconds": { "$ref": "#/$defs/distribution" },
+    "end_to_end_milliseconds": { "$ref": "#/$defs/distribution" },
+    "tokens_per_second_milli": { "$ref": "#/$defs/distribution" },
+    "memory": { "$ref": "#/$defs/memory" },
+    "failures": { "$ref": "#/$defs/failures" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "successful_runs": { "const": 0 } }, "required": ["successful_runs"] },
+      "then": {
+        "properties": {
+          "hardware_class_measurement": { "const": "profile-declared-only-not-attested" },
+          "runtime_settings_measurement": { "$ref": "#/$defs/unavailableRuntimeSettingsMeasurement" },
+          "prefill_measurement": { "const": "unavailable" },
+          "generation_timing_measurement": { "const": "unavailable" },
+          "memory": {
+            "properties": { "measurement": { "const": "unavailable" } }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "successful_runs": { "minimum": 1 } }, "required": ["successful_runs"] },
+      "then": {
+        "properties": {
+          "hardware_class_measurement": { "const": "profile-declared-gpu-use-observed-exact-class-not-attested" },
+          "runtime_settings_measurement": { "$ref": "#/$defs/observedRuntimeSettingsMeasurement" },
+          "prefill_measurement": { "not": { "const": "unavailable" } },
+          "generation_timing_measurement": { "not": { "const": "unavailable" } },
+          "memory": {
+            "properties": {
+              "measurement": { "const": "ollama-api-ps-size-vram-sum-sampled-during-run" }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "distribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["samples", "minimum", "p50", "p95", "maximum"],
+      "properties": {
+        "samples": { "type": "integer", "minimum": 0, "maximum": 50 },
+        "minimum": { "type": "integer", "minimum": 0 },
+        "p50": { "type": "integer", "minimum": 0 },
+        "p95": { "type": "integer", "minimum": 0 },
+        "maximum": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "runtimeSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["context_tokens", "batch_size", "parallelism", "gpu_offload_layers"],
+      "properties": {
+        "context_tokens": { "type": "integer", "minimum": 1, "maximum": 1048576 },
+        "batch_size": { "type": "integer", "minimum": 1, "maximum": 4096 },
+        "parallelism": { "const": 1 },
+        "gpu_offload_layers": { "type": "integer", "minimum": 1, "maximum": 4096 }
+      }
+    },
+    "runtimeSettingsMeasurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["context_tokens", "batch_size", "parallelism", "gpu_offload_layers"],
+      "properties": {
+        "context_tokens": { "enum": ["unavailable", "ollama-api-ps-context-length-observed"] },
+        "batch_size": { "enum": ["unavailable", "request-accepted-not-runtime-observed"] },
+        "parallelism": { "enum": ["unavailable", "harness-single-request-not-runtime-capacity"] },
+        "gpu_offload_layers": { "enum": ["unavailable", "request-accepted-gpu-use-observed-layer-count-not-observed"] }
+      }
+    },
+    "unavailableRuntimeSettingsMeasurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["context_tokens", "batch_size", "parallelism", "gpu_offload_layers"],
+      "properties": {
+        "context_tokens": { "const": "unavailable" },
+        "batch_size": { "const": "unavailable" },
+        "parallelism": { "const": "unavailable" },
+        "gpu_offload_layers": { "const": "unavailable" }
+      }
+    },
+    "observedRuntimeSettingsMeasurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["context_tokens", "batch_size", "parallelism", "gpu_offload_layers"],
+      "properties": {
+        "context_tokens": { "const": "ollama-api-ps-context-length-observed" },
+        "batch_size": { "const": "request-accepted-not-runtime-observed" },
+        "parallelism": { "const": "harness-single-request-not-runtime-capacity" },
+        "gpu_offload_layers": { "const": "request-accepted-gpu-use-observed-layer-count-not-observed" }
+      }
+    },
+    "memory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baseline_bytes", "sampled_peak_bytes", "samples_per_run", "recovery_bytes", "measurement"],
+      "properties": {
+        "baseline_bytes": { "type": "integer", "minimum": 0 },
+        "sampled_peak_bytes": { "$ref": "#/$defs/distribution" },
+        "samples_per_run": { "$ref": "#/$defs/distribution" },
+        "recovery_bytes": { "type": "integer", "minimum": 0 },
+        "measurement": { "enum": ["unavailable", "ollama-api-ps-size-vram-sum-sampled-during-run"] }
+      }
+    },
+    "failures": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["out_of_memory", "crash", "timeout", "cancelled", "protocol", "unknown"],
+      "properties": {
+        "out_of_memory": { "type": "integer", "minimum": 0, "maximum": 50 },
+        "crash": { "type": "integer", "minimum": 0, "maximum": 50 },
+        "timeout": { "type": "integer", "minimum": 0, "maximum": 50 },
+        "cancelled": { "type": "integer", "minimum": 0, "maximum": 50 },
+        "protocol": { "type": "integer", "minimum": 0, "maximum": 50 },
+        "unknown": { "type": "integer", "minimum": 0, "maximum": 50 }
+      }
+    }
+  }
+}

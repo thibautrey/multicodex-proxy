@@ -1,0 +1,27 @@
+{
+  "schema_version": "provider-runtime-benchmark-spec-v1",
+  "enabled": false,
+  "benchmark_id": "example-qwen-smoke",
+  "profile_id": "qwen2.5-0.5b-q4km-cuda8-ollama",
+  "profile_digest": "sha256:8712766cec5c7b6e5081564451b42b037b2d5516972f72df5631bc558a6de9ea",
+  "catalog_digest": "sha256:f67f5caf61690ea78564416e922e36ab5b9c3b9d486b7db1a67181d6d760dcfe",
+  "model_id": "hf:qwen/qwen2.5-0.5b-instruct",
+  "model_content_digest": "sha256:a8b0c51577010a279d933d14c2a8ab4b268079d44c5c8830c0a93900f1827c67",
+  "hardware_class": "nvidia-cuda-8gb",
+  "runtime_id": "ollama-managed",
+  "dataset": "multivibe-synthetic-term-sequence-v1",
+  "runs": 5,
+  "warmup_runs": 1,
+  "synthetic_terms": 256,
+  "maximum_output_tokens": 64,
+  "requested_runtime_settings": {
+    "context_tokens": 8192,
+    "batch_size": 128,
+    "parallelism": 1,
+    "gpu_offload_layers": 24
+  },
+  "seed": 7,
+  "temperature_milli": 0,
+  "run_timeout_milliseconds": 300000,
+  "induce_oom": false
+}

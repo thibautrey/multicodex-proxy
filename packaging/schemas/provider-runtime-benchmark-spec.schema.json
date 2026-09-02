@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://multivibe.cloud/schemas/provider-runtime-benchmark-spec.schema.json",
+  "title": "MultiVibe synthetic runtime benchmark spec v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "enabled", "benchmark_id", "profile_id", "profile_digest", "catalog_digest", "model_id", "model_content_digest", "hardware_class", "runtime_id", "dataset", "runs", "warmup_runs", "synthetic_terms", "maximum_output_tokens", "requested_runtime_settings", "seed", "temperature_milli", "run_timeout_milliseconds", "induce_oom"],
+  "properties": {
+    "schema_version": { "const": "provider-runtime-benchmark-spec-v1" },
+    "enabled": { "type": "boolean" },
+    "benchmark_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+    "profile_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "profile_digest": { "$ref": "#/$defs/digest" },
+    "catalog_digest": { "$ref": "#/$defs/digest" },
+    "model_id": { "type": "string", "minLength": 1, "maxLength": 192, "pattern": "^(?!(?:https?|file|ftp|ssh|data):)[a-z][a-z0-9-]{0,31}:[a-z0-9][a-z0-9._-]{0,63}/[a-z0-9][a-z0-9._-]{0,127}(/[a-z0-9][a-z0-9._-]{0,127})*$" },
+    "model_content_digest": { "$ref": "#/$defs/digest" },
+    "hardware_class": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "runtime_id": { "const": "ollama-managed" },
+    "dataset": { "const": "multivibe-synthetic-term-sequence-v1" },
+    "runs": { "type": "integer", "minimum": 3, "maximum": 50 },
+    "warmup_runs": { "type": "integer", "minimum": 0, "maximum": 10 },
+    "synthetic_terms": { "type": "integer", "minimum": 32, "maximum": 8192 },
+    "maximum_output_tokens": { "type": "integer", "minimum": 8, "maximum": 2048 },
+    "requested_runtime_settings": { "$ref": "#/$defs/runtimeSettings" },
+    "seed": { "const": 7 },
+    "temperature_milli": { "const": 0 },
+    "run_timeout_milliseconds": { "type": "integer", "minimum": 100, "maximum": 1800000 },
+    "induce_oom": { "type": "boolean" }
+  },
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "runtimeSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["context_tokens", "batch_size", "parallelism", "gpu_offload_layers"],
+      "properties": {
+        "context_tokens": { "type": "integer", "minimum": 1, "maximum": 1048576 },
+        "batch_size": { "type": "integer", "minimum": 1, "maximum": 4096 },
+        "parallelism": { "const": 1 },
+        "gpu_offload_layers": { "type": "integer", "minimum": 1, "maximum": 4096 }
+      }
+    }
+  }
+}
