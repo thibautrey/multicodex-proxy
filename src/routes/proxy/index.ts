@@ -3210,6 +3210,11 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 );
                 if (converted && !res.writableEnded) {
                   res.write(converted);
+                  // Diagnostics classify the Responses stream delivered to the
+                  // client. A chat upstream can emit response.completed from
+                  // the converter while handling [DONE], before the EOF
+                  // fallback below gets a chance to synthesize it.
+                  streamTap.push(new TextEncoder().encode(converted));
                   markFirstOutput(frame);
                 }
               };
