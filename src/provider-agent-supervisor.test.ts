@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   isValidProviderSelectedModelId,
   isValidProviderRuntimeEndpointInput,
+  isValidProviderRelayShadowSessionRequest,
   providerAgentChildEnvironment,
   providerAgentEnvironment,
 } from "./provider-agent-supervisor.js";
@@ -14,6 +15,7 @@ test("provider agent inherits only its explicit local configuration", () => {
     MULTIVIBE_PROVIDER_SELECTED_MODELS: '["publisher/model"]',
     MULTIVIBE_PROVIDER_STATE_PATH: "/must/not/be/inherited.json",
     MULTIVIBE_PROVIDER_RUNTIME_STATE_PATH: "/must/not/be/inherited-runtime.json",
+    MULTIVIBE_PROVIDER_DEVICE_KEY_PATH: "/must/not/be/inherited-device-key.json",
     MULTIVIBE_PROVIDER_CONTROL_TOKEN: "must-not-be-inherited-from-parent",
     STRIPE_SECRET_KEY: "must-not-cross-the-process-boundary",
     OPENAI_API_KEY: "must-not-cross-the-process-boundary",
@@ -52,14 +54,34 @@ test("provider agent child receives only generated control and explicit local st
       "/data/provider-agent-selection.json",
       generatedControlToken,
       "/data/provider-agent-runtime-endpoints.json",
+      "/data/provider-agent-device-identity.json",
     ),
     {
       MULTIVIBE_CORE_LOOPBACK_URL: "http://127.0.0.1:1455",
       MULTIVIBE_PROVIDER_STATE_PATH: "/data/provider-agent-selection.json",
       MULTIVIBE_PROVIDER_RUNTIME_STATE_PATH: "/data/provider-agent-runtime-endpoints.json",
+      MULTIVIBE_PROVIDER_DEVICE_KEY_PATH: "/data/provider-agent-device-identity.json",
       MULTIVIBE_PROVIDER_CONTROL_TOKEN: generatedControlToken,
     },
   );
+});
+
+test("provider relay shadow requests bind exact identities and keep every commercial gate closed", () => {
+  const valid = {
+    session_id: "session-1",
+    organization_id: "organization-1",
+    provider_id: "provider-1",
+    node_id: "node-1",
+    credential_epoch: 2,
+    relay_id: "relay-eu-1",
+    region: "eu",
+    transport: "outbound_mtls",
+  };
+  assert.equal(isValidProviderRelayShadowSessionRequest(valid), true);
+  assert.equal(isValidProviderRelayShadowSessionRequest({ ...valid, transport: "public_websocket" }), false);
+  assert.equal(isValidProviderRelayShadowSessionRequest({ ...valid, relay_id: "relay@example" }), false);
+  assert.equal(isValidProviderRelayShadowSessionRequest({ ...valid, credential_epoch: 0 }), false);
+  assert.equal(isValidProviderRelayShadowSessionRequest({ ...valid, customerTrafficAllowed: true }), false);
 });
 
 test("provider runtime endpoints accept only bounded literal loopback HTTP targets", () => {

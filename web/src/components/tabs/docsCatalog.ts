@@ -522,6 +522,23 @@ export const ENDPOINTS: ApiEndpoint[] = [
     }),
   },
   {
+    id: "provider-agent-manifest",
+    group: "Configuration",
+    method: "GET",
+    path: "/admin/provider-agent/manifest",
+    title: "Read provider consent and public device identity",
+    summary: "Read selected local model IDs and the public Ed25519 device identity.",
+    description:
+      "The private key never leaves the protected agent state file. Selection and public identity remain local until a separate enrollment flow is implemented.",
+    responseExample: json({
+      protocol_version: "provider-agent-v1",
+      state: "selected",
+      selected_models: ["publisher/model"],
+      device_key_id: "ed25519:...",
+      device_public_key_spki: "...",
+    }),
+  },
+  {
     id: "provider-agent-adapters",
     group: "Configuration",
     method: "GET",
@@ -533,6 +550,37 @@ export const ENDPOINTS: ApiEndpoint[] = [
     responseExample: json({
       schema_version: "provider-runtime-registry-v2",
       adapters: [{ id: "vllm", display_name: "vLLM", automatic_loopback_candidates: [] }],
+    }),
+  },
+  {
+    id: "provider-agent-relay-shadow-session",
+    group: "Configuration",
+    method: "POST",
+    path: "/admin/provider-agent/relay-shadow/session-open",
+    title: "Sign a relay shadow session open",
+    summary: "Create a short-lived transport-independent session envelope for Cloud shadow verification.",
+    description:
+      "The agent generates nonce, time window and monotonic sequence. Customer traffic, routing and compensation remain hard-disabled; this call opens no network connection.",
+    requestBody: json({
+      session_id: "session-1",
+      organization_id: "organization-1",
+      provider_id: "provider-1",
+      node_id: "node-1",
+      credential_epoch: 2,
+      relay_id: "relay-eu-1",
+      region: "eu",
+      transport: "outbound_mtls",
+    }),
+    responseExample: json({
+      envelopeVersion: "multivibe-provider-relay-envelope-v1",
+      kind: "relay_session_open",
+      payload: {
+        shadowOnly: true,
+        customerTrafficAllowed: false,
+        routingEligible: false,
+        compensationEligible: false,
+      },
+      signature: { algorithm: "Ed25519", keyId: "ed25519:...", value: "..." },
     }),
   },
   {

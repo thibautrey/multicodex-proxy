@@ -10,6 +10,37 @@ export type ProviderAgentSelection = {
   selected_models: string[];
 };
 
+export type ProviderAgentManifest = {
+  protocol_version: "provider-agent-v1";
+  state: "detected" | "selected";
+  selected_models: string[];
+  device_key_id?: string;
+  device_public_key_spki?: string;
+};
+
+export type ProviderRelayShadowSessionRequest = {
+  session_id: string;
+  organization_id: string;
+  provider_id: string;
+  node_id: string;
+  credential_epoch: number;
+  relay_id: string;
+  region: string;
+  transport: "outbound_mtls" | "tailscale_private";
+};
+
+export type SignedProviderRelayShadowSession = {
+  envelopeVersion: "multivibe-provider-relay-envelope-v1";
+  kind: "relay_session_open";
+  payload: Record<string, unknown> & {
+    shadowOnly: true;
+    customerTrafficAllowed: false;
+    routingEligible: false;
+    compensationEligible: false;
+  };
+  signature: { algorithm: "Ed25519"; keyId: string; value: string };
+};
+
 export type ProviderAgentDetectedModels = {
   schema_version: "provider-detected-models-v1";
   runtimes: Array<{ adapter_id: string; models: string[] }>;
@@ -44,12 +75,14 @@ export type ProviderAgentAdapterRegistry = {
 
 export type ProviderAgentControl = {
   enabled: boolean;
+  getManifest(): Promise<ProviderAgentManifest>;
   getSelection(): Promise<ProviderAgentSelection>;
   replaceSelection(revision: number, selectedModels: string[]): Promise<{ conflict: boolean; selection: ProviderAgentSelection }>;
   getAdapters(): Promise<ProviderAgentAdapterRegistry>;
   getRuntimeEndpoints(): Promise<ProviderAgentRuntimeEndpoints>;
   replaceRuntimeEndpoints(revision: number, endpoints: ProviderAgentRuntimeEndpointInput[]): Promise<{ conflict: boolean; endpoints: ProviderAgentRuntimeEndpoints }>;
   detectModels(): Promise<ProviderAgentDetectedModels>;
+  openRelayShadowSession(request: ProviderRelayShadowSessionRequest): Promise<SignedProviderRelayShadowSession>;
 };
 
 export type ProviderAgentSupervisor = ProviderAgentControl & { stop(): Promise<void> };
@@ -82,11 +115,13 @@ export function providerAgentChildEnvironment(
   statePath: string | undefined,
   controlToken: string,
   runtimeStatePath?: string,
+  deviceKeyPath?: string,
 ): NodeJS.ProcessEnv {
   return {
     ...providerAgentEnvironment(source),
     ...(statePath ? { MULTIVIBE_PROVIDER_STATE_PATH: statePath } : {}),
     ...(runtimeStatePath ? { MULTIVIBE_PROVIDER_RUNTIME_STATE_PATH: runtimeStatePath } : {}),
+    ...(deviceKeyPath ? { MULTIVIBE_PROVIDER_DEVICE_KEY_PATH: deviceKeyPath } : {}),
     MULTIVIBE_PROVIDER_CONTROL_TOKEN: controlToken,
   };
 }
@@ -130,24 +165,47 @@ export function isValidProviderRuntimeEndpointInput(
   return true;
 }
 
+export function isValidProviderRelayShadowSessionRequest(
+  value: unknown,
+): value is ProviderRelayShadowSessionRequest {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const request = value as Record<string, unknown>;
+  const keys = [
+    "session_id", "organization_id", "provider_id", "node_id", "credential_epoch",
+    "relay_id", "region", "transport",
+  ];
+  if (Object.keys(request).length !== keys.length || keys.some((key) => !(key in request))) return false;
+  const identifier = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
+  for (const key of ["session_id", "organization_id", "provider_id", "node_id", "relay_id", "region"]) {
+    if (typeof request[key] !== "string" || !identifier.test(request[key])) return false;
+  }
+  if (!Number.isSafeInteger(request.credential_epoch)
+    || (request.credential_epoch as number) < 1
+    || (request.credential_epoch as number) > 2 ** 48 - 1) return false;
+  return request.transport === "outbound_mtls" || request.transport === "tailscale_private";
+}
+
 export function startEmbeddedProviderAgent(options: {
   enabled: boolean;
   binaryPath: string;
   environment?: NodeJS.ProcessEnv;
   statePath?: string;
   runtimeStatePath?: string;
+  deviceKeyPath?: string;
   restartLimit?: number;
 }): ProviderAgentSupervisor {
   const unavailable = async (): Promise<never> => { throw new Error("provider agent is not enabled"); };
   if (!options.enabled) return {
     enabled: false,
     stop: async () => undefined,
+    getManifest: unavailable,
     getSelection: unavailable,
     replaceSelection: unavailable,
     getAdapters: unavailable,
     getRuntimeEndpoints: unavailable,
     replaceRuntimeEndpoints: unavailable,
     detectModels: unavailable,
+    openRelayShadowSession: unavailable,
   };
   if (!path.isAbsolute(options.binaryPath)) throw new Error("provider agent binary path must be absolute");
   if (options.statePath && (!path.isAbsolute(options.statePath) || path.normalize(options.statePath) !== options.statePath)) {
@@ -156,6 +214,10 @@ export function startEmbeddedProviderAgent(options: {
   if (options.runtimeStatePath && (!path.isAbsolute(options.runtimeStatePath)
     || path.normalize(options.runtimeStatePath) !== options.runtimeStatePath)) {
     throw new Error("provider agent runtime state path must be a clean absolute path");
+  }
+  if (options.deviceKeyPath && (!path.isAbsolute(options.deviceKeyPath)
+    || path.normalize(options.deviceKeyPath) !== options.deviceKeyPath)) {
+    throw new Error("provider agent device key path must be a clean absolute path");
   }
   const sourceEnvironment = options.environment ?? process.env;
   const controlToken = randomBytes(32).toString("base64url");
@@ -186,7 +248,7 @@ export function startEmbeddedProviderAgent(options: {
   const launch = () => {
     if (stopped) return;
     child = spawn(options.binaryPath, [], {
-      env: providerAgentChildEnvironment(sourceEnvironment, options.statePath, controlToken, options.runtimeStatePath),
+      env: providerAgentChildEnvironment(sourceEnvironment, options.statePath, controlToken, options.runtimeStatePath, options.deviceKeyPath),
       shell: false,
       stdio: ["ignore", "inherit", "inherit"],
     });
@@ -201,6 +263,7 @@ export function startEmbeddedProviderAgent(options: {
   launch();
   return {
     enabled: true,
+    getManifest: async () => (await request<ProviderAgentManifest>("/v1/manifest")).value,
     getSelection: async () => (await request<ProviderAgentSelection>("/v1/selection")).value,
     replaceSelection: async (revision, selectedModels) => {
       const result = await request<ProviderAgentSelection>("/v1/selection", {
@@ -221,6 +284,11 @@ export function startEmbeddedProviderAgent(options: {
       return { conflict: result.response.status === 409, endpoints: result.value };
     },
     detectModels: async () => (await request<ProviderAgentDetectedModels>("/v1/detected-models")).value,
+    openRelayShadowSession: async (session) => (await request<SignedProviderRelayShadowSession>("/v1/relay-shadow/session-open", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(session),
+    })).value,
     stop: async () => {
       stopped = true;
       const running = child;
