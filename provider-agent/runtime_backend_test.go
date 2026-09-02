@@ -149,18 +149,6 @@ func runtimeBackendTestProfile(backendIDs ...string) runtimeWorkloadProfile {
 	return profile
 }
 
-func runtimeProvenancePinFromDescriptor(descriptor runtimeBackendDescriptor) runtimeProvenancePin {
-	pin := runtimeProvenancePin{
-		BackendID: descriptor.ID, SourceURL: descriptor.Launch.Provenance.SourceURL, Version: descriptor.Launch.Provenance.Version,
-		ArtifactSHA256:  make(map[string]string, len(descriptor.Launch.Provenance.ArtifactSHA256)),
-		ContainerImages: append([]string{}, descriptor.Launch.ContainerImages...),
-	}
-	for platform, digest := range descriptor.Launch.Provenance.ArtifactSHA256 {
-		pin.ArtifactSHA256[platform] = digest
-	}
-	return pin
-}
-
 func runtimeBackendTestOverrides() runtimeBackendOverrides {
 	return runtimeBackendOverrides{SchemaVersion: runtimeBackendOverridesVersion}
 }

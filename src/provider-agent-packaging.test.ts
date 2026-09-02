@@ -14,7 +14,10 @@ test("the Core image builds and embeds the provider agent for its target archite
     /FROM --platform=\$BUILDPLATFORM golang:1\.24-alpine AS provider-agent-build/,
   );
   assert.match(dockerfile, /ARG TARGETOS\nARG TARGETARCH/);
-  assert.match(dockerfile, /RUN go test \.\/\.\.\./);
+  assert.match(
+    dockerfile,
+    /COPY provider-agent\/ \.\/\nCOPY packaging\/ \/src\/packaging\/\nRUN go test \.\/\.\.\./,
+  );
   assert.match(
     dockerfile,
     /CGO_ENABLED=0 GOOS="\$TARGETOS" GOARCH="\$TARGETARCH" \\\n  go build -trimpath -buildvcs=false -ldflags="-s -w"/,

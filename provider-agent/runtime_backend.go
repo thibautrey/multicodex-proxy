@@ -136,6 +136,18 @@ type runtimeProvenancePin struct {
 	ContainerImages []string          `json:"container_images"`
 }
 
+func runtimeProvenancePinFromDescriptor(descriptor runtimeBackendDescriptor) runtimeProvenancePin {
+	pin := runtimeProvenancePin{
+		BackendID: descriptor.ID, SourceURL: descriptor.Launch.Provenance.SourceURL, Version: descriptor.Launch.Provenance.Version,
+		ArtifactSHA256:  make(map[string]string, len(descriptor.Launch.Provenance.ArtifactSHA256)),
+		ContainerImages: append([]string{}, descriptor.Launch.ContainerImages...),
+	}
+	for platform, digest := range descriptor.Launch.Provenance.ArtifactSHA256 {
+		pin.ArtifactSHA256[platform] = digest
+	}
+	return pin
+}
+
 type runtimeProfile struct {
 	ContractVersion      string                        `json:"contract_version"`
 	RequiredCapabilities runtimeCapabilityRequirements `json:"required_capabilities"`
