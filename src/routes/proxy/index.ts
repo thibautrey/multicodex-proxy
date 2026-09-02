@@ -3717,9 +3717,26 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 continue;
               }
 
-              const respObj = parseResponsesSSEToResponseObject(
+              let respObj = parseResponsesSSEToResponseObject(
                 rendered.body || txt,
               );
+              if (moduleManager) {
+                const hooked = await moduleManager.runHook("response.beforeClient", respObj, {
+                  requestId: clientRequestId,
+                  sessionId: promptCacheSessionId,
+                  application,
+                  route: req.path,
+                  transport: "http",
+                  provider: candidate.provider,
+                  model: candidate.resolvedModel,
+                  signal: requestSignal,
+                });
+                if (hooked.response) {
+                  for (const [name, value] of Object.entries(hooked.response.headers ?? {})) res.setHeader(name, value);
+                  return res.status(hooked.response.status).send(hooked.response.body);
+                }
+                respObj = hooked.value;
+              }
               res.status(upstream.ok ? 200 : upstream.status).json(respObj);
               const upstreamError = !upstream.ok
                 ? txt.slice(0, 500)
