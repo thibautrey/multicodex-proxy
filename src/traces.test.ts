@@ -24,6 +24,7 @@ test("classifies inference and control-plane routes before router mounting", () 
 
   for (const route of [
     "GET /health",
+    "M-SEARCH /health",
     "GET /admin/stats/traces?sinceMs=1",
     "POST /admin/usage/refresh-stale",
     "GET /v1/models?client_version=0.151.0",

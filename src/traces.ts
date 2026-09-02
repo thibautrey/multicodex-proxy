@@ -1431,7 +1431,10 @@ export type TraceManager = ReturnType<typeof createTraceManager>;
 function tracePath(route: string | undefined): string {
   const normalized = String(route ?? "").trim();
   if (!normalized) return "";
-  const routeWithoutMethod = normalized.replace(/^[A-Z]+\s+/, "");
+  const routeWithoutMethod = normalized.replace(
+    /^[!#$%&'*+\-.^_`|~0-9A-Z]+\s+/i,
+    "",
+  );
   return routeWithoutMethod.split("?")[0];
 }
 

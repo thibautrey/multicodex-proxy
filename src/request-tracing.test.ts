@@ -2,13 +2,17 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import test from "node:test";
 import express from "express";
-import { createRequestTracingMiddleware } from "./request-tracing.js";
+import {
+  createRequestTracingMiddleware,
+  REQUEST_TRACE_PARENT_HEADER,
+} from "./request-tracing.js";
 
 function request(
   port: number,
   path: string,
   method = "GET",
   body?: unknown,
+  headers: Record<string, string> = {},
 ): Promise<number> {
   return new Promise((resolve, reject) => {
     const payload = body === undefined ? undefined : JSON.stringify(body);
@@ -18,12 +22,15 @@ function request(
         port,
         path,
         method,
-        headers: payload
-          ? {
-              "content-type": "application/json",
-              "content-length": Buffer.byteLength(payload),
-            }
-          : undefined,
+        headers: {
+          ...headers,
+          ...(payload
+            ? {
+                "content-type": "application/json",
+                "content-length": String(Buffer.byteLength(payload)),
+              }
+            : {}),
+        },
       },
       (res) => {
         res.resume();
@@ -80,8 +87,9 @@ test("request tracing records one final client outcome beside provider attempts"
   app.post("/v1/responses", (_req, res) => {
     res.locals._multivibeTraced = true;
     res.locals.proxyApplication = "test-app";
-    res.locals.multivibeProviderAttempts = 2;
-    res.locals.multivibeSawFailedProviderAttempt = true;
+    const context = res.locals.multivibeRequestTraceContext;
+    context.providerAttempts = 2;
+    context.sawFailedProviderAttempt = true;
     res.status(200).json({ ok: true });
   });
 
@@ -111,4 +119,96 @@ test("request tracing records one final client outcome beside provider attempts"
   assert.equal(traces[0].recoveredRetry, true);
   assert.equal(traces[0].application, "test-app");
   assert.equal(traces[0].status, 200);
+});
+test("request tracing collapses a nested inference request into its parent outcome", async (t) => {
+  const traces: any[] = [];
+  const app = express();
+  let port = 0;
+  app.use(express.json());
+  app.use(
+    createRequestTracingMiddleware({
+      traceManager: { recordTrace: (entry: any) => traces.push(entry) } as any,
+      includeBody: false,
+      includeHeaders: false,
+    }),
+  );
+  app.post("/v1/responses", (_req, res) => {
+    const context = res.locals.multivibeRequestTraceContext;
+    context.providerAttempts = 2;
+    context.sawFailedProviderAttempt = true;
+    res.status(200).json({ ok: true });
+  });
+  app.post("/v1/messages", async (_req, res) => {
+    const parentId = res.locals.multivibeClientRequestId;
+    const status = await request(
+      port,
+      "/v1/responses",
+      "POST",
+      { model: "test" },
+      { [REQUEST_TRACE_PARENT_HEADER]: parentId },
+    );
+    res.status(status).json({ ok: true });
+  });
+
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(
+    () =>
+      new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      ),
+  );
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  port = address.port;
+
+  assert.equal(
+    await request(port, "/v1/messages", "POST", { model: "test" }),
+    200,
+  );
+  assert.equal(traces.length, 1);
+  assert.equal(traces[0].route, "POST /v1/messages");
+  assert.equal(traces[0].traceKind, "client-request");
+  assert.equal(traces[0].providerAttempts, 2);
+  assert.equal(traces[0].recoveredRetry, true);
+});
+
+test("request tracing records a logical stream failure after HTTP 200 is committed", async (t) => {
+  const traces: any[] = [];
+  const app = express();
+  app.use(express.json());
+  app.use(
+    createRequestTracingMiddleware({
+      traceManager: { recordTrace: (entry: any) => traces.push(entry) } as any,
+      includeBody: false,
+      includeHeaders: false,
+    }),
+  );
+  app.post("/v1/responses", (_req, res) => {
+    res.status(200).write("data: stream-started\n\n");
+    res.locals.multivibeRequestTraceContext.clientOutcomeStatus = 429;
+    res.end("data: stream-failed\n\n");
+  });
+
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(
+    () =>
+      new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      ),
+  );
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+
+  assert.equal(
+    await request(address.port, "/v1/responses", "POST", {
+      model: "test",
+      stream: true,
+    }),
+    200,
+  );
+  assert.equal(traces.length, 1);
+  assert.equal(traces[0].status, 429);
+  assert.equal(traces[0].traceKind, "client-request");
 });

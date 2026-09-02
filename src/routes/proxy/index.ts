@@ -112,6 +112,7 @@ import {
   canServeStaleSnapshot,
 } from "../../async-refresh.js";
 import { fetchUpstreamWithRetry } from "../../upstream-retry.js";
+import type { RequestTraceContext } from "../../request-tracing.js";
 import {
   authorizationForAccountRequest,
   isDiscoveredLocalRuntimeAccount,
@@ -1979,15 +1980,35 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     res: express.Response,
   ) {
     const startedAt = Date.now();
+    const requestTraceContext = res.locals.multivibeRequestTraceContext as
+      | RequestTraceContext
+      | undefined;
     const clientRequestId =
-      typeof res.locals.multivibeClientRequestId === "string"
+      requestTraceContext?.clientRequestId ??
+      (typeof res.locals.multivibeClientRequestId === "string"
         ? res.locals.multivibeClientRequestId
-        : randomUUID();
+        : randomUUID());
     res.locals.multivibeClientRequestId = clientRequestId;
     let currentUpstreamAttempt: number | undefined;
     let upstreamAttemptCount = 0;
     res.locals.multivibeProviderAttempts = 0;
     res.locals.multivibeSawFailedProviderAttempt = false;
+    if (requestTraceContext) {
+      requestTraceContext.providerAttempts = 0;
+      requestTraceContext.sawFailedProviderAttempt = false;
+    }
+    const setProviderAttemptCount = (count: number) => {
+      res.locals.multivibeProviderAttempts = count;
+      if (requestTraceContext) requestTraceContext.providerAttempts = count;
+    };
+    const markFailedProviderAttempt = () => {
+      res.locals.multivibeSawFailedProviderAttempt = true;
+      if (requestTraceContext) requestTraceContext.sawFailedProviderAttempt = true;
+    };
+    const setClientOutcomeStatus = (status: number) => {
+      res.locals.multivibeClientOutcomeStatus = status;
+      if (requestTraceContext) requestTraceContext.clientOutcomeStatus = status;
+    };
     const requestAbortController = new AbortController();
     const abortRequest = () => {
       if (res.writableEnded || requestAbortController.signal.aborted) return;
@@ -2039,7 +2060,10 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     ) => {
       observeCapacityUsage(entry.usage);
       if (currentUpstreamAttempt !== undefined && entry.status >= 400) {
-        res.locals.multivibeSawFailedProviderAttempt = true;
+        markFailedProviderAttempt();
+      }
+      if (entry.status >= 400 && res.writableEnded) {
+        setClientOutcomeStatus(entry.status);
       }
       return traceManager.recordTrace({
         ...entry,
@@ -2081,7 +2105,10 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     ) => {
       observeCapacityUsage(entry.usage);
       if (currentUpstreamAttempt !== undefined && entry.status >= 400) {
-        res.locals.multivibeSawFailedProviderAttempt = true;
+        markFailedProviderAttempt();
+      }
+      if (entry.status >= 400 && res.writableEnded) {
+        setClientOutcomeStatus(entry.status);
       }
       return traceManager.completeTrace(id, {
         ...entry,
@@ -2174,6 +2201,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             : JSON.stringify(error);
 
       if (isNativeResponsesStream && res.headersSent) {
+        setClientOutcomeStatus(status);
         if (nativeStreamKeepalive) {
           clearInterval(nativeStreamKeepalive);
           nativeStreamKeepalive = undefined;
@@ -2849,18 +2877,49 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           const redirect = isDiscoveredLocalRuntimeAccount(selected)
             ? "manual"
             : "follow";
-          currentUpstreamAttempt = ++upstreamAttemptCount;
-          res.locals.multivibeProviderAttempts = upstreamAttemptCount;
-          let upstream = await fetchUpstreamWithRetry(
-            upstreamUrl,
-            {
-              method: "POST",
-              headers,
-              body: serializeUpstreamPayload(payloadToUpstream),
-              signal: requestSignal,
-              redirect,
-            },
-          );
+          let upstreamAttemptStartedAt = Date.now();
+          const recordRetriedUpstreamAttempt = (
+            status: number,
+            error?: string,
+          ) => {
+            recordTrace({
+              at: Date.now(),
+              route: req.path,
+              accountId: selected.id,
+              accountEmail: selected.email,
+              model: tracedModel,
+              ...traceModelResolution,
+              status,
+              stream: clientRequestedStream,
+              latencyMs: Date.now() - upstreamAttemptStartedAt,
+              requestBody,
+              ...traceImage,
+              error: error?.slice(0, 500),
+              upstreamError: error?.slice(0, 500),
+            });
+          };
+          const fetchWithTracing = () =>
+            fetchUpstreamWithRetry(
+              upstreamUrl,
+              {
+                method: "POST",
+                headers,
+                body: serializeUpstreamPayload(payloadToUpstream),
+                signal: requestSignal,
+                redirect,
+              },
+              {
+                onAttemptStart: () => {
+                  upstreamAttemptStartedAt = Date.now();
+                  currentUpstreamAttempt = ++upstreamAttemptCount;
+                  setProviderAttemptCount(upstreamAttemptCount);
+                },
+                onAttemptRetry: ({ status, error }) => {
+                  recordRetriedUpstreamAttempt(status ?? 599, error);
+                },
+              },
+            );
+          let upstream = await fetchWithTracing();
           if (upstream.status === 400) {
             const errorText = await upstream.text();
             const correction = applyUnsupportedValueCorrection(
@@ -2868,19 +2927,11 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               errorText,
             );
             if (correction) {
+              recordRetriedUpstreamAttempt(400, errorText);
               console.info(
                 `[proxy] Retrying ${candidate.resolvedModel ?? "model"} after correcting unsupported value ${correction.from} -> ${correction.to}`,
               );
-              upstream = await fetchUpstreamWithRetry(
-                upstreamUrl,
-                {
-                  method: "POST",
-                  headers,
-                  body: serializeUpstreamPayload(payloadToUpstream),
-                  signal: requestSignal,
-                  redirect,
-                },
-              );
+              upstream = await fetchWithTracing();
             } else {
               upstream = new Response(errorText, {
                 status: upstream.status,
@@ -2964,6 +3015,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             }
 
             if (!res.writableEnded) {
+              setClientOutcomeStatus(upstream.status);
               res.write(
                 `event: error\ndata: ${JSON.stringify({ error: upstreamError })}\n\n`,
               );
@@ -4386,6 +4438,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             nativeStreamKeepalive = undefined;
           }
           if (isNativeResponsesStream && res.headersSent && !res.writableEnded) {
+            setClientOutcomeStatus(599);
             res.write(
               `event: error\ndata: ${JSON.stringify({
                 error: {

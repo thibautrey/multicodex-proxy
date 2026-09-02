@@ -13,6 +13,17 @@ import {
   type TraceManager,
 } from "./traces.js";
 
+export const REQUEST_TRACE_PARENT_HEADER = "x-multivibe-trace-parent";
+
+export type RequestTraceContext = {
+  clientRequestId: string;
+  providerAttempts: number;
+  sawFailedProviderAttempt: boolean;
+  clientOutcomeStatus?: number;
+};
+
+const activeRequestTraceContexts = new Map<string, RequestTraceContext>();
+
 export function createRequestTracingMiddleware(options: {
   traceManager: Pick<TraceManager, "recordTrace">;
   includeBody: boolean;
@@ -25,9 +36,27 @@ export function createRequestTracingMiddleware(options: {
     const route = req.originalUrl || req.url;
     const traceRoute = `${req.method} ${route}`;
     const inferenceRequest = isInferenceTraceRoute(traceRoute);
+    const requestedParentId = req.header(REQUEST_TRACE_PARENT_HEADER);
+    const parentContext = requestedParentId
+      ? activeRequestTraceContexts.get(requestedParentId)
+      : undefined;
+    const nestedInferenceRequest = inferenceRequest && Boolean(parentContext);
 
     if (inferenceRequest) {
-      res.locals.multivibeClientRequestId ??= crypto.randomUUID();
+      const requestTraceContext: RequestTraceContext =
+        parentContext ?? {
+          clientRequestId: crypto.randomUUID(),
+          providerAttempts: 0,
+          sawFailedProviderAttempt: false,
+        };
+      res.locals.multivibeRequestTraceContext = requestTraceContext;
+      res.locals.multivibeClientRequestId = requestTraceContext.clientRequestId;
+      if (!parentContext) {
+        activeRequestTraceContexts.set(
+          requestTraceContext.clientRequestId,
+          requestTraceContext,
+        );
+      }
     }
     // Evaluate this before mounted routers can rewrite req.url/req.path. Hidden
     // control-plane traffic should neither consume recent-trace retention nor
@@ -38,12 +67,31 @@ export function createRequestTracingMiddleware(options: {
     const recordClientOutcome = (status: number) => {
       if (settled) return;
       settled = true;
+      if (nestedInferenceRequest) return;
       if (res.locals._multivibeTraced && !inferenceRequest) return;
-      const providerAttempts = Number.isFinite(
-        res.locals.multivibeProviderAttempts,
-      )
-        ? Math.max(0, Math.floor(res.locals.multivibeProviderAttempts))
-        : 0;
+      const requestTraceContext = res.locals.multivibeRequestTraceContext as
+        | RequestTraceContext
+        | undefined;
+      if (requestTraceContext) {
+        activeRequestTraceContexts.delete(requestTraceContext.clientRequestId);
+      }
+      const providerAttempts = requestTraceContext
+        ? requestTraceContext.providerAttempts
+        : Number.isFinite(res.locals.multivibeProviderAttempts)
+          ? Math.max(0, Math.floor(res.locals.multivibeProviderAttempts))
+          : 0;
+      const contextualOutcomeStatus = requestTraceContext?.clientOutcomeStatus;
+      const localOutcomeStatus = res.locals.multivibeClientOutcomeStatus;
+      const clientOutcomeStatus =
+        status === 499
+          ? status
+          : typeof contextualOutcomeStatus === "number" &&
+              Number.isFinite(contextualOutcomeStatus)
+            ? contextualOutcomeStatus
+            : typeof localOutcomeStatus === "number" &&
+                Number.isFinite(localOutcomeStatus)
+              ? localOutcomeStatus
+              : status;
 
       traceManager.recordTrace({
         ...(res.locals.multivibeTrace ?? {}),
@@ -57,14 +105,17 @@ export function createRequestTracingMiddleware(options: {
         providerAttempts,
         recoveredRetry:
           inferenceRequest &&
-          Boolean(res.locals.multivibeSawFailedProviderAttempt) &&
-          status < 400,
+          Boolean(
+            requestTraceContext?.sawFailedProviderAttempt ??
+              res.locals.multivibeSawFailedProviderAttempt,
+          ) &&
+          clientOutcomeStatus < 400,
         application: res.locals.proxyApplication,
         codexSessionId: extractCodexSessionId(req.headers),
         requestHeaders: includeHeaders
           ? traceHeadersForRequest(req.headers)
           : undefined,
-        status,
+        status: clientOutcomeStatus,
         stream: inferenceRequest && Boolean(req.body?.stream),
         latencyMs: Date.now() - startedAt,
         requestBody: includeBody ? req.body : undefined,

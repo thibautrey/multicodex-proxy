@@ -62,11 +62,8 @@ import {
   createAdmissionMiddleware,
   createSmartRoutingRouter,
 } from "./smart-routing-routes.js";
-<<<<<<< HEAD
 import { createInferenceIdempotencyMiddleware } from "./inference-idempotency.js";
-=======
 import { createRequestTracingMiddleware } from "./request-tracing.js";
->>>>>>> 9239637 (fix: separate client outcomes from provider attempts)
 
 const app = express();
 app.use(createBodyParserMiddleware());
