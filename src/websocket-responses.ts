@@ -334,13 +334,15 @@ function tryParseFrame(text: string): ResponseCreateFrame | null {
   }
 }
 
-function websocketRequestUrl(
-  req: http.IncomingMessage,
+export function websocketRequestUrl(
+  _req: http.IncomingMessage,
   port: number,
   path: string,
 ) {
-  const host = req.headers.host ?? `127.0.0.1:${port}`;
-  return new URL(`http://${host}${path}`);
+  // This request re-enters the same process. The outer Host header describes
+  // the client-facing endpoint and may not resolve (or may resolve elsewhere)
+  // from inside the container, so it must never be used as the loopback target.
+  return new URL(`http://localhost:${port}${path}`);
 }
 
 function extractBodyText(body: string) {
