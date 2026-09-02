@@ -213,6 +213,8 @@ function completeLinuxBundleTar(mutateFiles = () => {}) {
     ["THIRD_PARTY/ollama-LICENSE", { data: Buffer.from("Ollama MIT license\n"), mode: 0o644 }],
     ["THIRD_PARTY/provider-host-dependencies.json", { data: dependencyData, mode: 0o644 }],
     [`THIRD_PARTY/${assessmentRelative}`, { data: assessment, mode: 0o644 }],
+    ["app/dist/anthropic/compat.test.js", { data: Buffer.from("export {};\n"), mode: 0o644 }],
+    ["app/dist/anthropic-compat.js", { data: Buffer.from("export {};\n"), mode: 0o644 }],
     ["app/dist/instrument.js", { data: Buffer.from("export {};\n"), mode: 0o644 }],
     ["app/dist/server.js", { data: Buffer.from("export {};\n"), mode: 0o644 }],
     ["bin/multivibe-host", { data: elf, mode: 0o755 }],

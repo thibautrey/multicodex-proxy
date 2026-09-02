@@ -1112,7 +1112,7 @@ async function validateTree(root, options, archiveRoot) {
     }
   }
 
-  const actualFiles = await allFiles(root);
+  const actualFiles = (await allFiles(root)).sort((left, right) => left.localeCompare(right));
   const expectedFiles = [...seen, "manifest.json"].sort((left, right) => left.localeCompare(right));
   if (actualFiles.length !== expectedFiles.length || actualFiles.some((file, index) => file !== expectedFiles[index])) {
     throw new Error("provider-host archive contains files outside the signed manifest");
