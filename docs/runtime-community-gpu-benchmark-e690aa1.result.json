@@ -1,0 +1,126 @@
+{
+  "schema_version": "provider-runtime-benchmark-result-v1",
+  "result_digest": "sha256:78e227e02be3803afbdf2b185fbe88595bbdf8902fa53852a810705961c31acb",
+  "benchmark_id": "bench-1788382824893015757",
+  "spec_version": "provider-runtime-benchmark-spec-v1",
+  "profile_id": "qwen2.5-0.5b-q4km-cuda8-ollama",
+  "profile_digest": "sha256:8712766cec5c7b6e5081564451b42b037b2d5516972f72df5631bc558a6de9ea",
+  "catalog_digest": "sha256:f67f5caf61690ea78564416e922e36ab5b9c3b9d486b7db1a67181d6d760dcfe",
+  "model_id": "hf:qwen/qwen2.5-0.5b-instruct",
+  "model_content_digest": "sha256:a8b0c51577010a279d933d14c2a8ab4b268079d44c5c8830c0a93900f1827c67",
+  "hardware_class": "nvidia-cuda-8gb",
+  "hardware_class_measurement": "profile-declared-gpu-use-observed-exact-class-not-attested",
+  "runtime_id": "ollama-managed",
+  "requested_runtime_settings": {
+    "context_tokens": 8192,
+    "batch_size": 128,
+    "parallelism": 1,
+    "gpu_offload_layers": 24
+  },
+  "runtime_settings_measurement": {
+    "context_tokens": "ollama-api-ps-context-length-observed",
+    "batch_size": "request-accepted-not-runtime-observed",
+    "parallelism": "harness-single-request-not-runtime-capacity",
+    "gpu_offload_layers": "request-accepted-gpu-use-observed-layer-count-not-observed"
+  },
+  "observed_runtime_context_tokens": {
+    "samples": 3,
+    "minimum": 8192,
+    "p50": 8192,
+    "p95": 8192,
+    "maximum": 8192
+  },
+  "pass_scope": "synthetic-runtime-execution-only",
+  "profile_compatibility_attested": false,
+  "dataset": "multivibe-synthetic-term-sequence-v1",
+  "seed": 7,
+  "temperature_milli": 0,
+  "started_at": "2026-09-02T21:00:24.893025104Z",
+  "completed_at": "2026-09-02T21:01:25.032492455Z",
+  "requested_runs": 3,
+  "warmup_runs": 1,
+  "synthetic_terms": 32,
+  "maximum_output_tokens": 8,
+  "observed_prompt_tokens": {
+    "samples": 3,
+    "minimum": 235,
+    "p50": 235,
+    "p95": 235,
+    "maximum": 235
+  },
+  "observed_output_tokens": {
+    "samples": 3,
+    "minimum": 8,
+    "p50": 8,
+    "p95": 8,
+    "maximum": 8
+  },
+  "run_timeout_milliseconds": 300000,
+  "successful_runs": 3,
+  "stability_basis_points": 10000,
+  "passed": true,
+  "load_milliseconds": {
+    "samples": 1,
+    "minimum": 23606,
+    "p50": 23606,
+    "p95": 23606,
+    "maximum": 23606
+  },
+  "prefill_milliseconds": {
+    "samples": 3,
+    "minimum": 3,
+    "p50": 3,
+    "p95": 3,
+    "maximum": 3
+  },
+  "prefill_measurement": "backend-native",
+  "generation_timing_measurement": "backend-native",
+  "time_to_first_token_milliseconds": {
+    "samples": 3,
+    "minimum": 4,
+    "p50": 5,
+    "p95": 7,
+    "maximum": 7
+  },
+  "end_to_end_milliseconds": {
+    "samples": 3,
+    "minimum": 24,
+    "p50": 25,
+    "p95": 27,
+    "maximum": 27
+  },
+  "tokens_per_second_milli": {
+    "samples": 3,
+    "minimum": 381388,
+    "p50": 390720,
+    "p95": 407892,
+    "maximum": 407892
+  },
+  "memory": {
+    "baseline_bytes": 0,
+    "sampled_peak_bytes": {
+      "samples": 3,
+      "minimum": 490125393,
+      "p50": 490125393,
+      "p95": 490125393,
+      "maximum": 490125393
+    },
+    "samples_per_run": {
+      "samples": 3,
+      "minimum": 2,
+      "p50": 3,
+      "p95": 3,
+      "maximum": 3
+    },
+    "recovery_bytes": 0,
+    "measurement": "ollama-api-ps-size-vram-sum-sampled-during-run"
+  },
+  "failures": {
+    "out_of_memory": 0,
+    "crash": 0,
+    "timeout": 0,
+    "cancelled": 0,
+    "protocol": 0,
+    "unknown": 0
+  }
+}

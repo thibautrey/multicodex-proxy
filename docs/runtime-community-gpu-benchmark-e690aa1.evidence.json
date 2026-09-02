@@ -1,0 +1,71 @@
+{
+  "schema_version": "multivibe-runtime-benchmark-evidence-v1",
+  "evidence_digest": "sha256:2e80f717635dd5f4c839f34b5a9ac3fab56e6579fdb037b071e7b2250672b35b",
+  "source": {
+    "repository": "thibautrey/multivibe",
+    "commit": "e690aa10824aee885a493b5895e49fc8803cef3f",
+    "tree_dirty": false
+  },
+  "provider_host_archive": {
+    "filename": "multivibe-host_0.2.0-runtime-community.2_linux_amd64.tar.gz",
+    "sha256": "sha256:d80fa448e13a8a7468f78755ee1f97dd73c72e73258ad78a6f54ccdbd664a5b2",
+    "size_bytes": 2771249934,
+    "format": "ustar-gzip",
+    "version": "0.2.0-runtime-community.2",
+    "platform": "linux",
+    "architecture": "amd64",
+    "release_ready": true,
+    "runtime_checked": true,
+    "host_profile": "linux-nvidia"
+  },
+  "execution": {
+    "toolchain_image_digest": "sha256:06c7de7f97588c6b19ab842f54702fa4a4bb677bac82409fa84e74c5e5dc681b",
+    "network": "none",
+    "published_ports": 0,
+    "read_only_root_filesystem": true,
+    "capabilities": "dropped-all",
+    "gpu_binding": "single-explicit-device-identifier-omitted",
+    "model_id": "hf:qwen/qwen2.5-0.5b-instruct",
+    "model_content_digest": "sha256:a8b0c51577010a279d933d14c2a8ab4b268079d44c5c8830c0a93900f1827c67",
+    "model_artifact_bytes": 397821319
+  },
+  "benchmark_result": {
+    "path": "docs/runtime-community-gpu-benchmark-e690aa1.result.json",
+    "file_sha256": "sha256:86ab35d0f56be296e3a15a5a65af8785e266ffe5acf2e9b48bebfb34da2e12b6",
+    "result_digest": "sha256:78e227e02be3803afbdf2b185fbe88595bbdf8902fa53852a810705961c31acb",
+    "requested_runs": 3,
+    "successful_runs": 3,
+    "passed": true,
+    "pass_scope": "synthetic-runtime-execution-only",
+    "profile_compatibility_attested": false,
+    "failures": {
+      "out_of_memory": 0,
+      "crash": 0,
+      "timeout": 0,
+      "cancelled": 0,
+      "protocol": 0,
+      "unknown": 0
+    }
+  },
+  "external_gpu_observation": {
+    "device_identifier": "omitted",
+    "samples": 153,
+    "minimum_memory_mib": 4,
+    "maximum_memory_mib": 637,
+    "maximum_utilization_percent": 21,
+    "observed_process": "bundled-ollama-llama-server",
+    "raw_sampler_retained": false
+  },
+  "privacy": {
+    "prompt_or_output_retained": false,
+    "backend_error_retained": false,
+    "hardware_identifier_retained": false,
+    "hostname_or_address_retained": false
+  },
+  "limitations": [
+    "Synthetic runtime execution only.",
+    "Not a hardware-class or profile-compatibility attestation.",
+    "Batch size and GPU offload layer count were requested but not runtime-observed.",
+    "Does not prove worker enrollment, customer routing, production traffic, billing, credits, or provider payout."
+  ]
+}
