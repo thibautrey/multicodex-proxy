@@ -5,6 +5,7 @@ import test from "node:test";
 import { WebSocket, type RawData } from "ws";
 import {
   installResponsesWebsocketProxy,
+  websocketRequestUrl,
   WebSocketDeliveryQueue,
 } from "./websocket-responses.js";
 
@@ -12,6 +13,17 @@ type JsonFrame = {
   type?: string;
   error?: { code?: string; message?: string };
 };
+
+test("uses the local server for websocket loopback requests", () => {
+  const request = {
+    headers: { host: "external.example:1456" },
+  } as http.IncomingMessage;
+
+  assert.equal(
+    websocketRequestUrl(request, 1455, "/v1/responses").href,
+    "http://localhost:1455/v1/responses",
+  );
+});
 
 class FakeDeliveryWebSocket {
   readyState: number = WebSocket.OPEN;
