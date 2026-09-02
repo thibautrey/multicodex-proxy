@@ -229,6 +229,15 @@ test("rotates to the next account when a 429 is returned as SSE", async (t) => {
   const rotatedTrace = traces.find(
     (trace) => trace.accountId === "account-two" && trace.status === 200,
   );
+  const failedTrace = traces.find(
+    (trace) => trace.accountId === "account-one" && trace.status === 429,
+  );
+  assert.equal(typeof failedTrace?.clientRequestId, "string");
+  assert.equal(rotatedTrace?.clientRequestId, failedTrace?.clientRequestId);
+  assert.equal(failedTrace?.traceKind, "upstream-attempt");
+  assert.equal(rotatedTrace?.traceKind, "upstream-attempt");
+  assert.equal(failedTrace?.upstreamAttempt, 1);
+  assert.equal(rotatedTrace?.upstreamAttempt, 2);
   assert.equal(rotatedTrace?.accountSelection?.reason, "quota-headroom");
   assert.equal(rotatedTrace?.accountSelection?.rotated, true);
   assert.equal(rotatedTrace?.accountSelection?.candidateCount, 1);

@@ -13,6 +13,8 @@ import type {
   ApplicationWebhook,
   ExposedModel,
   ModelAlias,
+  ModuleView,
+  MarketplaceModule,
   PriorityClass,
   ProxyApiKey,
   CreatedProxyApiKey,
@@ -30,17 +32,20 @@ import { OverviewTab } from "./components/tabs/OverviewTab";
 import { TracingTab } from "./components/tabs/TracingTab";
 import { AliasesTab } from "./components/tabs/AliasesTab";
 import { ApiKeysTab } from "./components/tabs/ApiKeysTab";
+import { PluginsTab } from "./components/tabs/PluginsTab";
 import {
   initialThemeMode,
   ThemeSwitcher,
   type ThemeMode,
 } from "./components/ui/ThemeSwitcher";
+import { dismissGitHubPromotion, GITHUB_NEW_ISSUE_URL, GITHUB_REPOSITORY_URL, GITHUB_STARS_URL, readGitHubPromotionState } from "./github-promotion";
 
 const TAB_ITEMS: Array<{ id: Tab; label: string; description: string }> = [
   { id: "overview", label: "Overview", description: "Health and usage at a glance" },
   { id: "accounts", label: "Accounts", description: "Providers, quotas and routing" },
   { id: "aliases", label: "Aliases", description: "Model routing and fallbacks" },
   { id: "api-keys", label: "API keys", description: "Application access and credentials" },
+  { id: "plugins", label: "Plugins", description: "Lifecycle modules and security" },
   { id: "tracing", label: "Tracing", description: "Requests, cost and latency" },
   { id: "docs", label: "API reference", description: "Professional reference and live request console" },
 ];
@@ -73,8 +78,15 @@ function TabIcon({ tab }: { tab: Tab }) {
   if (tab === "tracing") {
     return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17h3l2-7 4 10 3-13 2 10h2"/></svg>;
   }
+  if (tab === "plugins") {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3v4M16 3v4M5 7h14v4a7 7 0 0 1-14 0z"/><path d="M12 18v3"/></svg>;
+  }
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5M8 12h8M8 16h8"/></svg>;
 }
+function GitHubIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8a9.4 9.4 0 0 0-3 18.3c.5.1.6-.2.6-.4v-1.8c-2.7.6-3.3-1.1-3.3-1.1-.4-1.1-1.1-1.4-1.1-1.4-.9-.6.1-.6.1-.6 1 0 1.5 1 1.5 1 .9 1.5 2.3 1.1 2.9.8.1-.6.4-1.1.7-1.3-2.2-.2-4.5-1.1-4.5-4.7 0-1 .4-1.9 1-2.5-.1-.3-.4-1.3.1-2.5 0 0 .8-.3 2.6 1a9 9 0 0 1 4.7 0c1.8-1.2 2.6-1 2.6-1 .5 1.2.2 2.2.1 2.5.6.6 1 1.5 1 2.5 0 3.6-2.3 4.5-4.5 4.7.4.3.7.9.7 1.8v2.6c0 .3.2.6.7.4A9.4 9.4 0 0 0 12 2.8Z" /></svg>;
+}
+
 function activeModelBlockCount(account: Account) {
   return Object.values(account.state?.modelBlocks ?? {}).filter(
     (block) => block.until > Date.now(),
@@ -82,6 +94,7 @@ function activeModelBlockCount(account: Account) {
 }
 
 export default function App() {
+  const [githubPromotion] = useState(() => readGitHubPromotionState(localStorage));
   const [tab, setTab] = useState<Tab>(initialTab);
   const [locationSearch, setLocationSearch] = useState(window.location.search);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -96,10 +109,15 @@ export default function App() {
   const [proxyApiKeys, setProxyApiKeys] = useState<ProxyApiKey[]>([]);
   const [applicationPolicies, setApplicationPolicies] = useState<ApplicationPolicy[]>([]);
   const [settings, setSettings] = useState<StoreSettings>({});
+  const [modules, setModules] = useState<ModuleView[]>([]);
+  const [marketplaceModules, setMarketplaceModules] = useState<MarketplaceModule[]>([]);
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [loginToken, setLoginToken] = useState("");
   const [loginBusy, setLoginBusy] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>(initialThemeMode);
+  const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
+  const [githubPromotionOpen, setGitHubPromotionOpen] = useState(!githubPromotion.dismissed && Date.now() >= githubPromotion.showAt);
+  const [githubPromotionDismissed, setGitHubPromotionDismissed] = useState(githubPromotion.dismissed);
   const [usageCacheTtlMs, setUsageCacheTtlMs] = useState(300_000);
   const [oauthRedirectUri, setOauthRedirectUri] = useState("");
   const [error, setError] = useState("");
@@ -110,6 +128,9 @@ export default function App() {
   const [traceExportInProgress, setTraceExportInProgress] = useState(false);
   const tracePageRef = useRef(tracePagination.page);
   const traceRangeRef = useRef(traceRange);
+  const mobileNavigationRef = useRef<HTMLDialogElement>(null);
+  const mobileNavigationTriggerRef = useRef<HTMLButtonElement>(null);
+  const activeTabItem = TAB_ITEMS.find((item) => item.id === tab) ?? TAB_ITEMS[0];
   const sanitized = useMemo(() => {
     const params = new URLSearchParams(locationSearch);
     return params.get("sanitized") === "1" || params.get("safe") === "1";
@@ -124,6 +145,51 @@ export default function App() {
 
   useEffect(() => {
     localStorage.removeItem("adminToken");
+  }, []);
+
+  const closeGitHubPromotion = () => {
+    dismissGitHubPromotion(localStorage);
+    setGitHubPromotionOpen(false);
+    setGitHubPromotionDismissed(true);
+  };
+
+  useEffect(() => {
+    if (githubPromotionDismissed || githubPromotionOpen) return;
+    const remaining = githubPromotion.showAt - Date.now();
+    if (remaining <= 0) {
+      setGitHubPromotionOpen(true);
+      return;
+    }
+    const timeout = window.setTimeout(() => setGitHubPromotionOpen(true), remaining);
+    return () => window.clearTimeout(timeout);
+  }, [githubPromotion.showAt, githubPromotionDismissed, githubPromotionOpen]);
+
+  useEffect(() => {
+    if (!githubPromotionOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeGitHubPromotion();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [githubPromotionOpen]);
+
+  useEffect(() => {
+    const dialog = mobileNavigationRef.current;
+    if (!dialog) return;
+    if (mobileNavigationOpen && !dialog.open) {
+      dialog.showModal();
+    } else if (!mobileNavigationOpen && dialog.open) {
+      dialog.close();
+    }
+  }, [mobileNavigationOpen]);
+
+  useEffect(() => {
+    const desktopNavigation = window.matchMedia("(min-width: 901px)");
+    const closeOnDesktop = (event: MediaQueryListEvent) => {
+      if (event.matches) setMobileNavigationOpen(false);
+    };
+    desktopNavigation.addEventListener("change", closeOnDesktop);
+    return () => desktopNavigation.removeEventListener("change", closeOnDesktop);
   }, []);
 
   useLayoutEffect(() => {
@@ -231,7 +297,7 @@ export default function App() {
   };
 
   const loadBase = async () => {
-    const [acc, cfg, mdl, aliasRes, settingsRes, apiKeysRes, policiesRes] = await Promise.all([
+    const [acc, cfg, mdl, aliasRes, settingsRes, apiKeysRes, policiesRes, modulesRes] = await Promise.all([
       api("/admin/accounts"),
       api("/admin/config"),
       fetch("/v1/models").then((r) => r.json()),
@@ -239,6 +305,7 @@ export default function App() {
       api("/admin/settings"),
       api("/admin/proxy-api-keys"),
       api("/admin/application-policies"),
+      api("/admin/modules"),
     ]);
     setAccounts((acc.accounts ?? []) as Account[]);
     if (Number.isFinite(Number(cfg.usageCacheTtlMs)) && Number(cfg.usageCacheTtlMs) > 0) {
@@ -250,6 +317,8 @@ export default function App() {
     setSettings((settingsRes.settings ?? {}) as StoreSettings);
     setProxyApiKeys((apiKeysRes.proxyApiKeys ?? []) as ProxyApiKey[]);
     setApplicationPolicies((policiesRes.applicationPolicies ?? []) as ApplicationPolicy[]);
+    setModules((modulesRes.modules ?? []) as ModuleView[]);
+    setMarketplaceModules((modulesRes.marketplace ?? []) as MarketplaceModule[]);
   };
 
   const refreshModels = async () => {
@@ -834,14 +903,37 @@ export default function App() {
             </div>
           </div>
 
+          <button
+            ref={mobileNavigationTriggerRef}
+            type="button"
+            className="mobile-navigation-trigger"
+            aria-haspopup="dialog"
+            aria-expanded={mobileNavigationOpen}
+            aria-controls="mobile-navigation-dialog"
+            aria-label={`Open navigation. Current section: ${activeTabItem.label}`}
+            onClick={() => setMobileNavigationOpen(true)}
+          >
+            <span className="mobile-navigation-current-icon"><TabIcon tab={tab} /></span>
+            <span className="mobile-navigation-current-copy">
+              <small>Workspace</small>
+              <strong>{activeTabItem.label}</strong>
+            </span>
+            <span className="mobile-navigation-trigger-label">
+              Menu
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
+            </span>
+          </button>
+
           <nav className="sidebar-nav" aria-label="Primary navigation">
             <span className="sidebar-nav-label">Workspace</span>
             {TAB_ITEMS.map((item) => (
               <button
                 key={item.id}
+                type="button"
                 className={tab === item.id ? "nav-tab active" : "nav-tab"}
                 onClick={() => setTab(item.id)}
                 aria-current={tab === item.id ? "page" : undefined}
+                aria-label={`${item.label}: ${item.description}`}
               >
                 <span className="nav-tab-icon"><TabIcon tab={item.id} /></span>
                 <span className="nav-tab-copy">
@@ -861,14 +953,119 @@ export default function App() {
               </span>
             </div>
             <ThemeSwitcher value={themeMode} onChange={setThemeMode} />
+            {githubPromotionDismissed && (
+              <a className="github-repository-link" href={GITHUB_REPOSITORY_URL} target="_blank" rel="noreferrer">
+                <GitHubIcon /><span>View on GitHub</span>
+              </a>
+            )}
           </div>
         </aside>
+
+        <dialog
+          ref={mobileNavigationRef}
+          id="mobile-navigation-dialog"
+          className="mobile-navigation-dialog"
+          aria-labelledby="mobile-navigation-title"
+          onCancel={(event) => {
+            event.preventDefault();
+            setMobileNavigationOpen(false);
+          }}
+          onClose={() => {
+            setMobileNavigationOpen(false);
+            const trigger = mobileNavigationTriggerRef.current;
+            if (trigger?.getClientRects().length) trigger.focus();
+          }}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              setMobileNavigationOpen(false);
+            }
+          }}
+        >
+          <div className="mobile-navigation-drawer">
+            <header className="mobile-navigation-header">
+              <div className="mobile-navigation-brand">
+                <img className="brand-mark" src="/assets/brand/multivibe-app-icon.svg" alt="" />
+                <div>
+                  <small>MultiVibe</small>
+                  <strong id="mobile-navigation-title">Navigate workspace</strong>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="mobile-navigation-close"
+                aria-label="Close navigation"
+                onClick={() => setMobileNavigationOpen(false)}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+              </button>
+            </header>
+
+            <nav className="mobile-navigation-list" aria-label="Mobile primary navigation">
+              {TAB_ITEMS.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={tab === item.id ? "mobile-navigation-item active" : "mobile-navigation-item"}
+                  aria-current={tab === item.id ? "page" : undefined}
+                  onClick={() => {
+                    setTab(item.id);
+                    setMobileNavigationOpen(false);
+                  }}
+                >
+                  <span className="mobile-navigation-item-icon"><TabIcon tab={item.id} /></span>
+                  <span className="mobile-navigation-item-copy">
+                    <strong>{item.label}</strong>
+                    <small>{item.description}</small>
+                  </span>
+                  {tab === item.id && <span className="mobile-navigation-active-label">Current</span>}
+                </button>
+              ))}
+            </nav>
+
+            <footer className="mobile-navigation-footer">
+              <div className="mobile-navigation-status">
+                <span className="status-dot" />
+                <span>
+                  <strong>{sanitized ? "Sanitized view" : "System online"}</strong>
+                  <small>{accounts.length} accounts · {models.length} models</small>
+                </span>
+              </div>
+              <ThemeSwitcher value={themeMode} onChange={setThemeMode} />
+              {githubPromotionDismissed && (
+                <a className="github-repository-link" href={GITHUB_REPOSITORY_URL} target="_blank" rel="noreferrer">
+                  <GitHubIcon /><span>View on GitHub</span>
+                </a>
+              )}
+            </footer>
+          </div>
+        </dialog>
+
+        {githubPromotionOpen && authenticated && (
+          <div className="modal-backdrop github-promotion-backdrop" role="presentation" onClick={(event) => {
+            if (event.target === event.currentTarget) closeGitHubPromotion();
+          }}>
+            <section className="modal panel github-promotion-modal" role="dialog" aria-modal="true" aria-labelledby="github-promotion-title">
+              <button className="modal-close-button github-promotion-close" type="button" onClick={closeGitHubPromotion} aria-label="Close">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+              </button>
+              <div className="github-promotion-icon" aria-hidden="true">★</div>
+              <span className="eyebrow">Enjoying MultiVibe?</span>
+              <h2 id="github-promotion-title">Help the project grow</h2>
+              <p>If MultiVibe is useful to you, a GitHub star helps more people discover it. Feedback and bug reports are just as valuable.</p>
+              <div className="github-promotion-actions">
+                <a className="btn" href={GITHUB_STARS_URL} target="_blank" rel="noreferrer" onClick={closeGitHubPromotion}>Star on GitHub</a>
+                <a className="btn secondary" href={GITHUB_NEW_ISSUE_URL} target="_blank" rel="noreferrer">Submit an issue</a>
+              </div>
+              <button className="github-promotion-later" type="button" onClick={closeGitHubPromotion}>Maybe later</button>
+            </section>
+          </div>
+        )}
 
         <div className="workspace">
           <header className="topbar">
             <div className="topbar-title">
-              <h1>{TAB_ITEMS.find((item) => item.id === tab)?.label}</h1>
-              <p className="muted">{TAB_ITEMS.find((item) => item.id === tab)?.description}</p>
+              <h1>{activeTabItem.label}</h1>
+              <p className="muted">{activeTabItem.description}</p>
             </div>
             <div className="topbar-actions">
               <span className="badge badge-live">
@@ -993,6 +1190,10 @@ export default function App() {
             settings={settings}
             patchSettings={patchSettings}
           />
+        )}
+
+        {tab === "plugins" && (
+          <PluginsTab modules={modules} marketplace={marketplaceModules} reload={loadBase} />
         )}
 
         {tab === "docs" && (

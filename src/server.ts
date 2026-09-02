@@ -15,8 +15,15 @@ import {
   ADMIN_TOKEN,
   CODEX_PROJECT_REGISTRATION_TOKEN,
   CODEX_PROJECTS_PATH,
+  INFERENCE_IDEMPOTENCY_IN_FLIGHT_TIMEOUT_MS,
+  INFERENCE_IDEMPOTENCY_MAX_BYTES,
+  INFERENCE_IDEMPOTENCY_MAX_ENTRIES,
+  INFERENCE_IDEMPOTENCY_MAX_RESPONSE_BYTES,
+  INFERENCE_IDEMPOTENCY_TTL_MS,
   JOBS_DB_PATH,
   JOB_WORKER_CONCURRENCY,
+  MODULES_PATH,
+  BUNDLED_SECURITY_MODULE_PATH,
   CHATGPT_BASE_URL,
   MISTRAL_BASE_URL,
   MISTRAL_UPSTREAM_PATH,
@@ -51,6 +58,7 @@ import {
   REALTIME_REQUEST_TIMEOUT_MS,
   REALTIME_WEBRTC_CALL_URL,
 } from "./config.js";
+import { ModuleManager } from "./module-manager.js";
 import { createBodyParserMiddleware } from "./middleware/decompression.js";
 import http from "node:http";
 import { startScheduledWeeklyResetMonitor } from "./rate-limit-reset.js";
@@ -58,14 +66,7 @@ import {
   identifyProxyApplication,
   parseProxyApiKeys,
 } from "./proxy-api-keys.js";
-import { traceHeadersForRequest } from "./trace-headers.js";
-import {
-  CodexProjectRegistry,
-  extractCodexProjectHost,
-  extractCodexProjectRoot,
-  extractCodexSessionId,
-  extractLiteLLMProjectAttribution,
-} from "./codex-projects.js";
+import { CodexProjectRegistry } from "./codex-projects.js";
 import { anthropicErrorEnvelope } from "./anthropic-compat.js";
 import { CapacityTracker } from "./smart-routing.js";
 import { JobRunner, JobStore } from "./jobs.js";
@@ -75,6 +76,8 @@ import {
   createSmartRoutingRouter,
 } from "./smart-routing-routes.js";
 import { startEmbeddedProviderAgent } from "./provider-agent-supervisor.js";
+import { createInferenceIdempotencyMiddleware } from "./inference-idempotency.js";
+import { createRequestTracingMiddleware } from "./request-tracing.js";
 
 const app = express();
 app.use(createBodyParserMiddleware());
@@ -114,6 +117,7 @@ const jobStore = new JobStore(
 const smartRouting = new SmartRoutingCoordinator(store, jobStore, capacityTracker);
 const oauthStore = new OAuthStateStore(OAUTH_STATE_PATH);
 const codexProjectRegistry = new CodexProjectRegistry(CODEX_PROJECTS_PATH);
+const moduleManager = new ModuleManager(MODULES_PATH, BUNDLED_SECURITY_MODULE_PATH);
 const traceManager = createTraceManager({
   filePath: TRACE_FILE_PATH,
   historyFilePath: TRACE_STATS_HISTORY_PATH,
@@ -127,6 +131,7 @@ await Promise.all([
   oauthStore.init(),
   codexProjectRegistry.init(),
   traceManager.initialize(),
+  moduleManager.initialize(),
 ]);
 const providerAgent = startEmbeddedProviderAgent({
   enabled: PROVIDER_AGENT_ENABLED,
@@ -151,43 +156,13 @@ startScheduledWeeklyResetMonitor({
   openaiBaseUrl: CHATGPT_BASE_URL,
 });
 
-// Catch-all request tracing — records every request even if it doesn't hit an official endpoint.
-// Routes that record their own detailed trace (e.g. /v1/chat/completions) set res.locals._multivibeTraced
-// so we don't double-count them.
-app.use((req, res, next) => {
-  const startedAt = Date.now();
-  const route = req.originalUrl || req.url;
-
-  res.on("finish", () => {
-    if (res.locals._multivibeTraced) return;
-    const pathOrUrl = req.path || req.originalUrl || "";
-    if (
-      pathOrUrl.startsWith("/admin/") ||
-      pathOrUrl.startsWith("/assets/") ||
-      pathOrUrl === "/favicon.ico"
-    )
-      return;
-    traceManager.recordTrace({
-      ...(res.locals.multivibeTrace ?? {}),
-      ...extractLiteLLMProjectAttribution(req.headers),
-      codexProjectHost: extractCodexProjectHost(req.headers),
-      codexProjectRoot: extractCodexProjectRoot(req.headers),
-      at: Date.now(),
-      route: `${req.method} ${route}`,
-      application: res.locals.proxyApplication,
-      codexSessionId: extractCodexSessionId(req.headers),
-      requestHeaders: TRACE_INCLUDE_HEADERS
-        ? traceHeadersForRequest(req.headers)
-        : undefined,
-      status: res.statusCode,
-      stream: false,
-      latencyMs: Date.now() - startedAt,
-      requestBody: TRACE_INCLUDE_BODY ? req.body : undefined,
-    });
-  });
-
-  next();
-});
+app.use(
+  createRequestTracingMiddleware({
+    traceManager,
+    includeBody: TRACE_INCLUDE_BODY,
+    includeHeaders: TRACE_INCLUDE_HEADERS,
+  }),
+);
 
 const adminRouter = createAdminRouter({
   store,
@@ -203,6 +178,7 @@ const adminRouter = createAdminRouter({
   smartRouting,
   anonymousUsageSharing,
   providerAgent,
+  moduleManager,
   storagePaths: {
     accountsPath: STORE_PATH,
     oauthStatePath: OAUTH_STATE_PATH,
@@ -225,6 +201,7 @@ const proxyRouter = createProxyRouter({
   oauthConfig,
   capacityTracker,
   smartRoutingCoordinator: smartRouting,
+  moduleManager,
 });
 
 const realtimeRouter = createRealtimeRouter({
@@ -475,12 +452,31 @@ app.delete("/admin/session", (req, res) => {
 });
 
 app.use("/admin", adminGuard, adminRouter);
+const inferenceIdempotencyMiddleware = createInferenceIdempotencyMiddleware({
+  ttlMs: INFERENCE_IDEMPOTENCY_TTL_MS,
+  inFlightTimeoutMs: INFERENCE_IDEMPOTENCY_IN_FLIGHT_TIMEOUT_MS,
+  maxEntries: INFERENCE_IDEMPOTENCY_MAX_ENTRIES,
+  maxBytes: INFERENCE_IDEMPOTENCY_MAX_BYTES,
+  maxResponseBytes: INFERENCE_IDEMPOTENCY_MAX_RESPONSE_BYTES,
+});
 const admissionMiddleware = createAdmissionMiddleware(smartRouting);
 const smartRoutingRouter = createSmartRoutingRouter(smartRouting);
-app.use("/v1", proxyGuard, admissionMiddleware, smartRoutingRouter);
+app.use(
+  "/v1",
+  proxyGuard,
+  inferenceIdempotencyMiddleware,
+  admissionMiddleware,
+  smartRoutingRouter,
+);
 app.use("/v1", realtimeRouter);
 app.use("/v1", proxyRouter);
-app.use("/", rootProxyGuard, admissionMiddleware, realtimeRouter);
+app.use(
+  "/",
+  rootProxyGuard,
+  inferenceIdempotencyMiddleware,
+  admissionMiddleware,
+  realtimeRouter,
+);
 app.use("/", proxyRouter);
 
 app.use(express.static(webDist));

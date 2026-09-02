@@ -76,6 +76,7 @@ import {
   ProviderAgentControlRequestError,
   type ProviderAgentControl,
 } from "../../provider-agent-supervisor.js";
+import type { ModuleManager } from "../../module-manager.js";
 
 type StoragePaths = {
   accountsPath: string;
@@ -100,6 +101,7 @@ export type AdminRoutesOptions = {
   smartRouting?: SmartRoutingCoordinator;
   anonymousUsageSharing?: AnonymousUsageSharingController;
   providerAgent?: ProviderAgentControl;
+  moduleManager?: ModuleManager;
 };
 
 function proxyApiKeyPreview(key: string): string {
@@ -370,6 +372,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     configuredProxyApiKeys,
     storagePaths,
     smartRouting,
+    moduleManager,
   } = options;
 
   const {
@@ -388,6 +391,60 @@ export function createAdminRouter(options: AdminRoutesOptions) {
   } = traceManager;
 
   const router = express.Router();
+
+  router.get("/modules", (_req, res) => {
+    if (!moduleManager) return res.status(503).json({ error: "Module manager is unavailable" });
+    return res.json({ modules: moduleManager.list(), marketplace: moduleManager.marketplaceList() });
+  });
+
+  router.post("/modules/submit", async (req, res) => {
+    if (!moduleManager) return res.status(503).json({ error: "Module manager is unavailable" });
+    try {
+      return res.status(201).json({ marketplaceModule: await moduleManager.submit(String(req.body?.url ?? "")) });
+    } catch (error) {
+      return res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post("/modules/install", async (req, res) => {
+    if (!moduleManager) return res.status(503).json({ error: "Module manager is unavailable" });
+    try {
+      return res.status(201).json({ module: await moduleManager.install(String(req.body?.url ?? "")) });
+    } catch (error) {
+      return res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post("/modules/:id/update", async (req, res) => {
+    if (!moduleManager) return res.status(503).json({ error: "Module manager is unavailable" });
+    try {
+      return res.json({ module: await moduleManager.update(req.params.id) });
+    } catch (error) {
+      return res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.patch("/modules/:id", async (req, res) => {
+    if (!moduleManager) return res.status(503).json({ error: "Module manager is unavailable" });
+    try {
+      let result;
+      if ("enabled" in (req.body ?? {})) result = await moduleManager.setEnabled(req.params.id, Boolean(req.body.enabled));
+      if ("settings" in (req.body ?? {})) result = await moduleManager.setSettings(req.params.id, req.body.settings);
+      return res.json({ module: result ?? moduleManager.list().find((entry) => entry.id === req.params.id) });
+    } catch (error) {
+      return res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.delete("/modules/:id", async (req, res) => {
+    if (!moduleManager) return res.status(503).json({ error: "Module manager is unavailable" });
+    try {
+      await moduleManager.remove(req.params.id);
+      return res.json({ ok: true });
+    } catch (error) {
+      return res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
 
   const usageBaseUrlForAccount = (account: Account): string => {
     const provider = normalizeProvider(account);
@@ -1125,13 +1182,17 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       if (projectIdFilter && t.projectId !== projectIdFilter) return false;
       return true;
     });
+    const usageTraces = filtered.filter(
+      (trace) =>
+        trace.traceKind === undefined || trace.traceKind === "upstream-attempt",
+    );
 
     const globalAgg = createUsageAggregate();
     const byAccount = new Map<string, ReturnType<typeof createUsageAggregate>>();
     const byRoute = new Map<string, ReturnType<typeof createUsageAggregate>>();
     const byApplication = new Map<string, ReturnType<typeof createUsageAggregate>>();
 
-    for (const trace of filtered) {
+    for (const trace of usageTraces) {
       addTraceToAggregate(globalAgg, trace);
 
       const accountKey = trace.accountId ?? "unknown";
@@ -1182,7 +1243,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     const byApplicationOut = Array.from(byApplication.entries())
       .map(([application, agg]) => ({ application, ...finalizeAggregate(agg) }))
       .sort((a, b) => b.requests - a.requests);
-    const byProjectOut = aggregateProjectUsage(filtered);
+    const byProjectOut = aggregateProjectUsage(usageTraces);
 
     res.json({
       ok: true,
@@ -1200,7 +1261,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       byApplication: byApplicationOut,
       byProject: byProjectOut,
       tracesEvaluated: traces.length,
-      tracesMatched: filtered.length,
+      tracesMatched: usageTraces.length,
     });
   });
 

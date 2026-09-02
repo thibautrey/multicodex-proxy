@@ -52,12 +52,12 @@ export function OverviewTab({
       </section>
 
       <section className="grid cards6">
-        <Metric title="Requests" value={`${traceStats.totals.requests}`} detail="For the selected trace range" />
+        <Metric title="Client requests" value={`${traceStats.totals.requests}`} detail={`${traceStats.totals.upstreamAttempts} provider attempts in range`} />
         <Metric title="Input tokens" value={formatTokenCount(traceStats.totals.tokensInput)} detail="Prompt tokens sent to providers" />
         <Metric title="Output tokens" value={formatTokenCount(traceStats.totals.tokensOutput)} detail="Generated tokens returned by providers" />
-        <Metric title="Inference speed" value={formatTokenRate(traceStats.totals.inferenceTokensPerSecond)} detail={`${traceStats.totals.inferenceRequests} measurable requests`} />
+        <Metric title="Inference speed" value={formatTokenRate(traceStats.totals.inferenceTokensPerSecond)} detail={`${traceStats.totals.inferenceRequests} measurable attempts`} />
         <Metric title="Estimated cost" value={usd(traceStats.totals.costUsd)} detail={`No-cache estimate: ${usd(traceStats.totals.costUsdWithoutCache)}`} />
-        <Metric title="Avg latency" value={`${Math.round(traceStats.totals.latencyAvgMs)}ms`} detail="Mean response time across traced calls" />
+        <Metric title="Avg latency" value={`${Math.round(traceStats.totals.latencyAvgMs)}ms`} detail="Mean client response time" />
       </section>
 
         <section className="panel">

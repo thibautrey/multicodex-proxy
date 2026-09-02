@@ -312,6 +312,19 @@ test("client close after response.completed is classified as success", () => {
   assert.deepEqual(
     classifyNativeStreamCompletion(
       true,
+      false,
+      new Error("reader cancellation surfaced as an error"),
+    ),
+    {
+      interrupted: true,
+      status: 499,
+      clientDisconnected: true,
+      error: "client disconnected before stream completion",
+    },
+  );
+  assert.deepEqual(
+    classifyNativeStreamCompletion(
+      true,
       true,
       new Error("upstream reader aborted after completion"),
     ),
