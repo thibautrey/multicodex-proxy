@@ -354,8 +354,20 @@ export type ModuleView = {
     version: string;
     description: string;
     hooks: string[];
+    categories?: string[];
+    tags?: string[];
+    author?: string;
+    homepage?: string;
     settingsSchema?: Record<string, unknown>;
   };
+};
+
+export type MarketplaceModule = {
+  id: string;
+  origin: string;
+  commit: string;
+  submittedAt: string;
+  manifest: NonNullable<ModuleView["manifest"]>;
 };
 
 export type ProxyApiKey = {

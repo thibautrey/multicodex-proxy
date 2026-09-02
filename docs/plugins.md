@@ -40,6 +40,25 @@ deployment), then:
 The plugin cards expose their origin, pinned commit, version, declared hooks,
 health, and load state.
 
+The **Marketplace** view is designed for larger catalogs: search matches names,
+descriptions, authors, IDs, categories, and tags, while category chips narrow
+the result grid. Select **Install** on a catalog card to clone and pin that
+plugin without re-entering its URL. The separate **Installed** view retains the
+runtime controls and health information.
+
+### Submit a plugin
+
+Select **Submit a plugin**, enter the public GitHub repository URL, then choose
+**Validate and submit**. MultiVibe clones a temporary snapshot, validates the
+same safety and compatibility rules used during installation, reads its
+marketplace metadata, and adds or refreshes the entry in this deployment's
+catalog. Submission does not install or execute the plugin.
+
+Marketplace submissions are stored in `/data/modules/marketplace.json`. This
+is an instance-local registry: operators can curate their own catalog and move
+it with their `/data` backup. The submission API is protected by the same admin
+authentication as the rest of the dashboard.
+
 | Action | Effect |
 | --- | --- |
 | **Enable** | Makes a loaded plugin participate in new requests. |
@@ -145,6 +164,10 @@ Example manifest:
   "timeoutMs": 5000,
   "failurePolicy": "open",
   "repository": "https://github.com/owner/example-plugin.git",
+  "categories": ["Productivity", "Automation"],
+  "tags": ["metadata", "routing"],
+  "author": "Example Labs",
+  "homepage": "https://github.com/owner/example-plugin",
   "settingsSchema": {
     "type": "object",
     "properties": { "marker": { "type": "string" } },
@@ -162,6 +185,10 @@ Example manifest:
 | `entrypoint` | Yes | Repository-relative path to a committed ESM JavaScript file. |
 | `hooks` | Yes | Hook names the plugin implements. |
 | `repository` | Yes | Canonical public GitHub URL; it must match the installation URL after normalization. |
+| `categories` | No | Up to 8 category names used for marketplace grouping; uncategorized plugins appear under `Other`. |
+| `tags` | No | Up to 16 searchable tags. |
+| `author` | No | Author or publisher displayed by marketplace cards. |
+| `homepage` | No | Public HTTPS details URL shown on the card. |
 | `priority` | No | Execution order; lower values run first, default `100`, then IDs break ties. |
 | `timeoutMs` | No | Per-hook timeout, default 5,000 ms and clamped to 10–60,000 ms. |
 | `failurePolicy` | No | `open` (default) continues the request after failure; `closed` fails it. |

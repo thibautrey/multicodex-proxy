@@ -586,6 +586,12 @@ dashboard's **Plugins** tab lets an administrator install a public GitHub
 repository, inspect its pinned commit and declared hooks, enable or disable it,
 fetch an explicit update, and remove a disabled third-party plugin.
 
+The same tab includes a searchable marketplace grouped by manifest categories.
+Operators can submit a public repository for validation and inclusion in their
+instance catalog, then install any listed plugin with one click. Marketplace
+entries are metadata snapshots and are never executed until explicitly
+installed and enabled.
+
 Plugins are loaded as fully trusted JavaScript inside the MultiVibe process.
 They have the same access to requests, credentials, storage, and the network as
 MultiVibe itself, so review the complete repository and every update before

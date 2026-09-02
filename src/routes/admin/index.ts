@@ -382,7 +382,16 @@ export function createAdminRouter(options: AdminRoutesOptions) {
 
   router.get("/modules", (_req, res) => {
     if (!moduleManager) return res.status(503).json({ error: "Module manager is unavailable" });
-    return res.json({ modules: moduleManager.list() });
+    return res.json({ modules: moduleManager.list(), marketplace: moduleManager.marketplaceList() });
+  });
+
+  router.post("/modules/submit", async (req, res) => {
+    if (!moduleManager) return res.status(503).json({ error: "Module manager is unavailable" });
+    try {
+      return res.status(201).json({ marketplaceModule: await moduleManager.submit(String(req.body?.url ?? "")) });
+    } catch (error) {
+      return res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
   });
 
   router.post("/modules/install", async (req, res) => {
