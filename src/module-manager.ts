@@ -127,6 +127,29 @@ export async function readModuleManifest(root: string): Promise<ModuleManifest> 
   return manifest as ModuleManifest;
 }
 
+function validateSettings(schema: Record<string, any> | undefined, settings: Record<string, unknown>): void {
+  if (!schema) return;
+  if (schema.type && schema.type !== "object") throw new Error("Module settings schema root must be an object");
+  const properties = schema.properties && typeof schema.properties === "object" ? schema.properties : {};
+  if (schema.additionalProperties === false) {
+    const unknown = Object.keys(settings).find((key) => !(key in properties));
+    if (unknown) throw new Error(`Unknown module setting: ${unknown}`);
+  }
+  for (const [key, value] of Object.entries(settings)) {
+    const definition = properties[key];
+    if (!definition) continue;
+    const validType =
+      definition.type === "array" ? Array.isArray(value) :
+      definition.type === "object" ? Boolean(value) && typeof value === "object" && !Array.isArray(value) :
+      definition.type === "integer" ? Number.isInteger(value) :
+      definition.type === "number" ? typeof value === "number" && Number.isFinite(value) :
+      definition.type ? typeof value === definition.type : true;
+    if (!validType) throw new Error(`Invalid value for module setting: ${key}`);
+    if (Array.isArray(definition.enum) && !definition.enum.includes(value)) throw new Error(`Unsupported value for module setting: ${key}`);
+    if (typeof value === "number" && (value < (definition.minimum ?? -Infinity) || value > (definition.maximum ?? Infinity))) throw new Error(`Module setting is out of range: ${key}`);
+  }
+}
+
 export class ModuleManager {
   private locks: ModuleLock[] = [];
   private loaded = new Map<string, LoadedModule>();
@@ -171,7 +194,7 @@ export class ModuleManager {
   }
 
   private moduleRoot(lock: ModuleLock): string {
-    if (lock.source === "bundled" && this.bundledRoot) return this.bundledRoot;
+    if (lock.source === "bundled" && lock.commit === "bundled" && this.bundledRoot) return this.bundledRoot;
     return path.join(this.checkoutRoot, lock.id);
   }
 
@@ -272,7 +295,6 @@ export class ModuleManager {
         throw error;
       }
       lock.commit = commit;
-      lock.source = "external";
       lock.restartRequired = true;
       await this.saveLocks();
       return this.list().find((entry) => entry.id === id)!;
@@ -285,6 +307,8 @@ export class ModuleManager {
     const lock = this.locks.find((entry) => entry.id === id);
     if (!lock) throw new Error("Module not found");
     if (!settings || typeof settings !== "object" || Array.isArray(settings)) throw new Error("Settings must be an object");
+    const manifest = this.loaded.get(id)?.manifest ?? await readModuleManifest(this.moduleRoot(lock));
+    validateSettings(manifest.settingsSchema, settings);
     lock.settings = structuredClone(settings);
     const loaded = this.loaded.get(id);
     if (loaded) loaded.lock.settings = lock.settings;
