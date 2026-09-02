@@ -475,6 +475,10 @@ test("converts a z.ai chat completion SSE to a completed Responses stream", asyn
   assert.equal(completedTraces.length, 1);
   assert.equal(completedTraces[0].lifecycleState, "completed");
   assert.equal(completedTraces[0].status, 200);
+  assert.equal(
+    completedTraces[0].responseStreamDiagnostics.terminalEventType,
+    "response.completed",
+  );
   assert.deepEqual(completedTraces[0].usage, {
     prompt_tokens: 12,
     completion_tokens: 3,

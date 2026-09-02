@@ -171,7 +171,7 @@ test("successful delivery callbacks release queue capacity", async () => {
 
 async function listen(server: http.Server): Promise<number> {
   await new Promise<void>((resolve) =>
-    server.listen(0, "<MVSEC_IPV4_DAA4891F8A7E>", resolve),
+    server.listen(0, "localhost", resolve),
   );
   const address = server.address();
   assert.ok(address && typeof address === "object");
@@ -188,7 +188,7 @@ async function startProxy(
 }
 
 async function openWebsocket(port: number) {
-  const ws = new WebSocket(`ws://<MVSEC_IPV4_DAA4891F8A7E>:${port}/v1/responses`);
+  const ws = new WebSocket(`ws://localhost:${port}/v1/responses`);
   await once(ws, "open");
   ws.on("error", () => undefined);
   return ws;
