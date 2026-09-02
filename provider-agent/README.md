@@ -106,3 +106,61 @@ capacity, enable routing, or create compensation eligibility.
 Agent readiness calls Core's credential-free loopback `/health` endpoint. It
 never receives or forwards the proxy API key merely to prove that the packaged
 Core process is reachable.
+
+## Capacity consent and model planning foundation
+
+`capacity_policy.go` defines the fail-closed capacity contract that a future
+host application can present to the machine owner. There are no defaults: the
+owner must explicitly choose all of the following values before the policy is
+accepted:
+
+- maximum GPU utilization percentage (`1` through `100`);
+- maximum percentage of GPU-addressable VRAM (`1` through `100`);
+- maximum bytes occupied in the managed model store;
+- the managed model store's clean, absolute, non-root path;
+- maximum model download bytes in a rolling 24-hour window;
+- a positive minimum active-model residency;
+- maximum model-set changes in a rolling 24-hour window; and
+- a positive amount of physical disk space that must remain free.
+
+An explicit zero download limit disables new model downloads. An explicit zero
+model-change limit freezes the current active set. Those values use pointer
+fields in the operator-facing document so they cannot be confused with an
+omitted choice. Invalid percentages, missing fields, zero safety values,
+relative or unclean paths, filesystem roots and overflowing durations are
+rejected rather than normalized.
+
+`model_planner.go` is a dependency-free, deterministic and declarative planning
+slice. Its caller supplies a capacity snapshot for exactly the configured
+storage path, a bounded candidate catalog, the provider agent's managed model
+state and a fresh authoritative demand snapshot. The planner never searches a
+home directory, mounted volume, process table, runtime, network endpoint or any
+other filesystem location. It does not call `stat`, walk directories, infer
+installed models, download or delete model files, or start and stop runtimes.
+Its output is only a proposed selected-model list plus proposed download sizes.
+
+For each demanded model, the planner requires the candidate context window to
+cover the requested context and ranks utility as `demand units × required
+context tokens`. Ties prefer larger requested contexts, existing active and
+installed models, smaller artifacts and finally lexical model ID. It greedily
+admits candidates only while the sum of their GPU utilization reservations and
+VRAM fits the owner's percentages. A not-yet-installed candidate must also fit
+the lesser of the remaining managed-store allowance and physical free space
+after the owner's reserve, as well as the remaining rolling download budget.
+The existing active set itself must fit the policy or planning fails closed.
+
+Active models inside the minimum residency window remain selected even if
+demand changes. Successful active-set transitions are counted over the rolling
+24-hour history supplied by managed state; when the owner's change limit is
+exhausted the plan preserves the current set and proposes no downloads. This
+slice never proposes deletion, so existing managed artifacts are not evicted to
+manufacture room for a more popular model.
+
+The raw `signedAuthoritativeDemandInput` is intentionally a separate, opaque
+type. This package does not decode it, verify a signature, select a trust root,
+contact MultiVibe Cloud or convert it into an
+`authoritativeDemandSnapshot`. A later integration must authenticate and
+authorize that envelope outside the planner, then construct the authoritative
+snapshot. The planner still rejects expired, future-issued, duplicated,
+unbounded or structurally invalid demand as defense in depth; those checks are
+not a substitute for cryptographic verification.
