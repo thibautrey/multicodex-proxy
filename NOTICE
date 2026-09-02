@@ -1,0 +1,19 @@
+MultiVibe
+Copyright 2026 Thibaut Rey
+Copyright 2026 Pleiades Solutions
+
+The source code in this repository, including MultiVibe Core and the auditable
+provider-host agent, is licensed under the Apache License, Version 2.0. See the
+accompanying LICENSE file for the complete terms.
+
+This distribution includes third-party software and may include separately
+licensed model artifacts. Their notices and license assessments are kept under
+THIRD_PARTY in release archives. Those third-party terms remain separate from
+the Apache-2.0 license for MultiVibe Core.
+
+Every MultiVibe-authored source file distributed in this repository is covered
+by Apache-2.0. The separately implemented and operated multivibe.cloud service
+is not included in this repository or distribution. Apache-2.0 grants no access
+to service accounts, credentials, customer data or non-distributed operational
+assets, and grants no trademark rights beyond the limited use permitted by
+Section 6 of the license.

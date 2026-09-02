@@ -52,10 +52,10 @@ type authoritativeModelDemand struct {
 // hostCapacitySnapshot is supplied by the caller for the one configured model
 // storage path. The planner performs no filesystem or hardware discovery.
 type hostCapacitySnapshot struct {
-	ModelStoragePath      string
-	TotalGPUVRAMBytes     uint64
-	ManagedModelDiskBytes uint64
-	FreeDiskBytes         uint64
+	ModelStoragePath            string
+	TotalAcceleratorMemoryBytes uint64
+	ManagedModelDiskBytes       uint64
+	FreeDiskBytes               uint64
 }
 
 type modelCandidate struct {
@@ -138,7 +138,7 @@ func planModels(policy capacityPolicy, capacity hostCapacitySnapshot, candidates
 		return modelPlan{}, err
 	}
 
-	vramBudget := percentageOf(capacity.TotalGPUVRAMBytes, policy.gpuVRAMPercent)
+	vramBudget := percentageOf(capacity.TotalAcceleratorMemoryBytes, policy.gpuVRAMPercent)
 	currentGPU, currentVRAM, currentIDs, err := currentActiveUsage(activeByID, candidateByID)
 	if err != nil || currentGPU > uint64(policy.gpuUtilizationPercent) || currentVRAM > vramBudget {
 		return modelPlan{}, errInvalidModelPlannerInput
@@ -308,7 +308,7 @@ func planModels(policy capacityPolicy, capacity hostCapacitySnapshot, candidates
 }
 
 func validateHostCapacitySnapshot(policy capacityPolicy, capacity hostCapacitySnapshot) error {
-	if capacity.ModelStoragePath != policy.modelStoragePath || capacity.TotalGPUVRAMBytes == 0 || capacity.ManagedModelDiskBytes > policy.maxDiskBytes {
+	if capacity.ModelStoragePath != policy.modelStoragePath || capacity.TotalAcceleratorMemoryBytes == 0 || capacity.ManagedModelDiskBytes > policy.maxDiskBytes {
 		return errInvalidModelPlannerInput
 	}
 	return nil

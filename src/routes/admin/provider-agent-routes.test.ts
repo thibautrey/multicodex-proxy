@@ -6,6 +6,8 @@ import { createAdminRouter, type AdminRoutesOptions } from "./index.js";
 import type {
   ProviderAgentControl,
   ProviderAgentRuntimeEndpointInput,
+  ProviderCapacityPolicy,
+  ProviderManagedOllamaView,
 } from "../../provider-agent-supervisor.js";
 
 function adminOptions(providerAgent: ProviderAgentControl): AdminRoutesOptions {
@@ -64,10 +66,199 @@ function providerAgentControl(overrides: Partial<ProviderAgentControl> = {}): Pr
     detectModels: unavailable,
     getCloudEnrollment: unavailable,
     enrollCloud: unavailable,
+    getCapacityPolicy: unavailable,
+    replaceCapacityPolicy: unavailable,
+    getDemandPlan: unavailable,
+    submitSignedDemand: unavailable,
+    getManagedOllamaStatus: unavailable,
+    installManagedOllama: unavailable,
+    startManagedOllama: unavailable,
+    stopManagedOllama: unavailable,
+    reconcileManagedOllama: unavailable,
     openRelayShadowSession: unavailable,
     ...overrides,
   };
 }
+
+const capacityPolicy = (): ProviderCapacityPolicy => ({
+  schema_version: "provider-capacity-policy-state-v1",
+  revision: 1,
+  paused: false,
+  automatic_downloads: true,
+  allow_cloud_workloads: false,
+  policy: {
+    schema_version: "provider-capacity-policy-v1",
+    gpu_utilization_percent: 70,
+    gpu_vram_percent: 75,
+    max_disk_bytes: 100_000_000_000,
+    model_storage_path: "/data/multivibe/models",
+    max_download_bytes_per_day: 20_000_000_000,
+    minimum_model_residency_seconds: 21_600,
+    max_model_changes_per_day: 4,
+    reserve_free_disk_bytes: 10_000_000_000,
+  },
+});
+
+const managedOllamaView = (): ProviderManagedOllamaView => ({
+  schema_version: "provider-managed-controller-view-v1",
+  state: "ready-shadow",
+  head_generation: 7,
+  head_envelope_digest: "a".repeat(64),
+  applied_generation: 7,
+  applied_envelope_digest: "a".repeat(64),
+  applied_policy_revision: 3,
+  policy_revision: 3,
+  selected_model_ids: ["hf:qwen/qwen2.5-0.5b-instruct"],
+  shadow_only: true,
+  customer_traffic_allowed: false,
+  routing_eligible: false,
+  compensation_eligible: false,
+  runtime: {
+    schema_version: "managed-ollama-status-v1",
+    state: "running",
+    version: "0.33.2",
+    platform: "linux-amd64",
+    runtime_installed: true,
+    running: true,
+    paused: false,
+    installed_model_ids: ["hf:qwen/qwen2.5-0.5b-instruct"],
+  },
+});
+
+test("admin managed Ollama actions preserve exact revision fences and shadow-only locks", async () => {
+  const received: unknown[] = [];
+  const control = providerAgentControl({
+    getManagedOllamaStatus: async () => managedOllamaView(),
+    installManagedOllama: async (policyRevision) => { received.push(["install", policyRevision]); return managedOllamaView(); },
+    startManagedOllama: async (policyRevision) => { received.push(["start", policyRevision]); return managedOllamaView(); },
+    stopManagedOllama: async () => { received.push(["stop"]); return managedOllamaView(); },
+    reconcileManagedOllama: async (fence) => { received.push(["reconcile", fence]); return managedOllamaView(); },
+  });
+  await withAdminServer(control, async (baseUrl) => {
+    const status = await fetch(`${baseUrl}/admin/provider-agent/managed-ollama/status`);
+    assert.equal(status.status, 200);
+    assert.equal((await status.json() as ProviderManagedOllamaView).customer_traffic_allowed, false);
+
+    for (const [action, body] of [
+      ["install", { policy_revision: 3 }],
+      ["start", { policy_revision: 3 }],
+      ["stop", {}],
+      ["reconcile", { policy_revision: 3, plan_generation: 7, envelope_digest: "a".repeat(64) }],
+    ] as const) {
+      const response = await fetch(`${baseUrl}/admin/provider-agent/managed-ollama/${action}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      assert.equal(response.status, 200, action);
+      assert.equal((await response.json() as ProviderManagedOllamaView).routing_eligible, false);
+    }
+    assert.deepEqual(received, [
+      ["install", 3],
+      ["start", 3],
+      ["stop"],
+      ["reconcile", { policy_revision: 3, plan_generation: 7, envelope_digest: "a".repeat(64) }],
+    ]);
+
+    const invalid = await fetch(`${baseUrl}/admin/provider-agent/managed-ollama/reconcile`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ policy_revision: 3, plan_generation: 7, envelope_digest: "test-key", routing_eligible: true }),
+    });
+    assert.equal(invalid.status, 400);
+  });
+});
+
+test("admin capacity policy preserves explicit local consent and revision fencing", async () => {
+  let received: ProviderCapacityPolicy | undefined;
+  const control = providerAgentControl({
+    getCapacityPolicy: async () => capacityPolicy(),
+    replaceCapacityPolicy: async (policy) => {
+      received = policy;
+      return { conflict: false, policy: { ...policy, revision: policy.revision + 1 } };
+    },
+  });
+  await withAdminServer(control, async (baseUrl) => {
+    const current = await fetch(`${baseUrl}/admin/provider-agent/capacity-policy`);
+    assert.equal(current.status, 200);
+    assert.equal((await current.json() as ProviderCapacityPolicy).allow_cloud_workloads, false);
+
+    const input = capacityPolicy();
+    const saved = await fetch(`${baseUrl}/admin/provider-agent/capacity-policy`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    assert.equal(saved.status, 200);
+    assert.equal(received?.policy.model_storage_path, "/data/multivibe/models");
+    assert.equal((await saved.json() as ProviderCapacityPolicy).revision, 2);
+
+    const denied = await fetch(`${baseUrl}/admin/provider-agent/capacity-policy`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...input, allow_cloud_workloads: undefined }),
+    });
+    assert.equal(denied.status, 400);
+  });
+});
+
+test("admin demand shadow forwards only a bounded signed envelope and exposes the accepted plan", async () => {
+  const envelope = {
+    envelopeVersion: "multivibe-provider-demand-envelope-v1",
+    kind: "provider_demand_snapshot",
+    payload: { kind: "provider_demand_snapshot" },
+    signature: { algorithm: "Ed25519", keyId: "ed25519:test", value: "signature" },
+  };
+  const plan = {
+    schema_version: "provider-demand-plan-state-v1" as const,
+    generation: 7,
+    envelope_digest: "a".repeat(64),
+    signing_key_id: "ed25519:test",
+    accepted_at: "2026-09-02T12:00:00.000Z",
+    plan: {
+      schema_version: "provider-model-plan-v1" as const,
+      demand_revision: 7,
+      model_storage_path: "/data/multivibe/models",
+      selected_model_ids: [],
+      downloads: [],
+      gpu_utilization_percent: 0,
+      gpu_vram_bytes: 0,
+      additional_disk_bytes: 0,
+      model_change: false,
+      model_change_deferred: false,
+      constraints: [],
+    },
+  };
+  let forwarded: Record<string, unknown> | undefined;
+  const control = providerAgentControl({
+    getDemandPlan: async () => plan,
+    submitSignedDemand: async (value) => {
+      forwarded = value;
+      return { duplicate: false, plan };
+    },
+  });
+  await withAdminServer(control, async (baseUrl) => {
+    const submitted = await fetch(`${baseUrl}/admin/provider-agent/cloud-shadow/demand`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(envelope),
+    });
+    assert.equal(submitted.status, 201);
+    assert.deepEqual(forwarded, envelope);
+    assert.equal((await submitted.json() as typeof plan).generation, 7);
+
+    const current = await fetch(`${baseUrl}/admin/provider-agent/cloud-shadow/demand-plan`);
+    assert.equal(current.status, 200);
+    assert.equal((await current.json() as typeof plan).envelope_digest, "a".repeat(64));
+
+    const invalid = await fetch(`${baseUrl}/admin/provider-agent/cloud-shadow/demand`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "[]",
+    });
+    assert.equal(invalid.status, 400);
+  });
+});
 
 test("admin runtime routes return registry and secret-free endpoint views", async () => {
   const control = providerAgentControl({

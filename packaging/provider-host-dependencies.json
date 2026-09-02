@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "node": {
+    "version": "22.23.2",
+    "artifacts": {
+      "darwin-arm64": {
+        "url": "https://nodejs.org/dist/v22.23.2/node-v22.23.2-darwin-arm64.tar.gz",
+        "sha256": "61130f394c1630d211dd50aecc4353d379480f36d3ac913cd85dbba1aed585c6",
+        "archive": "tar-gzip"
+      },
+      "linux-amd64": {
+        "url": "https://nodejs.org/dist/v22.23.2/node-v22.23.2-linux-x64.tar.gz",
+        "sha256": "b294a556e639d64338823920e5866c21c02741742d2e1529ee1a225c1ec9252a",
+        "archive": "tar-gzip"
+      }
+    }
+  },
+  "ollama": {
+    "version": "0.33.2",
+    "artifacts": {
+      "darwin-arm64": {
+        "url": "https://github.com/ollama/ollama/releases/download/v0.33.2/ollama-darwin.tgz",
+        "sha256": "5751e296a2cd545939bdd51b700de0c20d319f0e723c9d7f48bebb5ab0b731d4",
+        "archive": "tar-gzip"
+      },
+      "linux-amd64": {
+        "url": "https://github.com/ollama/ollama/releases/download/v0.33.2/ollama-linux-amd64.tar.zst",
+        "sha256": "9785247dea264d9072f09f6c9c0eb4b8e666892826a3d8388eba3e8fb9ed1db9",
+        "archive": "tar-zstd"
+      }
+    }
+  }
+}

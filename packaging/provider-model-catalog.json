@@ -1,0 +1,26 @@
+{
+  "schema_version": "provider-model-catalog-v1",
+  "models": [
+    {
+      "canonical_model_id": "hf:qwen/qwen2.5-0.5b-instruct",
+      "ollama_model": "qwen2.5:0.5b",
+      "ollama_manifest_path": "registry.ollama.ai/library/qwen2.5/0.5b",
+      "content_digest": "sha256:a8b0c51577010a279d933d14c2a8ab4b268079d44c5c8830c0a93900f1827c67",
+      "download_bytes_hex": "0x17b64587",
+      "gpu_utilization_percent": 50,
+      "vram_estimates": [
+        { "context_tokens": 2048, "estimated_vram_bytes_hex": "0x30000000" },
+        { "context_tokens": 4096, "estimated_vram_bytes_hex": "0x38000000" },
+        { "context_tokens": 8192, "estimated_vram_bytes_hex": "0x48000000" },
+        { "context_tokens": 16384, "estimated_vram_bytes_hex": "0x60000000" },
+        { "context_tokens": 32768, "estimated_vram_bytes_hex": "0x90000000" }
+      ],
+      "license": {
+        "license_id": "Apache-2.0",
+        "hosted_inference_allowed": true,
+        "assessment_path": "provider-model-license-assessments/qwen2.5-0.5b.md",
+        "assessment_digest": "820d427dba05fb3ef3694ea46c991e1317dbc6de9dcededfaf7937023ebd77c8"
+      }
+    }
+  ]
+}

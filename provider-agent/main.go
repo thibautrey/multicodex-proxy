@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -11,10 +12,19 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 	"unicode"
+)
+
+const (
+	providerAgentReadHeaderTimeout = 5 * time.Second
+	providerAgentReadTimeout       = 10 * time.Second
+	providerAgentWriteTimeout      = managedOllamaDefaultInstallTimeout + time.Minute
+	providerAgentIdleTimeout       = 30 * time.Second
+	providerAgentMaxHeaderBytes    = 32 * 1024
 )
 
 type manifest struct {
@@ -109,6 +119,18 @@ func providerHandlerWithStoresAndIdentity(core *url.URL, selections *selectionSt
 }
 
 func providerHandlerWithServices(core *url.URL, selections *selectionStore, runtimes *runtimeEndpointStore, identity *deviceIdentity, enrollment *cloudEnrollmentService, client *http.Client, controlToken string) http.Handler {
+	return providerHandlerWithAllServices(core, selections, runtimes, identity, enrollment, nil, client, controlToken)
+}
+
+func providerHandlerWithAllServices(core *url.URL, selections *selectionStore, runtimes *runtimeEndpointStore, identity *deviceIdentity, enrollment *cloudEnrollmentService, capacity *capacityPolicyStore, client *http.Client, controlToken string) http.Handler {
+	return providerHandlerWithDemandService(core, selections, runtimes, identity, enrollment, capacity, nil, client, controlToken)
+}
+
+func providerHandlerWithDemandService(core *url.URL, selections *selectionStore, runtimes *runtimeEndpointStore, identity *deviceIdentity, enrollment *cloudEnrollmentService, capacity *capacityPolicyStore, demand *providerDemandService, client *http.Client, controlToken string) http.Handler {
+	return providerHandlerWithManagedController(core, selections, runtimes, identity, enrollment, capacity, demand, nil, client, controlToken)
+}
+
+func providerHandlerWithManagedController(core *url.URL, selections *selectionStore, runtimes *runtimeEndpointStore, identity *deviceIdentity, enrollment *cloudEnrollmentService, capacity *capacityPolicyStore, demand *providerDemandService, controller *managedProviderController, client *http.Client, controlToken string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health/live", func(response http.ResponseWriter, _ *http.Request) {
 		response.Header().Set("content-type", "application/json")
@@ -263,6 +285,197 @@ func providerHandlerWithServices(core *url.URL, selections *selectionStore, runt
 		response.Header().Set("content-type", "application/json")
 		_ = json.NewEncoder(response).Encode(detectedModels(request.Context(), runtimeAdapterRegistry(), runtimes.configured(), client))
 	})
+	mux.HandleFunc("GET /v1/capacity-policy", func(response http.ResponseWriter, request *http.Request) {
+		if !authorizeProviderControl(request, controlToken) {
+			http.Error(response, "not found", http.StatusNotFound)
+			return
+		}
+		if capacity == nil {
+			http.Error(response, "provider capacity policy unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		document := capacity.snapshot()
+		if document == nil {
+			http.Error(response, "provider capacity policy not found", http.StatusNotFound)
+			return
+		}
+		response.Header().Set("cache-control", "no-store")
+		response.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(response).Encode(document)
+	})
+	mux.HandleFunc("PUT /v1/capacity-policy", func(response http.ResponseWriter, request *http.Request) {
+		if !authorizeProviderControl(request, controlToken) {
+			http.Error(response, "not found", http.StatusNotFound)
+			return
+		}
+		if capacity == nil {
+			http.Error(response, "provider capacity policy unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		mediaType, _, mediaTypeErr := mime.ParseMediaType(request.Header.Get("content-type"))
+		if mediaTypeErr != nil || mediaType != "application/json" {
+			http.Error(response, "invalid request", http.StatusUnsupportedMediaType)
+			return
+		}
+		request.Body = http.MaxBytesReader(response, request.Body, 32*1024)
+		var input capacityPolicyStateDocument
+		decoder := json.NewDecoder(request.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&input); err != nil || ensureJSONEOF(decoder) != nil || input.SchemaVersion != capacityPolicyStateSchemaVersion {
+			http.Error(response, "invalid request", http.StatusBadRequest)
+			return
+		}
+		expectedRevision := input.Revision
+		document, conflict, err := capacity.replace(expectedRevision, input)
+		if err != nil {
+			if errors.Is(err, errInvalidCapacityPolicy) {
+				http.Error(response, "invalid request", http.StatusBadRequest)
+				return
+			}
+			http.Error(response, "capacity policy unavailable", http.StatusInternalServerError)
+			return
+		}
+		if !conflict && controller != nil {
+			if err := controller.enforceCurrentPolicy(request.Context()); err != nil {
+				http.Error(response, "capacity policy enforcement unavailable", http.StatusServiceUnavailable)
+				return
+			}
+		}
+		response.Header().Set("cache-control", "no-store")
+		response.Header().Set("content-type", "application/json")
+		if conflict {
+			response.WriteHeader(http.StatusConflict)
+		}
+		_ = json.NewEncoder(response).Encode(document)
+	})
+	mux.HandleFunc("GET /v1/managed-ollama/status", func(response http.ResponseWriter, request *http.Request) {
+		if !authorizeProviderControl(request, controlToken) {
+			http.Error(response, "not found", http.StatusNotFound)
+			return
+		}
+		if controller == nil {
+			http.Error(response, "managed Ollama unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		writeManagedControllerView(response, controller.status())
+	})
+	for path, action := range map[string]string{
+		"/v1/managed-ollama/install":   "install",
+		"/v1/managed-ollama/start":     "start",
+		"/v1/managed-ollama/stop":      "stop",
+		"/v1/managed-ollama/reconcile": "reconcile",
+	} {
+		path := path
+		action := action
+		mux.HandleFunc("POST "+path, func(response http.ResponseWriter, request *http.Request) {
+			if !authorizeProviderControl(request, controlToken) {
+				http.Error(response, "not found", http.StatusNotFound)
+				return
+			}
+			if controller == nil {
+				http.Error(response, "managed Ollama unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			mediaType, _, mediaTypeErr := mime.ParseMediaType(request.Header.Get("content-type"))
+			if mediaTypeErr != nil || mediaType != "application/json" {
+				http.Error(response, "invalid request", http.StatusUnsupportedMediaType)
+				return
+			}
+			request.Body = http.MaxBytesReader(response, request.Body, 4096)
+			if action == "stop" {
+				var input struct{}
+				decoder := json.NewDecoder(request.Body)
+				decoder.DisallowUnknownFields()
+				if decoder.Decode(&input) != nil || ensureJSONEOF(decoder) != nil {
+					http.Error(response, "invalid request", http.StatusBadRequest)
+					return
+				}
+				view, err := controller.stop(request.Context())
+				if err != nil {
+					http.Error(response, "managed Ollama stop unavailable", http.StatusServiceUnavailable)
+					return
+				}
+				writeManagedControllerView(response, view)
+				return
+			}
+			fence, err := decodeManagedControllerFence(request.Body, action == "reconcile")
+			if err != nil {
+				http.Error(response, "invalid request", http.StatusBadRequest)
+				return
+			}
+			var view managedControllerView
+			switch action {
+			case "install":
+				view, err = controller.install(request.Context(), fence.PolicyRevision)
+			case "start":
+				view, err = controller.start(request.Context(), fence.PolicyRevision)
+			case "reconcile":
+				view, err = controller.reconcile(request.Context(), fence)
+			}
+			if err != nil {
+				writeManagedControllerError(response, err)
+				return
+			}
+			writeManagedControllerView(response, view)
+		})
+	}
+	mux.HandleFunc("GET /v1/cloud-shadow/demand-plan", func(response http.ResponseWriter, request *http.Request) {
+		if !authorizeProviderControl(request, controlToken) {
+			http.Error(response, "not found", http.StatusNotFound)
+			return
+		}
+		if demand == nil {
+			http.Error(response, "provider demand planning unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		document := demand.plans.snapshot()
+		if document == nil {
+			http.Error(response, "provider demand plan not found", http.StatusNotFound)
+			return
+		}
+		response.Header().Set("cache-control", "no-store")
+		response.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(response).Encode(document)
+	})
+	mux.HandleFunc("POST /v1/cloud-shadow/demand", func(response http.ResponseWriter, request *http.Request) {
+		if !authorizeProviderControl(request, controlToken) {
+			http.Error(response, "not found", http.StatusNotFound)
+			return
+		}
+		if demand == nil {
+			http.Error(response, "provider demand planning unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		mediaType, _, mediaTypeErr := mime.ParseMediaType(request.Header.Get("content-type"))
+		if mediaTypeErr != nil || mediaType != "application/json" {
+			http.Error(response, "invalid request", http.StatusUnsupportedMediaType)
+			return
+		}
+		request.Body = http.MaxBytesReader(response, request.Body, maximumProviderDemandBytes)
+		raw, err := decodeProviderDemandRequest(request.Body)
+		if err != nil {
+			http.Error(response, "invalid request", http.StatusBadRequest)
+			return
+		}
+		document, status, err := demand.accept(raw)
+		if err != nil {
+			switch {
+			case errors.Is(err, errInvalidProviderDemand):
+				http.Error(response, "invalid request", http.StatusBadRequest)
+			case errors.Is(err, errProviderDemandGenerationConflict), errors.Is(err, errProviderDemandGenerationStale), errors.Is(err, errProviderCapacityNotAuthorized):
+				http.Error(response, "provider demand rejected", http.StatusConflict)
+			default:
+				http.Error(response, "provider demand planning unavailable", http.StatusServiceUnavailable)
+			}
+			return
+		}
+		response.Header().Set("cache-control", "no-store")
+		response.Header().Set("content-type", "application/json")
+		if status == "accepted" {
+			response.WriteHeader(http.StatusCreated)
+		}
+		_ = json.NewEncoder(response).Encode(document)
+	})
 	mux.HandleFunc("POST /v1/relay-shadow/session-open", func(response http.ResponseWriter, request *http.Request) {
 		if !authorizeProviderControl(request, controlToken) {
 			http.Error(response, "not found", http.StatusNotFound)
@@ -355,6 +568,23 @@ func providerHandlerWithServices(core *url.URL, selections *selectionStore, runt
 	return mux
 }
 
+func writeManagedControllerView(response http.ResponseWriter, view managedControllerView) {
+	response.Header().Set("cache-control", "no-store")
+	response.Header().Set("content-type", "application/json")
+	_ = json.NewEncoder(response).Encode(view)
+}
+
+func writeManagedControllerError(response http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, errManagedControllerFence), errors.Is(err, errManagedControllerNoPlan), errors.Is(err, errManagedControllerPlanExpired),
+		errors.Is(err, errManagedControllerConsent), errors.Is(err, errManagedControllerSuperseded), errors.Is(err, errManagedOllamaPaused),
+		errors.Is(err, errManagedOllamaDownloadsDisabled), errors.Is(err, errManagedOllamaPolicyRequired):
+		http.Error(response, "managed Ollama operation rejected", http.StatusConflict)
+	default:
+		http.Error(response, "managed Ollama operation unavailable", http.StatusServiceUnavailable)
+	}
+}
+
 func authorizeProviderControl(request *http.Request, expected string) bool {
 	if len(expected) < 32 {
 		return false
@@ -363,8 +593,28 @@ func authorizeProviderControl(request *http.Request, expected string) bool {
 	return len(provided) == len(expected) && subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) == 1
 }
 
+func newProviderHTTPServer(handler http.Handler) *http.Server {
+	return &http.Server{
+		Handler: handler, ReadHeaderTimeout: providerAgentReadHeaderTimeout, ReadTimeout: providerAgentReadTimeout,
+		WriteTimeout: providerAgentWriteTimeout, IdleTimeout: providerAgentIdleTimeout, MaxHeaderBytes: providerAgentMaxHeaderBytes,
+	}
+}
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "doctor":
+			os.Exit(runDoctor(os.Stdout))
+		case "version", "--version", "-version":
+			_, _ = fmt.Fprintln(os.Stdout, providerAgentVersion)
+			return
+		default:
+			logger.Error("provider_agent_command_invalid")
+			os.Exit(2)
+		}
+	}
+	capability := currentHostCapability()
 	core, err := loopbackCoreURL(envDefault("MULTIVIBE_CORE_LOOPBACK_URL", "http://127.0.0.1:1455"))
 	if err != nil {
 		logger.Error("provider_agent_configuration_invalid", "error", err.Error())
@@ -416,12 +666,124 @@ func main() {
 			os.Exit(2)
 		}
 	}
+	capacityPolicyPath := strings.TrimSpace(os.Getenv("MULTIVIBE_PROVIDER_CAPACITY_POLICY_PATH"))
+	capacity := newMemoryCapacityPolicyStore()
+	if capacityPolicyPath != "" {
+		capacity, err = openCapacityPolicyStore(capacityPolicyPath)
+		if err != nil {
+			logger.Error("provider_agent_configuration_invalid", "error", err.Error())
+			os.Exit(2)
+		}
+	}
+	demandPlanPath := strings.TrimSpace(os.Getenv("MULTIVIBE_PROVIDER_DEMAND_PLAN_PATH"))
+	modelCatalogPath := strings.TrimSpace(os.Getenv("MULTIVIBE_PROVIDER_MODEL_CATALOG_PATH"))
+	trustedDemandKeysRaw := strings.TrimSpace(os.Getenv("MULTIVIBE_PROVIDER_DEMAND_TRUSTED_KEYS"))
+	var demand *providerDemandService
+	var plans *providerDemandPlanStore
+	demandConfigurationFields := 0
+	for _, value := range []string{demandPlanPath, modelCatalogPath, trustedDemandKeysRaw} {
+		if value != "" {
+			demandConfigurationFields++
+		}
+	}
+	if demandConfigurationFields != 0 && demandConfigurationFields != 3 {
+		logger.Error("provider_agent_configuration_invalid", "error", "provider demand planning requires plan path, model catalog and trusted keys")
+		os.Exit(2)
+	}
+	if demandConfigurationFields == 3 {
+		catalog, catalogErr := openProviderModelCatalog(modelCatalogPath)
+		trustedKeys, keysErr := parseTrustedProviderDemandKeys(trustedDemandKeysRaw)
+		capabilityErr := requireProviderComputeCapability(capability, true)
+		var plansErr error
+		plans, plansErr = openProviderDemandPlanStore(demandPlanPath)
+		if catalogErr != nil || keysErr != nil || plansErr != nil || capabilityErr != nil {
+			logger.Error("provider_agent_configuration_invalid", "error", "provider demand planning configuration is invalid")
+			os.Exit(2)
+		}
+		demand, err = newProviderDemandService(trustedKeys, catalog, capacity, plans, capability)
+		if err != nil {
+			logger.Error("provider_agent_configuration_invalid", "error", err.Error())
+			os.Exit(2)
+		}
+	}
+	managedRoot := strings.TrimSpace(os.Getenv("MULTIVIBE_PROVIDER_MANAGED_ROOT"))
+	bundledOllamaRoot := strings.TrimSpace(os.Getenv("MULTIVIBE_PROVIDER_BUNDLED_OLLAMA_ROOT"))
+	dependencyManifestPath := strings.TrimSpace(os.Getenv("MULTIVIBE_PROVIDER_DEPENDENCY_MANIFEST_PATH"))
+	managedPlannerStatePath := strings.TrimSpace(os.Getenv("MULTIVIBE_PROVIDER_MANAGED_PLANNER_STATE_PATH"))
+	ollamaListenAddress := strings.TrimSpace(os.Getenv("MULTIVIBE_PROVIDER_OLLAMA_LISTEN"))
+	cudaVisibleDevices := strings.TrimSpace(os.Getenv("MULTIVIBE_PROVIDER_CUDA_VISIBLE_DEVICES"))
+	managedConfigurationFields := 0
+	for _, value := range []string{managedRoot, dependencyManifestPath, managedPlannerStatePath} {
+		if value != "" {
+			managedConfigurationFields++
+		}
+	}
+	var controller *managedProviderController
+	if managedConfigurationFields != 0 || bundledOllamaRoot != "" || ollamaListenAddress != "" || cudaVisibleDevices != "" {
+		if managedConfigurationFields != 3 || demand == nil || plans == nil || capacityPolicyPath == "" {
+			logger.Error("provider_agent_configuration_invalid", "error", "managed Ollama requires its root, dependency manifest, planner state, capacity policy and signed demand planning")
+			os.Exit(2)
+		}
+		if err := requireProviderComputeCapability(capability, true); err != nil {
+			logger.Error("provider_agent_platform_unsupported", "reason", capability.Reason)
+			os.Exit(2)
+		}
+		if ollamaListenAddress == "" {
+			ollamaListenAddress = managedOllamaDefaultListenAddress
+		}
+		if capability.OS == "linux" && cudaVisibleDevices == "" {
+			cudaVisibleDevices = "0"
+		}
+		managedRuntime, runtimeErr := newManagedOllama(managedOllamaConfig{
+			ManagedRoot: managedRoot, BundledRuntimeRoot: bundledOllamaRoot, ListenAddress: ollamaListenAddress,
+			CUDAVisibleDevices: cudaVisibleDevices, GOOS: capability.OS, GOARCH: capability.Architecture,
+		})
+		plannerState, plannerErr := openManagedPlannerStateStore(managedPlannerStatePath)
+		if runtimeErr != nil || plannerErr != nil {
+			logger.Error("provider_agent_configuration_invalid", "error", "managed Ollama runtime configuration is invalid")
+			os.Exit(2)
+		}
+		managedBackend, backendErr := newOllamaRuntimeBackend(managedRuntime, modelCatalogPath, dependencyManifestPath)
+		backendRegistry, registryErr := newRuntimeBackendRegistry(managedBackend)
+		if backendErr != nil || registryErr != nil || strings.Join(backendRegistry.IDs(), ",") != runtimeBackendOllamaID {
+			logger.Error("provider_agent_configuration_invalid", "error", "managed runtime backend registry is invalid")
+			os.Exit(2)
+		}
+		controllerStatePath := filepath.Join(managedRoot, "state", "controller.json")
+		controller, err = newManagedProviderController(
+			managedBackend, capacity, plans, plannerState, modelCatalogPath, dependencyManifestPath, controllerStatePath,
+		)
+		if err != nil {
+			logger.Error("provider_agent_configuration_invalid", "error", err.Error())
+			os.Exit(2)
+		}
+		demand.state = controller.plannerSnapshot
+	}
+	if demand != nil {
+		if err := demand.restorePersisted(); err != nil {
+			logger.Warn("provider_demand_persisted_envelope_rejected")
+		}
+	}
+	if controller != nil {
+		go controller.monitorPolicy(context.Background())
+		go controller.monitorPlanExpiry(context.Background())
+	}
 	controlToken := strings.TrimSpace(os.Getenv("MULTIVIBE_PROVIDER_CONTROL_TOKEN"))
 	if controlToken != "" && len(controlToken) < 32 {
 		logger.Error("provider_agent_configuration_invalid", "error", "provider control token must contain at least 32 characters")
 		os.Exit(2)
 	}
-	listenAddress, err := loopbackAgentAddress(envDefault("MULTIVIBE_PROVIDER_AGENT_LISTEN", "127.0.0.1:1460"))
+	bootstrap, err := inheritedProviderAgentBootstrap(os.Getenv(providerAgentBootstrapEnvironment))
+	if err != nil {
+		logger.Error("provider_agent_configuration_invalid", "error", err.Error())
+		os.Exit(2)
+	}
+	listenAddress := ""
+	if bootstrap == nil {
+		listenAddress, err = loopbackAgentAddress(envDefault("MULTIVIBE_PROVIDER_AGENT_LISTEN", "127.0.0.1:1460"))
+	} else {
+		listenAddress, err = supervisedLoopbackAgentAddress(envDefault("MULTIVIBE_PROVIDER_AGENT_LISTEN", "127.0.0.1:0"))
+	}
 	if err != nil {
 		logger.Error("provider_agent_configuration_invalid", "error", err.Error())
 		os.Exit(2)
@@ -435,13 +797,13 @@ func main() {
 	if identity != nil {
 		enrollment = newCloudEnrollmentService(cloudURL, client, identity, selections, enrollmentStore)
 	}
-	listener, err := net.Listen("tcp", listenAddress)
+	listener, err := openProviderAgentListener(listenAddress, bootstrap)
 	if err != nil {
 		logger.Error("provider_agent_listen_failed", "error", err.Error())
 		os.Exit(1)
 	}
-	logger.Info("provider_agent_started", "address", listener.Addr().String(), "selected_model_count", len(selections.snapshot().SelectedModels), "selection_persistent", statePath != "", "manual_runtime_count", len(runtimes.snapshot().Endpoints), "runtime_state_persistent", runtimeStatePath != "", "device_identity_persistent", deviceKeyPath != "", "cloud_enrollment_persistent", enrollmentStatePath != "")
-	server := &http.Server{Handler: providerHandlerWithServices(core, selections, runtimes, identity, enrollment, client, controlToken), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second}
+	logger.Info("provider_agent_started", "address", listener.Addr().String(), "selected_model_count", len(selections.snapshot().SelectedModels), "selection_persistent", statePath != "", "manual_runtime_count", len(runtimes.snapshot().Endpoints), "runtime_state_persistent", runtimeStatePath != "", "device_identity_persistent", deviceKeyPath != "", "cloud_enrollment_persistent", enrollmentStatePath != "", "capacity_policy_configured", capacity.snapshot() != nil, "capacity_policy_persistent", capacityPolicyPath != "", "demand_planning_enabled", demand != nil, "demand_plan_persistent", demandPlanPath != "", "managed_ollama_enabled", controller != nil)
+	server := newProviderHTTPServer(providerHandlerWithManagedController(core, selections, runtimes, identity, enrollment, capacity, demand, controller, client, controlToken))
 	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("provider_agent_failed", "error", fmt.Sprint(err))
 		os.Exit(1)
@@ -453,4 +815,17 @@ func envDefault(name, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func requireProviderComputeCapability(capability hostCapability, managedComputeRequested bool) error {
+	if !managedComputeRequested {
+		return nil
+	}
+	if !capability.Supported {
+		return errors.New("managed provider compute is unsupported on this host")
+	}
+	if _, err := providerAcceleratorMemoryCapacity(capability); err != nil {
+		return errors.New("managed provider accelerator capacity is unavailable")
+	}
+	return nil
 }

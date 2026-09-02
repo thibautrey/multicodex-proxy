@@ -71,7 +71,7 @@ func TestRuntimeEndpointValidationRejectsEveryNonLoopbackOrAmbiguousTarget(t *te
 	for _, endpoint := range []string{
 		"https://127.0.0.1:8000", "http://localhost:8000", "http://0.0.0.0:8000",
 		"http://192.168.1.10:8000", "http://127.0.0.1", "http://127.0.0.1:8000/v1",
-		"http://user:secret@127.0.0.1:8000", "http://127.0.0.1:8000?token=secret",
+		"http://user:secret@127.0.0.1:8000", "http://127.0.0.1:8000?token=secret", "http://[::1",
 	} {
 		_, err := normalizeRuntimeEndpoints([]runtimeEndpoint{{
 			AdapterID: "manual-openai-compatible", Endpoint: endpoint,
