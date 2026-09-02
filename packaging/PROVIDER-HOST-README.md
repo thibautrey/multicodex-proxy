@@ -7,6 +7,15 @@ on macOS and Linux amd64 hosts with a working NVIDIA GPU of compute capability
 7.0 or newer. No system Node.js, Ollama, package manager or administrator access
 is required after downloading the matching archive.
 
+The archive also includes the optional `multivibe-runtime-benchmark` CLI, the
+reviewed runtime-profile catalog, closed JSON schemas and disabled examples.
+The CLI is separate from the provider HTTP service, accepts no prompt text and
+requires an explicit `--run` plus both reviewed catalogs against a numeric
+loopback Ollama endpoint. It rejects runtime-version or model digest/size
+substitution before generation. See
+`provider-agent/RUNTIME_BENCHMARKS.md` in the source tree for the complete
+measurement and safety contract.
+
 The included installer verifies every extracted file's path, mode, size and
 SHA-256 against `manifest.json`, rejects symbolic links and undeclared files,
 runs `doctor` before changing the machine, and verifies the application code

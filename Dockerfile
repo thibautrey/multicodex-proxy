@@ -19,8 +19,7 @@ FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS provider-agent-build
 WORKDIR /src/provider-agent
 ARG TARGETOS
 ARG TARGETARCH
-COPY provider-agent/go.mod ./
-COPY provider-agent/*.go ./
+COPY provider-agent/ ./
 RUN go test ./...
 RUN CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
   go build -trimpath -buildvcs=false -ldflags="-s -w" \

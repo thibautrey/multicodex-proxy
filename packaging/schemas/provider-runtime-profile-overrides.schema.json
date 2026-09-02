@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://multivibe.cloud/schemas/provider-runtime-profile-overrides.schema.json",
+  "title": "MultiVibe local runtime profile overrides v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version"],
+  "properties": {
+    "schema_version": { "const": "provider-runtime-profile-overrides-v1" },
+    "require_profile_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "require_backend_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
+    "context_tokens": { "type": "integer", "minimum": 1, "maximum": 1048576 },
+    "batch_size": { "type": "integer", "minimum": 1, "maximum": 4096 },
+    "parallelism": { "type": "integer", "minimum": 1, "maximum": 256 },
+    "gpu_offload_layers": { "type": "integer", "minimum": 0, "maximum": 4096 },
+    "maximum_memory_bytes": { "type": "integer", "minimum": 1, "maximum": 1125899906842624 }
+  }
+}

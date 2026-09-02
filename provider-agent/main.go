@@ -745,7 +745,9 @@ func main() {
 		}
 		managedBackend, backendErr := newOllamaRuntimeBackend(managedRuntime, modelCatalogPath, dependencyManifestPath)
 		backendRegistry, registryErr := newRuntimeBackendRegistry(managedBackend)
-		if backendErr != nil || registryErr != nil || strings.Join(backendRegistry.IDs(), ",") != runtimeBackendOllamaID {
+		sdkRegistry, sdkRegistryErr := newRuntimeBackendSDKRegistry(managedBackend, capacity, capability)
+		if backendErr != nil || registryErr != nil || sdkRegistryErr != nil ||
+			strings.Join(backendRegistry.IDs(), ",") != runtimeBackendOllamaID || strings.Join(sdkRegistry.IDs(), ",") != runtimeBackendOllamaID {
 			logger.Error("provider_agent_configuration_invalid", "error", "managed runtime backend registry is invalid")
 			os.Exit(2)
 		}
