@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "decision": "approve-public-source-distribution",
+  "license": "Apache-2.0",
+  "repository": "thibautrey/multivibe",
+  "scope": [
+    "MultiVibe Core source",
+    "provider-host worker source"
+  ],
+  "excluded": [
+    "MultiVibe Cloud source and service",
+    "trademarks",
+    "model weights",
+    "third-party license grants"
+  ],
+  "statement": "The repository owner explicitly selected Apache-2.0 for public distribution of the in-scope source. This record does not assert legal, tax, accounting, or fiscal review."
+}

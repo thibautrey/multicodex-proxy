@@ -1,0 +1,52 @@
+name: Immutable Core source release
+
+on:
+  push:
+    tags: ["source-v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: Require immutable annotated source tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" == tag ]]
+          [[ "$(git rev-parse "$GITHUB_REF_NAME^{commit}")" == "$GITHUB_SHA" ]]
+      - name: Build deterministic source archive and approval
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/build-source-release.mjs "$GITHUB_REF_NAME" "$GITHUB_SHA" release-out
+          node scripts/build-source-approval.mjs release-out/source-release.json release/source-distribution-decision.json release-out/distribution-approval.json
+          sha256sum release-out/distribution-approval.json >> release-out/SHA256SUMS
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: |
+            release-out/*.tar.gz
+            release-out/distribution-approval.json
+            release-out/source-release.json
+            release-out/SHA256SUMS
+      - name: Publish immutable source release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1
+          gh release create "$GITHUB_REF_NAME" release-out/* --verify-tag --title "MultiVibe Core source $GITHUB_REF_NAME" --notes "Immutable Apache-2.0 source release with GitHub OIDC build provenance."
