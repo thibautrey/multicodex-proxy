@@ -77,7 +77,7 @@ jobs:
           go -C provider-agent test -race ./...
           go -C host-application test -race ./...
       - name: Reject hostile provider archive fixtures
-        run: node --test scripts/verify-provider-host-archive-fixtures.test.mjs
+        run: node --test scripts/provider-host-native-dependencies.test.mjs scripts/verify-provider-host-archive-fixtures.test.mjs
       - name: Install the pinned Go vulnerability scanner
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
       - name: Scan the provider agent for reachable Go vulnerabilities
@@ -159,7 +159,7 @@ jobs:
           go -C provider-agent test -race ./...
           go -C host-application test -race ./...
       - name: Reject hostile provider archive fixtures
-        run: node --test scripts/verify-provider-host-archive-fixtures.test.mjs
+        run: node --test scripts/provider-host-native-dependencies.test.mjs scripts/verify-provider-host-archive-fixtures.test.mjs
       - name: Import ephemeral Apple release credentials
         shell: bash
         env:
