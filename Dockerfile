@@ -20,6 +20,7 @@ WORKDIR /src/provider-agent
 ARG TARGETOS
 ARG TARGETARCH
 COPY provider-agent/ ./
+COPY packaging/ /src/packaging/
 RUN go test ./...
 RUN CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
   go build -trimpath -buildvcs=false -ldflags="-s -w" \

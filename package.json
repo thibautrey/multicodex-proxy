@@ -9,7 +9,7 @@
     "build:api": "tsc -p tsconfig.json",
     "build:web": "npm --prefix web run build",
     "build": "npm run build:web && npm run build:api",
-    "test:provider-host": "go -C provider-agent test ./... && go -C host-application test ./... && node --check scripts/package-provider-host.mjs && node --check scripts/verify-provider-host.mjs && node --check scripts/sign-provider-host-release.mjs && node --test scripts/verify-provider-host-archive-fixtures.test.mjs",
+    "test:provider-host": "go -C provider-agent build ./... && go -C host-application build ./... && go -C provider-agent test ./... && go -C host-application test ./... && node --check scripts/package-provider-host.mjs && node --check scripts/verify-provider-host.mjs && node --check scripts/sign-provider-host-release.mjs && node --test scripts/verify-provider-host-archive-fixtures.test.mjs",
     "package:provider-host": "node scripts/package-provider-host.mjs",
     "verify:provider-host": "node scripts/verify-provider-host.mjs",
     "sign:provider-host": "node scripts/sign-provider-host-release.mjs",
