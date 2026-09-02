@@ -6,8 +6,19 @@ type WebsocketSSEMessageRelayOptions = {
 };
 
 export type WebsocketSSEMessageRelay = {
-  push(chunk: Uint8Array): void;
-  finish(): void;
+  push(chunk: Uint8Array): WebsocketSSETerminalEvent | null;
+  finish(): WebsocketSSERelayResult;
+};
+
+export type WebsocketSSETerminalEvent =
+  | "response.completed"
+  | "response.failed"
+  | "response.incomplete"
+  | "error";
+
+export type WebsocketSSERelayResult = {
+  terminalEvent: WebsocketSSETerminalEvent | null;
+  unterminatedFrame: boolean;
 };
 
 type ExtractedPayload = {
@@ -56,8 +67,24 @@ function requiresInspection(payload: string) {
     payload.startsWith('{"type":"response.output_item.added"') ||
     payload.startsWith('{"type":"response.output_item.done"') ||
     payload.startsWith('{"type":"response.completed"') ||
+    payload.startsWith('{"type":"response.failed"') ||
+    payload.startsWith('{"type":"response.incomplete"') ||
     payload.includes('"type":"function_call"')
   );
+}
+
+function terminalEventType(event: unknown): WebsocketSSETerminalEvent | null {
+  if (!event || typeof event !== "object") return null;
+  const type = (event as { type?: unknown }).type;
+  if (
+    type === "response.completed" ||
+    type === "response.failed" ||
+    type === "response.incomplete" ||
+    type === "error"
+  ) {
+    return type;
+  }
+  return null;
 }
 
 /**
@@ -71,37 +98,46 @@ export function createWebsocketSSEMessageRelay({
   onMessage,
   onInspectableEvent,
 }: WebsocketSSEMessageRelayOptions): WebsocketSSEMessageRelay {
+  let terminalEvent: WebsocketSSETerminalEvent | null = null;
   const tap = createSSEStreamTap((frame) => {
     const extracted = extractPayload(frame);
     if (!extracted) return;
 
     if (extracted.direct) {
       if (requiresInspection(extracted.payload)) {
+        let parsed: unknown;
         try {
-          onInspectableEvent(JSON.parse(extracted.payload));
+          parsed = JSON.parse(extracted.payload);
         } catch {
           return;
         }
+        terminalEvent ??= terminalEventType(parsed);
+        onInspectableEvent(parsed);
       }
       onMessage(extracted.payload);
       return;
     }
 
+    let parsed: unknown;
     try {
-      const parsed = JSON.parse(extracted.payload);
-      onInspectableEvent(parsed);
-      onMessage(JSON.stringify(parsed));
+      parsed = JSON.parse(extracted.payload);
     } catch {
       // Match the previous relay behavior by ignoring malformed SSE payloads.
+      return;
     }
+    terminalEvent ??= terminalEventType(parsed);
+    onInspectableEvent(parsed);
+    onMessage(JSON.stringify(parsed));
   });
 
   return {
     push(chunk) {
       tap.push(chunk);
+      return terminalEvent;
     },
     finish() {
-      tap.finish();
+      const { unterminatedFrame } = tap.finish();
+      return { terminalEvent, unterminatedFrame };
     },
   };
 }

@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { AccountStore } from "./store.js";
+import type { Account, ModelAlias } from "./types.js";
 
 test("a mutation arriving during a flush is included before the flush resolves", async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-store-"));
@@ -124,4 +125,119 @@ test("an existing explicit sharing opt-out remains disabled on upgrade", async (
   await store.init();
   assert.equal((await store.getSettings()).anonymousUsageSharingEnabled, false);
   await fs.rm(directory, { recursive: true, force: true });
+});
+
+test("runtime account telemetry advances persistence without invalidating the catalog", async (t) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-store-"));
+  t.after(async () => {
+    await fs.rm(directory, { recursive: true, force: true });
+  });
+  const store = new AccountStore(path.join(directory, "accounts.json"));
+  await store.init();
+
+  await store.addOrUpdate({
+    id: "openai-account",
+    provider: "openai",
+    accessToken: "token-one",
+    enabled: true,
+    location: "cloud",
+  });
+  const initialPersistenceRevision = store.getRevision();
+  const initialCatalogRevision = store.getCatalogRevision();
+
+  // Proxy routing mutates the cached account object in place before persisting
+  // lastSelectedAt, so this also guards against reference aliasing.
+  const selected = store.getCachedAccounts()[0];
+  selected.state = {
+    lastSelectedAt: 1_700_000_000_000,
+    lastError: "temporary upstream error",
+    recentErrors: [
+      { at: 1_700_000_000_000, message: "temporary upstream error" },
+    ],
+  };
+  selected.usage = {
+    fetchedAt: 1_700_000_000_000,
+    secondary: { usedPercent: 25 },
+  };
+  await store.upsertAccount(selected);
+
+  assert.equal(store.getRevision(), initialPersistenceRevision + 1);
+  assert.equal(store.getCatalogRevision(), initialCatalogRevision);
+
+  await store.patchAccount(selected.id, {
+    state: { modelBlocks: { "gpt-5.6-sol": { until: 1, reason: "quota" } } },
+    usage: { fetchedAt: 1_700_000_000_001, secondary: { usedPercent: 26 } },
+  });
+  assert.equal(store.getRevision(), initialPersistenceRevision + 2);
+  assert.equal(store.getCatalogRevision(), initialCatalogRevision);
+});
+
+test("account configuration, membership, and aliases advance the catalog revision", async (t) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-store-"));
+  t.after(async () => {
+    await fs.rm(directory, { recursive: true, force: true });
+  });
+  const store = new AccountStore(path.join(directory, "accounts.json"));
+  await store.init();
+
+  let account: Account = {
+    id: "provider-account",
+    provider: "openai",
+    email: "before@example.test",
+    accessToken: "token-one",
+    baseUrl: "https://provider-one.example.test",
+    enabled: true,
+    priority: 1,
+    location: "cloud",
+  };
+  await store.addOrUpdate(account);
+  assert.equal(store.getCatalogRevision(), 1);
+
+  const configurationChanges: Array<Partial<Account>> = [
+    { email: "after@example.test" },
+    { priority: 2 },
+    { enabled: false },
+    { provider: "openai-compatible" },
+    { baseUrl: "https://provider-two.example.test" },
+    { accessToken: "token-two" },
+  ];
+  for (const patch of configurationChanges) {
+    const before = store.getCatalogRevision();
+    account = { ...account, ...patch };
+    await store.upsertAccount(account);
+    assert.equal(store.getCatalogRevision(), before + 1);
+  }
+
+  await store.addOrUpdate({
+    id: "second-account",
+    provider: "mistral",
+    accessToken: "token",
+    enabled: true,
+  });
+  assert.equal(store.getCatalogRevision(), 8);
+  await store.deleteAccount("second-account");
+  assert.equal(store.getCatalogRevision(), 9);
+
+  const alias: ModelAlias = {
+    schemaVersion: 2,
+    id: "coding",
+    enabled: true,
+    rules: [
+      {
+        id: "default",
+        candidates: [{ model: "gpt-5.6-sol" }],
+        onNoCapacity: "reject",
+      },
+    ],
+  };
+  await store.upsertModelAlias(alias);
+  assert.equal(store.getCatalogRevision(), 10);
+
+  // Re-saving an identical alias is a durability write, not a catalog change.
+  await store.upsertModelAlias(structuredClone(alias));
+  assert.equal(store.getCatalogRevision(), 10);
+  await store.patchModelAlias(alias.id, { description: "Primary coding model" });
+  assert.equal(store.getCatalogRevision(), 11);
+  await store.deleteModelAlias(alias.id);
+  assert.equal(store.getCatalogRevision(), 12);
 });

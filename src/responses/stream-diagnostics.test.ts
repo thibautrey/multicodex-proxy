@@ -126,8 +126,26 @@ test("fast frame inspection preserves complete stream diagnostics", () => {
   assert.equal(candidate.hiddenFunctionCallCount, 1);
   assert.equal(candidate.customToolCalls.length, 1);
   assert.equal(candidate.customToolCalls[0].inputBytes, 11);
+  assert.equal(candidate.terminalEventType, "response.completed");
   assert.equal(candidate.sawResponseCompleted, true);
   assert.equal(candidate.sawChatCompletionChunk, true);
+});
+
+test("records every documented Responses terminal event", () => {
+  for (const terminalEventType of [
+    "response.completed",
+    "response.failed",
+    "response.incomplete",
+    "error",
+  ] as const) {
+    const diagnostics = createResponseStreamDiagnostics();
+    inspectResponseStreamEvent({ type: terminalEventType }, diagnostics);
+    assert.equal(diagnostics.terminalEventType, terminalEventType);
+    assert.equal(
+      diagnostics.sawResponseCompleted,
+      terminalEventType === "response.completed",
+    );
+  }
 });
 
 test("multiple data payloads fall back to full parsing", () => {
