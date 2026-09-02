@@ -21,6 +21,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { extractPreflightedTarArchive } from "./provider-host-tar-preflight.mjs";
+import { pruneProductionNativeDependencies } from "./provider-host-native-dependencies.mjs";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const downloadHosts = new Set(["nodejs.org", "github.com", "release-assets.githubusercontent.com"]);
@@ -29,6 +30,7 @@ const maximumNodeFileBytes = 512 * 1024 * 1024;
 const maximumNodeExtractedBytes = 1024 * 1024 * 1024;
 const maximumOllamaFileBytes = 4 * 1024 * 1024 * 1024;
 const maximumOllamaExtractedBytes = 12 * 1024 * 1024 * 1024;
+const betterSQLiteSmokeTest = "const Database=require('better-sqlite3');const database=new Database(':memory:');try{const row=database.prepare('SELECT 1 AS value').get();if(row?.value!==1)throw new Error('better-sqlite3 smoke test failed')}finally{database.close()}";
 
 function argumentsFrom(argv) {
   const options = { allowDirty: false, allowUnsigned: false };
@@ -201,12 +203,13 @@ async function buildGo(moduleDirectory, output, versionVariable, version, select
   await chmod(output, 0o555);
 }
 
-async function productionApplication(destination) {
+async function productionApplication(destination, selectedTarget) {
   await mkdir(destination, { recursive: true, mode: 0o755 });
   for (const file of ["package.json", "package-lock.json"]) {
     await cp(path.join(repositoryRoot, file), path.join(destination, file));
   }
-  await command("npm", ["ci", "--omit=dev", "--no-audit", "--no-fund"], { cwd: destination });
+  await command("npm", ["ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: destination });
+  await pruneProductionNativeDependencies(destination, selectedTarget.key);
   await rm(path.join(destination, "node_modules", ".bin"), { recursive: true, force: true });
   await copySource(path.join(repositoryRoot, "dist"), path.join(destination, "dist"));
   await copySource(path.join(repositoryRoot, "web-dist"), path.join(destination, "web-dist"));
@@ -468,7 +471,7 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
     await mkdir(resourceDirectory, { recursive: true, mode: 0o755 });
   }
 
-  await productionApplication(applicationDirectory);
+  await productionApplication(applicationDirectory, selectedTarget);
   await mkdir(resourceDirectory, { recursive: true, mode: 0o755 });
   await cp(path.join(repositoryRoot, "packaging", "provider-model-catalog.json"), path.join(resourceDirectory, "provider-model-catalog.json"));
   await cp(path.join(repositoryRoot, "packaging", "provider-runtime-profiles.json"), path.join(resourceDirectory, "provider-runtime-profiles.json"));
@@ -479,6 +482,7 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
   await chmod(verifierDestination, 0o444);
   const nodeLicense = await nodeRuntime(work, nodeDestination, dependencies.node.artifacts[selectedTarget.key]);
   await cp(nodeLicense, path.join(root, "THIRD_PARTY", "node-LICENSE"));
+  await command(nodeDestination, ["--eval", betterSQLiteSmokeTest], { cwd: applicationDirectory });
   await ollamaRuntime(work, ollamaDestination, dependencies.ollama.artifacts[selectedTarget.key], selectedTarget, dependencies.ollama.version);
   await buildGo(path.join(repositoryRoot, "provider-agent"), agentDestination, "providerAgentVersion", options.version, selectedTarget);
   await buildGo(

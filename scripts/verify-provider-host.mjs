@@ -19,6 +19,7 @@ const maximumTarStreamBytes = maximumExtractedBytes + maximumArchiveEntries * 10
 const maximumCommandOutputBytes = 64 * 1024 * 1024;
 const expectedAppleTeamIdentifier = "5E2CNR9H47";
 const approvedDownloadHosts = new Set(["nodejs.org", "github.com", "release-assets.githubusercontent.com"]);
+const betterSQLiteSmokeTest = "const Database=require('better-sqlite3');const database=new Database(':memory:');try{const row=database.prepare('SELECT 1 AS value').get();if(row?.value!==1)throw new Error('better-sqlite3 smoke test failed')}finally{database.close()}";
 
 function argumentsFrom(argv) {
   const options = { requireRuntime: false };
@@ -1203,6 +1204,8 @@ async function validateTree(root, options, archiveRoot) {
   const host = manifest.platform === "darwin" ? path.join(application, "Contents", "MacOS", "multivibe-host") : path.join(root, "bin", "multivibe-host");
   const agent = manifest.platform === "darwin" ? path.join(application, "Contents", "Helpers", "multivibe-provider-agent") : path.join(root, "bin", "multivibe-provider-agent");
   const benchmark = manifest.platform === "darwin" ? path.join(application, "Contents", "Helpers", "multivibe-runtime-benchmark") : path.join(root, "bin", "multivibe-runtime-benchmark");
+  const applicationDirectory = manifest.platform === "darwin" ? path.join(application, "Contents", "Resources", "app") : path.join(root, "app");
+  const node = manifest.platform === "darwin" ? path.join(application, "Contents", "Frameworks", "node") : path.join(root, "bin", "node");
   let profile = null;
   if (options.requireRuntime) {
     if (manifest.releaseReady !== true) {
@@ -1217,6 +1220,7 @@ async function validateTree(root, options, archiveRoot) {
     if (hostVersion !== manifest.version || agentVersion !== manifest.version || benchmarkVersion !== manifest.version) {
       throw new Error("provider-host binary versions do not match the manifest");
     }
+    await command(node, ["--eval", betterSQLiteSmokeTest], { cwd: applicationDirectory });
     const doctor = JSON.parse(await command(host, ["doctor"], { capture: true, captureLimit: 64 * 1024 }));
     if (doctor.schema_version !== "multivibe-host-doctor-v1" || doctor.version !== manifest.version ||
       doctor.bundle !== "valid" || doctor.platform?.supported !== true) {
