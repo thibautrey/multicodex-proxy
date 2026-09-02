@@ -144,6 +144,39 @@ type ProviderRuntimeEndpointDraft = {
   clearBearer: boolean;
 };
 
+type ProviderCapacityPolicyState = {
+  schema_version: "provider-capacity-policy-state-v1";
+  revision: number;
+  paused: boolean;
+  automatic_downloads: boolean;
+  allow_cloud_workloads: boolean;
+  policy: {
+    schema_version: "provider-capacity-policy-v1";
+    gpu_utilization_percent: number;
+    gpu_vram_percent: number;
+    max_disk_bytes: number;
+    model_storage_path: string;
+    max_download_bytes_per_day: number;
+    minimum_model_residency_seconds: number;
+    max_model_changes_per_day: number;
+    reserve_free_disk_bytes: number;
+  };
+};
+
+type ProviderCapacityPolicyDraft = {
+  paused: boolean;
+  automaticDownloads: boolean;
+  allowCloudWorkloads: boolean;
+  gpuUtilizationPercent: string;
+  gpuVramPercent: string;
+  maxDiskGiB: string;
+  modelStoragePath: string;
+  maxDownloadGiBPerDay: string;
+  minimumModelResidencySeconds: string;
+  maxModelChangesPerDay: string;
+  reserveFreeDiskGiB: string;
+};
+
 type ProviderPreviewStatus =
   | "idle"
   | "loading"
@@ -151,6 +184,135 @@ type ProviderPreviewStatus =
   | "saving"
   | "unavailable"
   | "error";
+
+type ProviderCapacityStatus =
+  | "idle"
+  | "loading"
+  | "ready"
+  | "saving"
+  | "unavailable"
+  | "error";
+
+const BYTES_PER_GIB = 1024 ** 3;
+
+function emptyProviderCapacityPolicyDraft(): ProviderCapacityPolicyDraft {
+  return {
+    paused: true,
+    automaticDownloads: false,
+    allowCloudWorkloads: false,
+    gpuUtilizationPercent: "",
+    gpuVramPercent: "",
+    maxDiskGiB: "",
+    modelStoragePath: "",
+    maxDownloadGiBPerDay: "",
+    minimumModelResidencySeconds: "",
+    maxModelChangesPerDay: "",
+    reserveFreeDiskGiB: "",
+  };
+}
+
+function capacityPolicyDraftFromState(
+  state: ProviderCapacityPolicyState,
+): ProviderCapacityPolicyDraft {
+  return {
+    paused: state.paused,
+    automaticDownloads: state.automatic_downloads,
+    allowCloudWorkloads: state.allow_cloud_workloads,
+    gpuUtilizationPercent: String(state.policy.gpu_utilization_percent),
+    gpuVramPercent: String(state.policy.gpu_vram_percent),
+    maxDiskGiB: String(state.policy.max_disk_bytes / BYTES_PER_GIB),
+    modelStoragePath: state.policy.model_storage_path,
+    maxDownloadGiBPerDay: String(
+      state.policy.max_download_bytes_per_day / BYTES_PER_GIB,
+    ),
+    minimumModelResidencySeconds: String(
+      state.policy.minimum_model_residency_seconds,
+    ),
+    maxModelChangesPerDay: String(state.policy.max_model_changes_per_day),
+    reserveFreeDiskGiB: String(
+      state.policy.reserve_free_disk_bytes / BYTES_PER_GIB,
+    ),
+  };
+}
+
+function boundedIntegerInput(
+  input: string,
+  minimum: number,
+  maximum = Number.MAX_SAFE_INTEGER,
+) {
+  const value = Number(input);
+  return /^\d+$/.test(input.trim()) && Number.isSafeInteger(value) &&
+    value >= minimum && value <= maximum
+    ? value
+    : null;
+}
+
+function gibInputToBytes(input: string, minimum: number) {
+  const gib = Number(input);
+  if (input.trim() === "" || !Number.isFinite(gib) || gib < 0) return null;
+  const bytes = Math.round(gib * BYTES_PER_GIB);
+  return Number.isSafeInteger(bytes) && bytes >= minimum ? bytes : null;
+}
+
+function capacityPolicyStateFromDraft(
+  draft: ProviderCapacityPolicyDraft,
+  revision: number,
+): ProviderCapacityPolicyState | null {
+  const gpuUtilizationPercent = boundedIntegerInput(
+    draft.gpuUtilizationPercent,
+    1,
+    100,
+  );
+  const gpuVramPercent = boundedIntegerInput(draft.gpuVramPercent, 1, 100);
+  const maxDiskBytes = gibInputToBytes(draft.maxDiskGiB, 1);
+  const maxDownloadBytesPerDay = gibInputToBytes(
+    draft.maxDownloadGiBPerDay,
+    0,
+  );
+  const minimumModelResidencySeconds = boundedIntegerInput(
+    draft.minimumModelResidencySeconds,
+    1,
+  );
+  const maxModelChangesPerDay = boundedIntegerInput(
+    draft.maxModelChangesPerDay,
+    0,
+    4_294_967_295,
+  );
+  const reserveFreeDiskBytes = gibInputToBytes(draft.reserveFreeDiskGiB, 1);
+  const modelStoragePath = draft.modelStoragePath.trim();
+  if (
+    gpuUtilizationPercent === null ||
+    gpuVramPercent === null ||
+    maxDiskBytes === null ||
+    maxDownloadBytesPerDay === null ||
+    minimumModelResidencySeconds === null ||
+    maxModelChangesPerDay === null ||
+    reserveFreeDiskBytes === null ||
+    !modelStoragePath.startsWith("/") ||
+    modelStoragePath === "/" ||
+    /[\0\r\n]/u.test(modelStoragePath)
+  ) {
+    return null;
+  }
+  return {
+    schema_version: "provider-capacity-policy-state-v1",
+    revision,
+    paused: draft.paused,
+    automatic_downloads: draft.automaticDownloads,
+    allow_cloud_workloads: draft.allowCloudWorkloads,
+    policy: {
+      schema_version: "provider-capacity-policy-v1",
+      gpu_utilization_percent: gpuUtilizationPercent,
+      gpu_vram_percent: gpuVramPercent,
+      max_disk_bytes: maxDiskBytes,
+      model_storage_path: modelStoragePath,
+      max_download_bytes_per_day: maxDownloadBytesPerDay,
+      minimum_model_residency_seconds: minimumModelResidencySeconds,
+      max_model_changes_per_day: maxModelChangesPerDay,
+      reserve_free_disk_bytes: reserveFreeDiskBytes,
+    },
+  };
+}
 
 function isOAuthProvider(provider: AccountProvider) {
   return provider === "openai" || provider === "xai";
@@ -306,6 +468,13 @@ export function AccountsTab(props: Props) {
   const [providerRuntimeSaving, setProviderRuntimeSaving] = useState(false);
   const [providerRuntimeMessage, setProviderRuntimeMessage] = useState("");
   const [providerPreviewMessage, setProviderPreviewMessage] = useState("");
+  const [providerCapacityPolicy, setProviderCapacityPolicy] =
+    useState<ProviderCapacityPolicyState | null>(null);
+  const [providerCapacityDraft, setProviderCapacityDraft] =
+    useState<ProviderCapacityPolicyDraft>(emptyProviderCapacityPolicyDraft);
+  const [providerCapacityStatus, setProviderCapacityStatus] =
+    useState<ProviderCapacityStatus>("idle");
+  const [providerCapacityMessage, setProviderCapacityMessage] = useState("");
   const makeMoneyDialogRef = useRef<HTMLDivElement | null>(null);
   const makeMoneyTriggerRef = useRef<HTMLButtonElement | null>(null);
   const makeMoneyCloseRef = useRef<HTMLButtonElement | null>(null);
@@ -410,6 +579,10 @@ export function AccountsTab(props: Props) {
     setProviderRuntimeEndpoints(null);
     setProviderRuntimeDrafts([]);
     setProviderRuntimeMessage("");
+    setProviderCapacityPolicy(null);
+    setProviderCapacityDraft(emptyProviderCapacityPolicyDraft());
+    setProviderCapacityStatus("loading");
+    setProviderCapacityMessage("");
 
     void Promise.all([
       api("/admin/provider-agent/selection"),
@@ -440,6 +613,35 @@ export function AccountsTab(props: Props) {
         error instanceof ApiError && error.status === 503
           ? "The embedded provider agent is not available in this Core installation."
           : "The bounded local inventory could not be loaded.",
+      );
+    });
+
+    void api("/admin/provider-agent/capacity-policy").then((policy) => {
+      if (cancelled) return;
+      const nextPolicy = policy as ProviderCapacityPolicyState;
+      setProviderCapacityPolicy(nextPolicy);
+      setProviderCapacityDraft(capacityPolicyDraftFromState(nextPolicy));
+      setProviderCapacityStatus("ready");
+    }).catch((error: unknown) => {
+      if (cancelled) return;
+      if (error instanceof ApiError && error.status === 404) {
+        setProviderCapacityPolicy(null);
+        setProviderCapacityDraft(emptyProviderCapacityPolicyDraft());
+        setProviderCapacityStatus("ready");
+        setProviderCapacityMessage(
+          "No capacity policy is stored yet. Fill every limit below; the first save will create revision 1 from revision 0.",
+        );
+        return;
+      }
+      setProviderCapacityStatus(
+        error instanceof ApiError && error.status === 503
+          ? "unavailable"
+          : "error",
+      );
+      setProviderCapacityMessage(
+        error instanceof ApiError && error.status === 503
+          ? "The local capacity policy service is unavailable."
+          : "The local capacity policy could not be loaded.",
       );
     });
 
@@ -513,6 +715,16 @@ export function AccountsTab(props: Props) {
         : [...current, model].sort(),
     );
     setProviderPreviewMessage("");
+  };
+
+  const updateProviderCapacityDraft = <
+    Key extends keyof ProviderCapacityPolicyDraft,
+  >(
+    key: Key,
+    value: ProviderCapacityPolicyDraft[Key],
+  ) => {
+    setProviderCapacityDraft((current) => ({ ...current, [key]: value }));
+    setProviderCapacityMessage("");
   };
 
   const saveProviderSelection = async () => {
@@ -617,6 +829,68 @@ export function AccountsTab(props: Props) {
       );
     } finally {
       setProviderRuntimeSaving(false);
+    }
+  };
+
+  const saveProviderCapacityPolicy = async () => {
+    if (providerCapacityStatus === "saving") return;
+    const input = capacityPolicyStateFromDraft(
+      providerCapacityDraft,
+      providerCapacityPolicy?.revision ?? 0,
+    );
+    if (!input) {
+      setProviderCapacityMessage(
+        "Complete every limit with a valid value and choose an absolute model storage path before saving.",
+      );
+      return;
+    }
+
+    setProviderCapacityStatus("saving");
+    setProviderCapacityMessage("");
+    try {
+      const next = await api("/admin/provider-agent/capacity-policy", {
+        method: "PUT",
+        body: JSON.stringify(input),
+      }) as ProviderCapacityPolicyState;
+      setProviderCapacityPolicy(next);
+      setProviderCapacityDraft(capacityPolicyDraftFromState(next));
+      setProviderCapacityStatus("ready");
+      setProviderCapacityMessage(
+        next.paused
+          ? "Capacity limits saved locally. Manual pause is active and overrides downloads and Cloud workload consent. No workload, route or payment was activated."
+          : next.allow_cloud_workloads
+            ? "Capacity limits and explicit Cloud consent saved locally. This records permission only; it does not enroll the host, route traffic or activate payments."
+            : "Capacity limits saved locally. Cloud workloads remain disabled; no traffic or payment was activated.",
+      );
+    } catch (error: unknown) {
+      if (error instanceof ApiError && error.status === 409) {
+        try {
+          const latest = await api(
+            "/admin/provider-agent/capacity-policy",
+          ) as ProviderCapacityPolicyState;
+          setProviderCapacityPolicy(latest);
+          setProviderCapacityDraft(capacityPolicyDraftFromState(latest));
+          setProviderCapacityStatus("ready");
+          setProviderCapacityMessage(
+            "The capacity policy changed in another session. The latest local revision is shown; review every value before saving again.",
+          );
+          return;
+        } catch {
+          // Fall through to the local unavailable state below.
+        }
+      }
+      setProviderCapacityStatus(
+        error instanceof ApiError && error.status === 400
+          ? "ready"
+          : error instanceof ApiError && error.status === 503
+            ? "unavailable"
+            : "error",
+      );
+      setProviderCapacityMessage(
+        error instanceof ApiError && error.status === 400
+          ? "The agent rejected this policy. Check the percentages, integer limits and absolute storage path."
+          : "The local capacity policy could not be saved.",
+      );
     }
   };
 
@@ -1166,6 +1440,16 @@ export function AccountsTab(props: Props) {
       })
     ),
   );
+  const providerCapacityInput = capacityPolicyStateFromDraft(
+    providerCapacityDraft,
+    providerCapacityPolicy?.revision ?? 0,
+  );
+  const providerCapacityChanged = Boolean(
+    providerCapacityInput &&
+    (!providerCapacityPolicy ||
+      JSON.stringify(providerCapacityInput) !==
+        JSON.stringify(providerCapacityPolicy)),
+  );
 
   return (
     <>
@@ -1673,10 +1957,307 @@ export function AccountsTab(props: Props) {
             <div id="make-money-preview-status" className="make-money-preview-status">
               <strong>Preview only.</strong> Provider enrollment, customer
               workloads, earnings, payouts and Cloud credits are not active yet.
-              Opening this window performs only the agent&apos;s reviewed loopback
-              catalog probes. It does not scan the LAN, inspect processes or
-              files, install anything, or share the result.
+              Opening this window reads protected local provider settings and
+              performs only the agent&apos;s reviewed loopback catalog probes. It
+              does not scan the LAN, inspect processes or files, install
+              anything, or share the result.
             </div>
+
+            <section className="provider-selection-panel provider-capacity-panel" aria-labelledby="provider-capacity-title">
+              <div className="provider-selection-heading">
+                <div>
+                  <span className="eyebrow">Local capacity policy</span>
+                  <h3 id="provider-capacity-title">Set hard host limits</h3>
+                  <p>
+                    Every value is an explicit local choice. Saving this policy
+                    does not enroll the host, send workloads, enable payments or
+                    make the machine reachable from MultiVibe Cloud.
+                  </p>
+                </div>
+                {(providerCapacityStatus === "ready" || providerCapacityStatus === "saving") && (
+                  <span className={providerCapacityDraft.paused ? "badge badge-warn" : "badge"}>
+                    {providerCapacityPolicy
+                      ? `${providerCapacityDraft.paused ? "Paused" : "Limits set"} · revision ${providerCapacityPolicy.revision}`
+                      : "Not configured · revision 0"}
+                  </span>
+                )}
+              </div>
+
+              {providerCapacityStatus === "loading" && (
+                <div className="provider-selection-empty" role="status">
+                  Loading the protected local capacity policy…
+                </div>
+              )}
+
+              {(providerCapacityStatus === "unavailable" || providerCapacityStatus === "error") && (
+                <div className="provider-selection-empty provider-selection-error" role="status">
+                  <strong>{providerCapacityMessage}</strong>
+                  <span>No local policy was changed.</span>
+                </div>
+              )}
+
+              {(providerCapacityStatus === "ready" || providerCapacityStatus === "saving") && (
+                <>
+                  <div className={providerCapacityDraft.paused
+                    ? "provider-capacity-priority provider-capacity-paused"
+                    : "provider-capacity-priority"}
+                  >
+                    <strong>
+                      {providerCapacityDraft.paused
+                        ? "Manual pause is selected"
+                        : "Manual pause is off"}
+                    </strong>
+                    <span>
+                      Manual pause is the highest-priority local choice. It
+                      keeps this policy fail-closed even when automatic downloads
+                      or Cloud consent are selected.
+                    </span>
+                  </div>
+
+                  <div className="provider-capacity-grid">
+                    <label>
+                      Host state
+                      <select
+                        value={providerCapacityDraft.paused ? "paused" : "available"}
+                        disabled={providerCapacityStatus === "saving"}
+                        onChange={(event) => updateProviderCapacityDraft(
+                          "paused",
+                          event.target.value === "paused",
+                        )}
+                      >
+                        <option value="paused">Paused — safest default</option>
+                        <option value="available">Not paused — saved limits still apply</option>
+                      </select>
+                      <small>Pause overrides every other choice below.</small>
+                    </label>
+
+                    <label>
+                      Maximum GPU utilization (%)
+                      <input
+                        type="number"
+                        min="1"
+                        max="100"
+                        step="1"
+                        inputMode="numeric"
+                        value={providerCapacityDraft.gpuUtilizationPercent}
+                        disabled={providerCapacityStatus === "saving"}
+                        placeholder="80"
+                        onChange={(event) => updateProviderCapacityDraft(
+                          "gpuUtilizationPercent",
+                          event.target.value,
+                        )}
+                      />
+                      <small>Whole number from 1 to 100.</small>
+                    </label>
+
+                    <label>
+                      Maximum GPU memory use (%)
+                      <input
+                        type="number"
+                        min="1"
+                        max="100"
+                        step="1"
+                        inputMode="numeric"
+                        value={providerCapacityDraft.gpuVramPercent}
+                        disabled={providerCapacityStatus === "saving"}
+                        placeholder="75"
+                        onChange={(event) => updateProviderCapacityDraft(
+                          "gpuVramPercent",
+                          event.target.value,
+                        )}
+                      />
+                      <small>Whole number from 1 to 100.</small>
+                    </label>
+
+                    <label className="provider-capacity-wide">
+                      Model storage path
+                      <input
+                        type="text"
+                        value={providerCapacityDraft.modelStoragePath}
+                        disabled={providerCapacityStatus === "saving"}
+                        placeholder="/var/lib/multivibe/models"
+                        spellCheck={false}
+                        autoComplete="off"
+                        onChange={(event) => updateProviderCapacityDraft(
+                          "modelStoragePath",
+                          event.target.value,
+                        )}
+                      />
+                      <small>Choose an absolute folder other than the filesystem root.</small>
+                    </label>
+
+                    <label>
+                      Maximum model storage (GiB)
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        inputMode="decimal"
+                        value={providerCapacityDraft.maxDiskGiB}
+                        disabled={providerCapacityStatus === "saving"}
+                        placeholder="30"
+                        onChange={(event) => updateProviderCapacityDraft(
+                          "maxDiskGiB",
+                          event.target.value,
+                        )}
+                      />
+                      <small>Must be greater than 0 GiB.</small>
+                    </label>
+
+                    <label>
+                      Free disk reserve (GiB)
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        inputMode="decimal"
+                        value={providerCapacityDraft.reserveFreeDiskGiB}
+                        disabled={providerCapacityStatus === "saving"}
+                        placeholder="5"
+                        onChange={(event) => updateProviderCapacityDraft(
+                          "reserveFreeDiskGiB",
+                          event.target.value,
+                        )}
+                      />
+                      <small>Disk space the agent must leave untouched.</small>
+                    </label>
+
+                    <label>
+                      Daily download cap (GiB)
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        inputMode="decimal"
+                        value={providerCapacityDraft.maxDownloadGiBPerDay}
+                        disabled={providerCapacityStatus === "saving"}
+                        placeholder="20"
+                        onChange={(event) => updateProviderCapacityDraft(
+                          "maxDownloadGiBPerDay",
+                          event.target.value,
+                        )}
+                      />
+                      <small>0 explicitly disables model downloads.</small>
+                    </label>
+
+                    <label>
+                      Minimum model residency (seconds)
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        inputMode="numeric"
+                        value={providerCapacityDraft.minimumModelResidencySeconds}
+                        disabled={providerCapacityStatus === "saving"}
+                        placeholder="21600"
+                        onChange={(event) => updateProviderCapacityDraft(
+                          "minimumModelResidencySeconds",
+                          event.target.value,
+                        )}
+                      />
+                      <small>For example, 21600 is 6 hours.</small>
+                    </label>
+
+                    <label>
+                      Maximum model changes per day
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        inputMode="numeric"
+                        value={providerCapacityDraft.maxModelChangesPerDay}
+                        disabled={providerCapacityStatus === "saving"}
+                        placeholder="4"
+                        onChange={(event) => updateProviderCapacityDraft(
+                          "maxModelChangesPerDay",
+                          event.target.value,
+                        )}
+                      />
+                      <small>0 freezes the managed model set.</small>
+                    </label>
+
+                    <label className="provider-capacity-toggle provider-capacity-wide">
+                      <input
+                        type="checkbox"
+                        checked={providerCapacityDraft.automaticDownloads}
+                        disabled={providerCapacityStatus === "saving"}
+                        onChange={(event) => updateProviderCapacityDraft(
+                          "automaticDownloads",
+                          event.target.checked,
+                        )}
+                      />
+                      <span>
+                        <strong>Allow automatic model downloads</strong>
+                        <small>
+                          This permission remains bounded by the storage,
+                          reserve, daily download and model-change limits.
+                        </small>
+                      </span>
+                    </label>
+                  </div>
+
+                  <label className="provider-capacity-consent">
+                    <input
+                      type="checkbox"
+                      checked={providerCapacityDraft.allowCloudWorkloads}
+                      disabled={providerCapacityStatus === "saving"}
+                      onChange={(event) => updateProviderCapacityDraft(
+                        "allowCloudWorkloads",
+                        event.target.checked,
+                      )}
+                    />
+                    <span>
+                      <strong>Allow MultiVibe Cloud workloads</strong>
+                      <small>
+                        Separate explicit consent, off by default. Saving it only
+                        records local permission; it does not enroll this host,
+                        open a route, deliver traffic or activate payments.
+                      </small>
+                    </span>
+                  </label>
+
+                  {!providerCapacityInput && (
+                    <p className="provider-capacity-validation">
+                      Complete both percentages, all numeric limits and an
+                      absolute storage path. GiB values are converted to whole
+                      bytes when saved.
+                    </p>
+                  )}
+
+                  {providerCapacityMessage && (
+                    <p className="provider-selection-message" role="status">
+                      {providerCapacityMessage}
+                    </p>
+                  )}
+
+                  <div className="provider-selection-actions">
+                    <span className="muted">
+                      {!providerCapacityPolicy
+                        ? "No local policy saved · next write expects revision 0"
+                        : providerCapacityChanged
+                          ? "Unsaved local capacity changes"
+                          : "Local capacity policy is up to date"}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={
+                        !providerCapacityInput ||
+                        !providerCapacityChanged ||
+                        providerCapacityStatus === "saving"
+                      }
+                      onClick={() => void saveProviderCapacityPolicy()}
+                    >
+                      {providerCapacityStatus === "saving"
+                        ? "Saving locally…"
+                        : providerCapacityPolicy
+                          ? "Save local capacity policy"
+                          : "Create local capacity policy"}
+                    </button>
+                  </div>
+                </>
+              )}
+            </section>
 
             <section className="provider-selection-panel" aria-labelledby="provider-runtime-endpoints-title">
               <div className="provider-selection-heading">
@@ -1955,12 +2536,12 @@ export function AccountsTab(props: Props) {
               <section className="make-money-preview-card" aria-labelledby="make-money-control-title">
                 <h3 id="make-money-control-title">You stay in control</h3>
                 <p>
-                  Offering customer-serving capacity will require explicit opt-in.
-                  This is separate from anonymous model-demand sharing in Tracing.
-                  Planned provider controls include
-                  immediate pause, recurring availability windows and idle-aware
-                  sharing when your machine has spare capacity. Manual pause will
-                  always win. None of these controls is active in this preview.
+                  The local policy above records hard limits, a highest-priority
+                  manual pause and a separate Cloud workload opt-in. It is also
+                  separate from anonymous model-demand sharing in Tracing.
+                  Saving these choices does not enroll the host or activate
+                  customer traffic; recurring availability windows and
+                  idle-aware sharing remain planned controls.
                 </p>
               </section>
 
@@ -1968,10 +2549,14 @@ export function AccountsTab(props: Props) {
                 <h3 id="make-money-earnings-title">Verified earnings, not promises</h3>
                 <p>
                   If every marketplace gate passes, eligible cleared earnings are
-                  planned for monthly Stripe Connect payouts in real money. You
-                  may instead choose to convert eligible cleared earnings into
-                  Cloud credits for eligible model calls. Earnings are never
-                  guaranteed: accepted work or estimated usage is not payable.
+                  planned with 85% for the host operator and a 15% MultiVibe
+                  service fee, before applicable taxes, reserves, disputes and
+                  reversals. The separate 5% fee applies only to customer
+                  purchases or top-ups, not to the host operator&apos;s 85% share.
+                  Cleared balances are planned for monthly Stripe Connect payouts
+                  in real money, or an optional conversion to eligible Cloud
+                  credits. Earnings are never guaranteed: accepted work or
+                  estimated usage is not payable.
                 </p>
               </section>
             </div>

@@ -13,6 +13,7 @@ function finiteAtLeast(
 }
 
 export const PORT = Number(process.env.PORT ?? 1455);
+export const HOST = process.env.HOST?.trim() || undefined;
 export const PROVIDER_AGENT_ENABLED =
   (process.env.PROVIDER_AGENT_ENABLED ?? "false") === "true";
 export const PROVIDER_AGENT_BINARY =
@@ -26,8 +27,28 @@ export const PROVIDER_AGENT_DEVICE_KEY_PATH =
   process.env.PROVIDER_AGENT_DEVICE_KEY_PATH ?? path.resolve(path.dirname(STORE_PATH), "provider-agent-device-identity.json");
 export const PROVIDER_AGENT_ENROLLMENT_STATE_PATH =
   process.env.PROVIDER_AGENT_ENROLLMENT_STATE_PATH ?? path.resolve(path.dirname(STORE_PATH), "provider-agent-cloud-enrollment.json");
+export const PROVIDER_AGENT_CAPACITY_POLICY_PATH =
+  process.env.PROVIDER_AGENT_CAPACITY_POLICY_PATH ?? path.resolve(path.dirname(STORE_PATH), "provider-agent-capacity-policy.json");
 export const PROVIDER_AGENT_CLOUD_API_URL =
   process.env.PROVIDER_AGENT_CLOUD_API_URL ?? "https://api.multivibe.cloud";
+export const PROVIDER_AGENT_DEMAND_PLAN_PATH =
+  process.env.PROVIDER_AGENT_DEMAND_PLAN_PATH ?? path.resolve(path.dirname(STORE_PATH), "provider-agent-demand-plan.json");
+export const PROVIDER_AGENT_MODEL_CATALOG_PATH =
+  process.env.PROVIDER_AGENT_MODEL_CATALOG_PATH;
+export const PROVIDER_AGENT_DEMAND_TRUSTED_KEYS =
+  process.env.PROVIDER_AGENT_DEMAND_TRUSTED_KEYS;
+export const PROVIDER_AGENT_MANAGED_ROOT =
+  process.env.PROVIDER_AGENT_MANAGED_ROOT;
+export const PROVIDER_AGENT_BUNDLED_OLLAMA_ROOT =
+  process.env.PROVIDER_AGENT_BUNDLED_OLLAMA_ROOT;
+export const PROVIDER_AGENT_DEPENDENCY_MANIFEST_PATH =
+  process.env.PROVIDER_AGENT_DEPENDENCY_MANIFEST_PATH;
+export const PROVIDER_AGENT_MANAGED_PLANNER_STATE_PATH =
+  process.env.PROVIDER_AGENT_MANAGED_PLANNER_STATE_PATH;
+export const PROVIDER_AGENT_OLLAMA_LISTEN =
+  process.env.PROVIDER_AGENT_OLLAMA_LISTEN;
+export const PROVIDER_AGENT_CUDA_VISIBLE_DEVICES =
+  process.env.PROVIDER_AGENT_CUDA_VISIBLE_DEVICES;
 export const MODULES_PATH =
   process.env.MODULES_PATH ?? path.join(path.dirname(STORE_PATH), "modules");
 export const BUNDLED_SECURITY_MODULE_PATH =

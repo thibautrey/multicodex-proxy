@@ -1,0 +1,325 @@
+name: Provider Host Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: provider-host-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: 22.23.2
+  GO_VERSION: "1.24"
+
+jobs:
+  validate-tag:
+    runs-on: ubuntu-24.04
+    permissions: {}
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - name: Require a release tag
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE}" != "tag" || "${GITHUB_REF_NAME}" != v* ]]; then
+            echo "::error::Provider Host releases must run from a v-prefixed tag."
+            exit 1
+          fi
+          version="${GITHUB_REF_NAME#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::The release tag is not a supported semantic version."
+            exit 1
+          fi
+          printf 'value=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+  build-linux:
+    needs: validate-tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require Linux amd64
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(uname -s)" == Linux && "$(uname -m)" == x86_64 ]] || {
+            echo "::error::The Linux provider archive requires an amd64 runner."
+            exit 1
+          }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: Install locked build dependencies
+        run: |
+          npm ci --no-audit --no-fund
+          npm --prefix web ci --no-audit --no-fund
+      - name: Run provider security tests with the race detector
+        run: |
+          go -C provider-agent test -race ./...
+          go -C host-application test -race ./...
+      - name: Reject hostile provider archive fixtures
+        run: node --test scripts/verify-provider-host-archive-fixtures.test.mjs
+      - name: Install the pinned Go vulnerability scanner
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+      - name: Scan the provider agent for reachable Go vulnerabilities
+        working-directory: provider-agent
+        run: govulncheck ./...
+      - name: Scan the host launcher for reachable Go vulnerabilities
+        working-directory: host-application
+        run: govulncheck ./...
+      - name: Build the autonomous Linux archive
+        run: >-
+          npm run package:provider-host --
+          --version "${{ needs.validate-tag.outputs.version }}"
+          --output release-linux
+      - name: Verify the Linux archive without executing it
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="release-linux/multivibe-host_${{ needs.validate-tag.outputs.version }}_linux_amd64.tar.gz"
+          npm run verify:provider-host -- "$archive"
+      - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+      - name: Generate the Linux CycloneDX SBOM
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="release-linux/multivibe-host_${{ needs.validate-tag.outputs.version }}_linux_amd64.tar.gz"
+          scan_root="$RUNNER_TEMP/provider-host-linux-sbom"
+          mkdir -p "$scan_root"
+          tar -xzf "$archive" -C "$scan_root"
+          syft scan "dir:$scan_root" -o "cyclonedx-json=release-linux/multivibe-host_${{ needs.validate-tag.outputs.version }}_linux_amd64.cdx.json"
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: release-linux/multivibe-host_${{ needs.validate-tag.outputs.version }}_linux_amd64.tar.gz
+      - uses: actions/attest-sbom@bd218ad0dbcb3e146bd073d1d9c6d78e08aa8a0b # v2.4.0
+        with:
+          subject-path: release-linux/multivibe-host_${{ needs.validate-tag.outputs.version }}_linux_amd64.tar.gz
+          sbom-path: release-linux/multivibe-host_${{ needs.validate-tag.outputs.version }}_linux_amd64.cdx.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: provider-host-linux
+          path: release-linux/*
+          if-no-files-found: error
+          compression-level: 0
+
+  build-macos:
+    needs: validate-tag
+    runs-on: macos-15
+    timeout-minutes: 150
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require macOS Apple Silicon
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || {
+            echo "::error::The macOS provider archive requires an Apple Silicon runner."
+            exit 1
+          }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: Install locked build dependencies
+        run: |
+          npm ci --no-audit --no-fund
+          npm --prefix web ci --no-audit --no-fund
+      - name: Run provider tests with the race detector
+        run: |
+          go -C provider-agent test -race ./...
+          go -C host-application test -race ./...
+      - name: Reject hostile provider archive fixtures
+        run: node --test scripts/verify-provider-host-archive-fixtures.test.mjs
+      - name: Import ephemeral Apple release credentials
+        shell: bash
+        env:
+          CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          for variable in CERTIFICATE_P12 CERTIFICATE_PASSWORD SIGN_IDENTITY APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER_ID; do
+            if [[ -z "${!variable:-}" ]]; then
+              echo "::error::Missing required Apple release credential: $variable"
+              exit 1
+            fi
+          done
+          keychain="$RUNNER_TEMP/multivibe-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 32)"
+          certificate="$RUNNER_TEMP/multivibe-signing.p12"
+          api_key="$RUNNER_TEMP/AuthKey.p8"
+          printf '%s' "$CERTIFICATE_P12" | base64 --decode > "$certificate"
+          printf '%s' "$APPLE_API_KEY" | base64 --decode > "$api_key"
+          chmod 600 "$certificate" "$api_key"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain"
+          security default-keychain -d user -s "$keychain"
+          security find-identity -v -p codesigning "$keychain" | grep -F -- "$SIGN_IDENTITY" >/dev/null || {
+            echo "::error::The requested Developer ID Application identity was not imported."
+            exit 1
+          }
+          xcrun notarytool store-credentials multivibe-release \
+            --key "$api_key" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID" --keychain "$keychain"
+          rm -f "$certificate" "$api_key"
+      - name: Build, sign and notarize the macOS archive
+        env:
+          SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: >-
+          npm run package:provider-host --
+          --version "${{ needs.validate-tag.outputs.version }}"
+          --output release-macos
+          --sign-identity "$SIGN_IDENTITY"
+          --notary-profile multivibe-release
+      - name: Remove ephemeral Apple credentials
+        if: always()
+        shell: bash
+        run: |
+          security delete-keychain "$RUNNER_TEMP/multivibe-signing.keychain-db" >/dev/null 2>&1 || true
+          rm -f "$RUNNER_TEMP/multivibe-signing.p12" "$RUNNER_TEMP/AuthKey.p8"
+      - name: Verify the signed macOS archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="release-macos/multivibe-host_${{ needs.validate-tag.outputs.version }}_darwin_arm64.zip"
+          npm run verify:provider-host -- "$archive"
+      - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+      - name: Generate the macOS CycloneDX SBOM
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="release-macos/multivibe-host_${{ needs.validate-tag.outputs.version }}_darwin_arm64.zip"
+          scan_root="$RUNNER_TEMP/provider-host-macos-sbom"
+          mkdir -p "$scan_root"
+          ditto -x -k "$archive" "$scan_root"
+          syft scan "dir:$scan_root" -o "cyclonedx-json=release-macos/multivibe-host_${{ needs.validate-tag.outputs.version }}_darwin_arm64.cdx.json"
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: release-macos/multivibe-host_${{ needs.validate-tag.outputs.version }}_darwin_arm64.zip
+      - uses: actions/attest-sbom@bd218ad0dbcb3e146bd073d1d9c6d78e08aa8a0b # v2.4.0
+        with:
+          subject-path: release-macos/multivibe-host_${{ needs.validate-tag.outputs.version }}_darwin_arm64.zip
+          sbom-path: release-macos/multivibe-host_${{ needs.validate-tag.outputs.version }}_darwin_arm64.cdx.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: provider-host-macos
+          path: release-macos/*
+          if-no-files-found: error
+          compression-level: 0
+
+  sign-release:
+    needs: [validate-tag, build-linux, build-macos]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: provider-host-*
+          path: release
+          merge-multiple: true
+      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+      - name: Import the GPG release key and sign the artifacts
+        shell: bash
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY_BASE64 }}
+          GPG_FINGERPRINT: ${{ secrets.GPG_SIGNING_FINGERPRINT }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_SIGNING_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          for variable in GPG_PRIVATE_KEY GPG_FINGERPRINT GPG_PASSPHRASE; do
+            if [[ -z "${!variable:-}" ]]; then
+              echo "::error::Missing required release-signing credential: $variable"
+              exit 1
+            fi
+          done
+          GNUPGHOME="$(mktemp -d "$RUNNER_TEMP/multivibe-gnupg.XXXXXX")"
+          export GNUPGHOME
+          trap 'rm -rf -- "$GNUPGHOME"' EXIT
+          printf '%s' "$GPG_PRIVATE_KEY" | base64 --decode | gpg --batch --import
+          MULTIVIBE_GPG_PASSPHRASE="$GPG_PASSPHRASE" \
+            npm run sign:provider-host -- --gpg-key "$GPG_FINGERPRINT" release
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: |
+            release/SHA256SUMS
+            release/SHA256SUMS.asc
+            release/SHA256SUMS.sigstore.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: provider-host-signed-release
+          path: release/*
+          if-no-files-found: error
+          compression-level: 0
+
+  publish-release:
+    needs: [validate-tag, sign-release]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: provider-host-signed-release
+          path: release
+      - name: Publish the immutable GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "::error::A GitHub release already exists for $GITHUB_REF_NAME; refusing to overwrite it."
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" release/* \
+            --verify-tag \
+            --title "MultiVibe Host ${{ needs.validate-tag.outputs.version }}" \
+            --generate-notes
