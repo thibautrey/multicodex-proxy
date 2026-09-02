@@ -19,13 +19,15 @@ test("runs response modules for buffered native Responses streams", async () => 
     upsertAccount: async () => account, flushIfDirty: async () => undefined,
   };
   const traceManager: any = { recordTrace: () => undefined, beginTrace: async () => "t", completeTrace: async () => undefined };
-  const moduleManager: any = { runHook: async (hook: string, value: string) => ({ value: hook === "response.received" ? value.replaceAll("<SECRET>", "restored") : value }) };
+  const hooks: string[] = [];
+  const moduleManager: any = { runHook: async (hook: string, value: any) => { hooks.push(hook); return { value: hook === "response.beforeClient" ? JSON.parse(JSON.stringify(value).replaceAll("<SECRET>", "restored")) : value }; } };
   const app = express(); app.use(express.json()); app.use("/v1", createProxyRouter({ store, traceManager, moduleManager, openaiBaseUrl: "http://unused", mistralBaseUrl: "http://unused", mistralUpstreamPath: "/v1/responses", mistralCompactUpstreamPath: "/v1/responses/compact", zaiBaseUrl: "http://unused", zaiUpstreamPath: "/v1/chat/completions", zaiCompactUpstreamPath: "/v1/chat/completions", oauthConfig: {} as any }));
   const server = app.listen(0, "127.0.0.1");
   await new Promise<void>((resolve) => server.once("listening", resolve));
   const port = (server.address() as any).port;
   const body = await new Promise<string>((resolve, reject) => { const req = http.request({ host: "127.0.0.1", port, path: "/v1/responses", method: "POST", headers: { "content-type": "application/json" } }, (res) => { let text = ""; res.on("data", (chunk) => text += chunk); res.on("end", () => resolve(text)); }); req.on("error", reject); req.end(JSON.stringify({ model: "test-model", stream: false, input: "x" })); });
   assert.match(body, /restored/);
+  assert.ok(hooks.includes("response.beforeClient"));
   await new Promise<void>((resolve) => server.close(() => resolve()));
   globalThis.fetch = originalFetch;
 });
