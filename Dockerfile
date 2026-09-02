@@ -17,7 +17,7 @@ RUN npm run build
 
 FROM node:22-alpine
 WORKDIR /app
-RUN apk add --no-cache libstdc++
+RUN apk add --no-cache git libstdc++
 ENV NODE_ENV=production
 ARG GIT_SHA=unknown
 ARG BUILD_ID=unknown
