@@ -33,6 +33,29 @@ func enrollmentRequestBody(token string) string {
 	return string(encoded)
 }
 
+func TestCloudEnrollmentAcceptsEveryRegisteredRuntimeAndRejectsUnknownOnes(t *testing.T) {
+	selected := []string{"publisher/model"}
+	for _, adapter := range runtimeAdapterRegistry().Adapters {
+		input := cloudEnrollmentInput{
+			EnrollmentToken: "mve_" + strings.Repeat("a", 43), CoreVersion: "0.2.0", RuntimeFamily: adapter.ID,
+			SelectedModels:         []cloudEnrollmentModel{{ReportedID: selected[0], Modalities: []string{"text"}}},
+			DeclaredMaxConcurrency: 1,
+		}
+		manifest, err := normalizeEnrollmentInput(input, selected)
+		if err != nil || manifest.RuntimeFamily != adapter.ID {
+			t.Fatalf("registered runtime %s was rejected: %#v %v", adapter.ID, manifest, err)
+		}
+	}
+	invalid := cloudEnrollmentInput{
+		EnrollmentToken: "mve_" + strings.Repeat("a", 43), CoreVersion: "0.2.0", RuntimeFamily: "unknown-runtime",
+		SelectedModels:         []cloudEnrollmentModel{{ReportedID: selected[0], Modalities: []string{"text"}}},
+		DeclaredMaxConcurrency: 1,
+	}
+	if _, err := normalizeEnrollmentInput(invalid, selected); !errors.Is(err, errInvalidCloudEnrollment) {
+		t.Fatalf("unknown runtime must fail closed: %v", err)
+	}
+}
+
 func verifyEnrollmentProof(t *testing.T, proof signedEnrollmentProof, publicKey ed25519.PublicKey) {
 	t.Helper()
 	if proof.EnvelopeVersion != providerControlEnvelope || proof.Kind != "enrollment_proof" ||
