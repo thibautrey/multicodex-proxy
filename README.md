@@ -624,11 +624,32 @@ restricted to `https://api.multivibe.cloud` (or literal loopback HTTP in
 tests), signs the returned challenge, persists no grant or proof, freezes the
 submitted selection, and keeps routing and compensation false.
 
+The autonomous host archive also pins `PROVIDER_AGENT_MANAGED_ROOT`,
+`PROVIDER_AGENT_BUNDLED_OLLAMA_ROOT`,
+`PROVIDER_AGENT_DEPENDENCY_MANIFEST_PATH`,
+`PROVIDER_AGENT_MANAGED_PLANNER_STATE_PATH` and
+`PROVIDER_AGENT_MODEL_CATALOG_PATH` to its private data directory and signed
+bundle layout. Managed demand reconciliation is enabled only when an operator
+also supplies `MULTIVIBE_PROVIDER_DEMAND_TRUSTED_KEYS` to the host launcher.
+That value is an explicit Ed25519 public-key trust root; the repository's RFC
+interop test key is never used as a packaged Cloud key. Without a configured
+production trust root, Core still starts but signed demand and managed Ollama
+remain unavailable.
+
 The local-account **Share models · Preview** experience exposes the same
 inventory and revisioned selection without requiring a separate agent UI.
 It does not submit automatically: enrollment requires an explicit one-time
 grant and exact manifest. Submission does not advertise capacity, accept
 community workloads, or enable earnings and payouts.
+
+If the marketplace is later activated after every production gate passes, the
+announced commercial split for eligible, cleared community-workload revenue is
+85% to the host operator and a 15% MultiVibe service fee. Applicable taxes,
+reserves, disputes and reversals are handled after that split and may reduce or
+delay the amount payable. The separate 5% fee applies only to customer
+purchases or top-ups; it is not an additional deduction from the host
+operator's 85% share. This repository currently implements no payable,
+settlement or compensation activation.
 
 The multiarchitecture Core container build compiles the Go agent for the same
 target OS and architecture as the final image, runs its complete Go test suite
@@ -647,6 +668,11 @@ Provider-agent admin endpoints:
 - `GET /admin/provider-agent/cloud-shadow/enrollment`
 - `POST /admin/provider-agent/cloud-shadow/enroll`
 - `POST /admin/provider-agent/relay-shadow/session-open`
+- `GET /admin/provider-agent/managed-ollama/status`
+- `POST /admin/provider-agent/managed-ollama/install`
+- `POST /admin/provider-agent/managed-ollama/start`
+- `POST /admin/provider-agent/managed-ollama/stop`
+- `POST /admin/provider-agent/managed-ollama/reconcile`
 
 ### Anonymous model-demand sharing
 
@@ -724,6 +750,7 @@ file before they reach the container.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `PORT` | `1455` | HTTP server port |
+| `HOST` | Node.js all-interface default | Optional Core listen address; the autonomous provider-host launcher always pins literal loopback |
 | `ADMIN_TOKEN` | empty | Dashboard/admin secret; empty disables the admin check |
 | `PROXY_API_KEY` | empty | Shared inference/API key |
 | `PROXY_API_KEYS` | empty | JSON object mapping application names to keys |
@@ -908,6 +935,17 @@ Thanks to everyone who has helped improve MultiVibe. This gallery is generated
 from GitHub's contributor graph and updates automatically.
 
 [View all contributors and their commits](https://github.com/thibautrey/multivibe/graphs/contributors).
+
+---
+
+## 📄 License
+
+The source code in this repository, including MultiVibe Core and its auditable
+provider-host agent, is licensed under the [Apache License 2.0](./LICENSE). The
+license includes an explicit patent grant and permits inspection, modification,
+and redistribution under its terms. It does not grant access to the hosted
+multivibe.cloud service, service accounts, credentials, customer data, or
+Pleiades Solutions trademarks beyond Apache-2.0 Section 6.
 
 ---
 

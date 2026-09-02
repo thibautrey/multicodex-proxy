@@ -2356,6 +2356,100 @@ details summary {
   white-space: nowrap;
 }
 
+.provider-capacity-priority {
+  display: grid;
+  gap: 4px;
+  margin-top: 15px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-strong);
+  color: var(--muted-strong);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.provider-capacity-priority strong {
+  color: var(--text);
+}
+
+.provider-capacity-paused {
+  border-color: color-mix(in srgb, var(--warning) 32%, var(--line));
+  background: var(--warning-soft);
+}
+
+.provider-capacity-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.provider-capacity-grid > label {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  min-width: 0;
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.provider-capacity-grid small,
+.provider-capacity-consent small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.provider-capacity-wide {
+  grid-column: 1 / -1;
+}
+
+.provider-capacity-grid > .provider-capacity-toggle,
+.provider-capacity-consent {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-strong);
+  cursor: pointer;
+}
+
+.provider-capacity-toggle input,
+.provider-capacity-consent input {
+  flex: 0 0 auto;
+  margin: 2px 0 0;
+}
+
+.provider-capacity-toggle span,
+.provider-capacity-consent span {
+  display: grid;
+  gap: 3px;
+}
+
+.provider-capacity-consent {
+  margin-top: 12px;
+  border-color: color-mix(in srgb, var(--warning) 36%, var(--line));
+  background: color-mix(in srgb, var(--warning-soft) 68%, var(--panel-strong));
+  color: var(--muted-strong);
+  font-size: 12px;
+}
+
+.provider-capacity-consent strong {
+  color: var(--text);
+}
+
+.provider-capacity-validation {
+  margin: 12px 0 0;
+  color: var(--warning);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .provider-runtime-list {
   display: grid;
   gap: 10px;
@@ -3721,6 +3815,10 @@ details summary {
 
   .provider-selection-actions .btn {
     width: 100%;
+  }
+
+  .provider-capacity-grid {
+    grid-template-columns: 1fr;
   }
 
   .provider-runtime-editor {

@@ -70,6 +70,7 @@ import type { SmartRoutingCoordinator } from "../../smart-routing-routes.js";
 import { discoverAndPersistLocalRuntimes } from "../../local-runtime-discovery.js";
 import {
   isValidProviderRuntimeEndpointInput,
+  isValidProviderCapacityPolicy,
   isValidProviderCloudEnrollmentRequest,
   isValidProviderRelayShadowSessionRequest,
   isValidProviderSelectedModelId,
@@ -822,6 +823,129 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       res.status(503).json({ error: "provider_agent_unavailable" });
     }
   });
+
+  router.get("/provider-agent/capacity-policy", async (_req, res) => {
+    if (!options.providerAgent?.enabled) return res.status(503).json({ error: "provider_agent_unavailable" });
+    try {
+      res.setHeader("cache-control", "no-store");
+      res.json(await options.providerAgent.getCapacityPolicy());
+    } catch (error) {
+      if (error instanceof ProviderAgentControlRequestError && error.status === 404) {
+        return res.status(404).json({ error: "provider_capacity_policy_not_found" });
+      }
+      res.status(503).json({ error: "provider_agent_unavailable" });
+    }
+  });
+
+  router.put("/provider-agent/capacity-policy", async (req, res) => {
+    if (!options.providerAgent?.enabled) return res.status(503).json({ error: "provider_agent_unavailable" });
+    if (!isValidProviderCapacityPolicy(req.body)) {
+      return res.status(400).json({ error: "invalid_provider_capacity_policy" });
+    }
+    try {
+      const result = await options.providerAgent.replaceCapacityPolicy(req.body);
+      res.setHeader("cache-control", "no-store");
+      res.status(result.conflict ? 409 : 200).json(result.policy);
+    } catch (error) {
+      if (error instanceof ProviderAgentControlRequestError && error.status === 400) {
+        return res.status(400).json({ error: "invalid_provider_capacity_policy" });
+      }
+      res.status(503).json({ error: "provider_agent_unavailable" });
+    }
+  });
+
+  router.get("/provider-agent/cloud-shadow/demand-plan", async (_req, res) => {
+    if (!options.providerAgent?.enabled) return res.status(503).json({ error: "provider_agent_unavailable" });
+    try {
+      res.setHeader("cache-control", "no-store");
+      res.json(await options.providerAgent.getDemandPlan());
+    } catch (error) {
+      if (error instanceof ProviderAgentControlRequestError && error.status === 404) {
+        return res.status(404).json({ error: "provider_demand_plan_not_found" });
+      }
+      res.status(503).json({ error: "provider_agent_unavailable" });
+    }
+  });
+
+  router.post("/provider-agent/cloud-shadow/demand", async (req, res) => {
+    if (!options.providerAgent?.enabled) return res.status(503).json({ error: "provider_agent_unavailable" });
+    if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) {
+      return res.status(400).json({ error: "invalid_provider_demand" });
+    }
+    let encoded: string;
+    try {
+      encoded = JSON.stringify(req.body);
+    } catch {
+      return res.status(400).json({ error: "invalid_provider_demand" });
+    }
+    if (Buffer.byteLength(encoded) > 64 * 1024) {
+      return res.status(400).json({ error: "invalid_provider_demand" });
+    }
+    try {
+      const result = await options.providerAgent.submitSignedDemand(req.body as Record<string, unknown>);
+      res.setHeader("cache-control", "no-store");
+      res.status(result.duplicate ? 200 : 201).json(result.plan);
+    } catch (error) {
+      if (error instanceof ProviderAgentControlRequestError && error.status === 400) {
+        return res.status(400).json({ error: "invalid_provider_demand" });
+      }
+      if (error instanceof ProviderAgentControlRequestError && error.status === 409) {
+        return res.status(409).json({ error: "provider_demand_rejected" });
+      }
+      res.status(503).json({ error: "provider_agent_unavailable" });
+    }
+  });
+
+  router.get("/provider-agent/managed-ollama/status", async (_req, res) => {
+    if (!options.providerAgent?.enabled) return res.status(503).json({ error: "provider_agent_unavailable" });
+    try {
+      res.setHeader("cache-control", "no-store");
+      res.json(await options.providerAgent.getManagedOllamaStatus());
+    } catch {
+      res.status(503).json({ error: "provider_managed_ollama_unavailable" });
+    }
+  });
+
+  for (const action of ["install", "start", "stop", "reconcile"] as const) {
+    router.post(`/provider-agent/managed-ollama/${action}`, async (req, res) => {
+      if (!options.providerAgent?.enabled) return res.status(503).json({ error: "provider_agent_unavailable" });
+      const body = req.body;
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        return res.status(400).json({ error: "invalid_provider_managed_ollama_fence" });
+      }
+      const keys = Object.keys(body);
+      const expectedKeys = action === "stop"
+        ? []
+        : action === "reconcile"
+          ? ["envelope_digest", "plan_generation", "policy_revision"]
+          : ["policy_revision"];
+      if (keys.length !== expectedKeys.length || expectedKeys.some((key) => !(key in body)) ||
+        (action !== "stop" && (!Number.isSafeInteger(body.policy_revision) || body.policy_revision < 1)) ||
+        (action === "reconcile" && (!Number.isSafeInteger(body.plan_generation) || body.plan_generation < 1 ||
+          typeof body.envelope_digest !== "string" || !/^[a-f0-9]{64}$/u.test(body.envelope_digest)))) {
+        return res.status(400).json({ error: "invalid_provider_managed_ollama_fence" });
+      }
+      try {
+        const view = action === "install"
+          ? await options.providerAgent.installManagedOllama(body.policy_revision)
+          : action === "start"
+            ? await options.providerAgent.startManagedOllama(body.policy_revision)
+            : action === "stop"
+              ? await options.providerAgent.stopManagedOllama()
+              : await options.providerAgent.reconcileManagedOllama(body);
+        res.setHeader("cache-control", "no-store");
+        res.json(view);
+      } catch (error) {
+        if (error instanceof ProviderAgentControlRequestError && error.status === 409) {
+          return res.status(409).json({ error: "provider_managed_ollama_operation_rejected" });
+        }
+        if (error instanceof ProviderAgentControlRequestError && error.status === 400) {
+          return res.status(400).json({ error: "invalid_provider_managed_ollama_fence" });
+        }
+        res.status(503).json({ error: "provider_managed_ollama_unavailable" });
+      }
+    });
+  }
 
   router.post("/grok/import", async (_req, res) => {
     try {
