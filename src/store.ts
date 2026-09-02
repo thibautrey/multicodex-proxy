@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import type {
   Account,
   ApplicationPolicy,
@@ -22,6 +23,13 @@ const DEFAULT_FILE: StoreFile = {
   settings: {},
 };
 const DEFAULT_OAUTH_FILE: OAuthStateFile = { states: [] };
+
+type AccountCatalogSnapshot = Omit<Account, "usage" | "state">;
+
+function accountCatalogSnapshot(account: Account): AccountCatalogSnapshot {
+  const { usage: _usage, state: _state, ...catalogConfiguration } = account;
+  return structuredClone(catalogConfiguration);
+}
 
 async function ensureFile(filePath: string, seed: object) {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
@@ -59,7 +67,15 @@ export class AccountStore {
   private dirty = false;
   private flushTimer: NodeJS.Timeout | null = null;
   private flushPromise: Promise<void> | null = null;
+  // Persistence writes use their own generation so a mutation that arrives
+  // during a flush cannot be lost.
   private revision = 0;
+  // Model discovery only depends on account configuration and aliases. Runtime
+  // telemetry (usage, selection timestamps, blocks, and errors) must not make
+  // an otherwise fresh catalog stale.
+  private catalogRevision = 0;
+  private accountCatalogSnapshots = new Map<string, AccountCatalogSnapshot>();
+  private modelAliasCatalogSnapshots = new Map<string, ModelAlias>();
   private lastFlushError: { at: number; message: string } | undefined;
 
   constructor(
@@ -118,6 +134,18 @@ export class AccountStore {
       this.inMemorySettings.anonymousUsageSharingEnabledAt = this.clock().toISOString();
       migrated = true;
     }
+    this.accountCatalogSnapshots = new Map(
+      this.inMemoryAccounts.map((account) => [
+        account.id,
+        accountCatalogSnapshot(account),
+      ]),
+    );
+    this.modelAliasCatalogSnapshots = new Map(
+      this.inMemoryModelAliases.map((alias) => [
+        alias.id,
+        structuredClone(alias),
+      ]),
+    );
     this.dirty = migrated;
     if (migrated) {
       this.revision += 1;
@@ -186,6 +214,10 @@ export class AccountStore {
     return this.revision;
   }
 
+  getCatalogRevision(): number {
+    return this.catalogRevision;
+  }
+
   getCachedAccounts(): Account[] {
     return [...this.inMemoryAccounts];
   }
@@ -236,13 +268,25 @@ export class AccountStore {
       ? account
       : { ...account, location: inferAccountLocation(account) };
     const idx = this.inMemoryAccounts.findIndex((a) => a.id === accountId);
+    const previousCatalogSnapshot = this.accountCatalogSnapshots.get(accountId);
+    const nextCatalogSnapshot = accountCatalogSnapshot(normalized);
+    const catalogChanged =
+      idx === -1 ||
+      accountId !== normalized.id ||
+      !previousCatalogSnapshot ||
+      !isDeepStrictEqual(previousCatalogSnapshot, nextCatalogSnapshot);
     if (idx === -1) {
       this.inMemoryAccounts.push(normalized);
     } else {
       this.inMemoryAccounts[idx] = normalized;
     }
+    if (accountId !== normalized.id) {
+      this.accountCatalogSnapshots.delete(accountId);
+    }
+    this.accountCatalogSnapshots.set(normalized.id, nextCatalogSnapshot);
     this.dirty = true;
     this.revision += 1;
+    if (catalogChanged) this.catalogRevision += 1;
     this.scheduleFlush();
   }
 
@@ -275,8 +319,10 @@ export class AccountStore {
     const before = this.inMemoryAccounts.length;
     this.inMemoryAccounts = this.inMemoryAccounts.filter((a) => a.id !== id);
     if (this.inMemoryAccounts.length === before) return false;
+    this.accountCatalogSnapshots.delete(id);
     this.dirty = true;
     this.revision += 1;
+    this.catalogRevision += 1;
     await this.flushIfDirty();
     return true;
   }
@@ -287,13 +333,26 @@ export class AccountStore {
 
   private markModelAliasModified(aliasId: string, alias: ModelAlias) {
     const idx = this.inMemoryModelAliases.findIndex((a) => a.id === aliasId);
+    const previousCatalogSnapshot =
+      this.modelAliasCatalogSnapshots.get(aliasId);
+    const nextCatalogSnapshot = structuredClone(alias);
+    const catalogChanged =
+      idx === -1 ||
+      aliasId !== alias.id ||
+      !previousCatalogSnapshot ||
+      !isDeepStrictEqual(previousCatalogSnapshot, nextCatalogSnapshot);
     if (idx === -1) {
       this.inMemoryModelAliases.push(alias);
     } else {
       this.inMemoryModelAliases[idx] = alias;
     }
+    if (aliasId !== alias.id) {
+      this.modelAliasCatalogSnapshots.delete(aliasId);
+    }
+    this.modelAliasCatalogSnapshots.set(alias.id, nextCatalogSnapshot);
     this.dirty = true;
     this.revision += 1;
+    if (catalogChanged) this.catalogRevision += 1;
     this.scheduleFlush();
   }
 
@@ -332,8 +391,10 @@ export class AccountStore {
       (a) => a.id !== id,
     );
     if (this.inMemoryModelAliases.length === before) return false;
+    this.modelAliasCatalogSnapshots.delete(id);
     this.dirty = true;
     this.revision += 1;
+    this.catalogRevision += 1;
     await this.flushIfDirty();
     return true;
   }

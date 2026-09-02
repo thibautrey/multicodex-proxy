@@ -159,6 +159,12 @@ export type ResponseStreamDiagnostics = {
   hiddenFunctionCallCount: number;
   sanitizerDroppedEventCount: number;
   sanitizerDroppedTextEventCount: number;
+  /** A terminal Responses event observed before the upstream stream ended. */
+  terminalEventType?:
+    | "response.completed"
+    | "response.failed"
+    | "response.incomplete"
+    | "error";
   sawResponseCompleted: boolean;
   sawChatCompletionChunk: boolean;
 };

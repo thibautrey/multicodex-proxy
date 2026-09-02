@@ -92,13 +92,217 @@ function rememberFunctionCallsFromEvent(
 }
 
 function sendJson(ws: WebSocket, payload: unknown) {
-  if (ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify(payload));
+  return sendText(ws, JSON.stringify(payload));
 }
 
 function sendText(ws: WebSocket, payload: string) {
-  if (ws.readyState !== WebSocket.OPEN) return;
-  ws.send(payload);
+  if (ws.readyState !== WebSocket.OPEN) return false;
+  try {
+    ws.send(payload);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function normalizeError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+export const WEBSOCKET_MAX_PENDING_DELIVERY_BYTES = 8 * 1024 * 1024;
+export const WEBSOCKET_MAX_BUFFERED_AMOUNT_BYTES = 8 * 1024 * 1024;
+export const WEBSOCKET_MAX_PENDING_DELIVERIES = 4_096;
+export const WEBSOCKET_DELIVERY_TIMEOUT_MS = 30_000;
+
+type WebSocketDeliveryTarget = Pick<
+  WebSocket,
+  "readyState" | "bufferedAmount" | "send" | "terminate"
+>;
+
+export type WebSocketDeliveryQueueOptions = {
+  deliveryTimeoutMs?: number;
+  maxBufferedAmountBytes?: number;
+  maxPendingBytes?: number;
+  maxPendingDeliveries?: number;
+  signal?: AbortSignal;
+};
+
+type PendingWebSocketDelivery = {
+  bytes: number;
+  promise: Promise<void>;
+  reject: (error: Error) => void;
+  resolve: () => void;
+  timeout?: NodeJS.Timeout;
+};
+
+export class WebSocketDeliveryQueue {
+  private readonly pending = new Set<PendingWebSocketDelivery>();
+  private readonly deliveryTimeoutMs: number;
+  private readonly maxBufferedAmountBytes: number;
+  private readonly maxPendingBytes: number;
+  private readonly maxPendingDeliveries: number;
+  private readonly signal?: AbortSignal;
+  private readonly abortListener: () => void;
+  private failure: Error | null = null;
+  private pendingBytes = 0;
+
+  constructor(
+    private readonly ws: WebSocketDeliveryTarget,
+    private readonly onFailure: (error: Error) => void,
+    options: WebSocketDeliveryQueueOptions = {},
+  ) {
+    this.deliveryTimeoutMs =
+      options.deliveryTimeoutMs ?? WEBSOCKET_DELIVERY_TIMEOUT_MS;
+    this.maxBufferedAmountBytes =
+      options.maxBufferedAmountBytes ?? WEBSOCKET_MAX_BUFFERED_AMOUNT_BYTES;
+    this.maxPendingBytes =
+      options.maxPendingBytes ?? WEBSOCKET_MAX_PENDING_DELIVERY_BYTES;
+    this.maxPendingDeliveries =
+      options.maxPendingDeliveries ?? WEBSOCKET_MAX_PENDING_DELIVERIES;
+    this.signal = options.signal;
+    this.abortListener = () => {
+      this.fail(
+        this.signal?.reason ?? new Error("websocket delivery aborted"),
+        false,
+      );
+    };
+
+    if (this.signal?.aborted) this.abortListener();
+    else this.signal?.addEventListener("abort", this.abortListener, {
+      once: true,
+    });
+  }
+
+  send(payload: string) {
+    if (this.failure) throw this.failure;
+    if (this.ws.readyState !== WebSocket.OPEN) {
+      throw this.fail(
+        new Error("websocket closed before the upstream event was delivered"),
+        false,
+      );
+    }
+
+    const payloadBytes = Buffer.byteLength(payload);
+    if (
+      this.pending.size >= this.maxPendingDeliveries ||
+      this.pendingBytes + payloadBytes > this.maxPendingBytes
+    ) {
+      throw this.fail(
+        new Error(
+          `websocket delivery backlog exceeded ${this.maxPendingBytes} bytes or ${this.maxPendingDeliveries} messages`,
+        ),
+        true,
+      );
+    }
+    if (this.ws.bufferedAmount + payloadBytes > this.maxBufferedAmountBytes) {
+      throw this.fail(
+        new Error(
+          `websocket buffered amount exceeded ${this.maxBufferedAmountBytes} bytes`,
+        ),
+        true,
+      );
+    }
+
+    let resolveDelivery!: () => void;
+    let rejectDelivery!: (error: Error) => void;
+    const delivery = new Promise<void>((resolve, reject) => {
+      resolveDelivery = resolve;
+      rejectDelivery = reject;
+    });
+    void delivery.catch(() => undefined);
+    const pending: PendingWebSocketDelivery = {
+      bytes: payloadBytes,
+      promise: delivery,
+      reject: rejectDelivery,
+      resolve: resolveDelivery,
+    };
+    this.pending.add(pending);
+    this.pendingBytes += payloadBytes;
+    pending.timeout = setTimeout(() => {
+      this.fail(
+        new Error(
+          `websocket delivery timed out after ${this.deliveryTimeoutMs}ms`,
+        ),
+        true,
+      );
+    }, this.deliveryTimeoutMs);
+
+    try {
+      this.ws.send(payload, (error) => {
+        if (error) this.fail(error, true);
+        else this.settle(pending);
+      });
+    } catch (error) {
+      throw this.fail(error, true);
+    }
+  }
+
+  async flush() {
+    if (this.failure) throw this.failure;
+    while (this.pending.size > 0) {
+      await Promise.allSettled(
+        [...this.pending].map((delivery) => delivery.promise),
+      );
+      if (this.failure) throw this.failure;
+    }
+  }
+
+  dispose() {
+    this.detachAbortListener();
+    if (this.pending.size > 0 && !this.failure) {
+      this.fail(new Error("websocket delivery queue disposed"), false);
+    }
+  }
+
+  private settle(delivery: PendingWebSocketDelivery) {
+    if (!this.pending.delete(delivery)) return;
+    if (delivery.timeout) clearTimeout(delivery.timeout);
+    this.pendingBytes -= delivery.bytes;
+    delivery.resolve();
+  }
+
+  private fail(error: unknown, terminate: boolean) {
+    if (this.failure) return this.failure;
+
+    const failure = normalizeError(error);
+    this.failure = failure;
+    this.detachAbortListener();
+    for (const delivery of [...this.pending]) {
+      this.pending.delete(delivery);
+      if (delivery.timeout) clearTimeout(delivery.timeout);
+      this.pendingBytes -= delivery.bytes;
+      delivery.reject(failure);
+    }
+    this.pendingBytes = 0;
+    try {
+      this.onFailure(failure);
+    } catch {
+      // Cleanup failures must not replace the delivery failure or skip close.
+    }
+
+    if (terminate && this.ws.readyState !== WebSocket.CLOSED) {
+      try {
+        this.ws.terminate();
+      } catch {
+        // The delivery failure is already recorded and propagated to flush().
+      }
+    }
+    return failure;
+  }
+
+  private detachAbortListener() {
+    this.signal?.removeEventListener("abort", this.abortListener);
+  }
+}
+
+class UpstreamStreamInterruptedError extends Error {}
+
+function upstreamStreamErrorMessage(error: unknown) {
+  if (error instanceof UpstreamStreamInterruptedError) return error.message;
+  const detail = normalizeError(error).message.trim().slice(0, 500);
+  return detail
+    ? `upstream stream interrupted: ${detail}`
+    : "upstream stream interrupted";
 }
 
 function sendError(
@@ -197,21 +401,65 @@ async function relaySseAsWebsocket(
   ws: WebSocket,
   response: Response,
   conversationState: ConversationState,
+  signal?: AbortSignal,
 ) {
-  if (!response.body) return;
+  if (!response.body) {
+    throw new UpstreamStreamInterruptedError(
+      "upstream stream ended without a response body",
+    );
+  }
   const reader = response.body.getReader();
+  const delivery = new WebSocketDeliveryQueue(
+    ws,
+    (error) => {
+      void reader.cancel(error).catch(() => undefined);
+    },
+    { signal },
+  );
   const relay = createWebsocketSSEMessageRelay({
-    onMessage: (message) => sendText(ws, message),
+    onMessage: (message) => delivery.send(message),
     onInspectableEvent: (event) =>
       rememberFunctionCallsFromEvent(conversationState, event),
   });
+  const cancelReader = () => {
+    void reader
+      .cancel(signal?.reason ?? new Error("websocket closed"))
+      .catch(() => undefined);
+  };
 
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    relay.push(value);
+  if (signal?.aborted) cancelReader();
+  else signal?.addEventListener("abort", cancelReader, { once: true });
+
+  let terminalEvent: string | null = null;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      terminalEvent = relay.push(value) ?? terminalEvent;
+    }
+    terminalEvent = relay.finish().terminalEvent ?? terminalEvent;
+    await delivery.flush();
+    if (!terminalEvent) {
+      throw new UpstreamStreamInterruptedError(
+        "upstream stream ended before a terminal response.completed, response.failed, response.incomplete, or error event",
+      );
+    }
+  } catch (error) {
+    if (terminalEvent) {
+      try {
+        await delivery.flush();
+        return;
+      } catch (deliveryError) {
+        error = deliveryError;
+      }
+    }
+    await reader.cancel(error).catch(() => undefined);
+    throw error;
+  } finally {
+    signal?.removeEventListener("abort", cancelReader);
+    delivery.dispose();
+    reader.releaseLock();
   }
-  relay.finish();
 }
 
 async function relayJsonAsWebsocket(
@@ -260,6 +508,7 @@ async function forwardFrame(
   port: number,
   frame: ResponseCreateFrame,
   conversationState: ConversationState,
+  signal?: AbortSignal,
 ) {
   if (frame.generate === false) {
     const warmup = makeWarmupResponse(frame);
@@ -406,8 +655,10 @@ async function forwardFrame(
       method: "POST",
       headers,
       body: JSON.stringify(upstreamRequest),
+      signal,
     });
   } catch (error) {
+    if (signal?.aborted || ws.readyState !== WebSocket.OPEN) return;
     sendError(
       ws,
       error instanceof Error ? error.message : String(error),
@@ -430,7 +681,18 @@ async function forwardFrame(
   }
 
   if (contentType.includes("text/event-stream")) {
-    await relaySseAsWebsocket(ws, response, conversationState);
+    try {
+      await relaySseAsWebsocket(ws, response, conversationState, signal);
+    } catch (error) {
+      if (!signal?.aborted && ws.readyState === WebSocket.OPEN) {
+        sendError(
+          ws,
+          upstreamStreamErrorMessage(error),
+          502,
+          "upstream_stream_error",
+        );
+      }
+    }
     return;
   }
 
@@ -465,6 +727,7 @@ export function installResponsesWebsocketProxy({
 
   wss.on("connection", (ws, req) => {
     let inFlight = false;
+    const connectionAbort = new AbortController();
     const conversationState: ConversationState = {
       functionCalls: new Map(),
     };
@@ -497,14 +760,35 @@ export function installResponsesWebsocketProxy({
 
       inFlight = true;
       try {
-        await forwardFrame(ws, req, port, frame, conversationState);
+        await forwardFrame(
+          ws,
+          req,
+          port,
+          frame,
+          conversationState,
+          connectionAbort.signal,
+        );
+      } catch (error) {
+        if (!connectionAbort.signal.aborted && ws.readyState === WebSocket.OPEN) {
+          sendError(
+            ws,
+            normalizeError(error).message,
+            502,
+            "upstream_request_error",
+          );
+        }
       } finally {
         inFlight = false;
       }
     });
 
     ws.on("error", () => {
+      connectionAbort.abort(new Error("websocket failed"));
       ws.close();
+    });
+    ws.once("close", () => {
+      connectionAbort.abort(new Error("websocket closed"));
+      conversationState.functionCalls.clear();
     });
   });
 }
