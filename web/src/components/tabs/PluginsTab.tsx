@@ -3,6 +3,8 @@ import type { ModuleView } from "../../types";
 import { api } from "../../lib/api";
 import "./PluginsTab.css";
 
+const PLUGINS_DOCUMENTATION_URL = "https://github.com/thibautrey/multicodex-proxy/blob/main/docs/plugins.md";
+
 export function PluginsTab({ modules, reload }: { modules: ModuleView[]; reload: () => Promise<void> }) {
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState("");
@@ -22,6 +24,7 @@ export function PluginsTab({ modules, reload }: { modules: ModuleView[]; reload:
         <span className="eyebrow">GitHub modules</span>
         <h2>Install a plugin</h2>
         <p className="muted">Plugins run as fully trusted code with the same process access as MultiVibe. Install only repositories you have reviewed.</p>
+        <a className="plugins-documentation-link" href={PLUGINS_DOCUMENTATION_URL} target="_blank" rel="noreferrer">Read the complete plugins guide <span aria-hidden="true">↗</span></a>
       </div>
       <form onSubmit={(event) => { event.preventDefault(); void action("install", async () => { await api("/admin/modules/install", { method: "POST", body: JSON.stringify({ url }) }); setUrl(""); }); }}>
         <label className="control-field"><span className="control-label">Public GitHub HTTPS URL</span><input type="url" required pattern="https://github\.com/.+/.+" placeholder="https://github.com/owner/repository" value={url} onChange={(event) => setUrl(event.target.value)} /></label>
