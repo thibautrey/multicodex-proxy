@@ -10,6 +10,12 @@ type UpstreamRetryRuntime = {
   randomFn?: () => number;
   maxRetries?: number;
   baseDelayMs?: number;
+  onAttemptStart?: (attempt: number) => void;
+  onAttemptRetry?: (event: {
+    attempt: number;
+    status?: number;
+    error?: string;
+  }) => void;
 };
 
 function abortError(signal?: AbortSignal): Error {
@@ -82,6 +88,7 @@ export async function fetchUpstreamWithRetry(
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     throwIfAborted(signal);
+    runtime.onAttemptStart?.(attempt + 1);
     try {
       const response = await fetchFn(url, init);
       if (response.ok) return response;
@@ -93,6 +100,11 @@ export async function fetchUpstreamWithRetry(
         attempt < maxRetries &&
         shouldRetryUpstreamOnSameAccount(response.status, errorText)
       ) {
+        runtime.onAttemptRetry?.({
+          attempt: attempt + 1,
+          status: response.status,
+          error: errorText || response.statusText || undefined,
+        });
         const retryAfter = parseRetryAfter(response);
         const backoff = baseDelayMs * 2 ** attempt;
         const jitter = randomFn() * 500;
@@ -107,6 +119,10 @@ export async function fetchUpstreamWithRetry(
         attempt < maxRetries &&
         !isQuotaErrorText(lastError.message)
       ) {
+        runtime.onAttemptRetry?.({
+          attempt: attempt + 1,
+          error: lastError.message,
+        });
         const backoff = baseDelayMs * 2 ** attempt;
         const jitter = randomFn() * 500;
         await sleepFn(backoff + jitter, signal);

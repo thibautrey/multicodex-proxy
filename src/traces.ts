@@ -32,6 +32,15 @@ export type TraceEntry = {
   id: string;
   at: number;
   route: string;
+  /** Correlates every upstream attempt with one inbound client request. */
+  clientRequestId?: string;
+  traceKind?: "client-request" | "upstream-attempt" | "diagnostic";
+  /** One-based account/provider attempt within the inbound client request. */
+  upstreamAttempt?: number;
+  /** Total provider attempts observed before the client response completed. */
+  providerAttempts?: number;
+  /** A failed provider attempt was recovered before responding to the client. */
+  recoveredRetry?: boolean;
   application?: string;
   codexSessionId?: string;
   /** Untrusted request context used only for registry fallback resolution. */
@@ -174,6 +183,9 @@ export type TraceListEntry = Omit<TraceEntry, "requestBody" | "requestHeaders"> 
 
 export type TraceTotals = {
   requests: number;
+  upstreamAttempts: number;
+  retriedRequests: number;
+  recoveredRequests: number;
   requestsWithUsage: number;
   requestsWithCost: number;
   unpricedRequests: number;
@@ -204,6 +216,9 @@ export type TraceModelStats = {
 export type TraceTimeseriesBucket = {
   at: number;
   requests: number;
+  upstreamAttempts: number;
+  retriedRequests: number;
+  recoveredRequests: number;
   errors: number;
   tokensInput: number;
   tokensInputCached: number;
@@ -287,6 +302,9 @@ export type TraceManagerConfig = {
 type TraceBucketAggregate = {
   at: number;
   requests: number;
+  upstreamAttempts: number;
+  retriedRequests: number;
+  recoveredRequests: number;
   requestsWithUsage: number;
   requestsWithCost: number;
   unpricedRequests: number;
@@ -531,6 +549,32 @@ function normalizeTrace(raw: any): TraceEntry | null {
         : `${at}-${route}-${status}`,
     at,
     route,
+    clientRequestId:
+      typeof raw.clientRequestId === "string" && raw.clientRequestId.trim()
+        ? raw.clientRequestId.trim()
+        : undefined,
+    traceKind:
+      raw.traceKind === "client-request" ||
+      raw.traceKind === "upstream-attempt" ||
+      raw.traceKind === "diagnostic"
+        ? raw.traceKind
+        : undefined,
+    upstreamAttempt: (() => {
+      const value = safeNumber(raw.upstreamAttempt);
+      return typeof value === "number" && value >= 1
+        ? Math.floor(value)
+        : undefined;
+    })(),
+    providerAttempts: (() => {
+      const value = safeNumber(raw.providerAttempts);
+      return typeof value === "number" && value >= 0
+        ? Math.floor(value)
+        : undefined;
+    })(),
+    recoveredRetry:
+      typeof raw.recoveredRetry === "boolean"
+        ? raw.recoveredRetry
+        : undefined,
     application:
       typeof raw.application === "string" && raw.application.trim()
         ? raw.application.trim()
@@ -1040,36 +1084,57 @@ function finalizeAggregate(agg: UsageAggregate) {
   };
 }
 
+function isClientRequestTrace(trace: TraceEntry): boolean {
+  // Legacy traces predate explicit kinds and retain their historical behavior.
+  return trace.traceKind === undefined || trace.traceKind === "client-request";
+}
+
+function isUpstreamAttemptTrace(trace: TraceEntry): boolean {
+  return trace.traceKind === undefined || trace.traceKind === "upstream-attempt";
+}
+
 function buildTraceStats(traces: TraceEntry[]): TraceStats {
-  const requests = traces.length;
-  const requestsWithUsage = traces.filter(
+  const clientTraces = traces.filter(isClientRequestTrace);
+  const attemptTraces = traces.filter(isUpstreamAttemptTrace);
+  const requests = clientTraces.length;
+  const upstreamAttempts = attemptTraces.length;
+  const retriedRequests = clientTraces.filter(
+    (trace) => (trace.providerAttempts ?? 0) > 1,
+  ).length;
+  const recoveredRequests = clientTraces.filter(
+    (trace) => trace.recoveredRetry,
+  ).length;
+  const requestsWithUsage = attemptTraces.filter(
     (trace) => trace.usageStatus === "measured" || Boolean(trace.usage),
   ).length;
-  const requestsWithCost = traces.filter(
+  const requestsWithCost = attemptTraces.filter(
     (trace) => typeof trace.costUsd === "number",
   ).length;
-  const unpricedRequests = traces.filter(
+  const unpricedRequests = attemptTraces.filter(
     (trace) => trace.costStatus === "unpriced",
   ).length;
-  const errors = traces.filter((t) => t.isError).length;
-  const tokensInput = traces.reduce((sum, t) => sum + (t.tokensInput ?? 0), 0);
-  const tokensInputCached = traces.reduce(
+  const errors = clientTraces.filter((trace) => trace.isError).length;
+  const tokensInput = attemptTraces.reduce(
+    (sum, trace) => sum + (trace.tokensInput ?? 0),
+    0,
+  );
+  const tokensInputCached = attemptTraces.reduce(
     (sum, t) => sum + (t.tokensInputCached ?? 0),
     0,
   );
-  const tokensOutput = traces.reduce(
+  const tokensOutput = attemptTraces.reduce(
     (sum, t) => sum + (t.tokensOutput ?? 0),
     0,
   );
-  const tokensTotal = traces.reduce(
+  const tokensTotal = attemptTraces.reduce(
     (sum, t) =>
       sum + (t.tokensTotal ?? (t.tokensInput ?? 0) + (t.tokensOutput ?? 0)),
     0,
   );
-  const inferenceSpeeds = traces
+  const inferenceSpeeds = attemptTraces
     .map(traceInferenceTokensPerSecond)
     .filter((speed): speed is number => typeof speed === "number");
-  const costUsd = traces.reduce((sum, t) => {
+  const costUsd = attemptTraces.reduce((sum, t) => {
     if (typeof t.costUsd === "number") return sum + t.costUsd;
     return (
       sum +
@@ -1082,23 +1147,23 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
       ) ?? 0)
     );
   }, 0);
-  const costUsdWithoutCache = traces.reduce(
+  const costUsdWithoutCache = attemptTraces.reduce(
     (sum, trace) => sum + (estimateTraceCostWithoutCache(trace) ?? 0),
     0,
   );
   const latencyAvgMs = requests
-    ? traces.reduce((sum, t) => sum + t.latencyMs, 0) / requests
+    ? clientTraces.reduce((sum, trace) => sum + trace.latencyMs, 0) / requests
     : 0;
   const errorRate = requests ? errors / requests : 0;
   const ttftGroups = new Map<string, MutableTraceTtftStats>();
-  for (const trace of traces) addTtftSample(ttftGroups, trace);
+  for (const trace of attemptTraces) addTtftSample(ttftGroups, trace);
   const accountSelection = createAccountSelectionSummary();
-  for (const trace of traces) {
+  for (const trace of attemptTraces) {
     addAccountSelection(accountSelection, trace.accountSelection);
   }
 
   const modelMap = new Map<string, TraceModelStats>();
-  for (const trace of traces) {
+  for (const trace of attemptTraces) {
     const key = trace.model || "unknown";
     const existing = modelMap.get(key);
     const traceCost =
@@ -1140,6 +1205,9 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
     number,
     {
       requests: number;
+      upstreamAttempts: number;
+      retriedRequests: number;
+      recoveredRequests: number;
       errors: number;
       tokensInput: number;
       tokensInputCached: number;
@@ -1154,6 +1222,9 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
     const bucketAt = Math.floor(trace.at / 3_600_000) * 3_600_000;
     const bucket = bucketMap.get(bucketAt) ?? {
       requests: 0,
+      upstreamAttempts: 0,
+      retriedRequests: 0,
+      recoveredRequests: 0,
       errors: 0,
       tokensInput: 0,
       tokensInputCached: 0,
@@ -1163,49 +1234,64 @@ function buildTraceStats(traces: TraceEntry[]): TraceStats {
       latencies: [],
       inferenceSpeeds: [],
     };
-    bucket.requests += 1;
-    if (trace.isError) bucket.errors += 1;
-    bucket.tokensInput += trace.tokensInput ?? 0;
-    bucket.tokensInputCached += trace.tokensInputCached ?? 0;
-    bucket.tokensOutput += trace.tokensOutput ?? 0;
-    bucket.tokensTotal += trace.tokensTotal ?? 0;
-    const inferenceSpeed = traceInferenceTokensPerSecond(trace);
-    if (typeof inferenceSpeed === "number") {
-      bucket.inferenceSpeeds.push(inferenceSpeed);
+    if (isClientRequestTrace(trace)) {
+      bucket.requests += 1;
+      if (trace.isError) bucket.errors += 1;
+      if ((trace.providerAttempts ?? 0) > 1) bucket.retriedRequests += 1;
+      if (trace.recoveredRetry) bucket.recoveredRequests += 1;
+      bucket.latencies.push(trace.latencyMs);
     }
-    bucket.costUsd +=
-      typeof trace.costUsd === "number"
-        ? trace.costUsd
-        : (estimateCostUsd(
-            trace.model,
-            trace.tokensInput ?? 0,
-            trace.tokensOutput ?? 0,
-            trace.tokensInputCached ?? 0,
-            trace.tokensInputCacheWrite ?? 0,
-          ) ?? 0);
-    bucket.latencies.push(trace.latencyMs);
+    if (isUpstreamAttemptTrace(trace)) {
+      bucket.upstreamAttempts += 1;
+      bucket.tokensInput += trace.tokensInput ?? 0;
+      bucket.tokensInputCached += trace.tokensInputCached ?? 0;
+      bucket.tokensOutput += trace.tokensOutput ?? 0;
+      bucket.tokensTotal += trace.tokensTotal ?? 0;
+      const inferenceSpeed = traceInferenceTokensPerSecond(trace);
+      if (typeof inferenceSpeed === "number") {
+        bucket.inferenceSpeeds.push(inferenceSpeed);
+      }
+      bucket.costUsd +=
+        typeof trace.costUsd === "number"
+          ? trace.costUsd
+          : (estimateCostUsd(
+              trace.model,
+              trace.tokensInput ?? 0,
+              trace.tokensOutput ?? 0,
+              trace.tokensInputCached ?? 0,
+              trace.tokensInputCacheWrite ?? 0,
+            ) ?? 0);
+    }
     bucketMap.set(bucketAt, bucket);
   }
   const timeseries = Array.from(bucketMap.entries())
     .sort((a, b) => a[0] - b[0])
-    .map(([at, bucket]) => ({
-      at,
-      requests: bucket.requests,
-      errors: bucket.errors,
-      tokensInput: bucket.tokensInput,
-      tokensInputCached: bucket.tokensInputCached,
-      tokensOutput: bucket.tokensOutput,
-      tokensTotal: bucket.tokensTotal,
-      inferenceTokensPerSecond: average(bucket.inferenceSpeeds),
-      inferenceRequests: bucket.inferenceSpeeds.length,
-      costUsd: bucket.costUsd,
-      latencyP50Ms: percentile(bucket.latencies, 50),
-      latencyP95Ms: percentile(bucket.latencies, 95),
-    }));
+    .map(([at, bucket]) => {
+      return {
+        at,
+        requests: bucket.requests,
+        upstreamAttempts: bucket.upstreamAttempts,
+        retriedRequests: bucket.retriedRequests,
+        recoveredRequests: bucket.recoveredRequests,
+        errors: bucket.errors,
+        tokensInput: bucket.tokensInput,
+        tokensInputCached: bucket.tokensInputCached,
+        tokensOutput: bucket.tokensOutput,
+        tokensTotal: bucket.tokensTotal,
+        inferenceTokensPerSecond: average(bucket.inferenceSpeeds),
+        inferenceRequests: bucket.inferenceSpeeds.length,
+        costUsd: bucket.costUsd,
+        latencyP50Ms: percentile(bucket.latencies, 50),
+        latencyP95Ms: percentile(bucket.latencies, 95),
+      };
+    });
 
   return {
     totals: {
       requests,
+      upstreamAttempts,
+      retriedRequests,
+      recoveredRequests,
       requestsWithUsage,
       requestsWithCost,
       unpricedRequests,
@@ -1232,6 +1318,9 @@ function createEmptyBucket(at: number): TraceBucketAggregate {
   return {
     at,
     requests: 0,
+    upstreamAttempts: 0,
+    retriedRequests: 0,
+    recoveredRequests: 0,
     requestsWithUsage: 0,
     requestsWithCost: 0,
     unpricedRequests: 0,
@@ -1266,6 +1355,19 @@ function addLatencySample(bucket: TraceBucketAggregate, latencyMs: number) {
 }
 
 function addTraceToBucket(bucket: TraceBucketAggregate, trace: TraceEntry) {
+  if (isClientRequestTrace(trace)) {
+    bucket.requests += 1;
+    if (trace.isError) bucket.errors += 1;
+    if ((trace.providerAttempts ?? 0) > 1) bucket.retriedRequests += 1;
+    if (trace.recoveredRetry) bucket.recoveredRequests += 1;
+    bucket.latencyMsTotal += Number.isFinite(trace.latencyMs)
+      ? trace.latencyMs
+      : 0;
+    addLatencySample(bucket, trace.latencyMs);
+  }
+
+  if (!isUpstreamAttemptTrace(trace)) return;
+
   const model = trace.model || "unknown";
   const traceCost =
     typeof trace.costUsd === "number"
@@ -1281,13 +1383,12 @@ function addTraceToBucket(bucket: TraceBucketAggregate, trace: TraceEntry) {
   const traceTokensTotal =
     trace.tokensTotal ?? (trace.tokensInput ?? 0) + (trace.tokensOutput ?? 0);
 
-  bucket.requests += 1;
+  bucket.upstreamAttempts += 1;
   if (trace.usageStatus === "measured" || trace.usage) {
     bucket.requestsWithUsage += 1;
   }
   if (typeof trace.costUsd === "number") bucket.requestsWithCost += 1;
   if (trace.costStatus === "unpriced") bucket.unpricedRequests += 1;
-  if (trace.isError) bucket.errors += 1;
   bucket.tokensInput += trace.tokensInput ?? 0;
   bucket.tokensInputCached += trace.tokensInputCached ?? 0;
   bucket.tokensOutput += trace.tokensOutput ?? 0;
@@ -1297,9 +1398,7 @@ function addTraceToBucket(bucket: TraceBucketAggregate, trace: TraceEntry) {
     bucket.inferenceSpeeds.push(inferenceSpeed);
   }
   bucket.costUsd += traceCost;
-  bucket.latencyMsTotal += Number.isFinite(trace.latencyMs) ? trace.latencyMs : 0;
   bucket.costUsdWithoutCache += traceCostWithoutCache ?? 0;
-  addLatencySample(bucket, trace.latencyMs);
   addTtftSample(bucket.ttftGroups, trace);
   addAccountSelection(bucket.accountSelection, trace.accountSelection);
 
@@ -1329,18 +1428,50 @@ function addTraceToBucket(bucket: TraceBucketAggregate, trace: TraceEntry) {
 
 export type TraceManager = ReturnType<typeof createTraceManager>;
 
-export function isHiddenTraceRoute(route: string | undefined): boolean {
+function tracePath(route: string | undefined): string {
   const normalized = String(route ?? "").trim();
-  if (!normalized) return false;
-  const routeWithoutMethod = normalized.replace(/^[A-Z]+\s+/, "");
-  const [pathOnly] = routeWithoutMethod.split("?");
+  if (!normalized) return "";
+  const routeWithoutMethod = normalized.replace(
+    /^[!#$%&'*+\-.^_`|~0-9A-Z]+\s+/i,
+    "",
+  );
+  return routeWithoutMethod.split("?")[0];
+}
+
+export function isInferenceTraceRoute(route: string | undefined): boolean {
+  const pathOnly = tracePath(route);
+  return (
+    pathOnly === "/responses" ||
+    pathOnly === "/responses/compact" ||
+    pathOnly === "/chat/completions" ||
+    pathOnly === "/messages" ||
+    pathOnly === "/v1/responses" ||
+    pathOnly === "/v1/responses/compact" ||
+    pathOnly === "/v1/chat/completions" ||
+    pathOnly === "/v1/messages"
+  );
+}
+
+export function isHiddenTraceRoute(route: string | undefined): boolean {
+  const pathOnly = tracePath(route);
+  if (!pathOnly) return false;
   return (
     pathOnly === "/" ||
+    pathOnly === "/health" ||
     pathOnly === "/favicon.ico" ||
+    pathOnly === "/admin" ||
     pathOnly.startsWith("/admin/") ||
     pathOnly.startsWith("/assets/") ||
+    pathOnly === "/models" ||
+    /^\/models\/[^/]+$/.test(pathOnly) ||
     pathOnly === "/v1/models" ||
-    /^\/v1\/models\/[^/]+$/.test(pathOnly)
+    /^\/v1\/models\/[^/]+$/.test(pathOnly) ||
+    pathOnly === "/api/v1/models" ||
+    /^\/api\/v1\/models\/[^/]+$/.test(pathOnly) ||
+    pathOnly === "/api/tags" ||
+    pathOnly === "/version" ||
+    pathOnly === "/props" ||
+    pathOnly === "/v1/props"
   );
 }
 
@@ -1475,7 +1606,7 @@ export function createTraceManager(config: TraceManagerConfig) {
   }
 
   function ingestStatsTrace(trace: TraceEntry) {
-    if (isHiddenTraceRoute(trace.route)) return;
+    if (isHiddenTraceRoute(trace.route) || trace.traceKind === "diagnostic") return;
     totalStored += 1;
     const bucketAt = Math.floor(trace.at / HOUR_MS) * HOUR_MS;
     const bucket = statsBuckets.get(bucketAt) ?? createEmptyBucket(bucketAt);
@@ -1609,6 +1740,7 @@ export function createTraceManager(config: TraceManagerConfig) {
 
   async function appendStatsHistory(entry: TraceEntry): Promise<void> {
     await ensureCacheReady();
+    if (entry.traceKind === "diagnostic") return;
     const normalized = toNormalizedHistoryEntry(entry);
     const line = `${JSON.stringify(toStatsHistoryEntry(entry))}\n`;
     const run = historyWriteQueue.then(async () => {
@@ -1736,6 +1868,9 @@ export function createTraceManager(config: TraceManagerConfig) {
     const ttftGroups = new Map<string, MutableTraceTtftStats>();
     const accountSelection = createAccountSelectionSummary();
     let requests = 0;
+    let upstreamAttempts = 0;
+    let retriedRequests = 0;
+    let recoveredRequests = 0;
     let requestsWithUsage = 0;
     let requestsWithCost = 0;
     let unpricedRequests = 0;
@@ -1752,6 +1887,9 @@ export function createTraceManager(config: TraceManagerConfig) {
 
     const timeseries = selectedBuckets.map((bucket) => {
       requests += bucket.requests;
+      upstreamAttempts += bucket.upstreamAttempts;
+      retriedRequests += bucket.retriedRequests;
+      recoveredRequests += bucket.recoveredRequests;
       requestsWithUsage += bucket.requestsWithUsage;
       requestsWithCost += bucket.requestsWithCost;
       unpricedRequests += bucket.unpricedRequests;
@@ -1791,6 +1929,9 @@ export function createTraceManager(config: TraceManagerConfig) {
       return {
         at: bucket.at,
         requests: bucket.requests,
+        upstreamAttempts: bucket.upstreamAttempts,
+        retriedRequests: bucket.retriedRequests,
+        recoveredRequests: bucket.recoveredRequests,
         errors: bucket.errors,
         tokensInput: bucket.tokensInput,
         tokensInputCached: bucket.tokensInputCached,
@@ -1810,6 +1951,9 @@ export function createTraceManager(config: TraceManagerConfig) {
       stats: {
         totals: {
           requests,
+          upstreamAttempts,
+          retriedRequests,
+          recoveredRequests,
           requestsWithUsage,
           requestsWithCost,
           unpricedRequests,

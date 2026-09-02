@@ -51,6 +51,11 @@ export type Trace = {
   id: string;
   at: number;
   route: string;
+  clientRequestId?: string;
+  traceKind?: "client-request" | "upstream-attempt" | "diagnostic";
+  upstreamAttempt?: number;
+  providerAttempts?: number;
+  recoveredRetry?: boolean;
   application?: string;
   projectId?: string;
   projectName?: string;
@@ -102,6 +107,9 @@ export type Trace = {
 export type TraceStats = {
   totals: {
     requests: number;
+    upstreamAttempts: number;
+    retriedRequests: number;
+    recoveredRequests: number;
     requestsWithUsage: number;
     requestsWithCost: number;
     unpricedRequests: number;
@@ -130,6 +138,9 @@ export type TraceStats = {
   timeseries: Array<{
     at: number;
     requests: number;
+    upstreamAttempts: number;
+    retriedRequests: number;
+    recoveredRequests: number;
     errors: number;
     tokensInput: number;
     tokensInputCached: number;
