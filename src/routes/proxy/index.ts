@@ -3685,7 +3685,20 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             }
 
             if (!clientRequestedStream) {
-              const txt = await upstream.text();
+              let txt = await upstream.text();
+              if (moduleManager) {
+                const hooked = await moduleManager.runHook("response.received", txt, {
+                  requestId: clientRequestId,
+                  sessionId: promptCacheSessionId,
+                  application,
+                  route: req.path,
+                  transport: "http",
+                  provider: candidate.provider,
+                  model: candidate.resolvedModel,
+                  signal: requestSignal,
+                });
+                txt = hooked.value;
+              }
               const model = req.body?.model ?? payloadToUpstream?.model ?? "unknown";
               const rendered = renderBufferedResponsesStream(txt, model);
 
