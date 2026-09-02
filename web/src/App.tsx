@@ -13,6 +13,7 @@ import type {
   ApplicationWebhook,
   ExposedModel,
   ModelAlias,
+  ModuleView,
   PriorityClass,
   ProxyApiKey,
   CreatedProxyApiKey,
@@ -30,6 +31,7 @@ import { OverviewTab } from "./components/tabs/OverviewTab";
 import { TracingTab } from "./components/tabs/TracingTab";
 import { AliasesTab } from "./components/tabs/AliasesTab";
 import { ApiKeysTab } from "./components/tabs/ApiKeysTab";
+import { PluginsTab } from "./components/tabs/PluginsTab";
 import {
   initialThemeMode,
   ThemeSwitcher,
@@ -42,6 +44,7 @@ const TAB_ITEMS: Array<{ id: Tab; label: string; description: string }> = [
   { id: "accounts", label: "Accounts", description: "Providers, quotas and routing" },
   { id: "aliases", label: "Aliases", description: "Model routing and fallbacks" },
   { id: "api-keys", label: "API keys", description: "Application access and credentials" },
+  { id: "plugins", label: "Plugins", description: "Lifecycle modules and security" },
   { id: "tracing", label: "Tracing", description: "Requests, cost and latency" },
   { id: "docs", label: "API reference", description: "Professional reference and live request console" },
 ];
@@ -74,6 +77,9 @@ function TabIcon({ tab }: { tab: Tab }) {
   if (tab === "tracing") {
     return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17h3l2-7 4 10 3-13 2 10h2"/></svg>;
   }
+  if (tab === "plugins") {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3v4M16 3v4M5 7h14v4a7 7 0 0 1-14 0z"/><path d="M12 18v3"/></svg>;
+  }
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5M8 12h8M8 16h8"/></svg>;
 }
 function GitHubIcon() {
@@ -102,6 +108,7 @@ export default function App() {
   const [proxyApiKeys, setProxyApiKeys] = useState<ProxyApiKey[]>([]);
   const [applicationPolicies, setApplicationPolicies] = useState<ApplicationPolicy[]>([]);
   const [settings, setSettings] = useState<StoreSettings>({});
+  const [modules, setModules] = useState<ModuleView[]>([]);
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [loginToken, setLoginToken] = useState("");
   const [loginBusy, setLoginBusy] = useState(false);
@@ -288,7 +295,7 @@ export default function App() {
   };
 
   const loadBase = async () => {
-    const [acc, cfg, mdl, aliasRes, settingsRes, apiKeysRes, policiesRes] = await Promise.all([
+    const [acc, cfg, mdl, aliasRes, settingsRes, apiKeysRes, policiesRes, modulesRes] = await Promise.all([
       api("/admin/accounts"),
       api("/admin/config"),
       fetch("/v1/models").then((r) => r.json()),
@@ -296,6 +303,7 @@ export default function App() {
       api("/admin/settings"),
       api("/admin/proxy-api-keys"),
       api("/admin/application-policies"),
+      api("/admin/modules"),
     ]);
     setAccounts((acc.accounts ?? []) as Account[]);
     if (Number.isFinite(Number(cfg.usageCacheTtlMs)) && Number(cfg.usageCacheTtlMs) > 0) {
@@ -307,6 +315,7 @@ export default function App() {
     setSettings((settingsRes.settings ?? {}) as StoreSettings);
     setProxyApiKeys((apiKeysRes.proxyApiKeys ?? []) as ProxyApiKey[]);
     setApplicationPolicies((policiesRes.applicationPolicies ?? []) as ApplicationPolicy[]);
+    setModules((modulesRes.modules ?? []) as ModuleView[]);
   };
 
   const refreshModels = async () => {
@@ -1176,6 +1185,10 @@ export default function App() {
             toggleExpandedTrace={toggleExpandedTrace}
             sanitized={sanitized}
           />
+        )}
+
+        {tab === "plugins" && (
+          <PluginsTab modules={modules} reload={loadBase} />
         )}
 
         {tab === "docs" && (
