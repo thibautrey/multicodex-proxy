@@ -35,6 +35,7 @@ import {
   ThemeSwitcher,
   type ThemeMode,
 } from "./components/ui/ThemeSwitcher";
+import { dismissGitHubPromotion, GITHUB_NEW_ISSUE_URL, GITHUB_REPOSITORY_URL, GITHUB_STARS_URL, readGitHubPromotionState } from "./github-promotion";
 
 const TAB_ITEMS: Array<{ id: Tab; label: string; description: string }> = [
   { id: "overview", label: "Overview", description: "Health and usage at a glance" },
@@ -75,6 +76,10 @@ function TabIcon({ tab }: { tab: Tab }) {
   }
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5M8 12h8M8 16h8"/></svg>;
 }
+function GitHubIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8a9.4 9.4 0 0 0-3 18.3c.5.1.6-.2.6-.4v-1.8c-2.7.6-3.3-1.1-3.3-1.1-.4-1.1-1.1-1.4-1.1-1.4-.9-.6.1-.6.1-.6 1 0 1.5 1 1.5 1 .9 1.5 2.3 1.1 2.9.8.1-.6.4-1.1.7-1.3-2.2-.2-4.5-1.1-4.5-4.7 0-1 .4-1.9 1-2.5-.1-.3-.4-1.3.1-2.5 0 0 .8-.3 2.6 1a9 9 0 0 1 4.7 0c1.8-1.2 2.6-1 2.6-1 .5 1.2.2 2.2.1 2.5.6.6 1 1.5 1 2.5 0 3.6-2.3 4.5-4.5 4.7.4.3.7.9.7 1.8v2.6c0 .3.2.6.7.4A9.4 9.4 0 0 0 12 2.8Z" /></svg>;
+}
+
 function activeModelBlockCount(account: Account) {
   return Object.values(account.state?.modelBlocks ?? {}).filter(
     (block) => block.until > Date.now(),
@@ -82,6 +87,7 @@ function activeModelBlockCount(account: Account) {
 }
 
 export default function App() {
+  const [githubPromotion] = useState(() => readGitHubPromotionState(localStorage));
   const [tab, setTab] = useState<Tab>(initialTab);
   const [locationSearch, setLocationSearch] = useState(window.location.search);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -101,6 +107,8 @@ export default function App() {
   const [loginBusy, setLoginBusy] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>(initialThemeMode);
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
+  const [githubPromotionOpen, setGitHubPromotionOpen] = useState(!githubPromotion.dismissed && Date.now() >= githubPromotion.showAt);
+  const [githubPromotionDismissed, setGitHubPromotionDismissed] = useState(githubPromotion.dismissed);
   const [usageCacheTtlMs, setUsageCacheTtlMs] = useState(300_000);
   const [oauthRedirectUri, setOauthRedirectUri] = useState("");
   const [error, setError] = useState("");
@@ -129,6 +137,32 @@ export default function App() {
   useEffect(() => {
     localStorage.removeItem("adminToken");
   }, []);
+
+  const closeGitHubPromotion = () => {
+    dismissGitHubPromotion(localStorage);
+    setGitHubPromotionOpen(false);
+    setGitHubPromotionDismissed(true);
+  };
+
+  useEffect(() => {
+    if (githubPromotionDismissed || githubPromotionOpen) return;
+    const remaining = githubPromotion.showAt - Date.now();
+    if (remaining <= 0) {
+      setGitHubPromotionOpen(true);
+      return;
+    }
+    const timeout = window.setTimeout(() => setGitHubPromotionOpen(true), remaining);
+    return () => window.clearTimeout(timeout);
+  }, [githubPromotion.showAt, githubPromotionDismissed, githubPromotionOpen]);
+
+  useEffect(() => {
+    if (!githubPromotionOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeGitHubPromotion();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [githubPromotionOpen]);
 
   useEffect(() => {
     const dialog = mobileNavigationRef.current;
@@ -907,6 +941,11 @@ export default function App() {
               </span>
             </div>
             <ThemeSwitcher value={themeMode} onChange={setThemeMode} />
+            {githubPromotionDismissed && (
+              <a className="github-repository-link" href={GITHUB_REPOSITORY_URL} target="_blank" rel="noreferrer">
+                <GitHubIcon /><span>View on GitHub</span>
+              </a>
+            )}
           </div>
         </aside>
 
@@ -980,9 +1019,35 @@ export default function App() {
                 </span>
               </div>
               <ThemeSwitcher value={themeMode} onChange={setThemeMode} />
+              {githubPromotionDismissed && (
+                <a className="github-repository-link" href={GITHUB_REPOSITORY_URL} target="_blank" rel="noreferrer">
+                  <GitHubIcon /><span>View on GitHub</span>
+                </a>
+              )}
             </footer>
           </div>
         </dialog>
+
+        {githubPromotionOpen && authenticated && (
+          <div className="modal-backdrop github-promotion-backdrop" role="presentation" onClick={(event) => {
+            if (event.target === event.currentTarget) closeGitHubPromotion();
+          }}>
+            <section className="modal panel github-promotion-modal" role="dialog" aria-modal="true" aria-labelledby="github-promotion-title">
+              <button className="modal-close-button github-promotion-close" type="button" onClick={closeGitHubPromotion} aria-label="Close">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+              </button>
+              <div className="github-promotion-icon" aria-hidden="true">★</div>
+              <span className="eyebrow">Enjoying MultiVibe?</span>
+              <h2 id="github-promotion-title">Help the project grow</h2>
+              <p>If MultiVibe is useful to you, a GitHub star helps more people discover it. Feedback and bug reports are just as valuable.</p>
+              <div className="github-promotion-actions">
+                <a className="btn" href={GITHUB_STARS_URL} target="_blank" rel="noreferrer" onClick={closeGitHubPromotion}>Star on GitHub</a>
+                <a className="btn secondary" href={GITHUB_NEW_ISSUE_URL} target="_blank" rel="noreferrer">Submit an issue</a>
+              </div>
+              <button className="github-promotion-later" type="button" onClick={closeGitHubPromotion}>Maybe later</button>
+            </section>
+          </div>
+        )}
 
         <div className="workspace">
           <header className="topbar">

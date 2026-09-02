@@ -4058,3 +4058,18 @@ details summary {
     gap: 10px;
   }
 }
+
+.github-repository-link { min-height: 38px; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--sidebar-line); border-radius: 10px; background: var(--sidebar-surface); color: var(--sidebar-text); font-size: 12px; font-weight: 750; text-decoration: none; transition: border-color .16s ease, background .16s ease, transform .16s ease; }
+.github-repository-link:hover { border-color: rgba(91, 209, 194, .35); background: rgba(91, 209, 194, .1); transform: translateY(-1px); }
+.github-repository-link svg { width: 18px; height: 18px; fill: currentColor; }
+.github-promotion-backdrop { z-index: 1100; }
+.github-promotion-modal { position: relative; width: min(520px, 100%); padding: 34px; overflow: visible; text-align: center; }
+.github-promotion-modal h2 { margin: 8px 0 10px; font-size: clamp(1.65rem, 4vw, 2.25rem); letter-spacing: -.045em; }
+.github-promotion-modal p { max-width: 430px; margin: 0 auto; color: var(--muted); line-height: 1.6; }
+.github-promotion-icon { width: 62px; height: 62px; display: grid; place-items: center; margin: 0 auto 18px; border-radius: 18px; background: var(--warning-soft); color: var(--accent); font-size: 32px; box-shadow: var(--shadow-sm); }
+.github-promotion-close { position: absolute; top: 14px; right: 14px; }
+.github-promotion-close svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.github-promotion-actions { display: flex; justify-content: center; gap: 10px; margin-top: 24px; }
+.github-promotion-later { margin-top: 14px; padding: 4px 8px; border: 0; background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; }
+.github-promotion-later:hover { color: var(--text); text-decoration: underline; }
+@media (max-width: 560px) { .github-promotion-actions { align-items: stretch; flex-direction: column; } .github-promotion-actions .btn { width: 100%; } }
