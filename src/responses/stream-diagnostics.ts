@@ -99,6 +99,14 @@ function inspectResponseStreamEventType(
   if (type.startsWith("response.refusal")) {
     diagnostics.refusalEventCount += 1;
   }
+  if (
+    type === "response.completed" ||
+    type === "response.failed" ||
+    type === "response.incomplete" ||
+    type === "error"
+  ) {
+    diagnostics.terminalEventType ??= type;
+  }
   if (type === "response.completed") {
     diagnostics.sawResponseCompleted = true;
   }
