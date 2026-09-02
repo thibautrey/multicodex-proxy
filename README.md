@@ -27,6 +27,7 @@ API surface.
 [Providers](#-providers-and-onboarding) ·
 [API](#-api-surface) ·
 [Routing](#-routing-strategy) ·
+[Plugins](#-plugins) ·
 [Configuration](#-configuration) ·
 [Development](#-local-development) ·
 [Brand kit](./assets/brand/README.md)
@@ -42,7 +43,7 @@ API surface.
 | Account routing | Automatic model discovery, quota headroom selection, account/model blocks, retries, and optional Codex session affinity |
 | Smart aliases | Conditional schema-v2 policies, local/cloud candidates, capacity constraints, scoring, budgets, simulation, and queue/reject fallbacks |
 | Deferred work | Durable SQLite jobs, priority and application fairness, idempotency, polling/SSE results, cancellation, and signed webhooks |
-| Operations | Admin dashboard, dynamic application API keys, traces, cost/token/latency statistics, project attribution, exports, and Sentry integration |
+| Operations | Admin dashboard, lifecycle plugins, dynamic application API keys, traces, cost/token/latency statistics, project attribution, exports, and Sentry integration |
 
 MultiVibe exposes the same inference routes under `/v1` and at the root for
 clients that expect either style. Compatibility endpoints for Ollama- and
@@ -172,6 +173,7 @@ system themes.
 | Aliases | Guided redirect/fallback/local-cloud policies, advanced schema-v2 editing, simulation, live capacity inspection, and image-model override |
 | API keys | Dynamic application keys, deferred-job fairness weights, and signed result webhooks |
 | Tracing | Paginated requests, payload diagnostics, project attribution, cost/token/latency views, time ranges, and ZIP export |
+| Plugins | Install, pin, enable, update, disable, and remove trusted lifecycle modules |
 | API reference | Endpoint documentation, generated examples, model selection, and a live request console |
 
 <details>
@@ -576,22 +578,32 @@ directory only while the service is stopped.
 
 ---
 
+## 🧩 Plugins
+
+MultiVibe supports versioned lifecycle plugins that can validate, transform,
+or answer inference requests at defined request and response hooks. The
+dashboard's **Plugins** tab lets an administrator install a public GitHub
+repository, inspect its pinned commit and declared hooks, enable or disable it,
+fetch an explicit update, and remove a disabled third-party plugin.
+
+Plugins are loaded as fully trusted JavaScript inside the MultiVibe process.
+They have the same access to requests, credentials, storage, and the network as
+MultiVibe itself, so review the complete repository and every update before
+running it. Installs are pinned to a commit and never update automatically.
+Code installs and updates require a restart; enable and disable actions apply
+to new requests.
+
+The bundled **Security** plugin is enabled by default and provides reversible,
+session-scoped pseudonymization before prompt content leaves MultiVibe.
+
+See the **[complete plugins guide](./docs/plugins.md)** for installation and
+update workflows, the admin API, persistence and trust boundaries, the v1
+manifest format, hook semantics, settings, failure policies, and a complete
+plugin example.
+
+---
+
 ## ⚙️ Configuration
-
-### Lifecycle plugins
-
-MultiVibe loads versioned lifecycle modules that can inspect, transform, or
-answer requests at documented request and response hooks. Install public
-modules from the dashboard's **Plugins** page using a normal
-`https://github.com/owner/repository` URL. Installs are pinned to the resolved
-commit and never update automatically. Module code is fully trusted and runs
-with the same process permissions as MultiVibe; review repositories before
-installing them. Code changes require a restart, while activation changes apply
-to new requests immediately.
-
-The Security module is maintained separately at
-`https://github.com/thibautrey/multivibe-security-module`, shipped as a pinned
-submodule, and enabled by default.
 
 The tables below separate application defaults from the effective values in the
 shipped Compose profile.
@@ -759,6 +771,7 @@ Available scripts:
 
 ## 📚 Additional documentation
 
+- [Complete plugins guide](./docs/plugins.md)
 - [Deferred batch integration](./docs/batch-jobs.md)
 - [Reusable batch implementation prompt](./docs/prompts/implement-multivibe-batch.md)
 - [Reliability and performance audit](./docs/reliability-performance-audit-2026-08-23.md)

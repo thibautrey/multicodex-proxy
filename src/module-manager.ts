@@ -170,6 +170,11 @@ export class ModuleManager {
       if (error?.code !== "ENOENT") throw error;
       this.locks = [];
     }
+    const restarted = this.locks.some((entry) => entry.restartRequired);
+    if (restarted) {
+      for (const lock of this.locks) delete lock.restartRequired;
+      await this.saveLocks();
+    }
     if (this.bundledRoot) {
       try {
         const manifest = await readModuleManifest(this.bundledRoot);
