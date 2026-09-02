@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>fr</string>
+  <key>CFBundleDisplayName</key>
+  <string>MultiVibe Host</string>
+  <key>CFBundleExecutable</key>
+  <string>multivibe-host</string>
+  <key>CFBundleIdentifier</key>
+  <string>cloud.multivibe.host</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>MultiVibe Host</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>__MULTIVIBE_VERSION__</string>
+  <key>CFBundleVersion</key>
+  <string>__MULTIVIBE_BUILD__</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>14.0</string>
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+</dict>
+</plist>

@@ -92,8 +92,11 @@ func validateRelaySessionRequest(request relaySessionRequest) error {
 
 func canonicalJSON(value any, maximum int) ([]byte, error) {
 	var output bytes.Buffer
-	var write func(any) error
-	write = func(current any) error {
+	var write func(any, int) error
+	write = func(current any, depth int) error {
+		if depth > 24 {
+			return errors.New("canonical value is too deeply nested")
+		}
 		switch typed := current.(type) {
 		case nil:
 			output.WriteString("null")
@@ -110,7 +113,24 @@ func canonicalJSON(value any, maximum int) ([]byte, error) {
 				return errors.New("canonical integer is outside the safe range")
 			}
 			output.WriteString(strconv.FormatUint(typed, 10))
+		case []any:
+			if len(typed) > 2048 {
+				return errors.New("canonical array exceeds the item limit")
+			}
+			output.WriteByte('[')
+			for index, child := range typed {
+				if index > 0 {
+					output.WriteByte(',')
+				}
+				if err := write(child, depth+1); err != nil {
+					return err
+				}
+			}
+			output.WriteByte(']')
 		case map[string]any:
+			if len(typed) > 256 {
+				return errors.New("canonical object exceeds the key limit")
+			}
 			keys := make([]string, 0, len(typed))
 			for key := range typed {
 				keys = append(keys, key)
@@ -127,7 +147,7 @@ func canonicalJSON(value any, maximum int) ([]byte, error) {
 				}
 				output.Write(encoded)
 				output.WriteByte(':')
-				if err := write(typed[key]); err != nil {
+				if err := write(typed[key], depth+1); err != nil {
 					return err
 				}
 			}
@@ -140,7 +160,7 @@ func canonicalJSON(value any, maximum int) ([]byte, error) {
 		}
 		return nil
 	}
-	if err := write(value); err != nil {
+	if err := write(value, 0); err != nil {
 		return nil, err
 	}
 	return output.Bytes(), nil

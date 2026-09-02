@@ -78,9 +78,12 @@ func normalizeRuntimeEndpoints(endpoints []runtimeEndpoint, registry adapterRegi
 		}
 		seen[value.AdapterID] = struct{}{}
 		parsed, err := url.Parse(value.Endpoint)
+		if err != nil {
+			return nil, fmt.Errorf("%w: endpoint must be literal loopback HTTP with an explicit port", errInvalidRuntimeEndpoints)
+		}
 		host := strings.TrimPrefix(strings.TrimSuffix(parsed.Hostname(), "]"), "[")
 		port := parsed.Port()
-		if err != nil || parsed.Scheme != "http" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
+		if parsed.Scheme != "http" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
 			(host != "127.0.0.1" && host != "::1") || port == "" || (parsed.Path != "" && parsed.Path != "/") || parsed.RawPath != "" {
 			return nil, fmt.Errorf("%w: endpoint must be literal loopback HTTP with an explicit port", errInvalidRuntimeEndpoints)
 		}

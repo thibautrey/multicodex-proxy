@@ -37,10 +37,10 @@ func testCapacityPolicy(t *testing.T) capacityPolicy {
 
 func testCapacitySnapshot() hostCapacitySnapshot {
 	return hostCapacitySnapshot{
-		ModelStoragePath:      "/var/lib/multivibe/models",
-		TotalGPUVRAMBytes:     16 * plannerGiB,
-		ManagedModelDiskBytes: 2 * plannerGiB,
-		FreeDiskBytes:         50 * plannerGiB,
+		ModelStoragePath:            "/var/lib/multivibe/models",
+		TotalAcceleratorMemoryBytes: 16 * plannerGiB,
+		ManagedModelDiskBytes:       2 * plannerGiB,
+		FreeDiskBytes:               50 * plannerGiB,
 	}
 }
 

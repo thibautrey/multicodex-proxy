@@ -1,14 +1,29 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import fs from "node:fs/promises";
+import http from "node:http";
+import os from "node:os";
+import path from "node:path";
+import { PassThrough } from "node:stream";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import {
   isValidProviderSelectedModelId,
   isValidProviderRuntimeEndpointInput,
   isValidProviderRelayShadowSessionRequest,
   isValidProviderCloudEnrollmentRequest,
+  isValidProviderCapacityPolicy,
   PROVIDER_RUNTIME_FAMILIES,
+  providerAgentBootstrapBaseUrl,
   providerAgentChildEnvironment,
   providerAgentEnvironment,
+  readProviderAgentBootstrap,
+  startEmbeddedProviderAgent,
 } from "./provider-agent-supervisor.js";
+
+const execFileAsync = promisify(execFile);
 
 test("provider agent inherits only its explicit local configuration", () => {
   const environment = providerAgentEnvironment({
@@ -23,6 +38,7 @@ test("provider agent inherits only its explicit local configuration", () => {
     OPENAI_API_KEY: "must-not-cross-the-process-boundary",
     OAUTH_CLIENT_SECRET: "must-not-cross-the-process-boundary",
     CONTROL_PLANE_TOKEN: "must-not-cross-the-process-boundary",
+    MULTIVIBE_PROVIDER_BOOTSTRAP_FD: "9",
     PATH: "/unneeded/search/path",
   });
 
@@ -58,7 +74,19 @@ test("provider agent child receives only generated control and explicit local st
       "/data/provider-agent-runtime-endpoints.json",
       "/data/provider-agent-device-identity.json",
       "/data/provider-agent-cloud-enrollment.json",
+      "/data/provider-agent-capacity-policy.json",
       "https://api.multivibe.cloud",
+      "/data/provider-agent-demand-plan.json",
+      "/opt/multivibe/provider-model-catalog.json",
+      '{"ed25519:test":"spki"}',
+      "/data/provider-agent-managed",
+      "/opt/multivibe/runtime/ollama",
+      "/opt/multivibe/provider-host-dependencies.json",
+      "/data/provider-agent-managed-planner-state.json",
+      "127.0.0.1:18081",
+      "0",
+      "127.0.0.1:0",
+      3,
     ),
     {
       MULTIVIBE_CORE_LOOPBACK_URL: "http://127.0.0.1:1455",
@@ -66,10 +94,171 @@ test("provider agent child receives only generated control and explicit local st
       MULTIVIBE_PROVIDER_RUNTIME_STATE_PATH: "/data/provider-agent-runtime-endpoints.json",
       MULTIVIBE_PROVIDER_DEVICE_KEY_PATH: "/data/provider-agent-device-identity.json",
       MULTIVIBE_PROVIDER_ENROLLMENT_STATE_PATH: "/data/provider-agent-cloud-enrollment.json",
+      MULTIVIBE_PROVIDER_CAPACITY_POLICY_PATH: "/data/provider-agent-capacity-policy.json",
       MULTIVIBE_CLOUD_API_URL: "https://api.multivibe.cloud",
+      MULTIVIBE_PROVIDER_DEMAND_PLAN_PATH: "/data/provider-agent-demand-plan.json",
+      MULTIVIBE_PROVIDER_MODEL_CATALOG_PATH: "/opt/multivibe/provider-model-catalog.json",
+      MULTIVIBE_PROVIDER_DEMAND_TRUSTED_KEYS: '{"ed25519:test":"spki"}',
+      MULTIVIBE_PROVIDER_MANAGED_ROOT: "/data/provider-agent-managed",
+      MULTIVIBE_PROVIDER_BUNDLED_OLLAMA_ROOT: "/opt/multivibe/runtime/ollama",
+      MULTIVIBE_PROVIDER_DEPENDENCY_MANIFEST_PATH: "/opt/multivibe/provider-host-dependencies.json",
+      MULTIVIBE_PROVIDER_MANAGED_PLANNER_STATE_PATH: "/data/provider-agent-managed-planner-state.json",
+      MULTIVIBE_PROVIDER_OLLAMA_LISTEN: "127.0.0.1:18081",
+      MULTIVIBE_PROVIDER_CUDA_VISIBLE_DEVICES: "0",
+      MULTIVIBE_PROVIDER_AGENT_LISTEN: "127.0.0.1:0",
+      MULTIVIBE_PROVIDER_BOOTSTRAP_FD: "3",
       MULTIVIBE_PROVIDER_CONTROL_TOKEN: generatedControlToken,
     },
   );
+});
+
+test("provider agent bootstrap accepts one exact private-pipe announcement", async () => {
+  for (const [frame, expected] of [
+    ['{"protocol_version":"provider-agent-bootstrap-v1","address":"127.0.0.1:54321"}\n', "http://127.0.0.1:54321"],
+    ['{"protocol_version":"provider-agent-bootstrap-v1","address":"[::1]:54322"}\n', "http://[::1]:54322"],
+  ] as const) {
+    assert.equal(providerAgentBootstrapBaseUrl(frame), expected);
+    const pipe = new PassThrough();
+    const result = readProviderAgentBootstrap(pipe);
+    pipe.end(frame);
+    assert.equal(await result, expected);
+  }
+});
+
+test("provider agent bootstrap rejects fixed, remote, ambiguous, and secret-bearing frames", () => {
+  for (const frame of [
+    '{"protocol_version":"provider-agent-bootstrap-v1","address":"127.0.0.1:1460"}\n',
+    '{"protocol_version":"provider-agent-bootstrap-v1","address":"127.0.0.1:0"}\n',
+    '{"protocol_version":"provider-agent-bootstrap-v1","address":"0.0.0.0:54321"}\n',
+    '{"protocol_version":"provider-agent-bootstrap-v1","address":"localhost:54321"}\n',
+    '{"protocol_version":"provider-agent-bootstrap-v1","address":"127.0.0.1:054321"}\n',
+    '{"protocol_version":"provider-agent-bootstrap-v1","address":"127.0.0.1:65536"}\n',
+    '{"protocol_version":"provider-agent-bootstrap-v1","address":"127.0.0.1:54321","bearer":"secret"}\n',
+    '{"protocol_version":"provider-agent-bootstrap-v1","address":"0.0.0.0:1","address":"127.0.0.1:54321"}\n',
+    '{"protocol_version":"provider-agent-bootstrap-v0","address":"127.0.0.1:54321"}\n',
+    '{"protocol_version":"provider-agent-bootstrap-v1","address":"127.0.0.1:54321"}\n{}\n',
+    '{"protocol_version":"provider-agent-bootstrap-v1","address":"127.0.0.1:54321"}',
+  ]) {
+    assert.throws(() => providerAgentBootstrapBaseUrl(frame), /bootstrap/);
+  }
+});
+
+test("provider agent bootstrap is not trusted until its dedicated pipe closes", async () => {
+  const pipe = new PassThrough();
+  const result = readProviderAgentBootstrap(pipe);
+  pipe.write('{"protocol_version":"provider-agent-bootstrap-v1","address":"127.0.0.1:54321"}\n');
+  const beforeClose = await Promise.race([
+    result.then(() => "resolved", () => "rejected"),
+    new Promise<"pending">((resolve) => setImmediate(() => resolve("pending"))),
+  ]);
+  assert.equal(beforeClose, "pending");
+  pipe.end();
+  assert.equal(await result, "http://127.0.0.1:54321");
+});
+
+test("provider agent bootstrap enforces a bounded frame", async () => {
+  const pipe = new PassThrough();
+  const result = readProviderAgentBootstrap(pipe);
+  pipe.end("x".repeat(513));
+  await assert.rejects(result, /too large/);
+});
+
+test("supervision never sends its bearer to a process pre-bound on 1460 and follows a restarted child", {
+  timeout: 20_000,
+}, async (context) => {
+  let decoyRequests = 0;
+  const decoy = http.createServer((_request, response) => {
+    decoyRequests += 1;
+    response.setHeader("content-type", "application/json");
+    response.end('{"protocol_version":"provider-agent-v1","state":"detected","selected_models":[]}');
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => reject(error);
+      decoy.once("error", onError);
+      decoy.listen(1460, "127.0.0.1", () => {
+        decoy.off("error", onError);
+        resolve();
+      });
+    });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EADDRINUSE") {
+      context.skip("loopback port 1460 is already occupied by a non-test process");
+      return;
+    }
+    throw error;
+  }
+
+  const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-provider-bootstrap-"));
+  const binaryPath = path.join(temporaryDirectory, "bootstrap-fixture");
+  const statePath = path.join(temporaryDirectory, "launch-addresses.txt");
+  const providerAgentDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../provider-agent");
+  let supervisor: ReturnType<typeof startEmbeddedProviderAgent> | undefined;
+  try {
+    await execFileAsync("go", ["build", "-o", binaryPath, "./testdata/bootstrap-fixture"], {
+      cwd: providerAgentDirectory,
+    });
+    supervisor = startEmbeddedProviderAgent({
+      enabled: true,
+      binaryPath,
+      statePath,
+      environment: { MULTIVIBE_PROVIDER_AGENT_LISTEN: "127.0.0.1:1460" },
+      restartLimit: 2,
+    });
+
+    const firstManifest = await supervisor.getManifest();
+    assert.equal(firstManifest.protocol_version, "provider-agent-v1");
+    const deadline = Date.now() + 8_000;
+    let addresses: string[] = [];
+    while (Date.now() < deadline) {
+      try {
+        addresses = (await fs.readFile(statePath, "utf8")).trim().split(/\s+/u).filter(Boolean);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      if (addresses.length >= 2) break;
+      await delay(50);
+    }
+    assert.equal(addresses.length, 2, "the supervised child did not relaunch with a fresh bootstrap");
+    assert.notEqual(addresses[0], addresses[1], "the fixture reserves the old port, so the new bind must be observed");
+    for (const address of addresses) {
+      assert.match(address, /^127\.0\.0\.1:[1-9][0-9]{0,4}$/u);
+      assert.notEqual(address, "127.0.0.1:1460");
+    }
+    const secondManifest = await supervisor.getManifest();
+    assert.equal(secondManifest.protocol_version, "provider-agent-v1");
+    assert.equal(decoyRequests, 0, "the fixed-port decoy received a bearer-authenticated request");
+  } finally {
+    await supervisor?.stop();
+    await new Promise<void>((resolve) => decoy.close(() => resolve()));
+    await fs.rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("provider capacity policy requires every explicit hoster choice", () => {
+  const valid = {
+    schema_version: "provider-capacity-policy-state-v1",
+    revision: 0,
+    paused: false,
+    automatic_downloads: true,
+    allow_cloud_workloads: false,
+    policy: {
+      schema_version: "provider-capacity-policy-v1",
+      gpu_utilization_percent: 70,
+      gpu_vram_percent: 75,
+      max_disk_bytes: 100_000_000_000,
+      model_storage_path: "/data/multivibe/models",
+      max_download_bytes_per_day: 20_000_000_000,
+      minimum_model_residency_seconds: 21_600,
+      max_model_changes_per_day: 4,
+      reserve_free_disk_bytes: 10_000_000_000,
+    },
+  };
+  assert.equal(isValidProviderCapacityPolicy(valid), true);
+  assert.equal(isValidProviderCapacityPolicy({ ...valid, allow_cloud_workloads: undefined }), false);
+  assert.equal(isValidProviderCapacityPolicy({ ...valid, policy: { ...valid.policy, model_storage_path: "relative" } }), false);
+  assert.equal(isValidProviderCapacityPolicy({ ...valid, policy: { ...valid.policy, gpu_vram_percent: 101 } }), false);
+  assert.equal(isValidProviderCapacityPolicy({ ...valid, customerTrafficAllowed: true }), false);
 });
 
 test("provider relay shadow requests bind exact identities and keep every commercial gate closed", () => {
