@@ -498,6 +498,10 @@ Recent traces and lightweight historical aggregates are stored separately.
 The dashboard and admin API expose request volume, tokens, cache usage,
 estimated cost, latency, time to first token, inference speed, provider/model
 selection, payload diagnostics, and time-range filtering.
+Client request totals and error rates use the final response returned to the
+caller, while provider attempts and recovered retries remain visible as routing
+telemetry. High-volume control-plane routes such as admin polling, health, and
+model discovery are not persisted as inference traces.
 
 Useful admin endpoints:
 

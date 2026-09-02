@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import express from "express";
+import { createRequestTracingMiddleware } from "../../request-tracing.js";
 process.env.HANG_RETRY_MAX_DURATION_MS = "5000";
 process.env.HANG_RETRY_INTERVAL_MS = "1000";
 process.env.MAX_UPSTREAM_RETRIES = "0";
@@ -514,6 +515,13 @@ test("native Responses stream preserves selection telemetry on a terminal upstre
   const app = express();
   app.use(express.json());
   app.use(
+    createRequestTracingMiddleware({
+      traceManager: traceManager as any,
+      includeBody: false,
+      includeHeaders: false,
+    }),
+  );
+  app.use(
     "/v1",
     createProxyRouter({
       store,
@@ -550,10 +558,18 @@ test("native Responses stream preserves selection telemetry on a terminal upstre
 
   const failedTrace = traces.find(
     (trace) =>
+      trace.traceKind === "upstream-attempt" &&
       trace.accountId === "account-one" && trace.status === 500,
   );
   assert.equal(failedTrace?.accountSelection?.reason, "quota-headroom");
   assert.equal(failedTrace?.accountSelection?.provider, "openai");
   assert.equal(failedTrace?.accountSelection?.candidateCount, 1);
+
+  const clientOutcome = traces.find(
+    (trace) => trace.traceKind === "client-request",
+  );
+  assert.equal(clientOutcome?.status, 500);
+  assert.equal(clientOutcome?.providerAttempts, 1);
+  assert.equal(clientOutcome?.recoveredRetry, false);
   assert.equal(failedTrace?.accountSelection?.rotated, false);
 });

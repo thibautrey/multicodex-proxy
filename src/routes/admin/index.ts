@@ -958,13 +958,17 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       if (projectIdFilter && t.projectId !== projectIdFilter) return false;
       return true;
     });
+    const usageTraces = filtered.filter(
+      (trace) =>
+        trace.traceKind === undefined || trace.traceKind === "upstream-attempt",
+    );
 
     const globalAgg = createUsageAggregate();
     const byAccount = new Map<string, ReturnType<typeof createUsageAggregate>>();
     const byRoute = new Map<string, ReturnType<typeof createUsageAggregate>>();
     const byApplication = new Map<string, ReturnType<typeof createUsageAggregate>>();
 
-    for (const trace of filtered) {
+    for (const trace of usageTraces) {
       addTraceToAggregate(globalAgg, trace);
 
       const accountKey = trace.accountId ?? "unknown";
@@ -1015,7 +1019,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     const byApplicationOut = Array.from(byApplication.entries())
       .map(([application, agg]) => ({ application, ...finalizeAggregate(agg) }))
       .sort((a, b) => b.requests - a.requests);
-    const byProjectOut = aggregateProjectUsage(filtered);
+    const byProjectOut = aggregateProjectUsage(usageTraces);
 
     res.json({
       ok: true,
@@ -1033,7 +1037,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       byApplication: byApplicationOut,
       byProject: byProjectOut,
       tracesEvaluated: traces.length,
-      tracesMatched: filtered.length,
+      tracesMatched: usageTraces.length,
     });
   });
 
