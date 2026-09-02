@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { lstat, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -12,6 +13,7 @@ import { extractPreflightedTarArchive, preflightTarArchive } from "./provider-ho
 import { validateProviderModelCatalogAssessments } from "./verify-provider-host.mjs";
 
 const verifier = fileURLToPath(new URL("./verify-provider-host.mjs", import.meta.url));
+const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 const extractedCeiling = 6 * 1024 * 1024 * 1024;
 
 async function inTemporaryDirectory(callback) {
@@ -188,60 +190,15 @@ function sha256Buffer(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function completeLinuxBundleTar() {
+function completeLinuxBundleTar(mutateFiles = () => {}) {
   const root = "multivibe-host_0.0.1_linux_amd64";
-  const dependencyMetadata = {
-    schemaVersion: 1,
-    node: {
-      version: "26.7.0",
-      artifacts: {
-        "darwin-arm64": {
-          url: "https://nodejs.org/dist/v26.7.0/node-v26.7.0-darwin-arm64.tar.gz",
-          sha256: "1".repeat(64),
-          archive: "tar-gzip",
-        },
-        "linux-amd64": {
-          url: "https://nodejs.org/dist/v26.7.0/node-v26.7.0-linux-x64.tar.gz",
-          sha256: "2".repeat(64),
-          archive: "tar-gzip",
-        },
-      },
-    },
-    ollama: {
-      version: "0.33.2",
-      artifacts: {
-        "darwin-arm64": {
-          url: "https://github.com/ollama/ollama/releases/download/v0.33.2/ollama-darwin.tgz",
-          sha256: "3".repeat(64),
-          archive: "tar-gzip",
-        },
-        "linux-amd64": {
-          url: "https://github.com/ollama/ollama/releases/download/v0.33.2/ollama-linux-amd64.tar.zst",
-          sha256: "4".repeat(64),
-          archive: "tar-zstd",
-        },
-      },
-    },
-  };
-  const assessment = Buffer.from("# Reviewed model license\n\nHosted inference is allowed under Apache-2.0.\n", "utf8");
-  const catalog = {
-    schema_version: "provider-model-catalog-v1",
-    models: [{
-      canonical_model_id: "hf:example/test-model",
-      ollama_model: "test-model:latest",
-      ollama_manifest_path: "registry.ollama.ai/library/test-model/latest",
-      content_digest: `sha256:${"5".repeat(64)}`,
-      download_bytes_hex: "0x1000",
-      gpu_utilization_percent: 50,
-      vram_estimates: [{ context_tokens: 2048, estimated_vram_bytes_hex: "0x1000" }],
-      license: {
-        license_id: "Apache-2.0",
-        hosted_inference_allowed: true,
-        assessment_path: "provider-model-license-assessments/test-model.md",
-        assessment_digest: sha256Buffer(assessment),
-      },
-    }],
-  };
+  const dependencyData = readFileSync(path.join(repositoryRoot, "packaging", "provider-host-dependencies.json"));
+  const dependencyMetadata = JSON.parse(dependencyData);
+  const catalogData = readFileSync(path.join(repositoryRoot, "packaging", "provider-model-catalog.json"));
+  const catalog = JSON.parse(catalogData);
+  const assessmentRelative = catalog.models[0].license.assessment_path;
+  const assessment = readFileSync(path.join(repositoryRoot, "docs", assessmentRelative));
+  const packaged = (...parts) => readFileSync(path.join(repositoryRoot, "packaging", ...parts));
   const elf = Buffer.alloc(64);
   elf.set([0x7f, 0x45, 0x4c, 0x46, 2, 1], 0);
   elf.writeUInt16LE(0x3e, 18);
@@ -254,24 +211,34 @@ function completeLinuxBundleTar() {
     ["uninstall.sh", { data: Buffer.from("#!/bin/sh\nexit 0\n"), mode: 0o755 }],
     ["THIRD_PARTY/node-LICENSE", { data: Buffer.from("Node.js license\n"), mode: 0o644 }],
     ["THIRD_PARTY/ollama-LICENSE", { data: Buffer.from("Ollama MIT license\n"), mode: 0o644 }],
-    ["THIRD_PARTY/provider-host-dependencies.json", { data: json(dependencyMetadata), mode: 0o644 }],
-    ["THIRD_PARTY/provider-model-license-assessments/test-model.md", { data: assessment, mode: 0o644 }],
+    ["THIRD_PARTY/provider-host-dependencies.json", { data: dependencyData, mode: 0o644 }],
+    [`THIRD_PARTY/${assessmentRelative}`, { data: assessment, mode: 0o644 }],
     ["app/dist/instrument.js", { data: Buffer.from("export {};\n"), mode: 0o644 }],
     ["app/dist/server.js", { data: Buffer.from("export {};\n"), mode: 0o644 }],
     ["bin/multivibe-host", { data: elf, mode: 0o755 }],
     ["bin/multivibe-provider-agent", { data: elf, mode: 0o755 }],
+    ["bin/multivibe-runtime-benchmark", { data: elf, mode: 0o755 }],
     ["bin/node", { data: elf, mode: 0o755 }],
-    ["resources/provider/provider-host-dependencies.json", { data: json(dependencyMetadata), mode: 0o644 }],
-    ["resources/provider/provider-model-catalog.json", { data: json(catalog), mode: 0o644 }],
+    ["resources/provider/provider-host-dependencies.json", { data: dependencyData, mode: 0o644 }],
+    ["resources/provider/provider-model-catalog.json", { data: catalogData, mode: 0o644 }],
+    ["resources/provider/provider-runtime-profiles.json", { data: packaged("provider-runtime-profiles.json"), mode: 0o644 }],
+    ["resources/provider/schemas/provider-runtime-profiles.schema.json", { data: packaged("schemas", "provider-runtime-profiles.schema.json"), mode: 0o644 }],
+    ["resources/provider/schemas/provider-runtime-profile-overrides.schema.json", { data: packaged("schemas", "provider-runtime-profile-overrides.schema.json"), mode: 0o644 }],
+    ["resources/provider/schemas/provider-runtime-benchmark-spec.schema.json", { data: packaged("schemas", "provider-runtime-benchmark-spec.schema.json"), mode: 0o644 }],
+    ["resources/provider/schemas/provider-runtime-benchmark-result.schema.json", { data: packaged("schemas", "provider-runtime-benchmark-result.schema.json"), mode: 0o644 }],
+    ["resources/provider/schemas/provider-runtime-benchmark-store.schema.json", { data: packaged("schemas", "provider-runtime-benchmark-store.schema.json"), mode: 0o644 }],
+    ["resources/provider/examples/runtime-profile-overrides.json", { data: packaged("examples", "runtime-profile-overrides.json"), mode: 0o644 }],
+    ["resources/provider/examples/runtime-benchmark-spec.json", { data: packaged("examples", "runtime-benchmark-spec.json"), mode: 0o644 }],
     ["runtime/ollama/.multivibe-bundle.json", { data: json({
       schema_version: "managed-ollama-bundle-v1",
       version: "0.33.2",
       platform: "linux-amd64",
-      archive_sha256: "4".repeat(64),
+      archive_sha256: dependencyMetadata.ollama.artifacts["linux-amd64"].sha256,
     }), mode: 0o644 }],
     ["runtime/ollama/bin/ollama", { data: elf, mode: 0o755 }],
     ["verify-provider-host.mjs", { data: Buffer.from("// verifier fixture\n"), mode: 0o644 }],
   ]);
+  mutateFiles(files);
   const manifestFiles = [...files].map(([filePath, file]) => ({
     path: filePath,
     size: file.data.length,
@@ -567,6 +534,33 @@ test("embedded catalog assessment digest must match the declared review file", a
     await writeFile(assessmentPath, "review changed after approval\n", { mode: 0o644 });
     await assert.rejects(validateProviderModelCatalogAssessments(root, "linux"), /assessment digest mismatch/u);
   });
+});
+
+test("signed archive rejects empty profiles and placeholder schemas or examples", async () => {
+  const invalidResources = {
+    "empty-profiles": ["resources/provider/provider-runtime-profiles.json", (original) => {
+      const catalog = JSON.parse(original.toString("utf8"));
+      catalog.profiles = [];
+      return Buffer.from(`${JSON.stringify(catalog)}\n`, "utf8");
+    }],
+    "placeholder-schema": ["resources/provider/schemas/provider-runtime-benchmark-result.schema.json",
+      () => Buffer.from('{"$schema":"https://json-schema.org/draft/2020-12/schema"}\n', "utf8")],
+    "placeholder-example": ["resources/provider/examples/runtime-benchmark-spec.json",
+      () => Buffer.from('{"schema_version":"provider-runtime-benchmark-spec-v1","enabled":false}\n', "utf8")],
+  };
+  for (const [name, [resourcePath, mutate]] of Object.entries(invalidResources)) {
+    await inTemporaryDirectory(async (directory) => {
+      const archive = path.join(directory, `${name}.tar.gz`);
+      const payload = completeLinuxBundleTar((files) => {
+        const original = files.get(resourcePath);
+        files.set(resourcePath, { ...original, data: mutate(original.data) });
+      });
+      await writeFile(archive, payload, { mode: 0o600 });
+      const result = await runVerifier(archive);
+      assert.notEqual(result.code, 0, `${name} was accepted: ${result.stdout}`);
+      assert.match(result.stderr, /provider runtime/u);
+    });
+  }
 });
 
 test("complete Linux release fixture passes archive and signed-manifest verification", async () => {

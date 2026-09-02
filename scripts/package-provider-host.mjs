@@ -178,7 +178,7 @@ async function copySource(source, destination) {
   });
 }
 
-async function buildGo(moduleDirectory, output, versionVariable, version, selectedTarget) {
+async function buildGo(moduleDirectory, output, versionVariable, version, selectedTarget, packagePath = ".") {
   await command("go", ["test", "./..."], { cwd: moduleDirectory });
   await command("go", [
     "build",
@@ -187,7 +187,7 @@ async function buildGo(moduleDirectory, output, versionVariable, version, select
     `-ldflags=-s -w -X main.${versionVariable}=${version}`,
     "-o",
     output,
-    ".",
+    packagePath,
   ], {
     cwd: moduleDirectory,
     env: {
@@ -370,6 +370,7 @@ async function signMacApplication(application, identity) {
     path.join(contents, "Frameworks", "node"),
     path.join(contents, "Helpers", "ollama-runtime", "ollama"),
     path.join(contents, "Helpers", "multivibe-provider-agent"),
+    path.join(contents, "Helpers", "multivibe-runtime-benchmark"),
     path.join(contents, "MacOS", "multivibe-host"),
   ])) {
     await command("codesign", ["--force", "--sign", identity, "--options", "runtime", "--timestamp", binary]);
@@ -430,6 +431,7 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
   let nodeDestination;
   let ollamaDestination;
   let agentDestination;
+  let benchmarkDestination;
   let hostDestination;
   let resourceDirectory;
   let verifierDestination;
@@ -441,6 +443,7 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
     nodeDestination = path.join(contents, "Frameworks", "node");
     ollamaDestination = path.join(contents, "Helpers", "ollama-runtime");
     agentDestination = path.join(contents, "Helpers", "multivibe-provider-agent");
+    benchmarkDestination = path.join(contents, "Helpers", "multivibe-runtime-benchmark");
     hostDestination = path.join(contents, "MacOS", "multivibe-host");
     resourceDirectory = path.join(contents, "Resources", "provider");
     verifierDestination = path.join(contents, "Resources", "verify-provider-host.mjs");
@@ -455,6 +458,7 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
     applicationDirectory = path.join(root, "app");
     nodeDestination = path.join(root, "bin", "node");
     agentDestination = path.join(root, "bin", "multivibe-provider-agent");
+    benchmarkDestination = path.join(root, "bin", "multivibe-runtime-benchmark");
     hostDestination = path.join(root, "bin", "multivibe-host");
     ollamaDestination = path.join(root, "runtime", "ollama");
     resourceDirectory = path.join(root, "resources", "provider");
@@ -466,13 +470,20 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
   await productionApplication(applicationDirectory);
   await mkdir(resourceDirectory, { recursive: true, mode: 0o755 });
   await cp(path.join(repositoryRoot, "packaging", "provider-model-catalog.json"), path.join(resourceDirectory, "provider-model-catalog.json"));
+  await cp(path.join(repositoryRoot, "packaging", "provider-runtime-profiles.json"), path.join(resourceDirectory, "provider-runtime-profiles.json"));
   await cp(path.join(repositoryRoot, "packaging", "provider-host-dependencies.json"), path.join(resourceDirectory, "provider-host-dependencies.json"));
+  await cp(path.join(repositoryRoot, "packaging", "schemas"), path.join(resourceDirectory, "schemas"), { recursive: true });
+  await cp(path.join(repositoryRoot, "packaging", "examples"), path.join(resourceDirectory, "examples"), { recursive: true });
   await cp(path.join(repositoryRoot, "scripts", "verify-provider-host.mjs"), verifierDestination);
   await chmod(verifierDestination, 0o444);
   const nodeLicense = await nodeRuntime(work, nodeDestination, dependencies.node.artifacts[selectedTarget.key]);
   await cp(nodeLicense, path.join(root, "THIRD_PARTY", "node-LICENSE"));
   await ollamaRuntime(work, ollamaDestination, dependencies.ollama.artifacts[selectedTarget.key], selectedTarget, dependencies.ollama.version);
   await buildGo(path.join(repositoryRoot, "provider-agent"), agentDestination, "providerAgentVersion", options.version, selectedTarget);
+  await buildGo(
+    path.join(repositoryRoot, "provider-agent"), benchmarkDestination, "runtimeBenchmarkVersion", options.version,
+    selectedTarget, "./cmd/runtime-benchmark",
+  );
   await buildGo(path.join(repositoryRoot, "host-application"), hostDestination, "hostApplicationVersion", options.version, selectedTarget);
 
   let macOSSignature = null;

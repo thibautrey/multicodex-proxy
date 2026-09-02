@@ -2,12 +2,81 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
+
+	runtimebackendapi "github.com/thibautrey/multivibe/provider-agent/runtimebackend"
+	"github.com/thibautrey/multivibe/provider-agent/runtimebackend/contracttest"
 )
+
+func (runtime *managedControllerTestRuntime) ensureRuntimePinned(ctx context.Context, policy *capacityPolicyStateDocument, manifest managedOllamaDependencyManifest) (managedOllamaStatus, error) {
+	if validateManagedOllamaDependencyManifest(manifest) != nil {
+		return managedOllamaStatus{}, errors.New("invalid pinned dependency")
+	}
+	runtime.record("pinned-dependency:" + manifest.Ollama.Artifacts["darwin-arm64"].SHA256)
+	return runtime.ensureRuntime(ctx, policy, "")
+}
+
+func (runtime *managedControllerTestRuntime) pullModelResultPinned(ctx context.Context, policy *capacityPolicyStateDocument, catalog providerModelCatalog, download plannedModelDownload) (managedOllamaModelRecord, bool, error) {
+	if validateProviderModelCatalog(&catalog) != nil {
+		return managedOllamaModelRecord{}, false, errors.New("invalid pinned catalog")
+	}
+	entry, found := catalog.entry(download.ModelID)
+	if !found || entry.DownloadBytes != download.Bytes {
+		return managedOllamaModelRecord{}, false, errors.New("model absent from pinned catalog")
+	}
+	runtime.record("pinned-pull:" + entry.ContentDigest)
+	record, changed, err := runtime.pullModelResult(ctx, policy, "", download)
+	if err == nil {
+		record.ManifestSHA256 = entry.ContentDigest
+	}
+	return record, changed, err
+}
+
+func (runtime *managedControllerTestRuntime) authorizeModelActivationPinned(policy *capacityPolicyStateDocument, catalog providerModelCatalog, modelID string) (managedOllamaModelRecord, error) {
+	if validateProviderModelCatalog(&catalog) != nil {
+		return managedOllamaModelRecord{}, errors.New("invalid pinned catalog")
+	}
+	entry, found := catalog.entry(modelID)
+	if !found {
+		return managedOllamaModelRecord{}, errors.New("model absent from pinned catalog")
+	}
+	runtime.record("pinned-authorize:" + entry.ContentDigest)
+	record, err := runtime.authorizeModelActivation(policy, "", modelID)
+	if err == nil {
+		record.ManifestSHA256 = entry.ContentDigest
+	}
+	return record, err
+}
+
+func (runtime *managedControllerTestRuntime) deactivateModelPinned(ctx context.Context, policy *capacityPolicyStateDocument, catalog providerModelCatalog, modelID string) error {
+	if validateProviderModelCatalog(&catalog) != nil {
+		return errors.New("invalid pinned catalog")
+	}
+	entry, found := catalog.entry(modelID)
+	if !found {
+		return errors.New("model absent from pinned catalog")
+	}
+	runtime.record("pinned-deactivate:" + entry.ContentDigest)
+	return runtime.deactivateModel(ctx, policy, "", modelID)
+}
+
+type mismatchedManifestRuntime struct {
+	*managedControllerTestRuntime
+}
+
+func (runtime *mismatchedManifestRuntime) pullModelResultPinned(ctx context.Context, policy *capacityPolicyStateDocument, catalog providerModelCatalog, download plannedModelDownload) (managedOllamaModelRecord, bool, error) {
+	record, changed, err := runtime.managedControllerTestRuntime.pullModelResultPinned(ctx, policy, catalog, download)
+	if err == nil {
+		record.ManifestSHA256 = "sha256:" + strings.Repeat("f", 64)
+	}
+	return record, changed, err
+}
 
 type runtimeBackendContractFake struct {
 	descriptor runtimeBackendDescriptor
@@ -576,4 +645,367 @@ func TestRuntimeBackendNormalizesExecutionFailuresAndCancellation(t *testing.T) 
 		metrics.CancelledExecutions != 2 || validateRuntimeBackendMetrics(backend.Descriptor(), metrics) != nil {
 		t.Fatalf("normalized failure metrics mismatch: %#v %v", metrics, err)
 	}
+}
+
+func TestOllamaRuntimeBackendPublicSDKBridgeContract(t *testing.T) {
+	base := t.TempDir()
+	now := time.Date(2026, 9, 2, 14, 0, 0, 0, time.UTC)
+	manifest := []byte(`{"schemaVersion":2,"layers":[]}`)
+	catalogPath := writeManagedOllamaTestCatalog(t, base, "sha256:"+managedOllamaTestSHA(manifest))
+	dependencyPath := writeManagedOllamaTestDependencies(t, base, strings.Repeat("d", 64))
+	runtime := &managedControllerTestRuntime{}
+	legacy, err := newOllamaRuntimeBackend(runtime, catalogPath, dependencyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := managedOllamaTestPolicy(filepath.Join(base, "models"), 7, false, true)
+	policies := newMemoryCapacityPolicyStore()
+	policies.current = cloneCapacityPolicyState(*policy)
+	capability := hostCapability{
+		SchemaVersion: "multivibe-host-capability-v1", AgentVersion: "test", Supported: true,
+		Profile: "linux-nvidia", OS: "linux", Architecture: "amd64", Accelerator: "cuda", AcceleratorMemoryBytes: 8192,
+	}
+	bridge, err := newOllamaRuntimeBackendSDKBridge(legacy, policies, capability, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	capturedDependencySHA := legacy.dependencyManifest.Ollama.Artifacts["darwin-arm64"].SHA256
+	capturedCatalogDigest := legacy.catalog.Models[0].ContentDigest
+	// Replace both valid source files after construction. All bridge operations
+	// must continue to consume the immutable values captured above.
+	writeManagedOllamaTestDependencies(t, base, strings.Repeat("f", 64))
+	writeManagedOllamaTestCatalog(t, base, "sha256:"+strings.Repeat("c", 64))
+	registry, err := runtimebackendapi.NewRegistry(bridge)
+	if err != nil || !reflect.DeepEqual(registry.IDs(), []string{runtimeBackendOllamaID}) {
+		t.Fatalf("public registry rejected Ollama bridge: %v %v", registry.IDs(), err)
+	}
+	descriptorJSON, err := json.Marshal(bridge.Descriptor())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, private := range []string{"bin/ollama", "{catalog_model}", "argument_templates", "executable_relative_paths"} {
+		if strings.Contains(string(descriptorJSON), private) {
+			t.Fatalf("public Ollama descriptor leaked private launch material %q: %s", private, descriptorJSON)
+		}
+	}
+	model := runtimebackendapi.ModelRequirements{
+		ID: "hf:qwen/qwen2.5-0.5b-instruct", ContentDigest: "sha256:" + managedOllamaTestSHA(manifest),
+		ArtifactBytes: 16, EstimatedMemoryBytes: 4096, ContextTokens: 2048,
+	}
+	grant := runtimebackendapi.OperationGrant{
+		ID: "ollama-contract", PolicyRevision: policy.Revision, TrafficClass: runtimebackendapi.TrafficClassShadow,
+		IssuedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour),
+		AllowedModelIDs: []string{model.ID},
+		Limits: runtimebackendapi.Limits{
+			MaximumModels: 1, MaximumConcurrency: 1, MaximumModelBytes: 16, MaximumMemoryBytes: 4096,
+			MaximumContextTokens: 2048, MaximumInputBytes: 16, MaximumOutputBytes: 16,
+		},
+	}
+	contracttest.Run(t, bridge, contracttest.Fixture{EvaluationTime: now, Grant: grant, Model: model, Input: []byte("shadow")})
+	runtime.mu.Lock()
+	calls := append([]string{}, runtime.calls...)
+	runtime.mu.Unlock()
+	for _, expected := range []string{
+		"pinned-dependency:" + capturedDependencySHA,
+		"pinned-pull:" + capturedCatalogDigest,
+		"pinned-authorize:" + capturedCatalogDigest,
+		"pinned-deactivate:" + capturedCatalogDigest,
+	} {
+		if !runtimeBackendTestContainsCall(calls, expected) {
+			t.Fatalf("captured input was not consumed: missing %q in %v", expected, calls)
+		}
+	}
+
+	stale := grant
+	stale.PolicyRevision--
+	if _, err := bridge.Health(context.Background(), stale); !errors.Is(err, runtimebackendapi.ErrIncompatible) {
+		t.Fatalf("stale policy revision was accepted by bridge: %v", err)
+	}
+}
+
+func runtimeBackendTestContainsCall(calls []string, expected string) bool {
+	for _, call := range calls {
+		if call == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func TestOllamaRuntimeBackendSDKBridgeRejectsMismatchedDownloadManifest(t *testing.T) {
+	now := time.Date(2026, 9, 2, 15, 0, 0, 0, time.UTC)
+	runtime := &mismatchedManifestRuntime{managedControllerTestRuntime: &managedControllerTestRuntime{}}
+	bridge, _, model, grant := newOllamaSDKBridgeTestSetup(t, runtime, now)
+	if _, err := bridge.Prepare(context.Background(), grant); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bridge.Download(context.Background(), runtimebackendapi.DownloadRequest{Grant: grant, Model: model}); !errors.Is(err, runtimebackendapi.ErrBackendFailure) {
+		t.Fatalf("mismatched manifest receipt was accepted or leaked a private error: %v", err)
+	}
+	bridge.mu.Lock()
+	downloads := len(bridge.downloads)
+	bridge.mu.Unlock()
+	if downloads != 0 {
+		t.Fatal("mismatched manifest receipt entered the bridge download set")
+	}
+}
+
+func TestOllamaRuntimeBackendSDKBridgeCleanupKeepsOtherGrantRevisionAndTrafficClassReceipts(t *testing.T) {
+	now := time.Date(2026, 9, 2, 15, 30, 0, 0, time.UTC)
+	runtime := &managedControllerTestRuntime{}
+	bridge, _, model, grant := newOllamaSDKBridgeTestSetup(t, runtime, now)
+	receipt := runtimebackendapi.DownloadedModel{
+		BackendID: runtimeBackendOllamaID, ModelID: model.ID, ContentDigest: model.ContentDigest, Bytes: model.ArtifactBytes,
+	}
+	otherGrant := grant
+	otherGrant.ID = "ollama-other-grant"
+	previousRevision := grant
+	previousRevision.PolicyRevision--
+	oppositeClass := grant
+	oppositeClass.TrafficClass = runtimebackendapi.TrafficClassCustomer
+
+	ownedKey := runtimeBackendSDKDownloadKey(grant, model)
+	otherGrantKey := runtimeBackendSDKDownloadKey(otherGrant, model)
+	previousRevisionKey := runtimeBackendSDKDownloadKey(previousRevision, model)
+	oppositeClassKey := runtimeBackendSDKDownloadKey(oppositeClass, model)
+	if ownedKey == otherGrantKey || ownedKey == previousRevisionKey || ownedKey == oppositeClassKey ||
+		otherGrantKey == previousRevisionKey || otherGrantKey == oppositeClassKey || previousRevisionKey == oppositeClassKey {
+		t.Fatal("download identity did not bind grant ID, policy revision and traffic class")
+	}
+	bridge.mu.Lock()
+	bridge.downloads[ownedKey] = receipt
+	bridge.downloads[otherGrantKey] = receipt
+	bridge.downloads[previousRevisionKey] = receipt
+	bridge.downloads[oppositeClassKey] = receipt
+	bridge.mu.Unlock()
+	if err := bridge.Cleanup(context.Background(), runtimebackendapi.CleanupRequest{
+		Grant: grant, ModelIDs: []string{model.ID}, StopRuntime: true,
+	}); !errors.Is(err, runtimebackendapi.ErrGrantMismatch) {
+		t.Fatalf("cleanup stopped a runtime shared with other grant owners: %v", err)
+	}
+	bridge.mu.Lock()
+	beforeScopedCleanup := len(bridge.downloads)
+	bridge.mu.Unlock()
+	if beforeScopedCleanup != 4 {
+		t.Fatalf("rejected shared-runtime cleanup mutated receipts: remaining=%d", beforeScopedCleanup)
+	}
+
+	if err := bridge.Cleanup(context.Background(), runtimebackendapi.CleanupRequest{
+		Grant: grant, ModelIDs: []string{model.ID},
+	}); err != nil {
+		t.Fatalf("grant-scoped cleanup failed: %v", err)
+	}
+	bridge.mu.Lock()
+	_, ownedFound := bridge.downloads[ownedKey]
+	_, otherGrantFound := bridge.downloads[otherGrantKey]
+	_, previousRevisionFound := bridge.downloads[previousRevisionKey]
+	_, oppositeClassFound := bridge.downloads[oppositeClassKey]
+	remaining := len(bridge.downloads)
+	bridge.mu.Unlock()
+	if ownedFound || !otherGrantFound || !previousRevisionFound || !oppositeClassFound || remaining != 3 {
+		t.Fatalf("cleanup crossed its grant boundary: owned=%t other_grant=%t previous_revision=%t opposite_class=%t remaining=%d",
+			ownedFound, otherGrantFound, previousRevisionFound, oppositeClassFound, remaining)
+	}
+	if err := bridge.Cleanup(context.Background(), runtimebackendapi.CleanupRequest{
+		Grant: oppositeClass, ModelIDs: []string{model.ID},
+	}); !errors.Is(err, runtimebackendapi.ErrExecutionDisabled) {
+		t.Fatalf("shadow-only bridge accepted cleanup under a customer-traffic grant: %v", err)
+	}
+	bridge.mu.Lock()
+	_, oppositeClassFound = bridge.downloads[oppositeClassKey]
+	remaining = len(bridge.downloads)
+	bridge.mu.Unlock()
+	if !oppositeClassFound || remaining != 3 {
+		t.Fatalf("rejected opposite-class cleanup mutated receipts: found=%t remaining=%d", oppositeClassFound, remaining)
+	}
+}
+
+func TestOllamaRuntimeBackendSDKBridgeDirectStopRejectsOtherRuntimeOwnersWithoutMutation(t *testing.T) {
+	now := time.Date(2026, 9, 2, 15, 45, 0, 0, time.UTC)
+	runtime := &managedControllerTestRuntime{}
+	bridge, _, _, grant := newOllamaSDKBridgeTestSetup(t, runtime, now)
+	ctx := context.Background()
+	if _, err := bridge.Prepare(ctx, grant); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bridge.Start(ctx, grant); err != nil {
+		t.Fatal(err)
+	}
+
+	otherID := grant
+	otherID.ID += "-other"
+	staleRevision := grant
+	staleRevision.PolicyRevision--
+	oppositeClass := grant
+	oppositeClass.TrafficClass = runtimebackendapi.TrafficClassCustomer
+	for name, candidate := range map[string]runtimebackendapi.OperationGrant{
+		"other grant ID":         otherID,
+		"stale policy revision":  staleRevision,
+		"opposite traffic class": oppositeClass,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := bridge.Stop(ctx, candidate); !errors.Is(err, runtimebackendapi.ErrGrantMismatch) {
+				t.Fatalf("direct stop crossed runtime ownership: %v", err)
+			}
+			health, err := bridge.Health(ctx, grant)
+			if err != nil || !health.Running {
+				t.Fatalf("rejected stop mutated runtime health: %#v %v", health, err)
+			}
+		})
+	}
+
+	if err := bridge.Cleanup(ctx, runtimebackendapi.CleanupRequest{Grant: grant, StopRuntime: true}); err != nil {
+		t.Fatalf("owner cleanup regressed after refused direct stops: %v", err)
+	}
+	health, err := bridge.Health(ctx, grant)
+	if err != nil || health.Running {
+		t.Fatalf("owner cleanup did not stop runtime: %#v %v", health, err)
+	}
+}
+
+func TestOllamaRuntimeBackendSDKBridgeSerializesTemporaryDownloadAndStart(t *testing.T) {
+	now := time.Date(2026, 9, 2, 16, 0, 0, 0, time.UTC)
+	pullStarted := make(chan struct{})
+	pullRelease := make(chan struct{})
+	runtime := &managedControllerTestRuntime{pullStarted: pullStarted, pullRelease: pullRelease}
+	bridge, _, model, grant := newOllamaSDKBridgeTestSetup(t, runtime, now)
+	if _, err := bridge.Prepare(context.Background(), grant); err != nil {
+		t.Fatal(err)
+	}
+	startAttempted := make(chan struct{}, 1)
+	bridge.lifecycleAttempt = func(operation string) {
+		if operation == "start" {
+			startAttempted <- struct{}{}
+		}
+	}
+	downloadDone := make(chan error, 1)
+	go func() {
+		_, err := bridge.Download(context.Background(), runtimebackendapi.DownloadRequest{Grant: grant, Model: model})
+		downloadDone <- err
+	}()
+	select {
+	case <-pullStarted:
+	case <-time.After(time.Second):
+		t.Fatal("download did not reach the deterministic pull barrier")
+	}
+	startDone := make(chan error, 1)
+	go func() {
+		_, err := bridge.Start(context.Background(), grant)
+		startDone <- err
+	}()
+	select {
+	case <-startAttempted:
+	case <-time.After(time.Second):
+		t.Fatal("concurrent start did not reach the lifecycle boundary")
+	}
+	select {
+	case err := <-startDone:
+		t.Fatalf("start crossed an active temporary download lifecycle: %v", err)
+	default:
+	}
+	close(pullRelease)
+	select {
+	case err := <-downloadDone:
+		if err != nil {
+			t.Fatalf("download failed: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("download did not finish")
+	}
+	select {
+	case err := <-startDone:
+		if err != nil {
+			t.Fatalf("serialized start failed: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("serialized start did not finish")
+	}
+	health, err := bridge.Health(context.Background(), grant)
+	if err != nil || !health.Running {
+		t.Fatalf("temporary download stopped the explicit start: %#v %v", health, err)
+	}
+	runtime.mu.Lock()
+	calls := append([]string{}, runtime.calls...)
+	runtime.mu.Unlock()
+	if !runtimeBackendTestOrderedCalls(calls, []string{"start", "pull:" + model.ID, "stop", "start"}) {
+		t.Fatalf("lifecycle ordering is unsafe: %v", calls)
+	}
+}
+
+func TestRuntimeBackendSDKErrorsAreAlwaysPublicSentinels(t *testing.T) {
+	tests := []struct {
+		input    error
+		expected error
+	}{
+		{context.Canceled, runtimebackendapi.ErrCancelled},
+		{context.DeadlineExceeded, runtimebackendapi.ErrTimedOut},
+		{errRuntimeBackendInvalid, runtimebackendapi.ErrInvalid},
+		{errRuntimeBackendIncompatible, runtimebackendapi.ErrIncompatible},
+		{errRuntimeBackendExecutionDisabled, runtimebackendapi.ErrExecutionDisabled},
+		{errRuntimeBackendCapabilityMissing, runtimebackendapi.ErrCapabilityUnavailable},
+		{errRuntimeBackendOutOfMemory, runtimebackendapi.ErrOutOfMemory},
+		{errRuntimeBackendCrashed, runtimebackendapi.ErrCrashed},
+		{errRuntimeBackendTimedOut, runtimebackendapi.ErrTimedOut},
+		{errRuntimeBackendCancelled, runtimebackendapi.ErrCancelled},
+		{errRuntimeBackendExecutionUnknown, runtimebackendapi.ErrExecutionUnknown},
+		{errors.New("private failure at /tmp/provider-secret"), runtimebackendapi.ErrBackendFailure},
+	}
+	for _, test := range tests {
+		result := runtimeBackendSDKError(test.input)
+		if result != test.expected {
+			t.Fatalf("private error was not reduced to its sentinel: input=%v result=%v expected=%v", test.input, result, test.expected)
+		}
+	}
+}
+
+func newOllamaSDKBridgeTestSetup(
+	t *testing.T,
+	runtime managedControllerRuntime,
+	now time.Time,
+) (*ollamaRuntimeBackendSDKBridge, *capacityPolicyStateDocument, runtimebackendapi.ModelRequirements, runtimebackendapi.OperationGrant) {
+	t.Helper()
+	base := t.TempDir()
+	digest := "sha256:" + strings.Repeat("a", 64)
+	legacy, err := newOllamaRuntimeBackend(
+		runtime,
+		writeManagedOllamaTestCatalog(t, base, digest),
+		writeManagedOllamaTestDependencies(t, base, strings.Repeat("d", 64)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := managedOllamaTestPolicy(filepath.Join(base, "models"), 9, false, true)
+	policies := newMemoryCapacityPolicyStore()
+	policies.current = cloneCapacityPolicyState(*policy)
+	capability := hostCapability{
+		SchemaVersion: "multivibe-host-capability-v1", AgentVersion: "test", Supported: true,
+		Profile: "linux-nvidia", OS: "linux", Architecture: "amd64", Accelerator: "cuda", AcceleratorMemoryBytes: 8192,
+	}
+	bridge, err := newOllamaRuntimeBackendSDKBridge(legacy, policies, capability, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := runtimebackendapi.ModelRequirements{
+		ID: "hf:qwen/qwen2.5-0.5b-instruct", ContentDigest: digest, ArtifactBytes: 16, EstimatedMemoryBytes: 4096, ContextTokens: 2048,
+	}
+	grant := runtimebackendapi.OperationGrant{
+		ID: "ollama-review", PolicyRevision: policy.Revision, TrafficClass: runtimebackendapi.TrafficClassShadow,
+		IssuedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour),
+		AllowedModelIDs: []string{model.ID},
+		Limits: runtimebackendapi.Limits{
+			MaximumModels: 1, MaximumConcurrency: 1, MaximumModelBytes: 16, MaximumMemoryBytes: 4096,
+			MaximumContextTokens: 2048, MaximumInputBytes: 16, MaximumOutputBytes: 16,
+		},
+	}
+	return bridge, policy, model, grant
+}
+
+func runtimeBackendTestOrderedCalls(calls, ordered []string) bool {
+	index := 0
+	for _, call := range calls {
+		if index < len(ordered) && call == ordered[index] {
+			index++
+		}
+	}
+	return index == len(ordered)
 }

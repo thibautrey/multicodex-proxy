@@ -1,0 +1,49 @@
+{
+  "schema_version": "multivibe-runtime-contribution-v1",
+  "backend_id": "example-static",
+  "backend_contract_version": "provider-runtime-backend-v1",
+  "descriptor_sha256": "sha256:277ef46c15243d41317daaf0f29bb80ed92362fd0a917bcd1d20ae4c1f82e170",
+  "manifest_path": "provider-agent/runtimebackend/exampleadapter/contribution.json",
+  "provenance": {
+    "source_url": "https://github.com/thibautrey/multivibe",
+    "source_digest": "sha256:75a1d1f27ad5806a574fdc6864b62dd83a8207298b4a43f57a6a3a2cad0151a5",
+    "license_spdx": "Apache-2.0"
+  },
+  "files": [
+    {
+      "path": "provider-agent/runtimebackend/CONTRIBUTING.md",
+      "role": "documentation",
+      "mode": 420,
+      "size": 7904,
+      "sha256": "sha256:64352993fcaf897be2b6520f73634e57b99f2981656679c627be3a7b3226bc1f"
+    },
+    {
+      "path": "provider-agent/runtimebackend/exampleadapter/backend.go",
+      "role": "adapter_source",
+      "mode": 420,
+      "size": 23116,
+      "sha256": "sha256:e750b66becc6933ed4dbefa950934ef0ffef064237e9aba7ae0ef09ff540293b"
+    },
+    {
+      "path": "provider-agent/runtimebackend/exampleadapter/backend_test.go",
+      "role": "contract_test",
+      "mode": 420,
+      "size": 2413,
+      "sha256": "sha256:b2296394a2e28c7cf0460df1b7d401924a6edf1a4e23facde380fe297263c759"
+    },
+    {
+      "path": "provider-agent/runtimebackend/exampleadapter/manifest_test.go",
+      "role": "contract_test",
+      "mode": 420,
+      "size": 1013,
+      "sha256": "sha256:db85979ade41726c51c2c26b8ac7a2838d55df6bdaff9b32a9310a7f11b4581d"
+    },
+    {
+      "path": "provider-agent/runtimebackend/exampleadapter/testdata/reference-runtime.txt",
+      "role": "runtime_artifact",
+      "mode": 420,
+      "size": 51,
+      "sha256": "sha256:554bcbbba785430265ef7d4155d295928250b741952f50f37bddaf93841ed4df"
+    }
+  ]
+}
