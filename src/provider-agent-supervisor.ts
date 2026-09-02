@@ -12,7 +12,7 @@ export type ProviderAgentSelection = {
 
 export type ProviderAgentManifest = {
   protocol_version: "provider-agent-v1";
-  state: "detected" | "selected";
+  state: "detected" | "selected" | "submitted";
   selected_models: string[];
   device_key_id?: string;
   device_public_key_spki?: string;
@@ -39,6 +39,32 @@ export type SignedProviderRelayShadowSession = {
     compensationEligible: false;
   };
   signature: { algorithm: "Ed25519"; keyId: string; value: string };
+};
+
+export type ProviderCloudEnrollmentRequest = {
+  enrollment_token: string;
+  core_version: string;
+  runtime_family: "lm-studio" | "omlx" | "exo" | "mtplx";
+  selected_models: Array<{ reported_id: string; modalities: string[] }>;
+  declared_max_concurrency: number;
+};
+
+export type ProviderCloudEnrollmentView = {
+  schema_version: "provider-cloud-enrollment-v1";
+  revision: 1;
+  state: "submitted";
+  provider_id: string;
+  node_id: string;
+  device_key_id: string;
+  credential_epoch: number;
+  manifest_digest: string;
+  runtime_family: "lm-studio" | "omlx" | "exo" | "mtplx";
+  declared_max_concurrency: number;
+  cloud_api_origin: string;
+  submitted_at: string;
+  routing_eligible: false;
+  compensation_eligible: false;
+  safety_profile: "shadow_only_no_routing_no_compensation";
 };
 
 export type ProviderAgentDetectedModels = {
@@ -82,6 +108,8 @@ export type ProviderAgentControl = {
   getRuntimeEndpoints(): Promise<ProviderAgentRuntimeEndpoints>;
   replaceRuntimeEndpoints(revision: number, endpoints: ProviderAgentRuntimeEndpointInput[]): Promise<{ conflict: boolean; endpoints: ProviderAgentRuntimeEndpoints }>;
   detectModels(): Promise<ProviderAgentDetectedModels>;
+  getCloudEnrollment(): Promise<ProviderCloudEnrollmentView>;
+  enrollCloud(request: ProviderCloudEnrollmentRequest): Promise<ProviderCloudEnrollmentView>;
   openRelayShadowSession(request: ProviderRelayShadowSessionRequest): Promise<SignedProviderRelayShadowSession>;
 };
 
@@ -116,12 +144,16 @@ export function providerAgentChildEnvironment(
   controlToken: string,
   runtimeStatePath?: string,
   deviceKeyPath?: string,
+  enrollmentStatePath?: string,
+  cloudApiUrl?: string,
 ): NodeJS.ProcessEnv {
   return {
     ...providerAgentEnvironment(source),
     ...(statePath ? { MULTIVIBE_PROVIDER_STATE_PATH: statePath } : {}),
     ...(runtimeStatePath ? { MULTIVIBE_PROVIDER_RUNTIME_STATE_PATH: runtimeStatePath } : {}),
     ...(deviceKeyPath ? { MULTIVIBE_PROVIDER_DEVICE_KEY_PATH: deviceKeyPath } : {}),
+    ...(enrollmentStatePath ? { MULTIVIBE_PROVIDER_ENROLLMENT_STATE_PATH: enrollmentStatePath } : {}),
+    ...(cloudApiUrl ? { MULTIVIBE_CLOUD_API_URL: cloudApiUrl } : {}),
     MULTIVIBE_PROVIDER_CONTROL_TOKEN: controlToken,
   };
 }
@@ -185,6 +217,44 @@ export function isValidProviderRelayShadowSessionRequest(
   return request.transport === "outbound_mtls" || request.transport === "tailscale_private";
 }
 
+export function isValidProviderCloudEnrollmentRequest(
+  value: unknown,
+): value is ProviderCloudEnrollmentRequest {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const request = value as Record<string, unknown>;
+  const keys = ["enrollment_token", "core_version", "runtime_family", "selected_models", "declared_max_concurrency"];
+  if (Object.keys(request).length !== keys.length || keys.some((key) => !(key in request))) return false;
+  if (typeof request.enrollment_token !== "string" || !/^mve_[A-Za-z0-9_-]{43}$/.test(request.enrollment_token)) return false;
+  if (typeof request.core_version !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._+:/-]{0,63}$/.test(request.core_version)) return false;
+  if (!new Set(["lm-studio", "omlx", "exo", "mtplx"]).has(String(request.runtime_family))) return false;
+  if (!Number.isSafeInteger(request.declared_max_concurrency)
+    || (request.declared_max_concurrency as number) < 1 || (request.declared_max_concurrency as number) > 1_000) return false;
+  if (!Array.isArray(request.selected_models) || request.selected_models.length < 1 || request.selected_models.length > 100) return false;
+  const ids = new Set<string>();
+  for (const value of request.selected_models) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const model = value as Record<string, unknown>;
+    if (Object.keys(model).length !== 2 || !("reported_id" in model) || !("modalities" in model)
+      || !isValidProviderSelectedModelId(model.reported_id) || ids.has(model.reported_id)) return false;
+    ids.add(model.reported_id);
+    if (!Array.isArray(model.modalities) || model.modalities.length < 1 || model.modalities.length > 16
+      || new Set(model.modalities).size !== model.modalities.length
+      || model.modalities.some((modality) => typeof modality !== "string"
+        || !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,31}$/.test(modality))) return false;
+  }
+  return true;
+}
+
+function providerCloudApiUrl(value: string): string {
+  let parsed: URL;
+  try { parsed = new URL(value); } catch { throw new Error("provider Cloud API URL is invalid"); }
+  const production = parsed.protocol === "https:" && parsed.host === "api.multivibe.cloud";
+  const loopback = parsed.protocol === "http:" && Boolean(parsed.port) && ["127.0.0.1", "[::1]"].includes(parsed.hostname);
+  if ((!production && !loopback) || parsed.username || parsed.password || parsed.search || parsed.hash
+    || (parsed.pathname !== "/" && parsed.pathname !== "")) throw new Error("provider Cloud API URL is invalid");
+  return parsed.origin;
+}
+
 export function startEmbeddedProviderAgent(options: {
   enabled: boolean;
   binaryPath: string;
@@ -192,6 +262,8 @@ export function startEmbeddedProviderAgent(options: {
   statePath?: string;
   runtimeStatePath?: string;
   deviceKeyPath?: string;
+  enrollmentStatePath?: string;
+  cloudApiUrl?: string;
   restartLimit?: number;
 }): ProviderAgentSupervisor {
   const unavailable = async (): Promise<never> => { throw new Error("provider agent is not enabled"); };
@@ -205,6 +277,8 @@ export function startEmbeddedProviderAgent(options: {
     getRuntimeEndpoints: unavailable,
     replaceRuntimeEndpoints: unavailable,
     detectModels: unavailable,
+    getCloudEnrollment: unavailable,
+    enrollCloud: unavailable,
     openRelayShadowSession: unavailable,
   };
   if (!path.isAbsolute(options.binaryPath)) throw new Error("provider agent binary path must be absolute");
@@ -219,6 +293,11 @@ export function startEmbeddedProviderAgent(options: {
     || path.normalize(options.deviceKeyPath) !== options.deviceKeyPath)) {
     throw new Error("provider agent device key path must be a clean absolute path");
   }
+  if (options.enrollmentStatePath && (!path.isAbsolute(options.enrollmentStatePath)
+    || path.normalize(options.enrollmentStatePath) !== options.enrollmentStatePath)) {
+    throw new Error("provider agent enrollment state path must be a clean absolute path");
+  }
+  const cloudApiUrl = providerCloudApiUrl(options.cloudApiUrl ?? "https://api.multivibe.cloud");
   const sourceEnvironment = options.environment ?? process.env;
   const controlToken = randomBytes(32).toString("base64url");
   const listenAddress = sourceEnvironment.MULTIVIBE_PROVIDER_AGENT_LISTEN ?? "127.0.0.1:1460";
@@ -226,15 +305,17 @@ export function startEmbeddedProviderAgent(options: {
     throw new Error("provider agent listen address must use literal loopback port 1460");
   }
   const baseUrl = listenAddress === "[::1]:1460" ? "http://[::1]:1460" : "http://127.0.0.1:1460";
-  const request = async <T>(route: string, init: RequestInit = {}): Promise<{ response: Response; value: T }> => {
+  const request = async <T>(route: string, init: RequestInit = {}, acceptedStatuses: readonly number[] = [200, 409]): Promise<{ response: Response; value: T }> => {
     const response = await fetch(`${baseUrl}${route}`, {
       ...init,
       headers: { authorization: `Bearer ${controlToken}`, ...(init.headers ?? {}) },
       redirect: "error",
       signal: AbortSignal.timeout(3_000),
     });
-    if (response.status === 400) throw new ProviderAgentControlRequestError(400);
-    if (response.status !== 200 && response.status !== 409) throw new Error("provider agent control request failed");
+    if (!acceptedStatuses.includes(response.status)) {
+      if ([400, 404, 409].includes(response.status)) throw new ProviderAgentControlRequestError(response.status);
+      throw new Error("provider agent control request failed");
+    }
     const declared = response.headers.get("content-length");
     if (declared && Number(declared) > 64 * 1024) throw new Error("provider agent control response is too large");
     const text = await response.text();
@@ -248,7 +329,10 @@ export function startEmbeddedProviderAgent(options: {
   const launch = () => {
     if (stopped) return;
     child = spawn(options.binaryPath, [], {
-      env: providerAgentChildEnvironment(sourceEnvironment, options.statePath, controlToken, options.runtimeStatePath, options.deviceKeyPath),
+      env: providerAgentChildEnvironment(
+        sourceEnvironment, options.statePath, controlToken, options.runtimeStatePath, options.deviceKeyPath,
+        options.enrollmentStatePath, cloudApiUrl,
+      ),
       shell: false,
       stdio: ["ignore", "inherit", "inherit"],
     });
@@ -284,6 +368,12 @@ export function startEmbeddedProviderAgent(options: {
       return { conflict: result.response.status === 409, endpoints: result.value };
     },
     detectModels: async () => (await request<ProviderAgentDetectedModels>("/v1/detected-models")).value,
+    getCloudEnrollment: async () => (await request<ProviderCloudEnrollmentView>("/v1/cloud-shadow/enrollment", {}, [200])).value,
+    enrollCloud: async (enrollment) => (await request<ProviderCloudEnrollmentView>("/v1/cloud-shadow/enroll", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(enrollment),
+    }, [201])).value,
     openRelayShadowSession: async (session) => (await request<SignedProviderRelayShadowSession>("/v1/relay-shadow/session-open", {
       method: "POST",
       headers: { "content-type": "application/json" },

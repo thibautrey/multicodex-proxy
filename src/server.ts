@@ -39,6 +39,8 @@ import {
   PORT,
   PROVIDER_AGENT_BINARY,
   PROVIDER_AGENT_DEVICE_KEY_PATH,
+  PROVIDER_AGENT_ENROLLMENT_STATE_PATH,
+  PROVIDER_AGENT_CLOUD_API_URL,
   PROVIDER_AGENT_ENABLED,
   PROVIDER_AGENT_RUNTIME_STATE_PATH,
   PROVIDER_AGENT_STATE_PATH,
@@ -132,6 +134,8 @@ const providerAgent = startEmbeddedProviderAgent({
   statePath: PROVIDER_AGENT_STATE_PATH,
   runtimeStatePath: PROVIDER_AGENT_RUNTIME_STATE_PATH,
   deviceKeyPath: PROVIDER_AGENT_DEVICE_KEY_PATH,
+  enrollmentStatePath: PROVIDER_AGENT_ENROLLMENT_STATE_PATH,
+  cloudApiUrl: PROVIDER_AGENT_CLOUD_API_URL,
 });
 await traceManager.seedStatsHistoryIfMissing();
 const anonymousUsageSharing = createAnonymousUsageSharingWorker({

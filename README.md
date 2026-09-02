@@ -129,6 +129,7 @@ Everything important is file-based and survives restart (if `/data` is mounted):
 - `/data/provider-agent-selection.json` (mode `0600`, local explicit model selection only)
 - `/data/provider-agent-runtime-endpoints.json` (mode `0600`, local loopback endpoints and optional runtime bearers)
 - `/data/provider-agent-device-identity.json` (mode `0600`, local Ed25519 device identity and relay-shadow sequence)
+- `/data/provider-agent-cloud-enrollment.json` (mode `0600`, submitted shadow node view; never the enrollment grant)
 - `/data/jobs.sqlite` (WAL, mode `0600`)
 
 Recent trace retention defaults to the latest **1000** entries and can be changed with `TRACE_RETENTION_MAX`.
@@ -160,10 +161,17 @@ manifest. Its authenticated relay-shadow endpoint signs Cloud-compatible
 30-second session-open envelopes with a persisted monotonic sequence and fixed
 non-commercial locks. This endpoint cannot carry customer content, open a
 socket to a relay, enable routing or create compensation eligibility.
+`PROVIDER_AGENT_ENROLLMENT_STATE_PATH` selects the separate submitted-node
+state. The authenticated Cloud-shadow enrollment route sends only the exact
+selected-model consent manifest to `PROVIDER_AGENT_CLOUD_API_URL`, which is
+restricted to `https://api.multivibe.cloud` (or literal loopback HTTP in
+tests), signs the returned challenge, persists no grant or proof, freezes the
+submitted selection and keeps routing and compensation false.
 The local-account **Share models · Preview** experience exposes the same
 inventory and revisioned selection without requiring a separate agent UI.
-They do not enroll a node, send the inventory to Cloud, advertise capacity,
-accept community workloads, or enable earnings and payouts.
+It does not submit automatically: enrollment requires an explicit one-time
+grant and exact manifest. Submission does not advertise capacity, accept
+community workloads, or enable earnings and payouts.
 
 ### Anonymous model-demand sharing
 
@@ -678,6 +686,8 @@ Embedded provider-agent endpoints:
 - `GET/PUT /admin/provider-agent/runtime-endpoints`
 - `GET /admin/provider-agent/detected-models`
 - `GET/PUT /admin/provider-agent/selection`
+- `GET /admin/provider-agent/cloud-shadow/enrollment`
+- `POST /admin/provider-agent/cloud-shadow/enroll`
 - `POST /admin/provider-agent/relay-shadow/session-open`
 
 OAuth admin endpoints:
@@ -708,6 +718,8 @@ directly through `POST /admin/accounts` with `provider: "opencode"`.
 | `PROVIDER_AGENT_STATE_PATH`       | beside `STORE_PATH`                       | Mode-0600 local explicit provider model selection                   |
 | `PROVIDER_AGENT_RUNTIME_STATE_PATH` | beside `STORE_PATH`                     | Mode-0600 manual loopback endpoints and optional runtime bearers    |
 | `PROVIDER_AGENT_DEVICE_KEY_PATH`   | beside `STORE_PATH`                       | Mode-0600 Ed25519 device identity and relay-shadow sequence         |
+| `PROVIDER_AGENT_ENROLLMENT_STATE_PATH` | beside `STORE_PATH`                  | Mode-0600 submitted Cloud shadow node view without the grant        |
+| `PROVIDER_AGENT_CLOUD_API_URL`      | `https://api.multivibe.cloud`             | Fixed Cloud enrollment API origin; production or literal loopback only |
 | `OAUTH_STATE_PATH`                | `/data/oauth-state.json`                  | OAuth flow state                                                    |
 | `TRACE_FILE_PATH`                 | `/data/requests-trace.jsonl`              | Recent request trace file                                           |
 | `TRACE_STATS_HISTORY_PATH`        | `/data/requests-stats-history.jsonl`      | Lightweight request history for long-term stats                     |

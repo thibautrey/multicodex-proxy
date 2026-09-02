@@ -70,6 +70,7 @@ import type { SmartRoutingCoordinator } from "../../smart-routing-routes.js";
 import { discoverAndPersistLocalRuntimes } from "../../local-runtime-discovery.js";
 import {
   isValidProviderRuntimeEndpointInput,
+  isValidProviderCloudEnrollmentRequest,
   isValidProviderRelayShadowSessionRequest,
   isValidProviderSelectedModelId,
   ProviderAgentControlRequestError,
@@ -658,6 +659,39 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     } catch (error) {
       if (error instanceof ProviderAgentControlRequestError && error.status === 400) {
         return res.status(400).json({ error: "invalid_provider_relay_shadow_session" });
+      }
+      res.status(503).json({ error: "provider_agent_unavailable" });
+    }
+  });
+
+  router.get("/provider-agent/cloud-shadow/enrollment", async (_req, res) => {
+    if (!options.providerAgent?.enabled) return res.status(503).json({ error: "provider_agent_unavailable" });
+    try {
+      res.setHeader("cache-control", "no-store");
+      res.json(await options.providerAgent.getCloudEnrollment());
+    } catch (error) {
+      if (error instanceof ProviderAgentControlRequestError && error.status === 404) {
+        return res.status(404).json({ error: "provider_cloud_enrollment_not_found" });
+      }
+      res.status(503).json({ error: "provider_agent_unavailable" });
+    }
+  });
+
+  router.post("/provider-agent/cloud-shadow/enroll", async (req, res) => {
+    if (!options.providerAgent?.enabled) return res.status(503).json({ error: "provider_agent_unavailable" });
+    if (!isValidProviderCloudEnrollmentRequest(req.body)) {
+      return res.status(400).json({ error: "invalid_provider_cloud_enrollment" });
+    }
+    try {
+      const enrollment = await options.providerAgent.enrollCloud(req.body);
+      res.setHeader("cache-control", "no-store");
+      res.status(201).json(enrollment);
+    } catch (error) {
+      if (error instanceof ProviderAgentControlRequestError && error.status === 400) {
+        return res.status(400).json({ error: "invalid_provider_cloud_enrollment" });
+      }
+      if (error instanceof ProviderAgentControlRequestError && error.status === 409) {
+        return res.status(409).json({ error: "provider_cloud_enrollment_conflict" });
       }
       res.status(503).json({ error: "provider_agent_unavailable" });
     }

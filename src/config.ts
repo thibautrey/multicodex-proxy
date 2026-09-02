@@ -13,6 +13,10 @@ export const PROVIDER_AGENT_RUNTIME_STATE_PATH =
   process.env.PROVIDER_AGENT_RUNTIME_STATE_PATH ?? path.resolve(path.dirname(STORE_PATH), "provider-agent-runtime-endpoints.json");
 export const PROVIDER_AGENT_DEVICE_KEY_PATH =
   process.env.PROVIDER_AGENT_DEVICE_KEY_PATH ?? path.resolve(path.dirname(STORE_PATH), "provider-agent-device-identity.json");
+export const PROVIDER_AGENT_ENROLLMENT_STATE_PATH =
+  process.env.PROVIDER_AGENT_ENROLLMENT_STATE_PATH ?? path.resolve(path.dirname(STORE_PATH), "provider-agent-cloud-enrollment.json");
+export const PROVIDER_AGENT_CLOUD_API_URL =
+  process.env.PROVIDER_AGENT_CLOUD_API_URL ?? "https://api.multivibe.cloud";
 export const OAUTH_STATE_PATH =
   process.env.OAUTH_STATE_PATH ?? "/data/oauth-state.json";
 export const TRACE_FILE_PATH =
