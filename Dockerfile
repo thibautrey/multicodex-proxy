@@ -25,6 +25,7 @@ ENV APP_GIT_SHA=$GIT_SHA
 ENV APP_BUILD_ID=$BUILD_ID
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/web-dist ./web-dist
+COPY modules/security ./modules/security
 COPY --from=build \
   /app/scripts/codex-project-hook.mjs \
   /app/scripts/install-codex-project-hook.mjs \

@@ -66,6 +66,7 @@ import {
 } from "../../smart-routing.js";
 import type { SmartRoutingCoordinator } from "../../smart-routing-routes.js";
 import { discoverAndPersistLocalRuntimes } from "../../local-runtime-discovery.js";
+import type { ModuleManager } from "../../module-manager.js";
 
 type StoragePaths = {
   accountsPath: string;
@@ -88,6 +89,7 @@ export type AdminRoutesOptions = {
   configuredProxyApiKeys: ProxyApiKey[];
   storagePaths: StoragePaths;
   smartRouting?: SmartRoutingCoordinator;
+  moduleManager?: ModuleManager;
 };
 
 function proxyApiKeyPreview(key: string): string {
@@ -358,6 +360,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     configuredProxyApiKeys,
     storagePaths,
     smartRouting,
+    moduleManager,
   } = options;
 
   const {
@@ -376,6 +379,51 @@ export function createAdminRouter(options: AdminRoutesOptions) {
   } = traceManager;
 
   const router = express.Router();
+
+  router.get("/modules", (_req, res) => {
+    if (!moduleManager) return res.status(503).json({ error: "Module manager is unavailable" });
+    return res.json({ modules: moduleManager.list() });
+  });
+
+  router.post("/modules/install", async (req, res) => {
+    if (!moduleManager) return res.status(503).json({ error: "Module manager is unavailable" });
+    try {
+      return res.status(201).json({ module: await moduleManager.install(String(req.body?.url ?? "")) });
+    } catch (error) {
+      return res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.post("/modules/:id/update", async (req, res) => {
+    if (!moduleManager) return res.status(503).json({ error: "Module manager is unavailable" });
+    try {
+      return res.json({ module: await moduleManager.update(req.params.id) });
+    } catch (error) {
+      return res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.patch("/modules/:id", async (req, res) => {
+    if (!moduleManager) return res.status(503).json({ error: "Module manager is unavailable" });
+    try {
+      let result;
+      if ("enabled" in (req.body ?? {})) result = await moduleManager.setEnabled(req.params.id, Boolean(req.body.enabled));
+      if ("settings" in (req.body ?? {})) result = await moduleManager.setSettings(req.params.id, req.body.settings);
+      return res.json({ module: result ?? moduleManager.list().find((entry) => entry.id === req.params.id) });
+    } catch (error) {
+      return res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  router.delete("/modules/:id", async (req, res) => {
+    if (!moduleManager) return res.status(503).json({ error: "Module manager is unavailable" });
+    try {
+      await moduleManager.remove(req.params.id);
+      return res.json({ ok: true });
+    } catch (error) {
+      return res.status(400).json({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
 
   const usageBaseUrlForAccount = (account: Account): string => {
     const provider = normalizeProvider(account);

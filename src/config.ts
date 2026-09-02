@@ -1,4 +1,5 @@
 import os from "node:os";
+import path from "node:path";
 
 function finiteAtLeast(
   value: string | undefined,
@@ -13,6 +14,10 @@ function finiteAtLeast(
 
 export const PORT = Number(process.env.PORT ?? 1455);
 export const STORE_PATH = process.env.STORE_PATH ?? "/data/accounts.json";
+export const MODULES_PATH =
+  process.env.MODULES_PATH ?? path.join(path.dirname(STORE_PATH), "modules");
+export const BUNDLED_SECURITY_MODULE_PATH =
+  process.env.BUNDLED_SECURITY_MODULE_PATH ?? path.resolve("modules/security");
 export const OAUTH_STATE_PATH =
   process.env.OAUTH_STATE_PATH ?? "/data/oauth-state.json";
 export const TRACE_FILE_PATH =

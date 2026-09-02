@@ -155,6 +155,7 @@ import {
   type RoutingRequest,
 } from "../../smart-routing.js";
 import type { SmartRoutingCoordinator } from "../../smart-routing-routes.js";
+import type { ModuleManager } from "../../module-manager.js";
 import {
   findSessionAffinityAccount,
   preferSessionAffinityAccount,
@@ -174,6 +175,7 @@ type ProxyRoutesOptions = {
   oauthConfig: OAuthConfig;
   capacityTracker?: CapacityTracker;
   smartRoutingCoordinator?: SmartRoutingCoordinator;
+  moduleManager?: ModuleManager;
   sessionAffinityCache?: SessionAffinityCache;
   sessionAffinityEnabled?: boolean;
 };
@@ -1937,6 +1939,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     oauthConfig,
     capacityTracker,
     smartRoutingCoordinator,
+    moduleManager,
   } = options;
   const { recordTrace } = traceManager;
   const router = express.Router();
@@ -2047,6 +2050,24 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       typeof res.locals.proxyApplication === "string"
         ? res.locals.proxyApplication
         : undefined;
+    if (moduleManager) {
+      try {
+        const hooked = await moduleManager.runHook("request.received", req.body, {
+          requestId: clientRequestId,
+          application,
+          route: req.path,
+          transport: Boolean(req.body?.stream) ? "sse" : "http",
+          signal: requestSignal,
+        });
+        if (hooked.response) {
+          for (const [name, value] of Object.entries(hooked.response.headers ?? {})) res.setHeader(name, value);
+          return res.status(hooked.response.status).send(hooked.response.body);
+        }
+        req.body = hooked.value;
+      } catch (error) {
+        return res.status(500).json({ error: { message: "A required request module failed", type: "module_error", code: "module_failed" } });
+      }
+    }
     const affinityApplication = application ?? "default";
     const requestHeaders = TRACE_INCLUDE_HEADERS
       ? traceHeadersForRequest(req.headers)
@@ -2652,6 +2673,29 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           candidate.resolvedModel,
           discoveredModels,
         );
+        if (moduleManager) {
+          const hooked = await moduleManager.runHook(
+            "request.beforeUpstream",
+            payloadToUpstream,
+            {
+              requestId: clientRequestId,
+              sessionId: promptCacheSessionId,
+              application,
+              route: req.path,
+              transport: clientRequestedStream ? "sse" : "http",
+              provider: candidate.provider,
+              model: candidate.resolvedModel,
+              signal: requestSignal,
+            },
+          );
+          if (hooked.response) {
+            for (const [name, value] of Object.entries(hooked.response.headers ?? {})) {
+              res.setHeader(name, value);
+            }
+            return res.status(hooked.response.status).send(hooked.response.body);
+          }
+          payloadToUpstream = hooked.value;
+        }
         const imageTrace = buildImagePayloadTrace(
           req.body,
           payloadToUpstream,
@@ -3581,7 +3625,20 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             }
 
             if (shouldReturnChatCompletions) {
-              const txt = await upstream.text();
+              let txt = await upstream.text();
+              if (moduleManager) {
+                const hooked = await moduleManager.runHook("response.received", txt, {
+                  requestId: clientRequestId,
+                  sessionId: promptCacheSessionId,
+                  application,
+                  route: req.path,
+                  transport: "http",
+                  provider: candidate.provider,
+                  model: candidate.resolvedModel,
+                  signal: requestSignal,
+                });
+                txt = hooked.value;
+              }
               const model = req.body?.model ?? payloadToUpstream?.model ?? "unknown";
               const parsedChat = txt.includes("chat.completion.chunk")
                 ? parseChatCompletionSSEToChatCompletion(txt, model)
@@ -3850,6 +3907,19 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           }
 
           let text = bufferedText ?? (await upstream.text());
+          if (moduleManager) {
+            const hooked = await moduleManager.runHook("response.received", text, {
+              requestId: clientRequestId,
+              sessionId: promptCacheSessionId,
+              application,
+              route: req.path,
+              transport: clientRequestedStream ? "sse" : "http",
+              provider: candidate.provider,
+              model: candidate.resolvedModel,
+              signal: requestSignal,
+            });
+            text = hooked.value;
+          }
           const upstreamEmptyBody = !text;
           if (!text)
             text = JSON.stringify({

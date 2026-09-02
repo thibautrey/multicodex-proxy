@@ -21,6 +21,8 @@ import {
   INFERENCE_IDEMPOTENCY_TTL_MS,
   JOBS_DB_PATH,
   JOB_WORKER_CONCURRENCY,
+  MODULES_PATH,
+  BUNDLED_SECURITY_MODULE_PATH,
   CHATGPT_BASE_URL,
   MISTRAL_BASE_URL,
   MISTRAL_UPSTREAM_PATH,
@@ -46,6 +48,7 @@ import {
   REALTIME_REQUEST_TIMEOUT_MS,
   REALTIME_WEBRTC_CALL_URL,
 } from "./config.js";
+import { ModuleManager } from "./module-manager.js";
 import { createBodyParserMiddleware } from "./middleware/decompression.js";
 import http from "node:http";
 import { startScheduledWeeklyResetMonitor } from "./rate-limit-reset.js";
@@ -103,6 +106,7 @@ const jobStore = new JobStore(
 const smartRouting = new SmartRoutingCoordinator(store, jobStore, capacityTracker);
 const oauthStore = new OAuthStateStore(OAUTH_STATE_PATH);
 const codexProjectRegistry = new CodexProjectRegistry(CODEX_PROJECTS_PATH);
+const moduleManager = new ModuleManager(MODULES_PATH, BUNDLED_SECURITY_MODULE_PATH);
 const traceManager = createTraceManager({
   filePath: TRACE_FILE_PATH,
   historyFilePath: TRACE_STATS_HISTORY_PATH,
@@ -116,6 +120,7 @@ await Promise.all([
   oauthStore.init(),
   codexProjectRegistry.init(),
   traceManager.initialize(),
+  moduleManager.initialize(),
 ]);
 await traceManager.seedStatsHistoryIfMissing();
 startScheduledWeeklyResetMonitor({
@@ -144,6 +149,7 @@ const adminRouter = createAdminRouter({
   codexProjectRegistrationToken: CODEX_PROJECT_REGISTRATION_TOKEN,
   configuredProxyApiKeys,
   smartRouting,
+  moduleManager,
   storagePaths: {
     accountsPath: STORE_PATH,
     oauthStatePath: OAUTH_STATE_PATH,
@@ -166,6 +172,7 @@ const proxyRouter = createProxyRouter({
   oauthConfig,
   capacityTracker,
   smartRoutingCoordinator: smartRouting,
+  moduleManager,
 });
 
 const realtimeRouter = createRealtimeRouter({

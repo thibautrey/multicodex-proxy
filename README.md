@@ -578,6 +578,21 @@ directory only while the service is stopped.
 
 ## ⚙️ Configuration
 
+### Lifecycle plugins
+
+MultiVibe loads versioned lifecycle modules that can inspect, transform, or
+answer requests at documented request and response hooks. Install public
+modules from the dashboard's **Plugins** page using a normal
+`https://github.com/owner/repository` URL. Installs are pinned to the resolved
+commit and never update automatically. Module code is fully trusted and runs
+with the same process permissions as MultiVibe; review repositories before
+installing them. Code changes require a restart, while activation changes apply
+to new requests immediately.
+
+The Security module is maintained separately at
+`https://github.com/thibautrey/multivibe-security-module`, shipped as a pinned
+submodule, and enabled by default.
+
 The tables below separate application defaults from the effective values in the
 shipped Compose profile.
 

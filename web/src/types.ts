@@ -257,6 +257,7 @@ export type Tab =
   | "accounts"
   | "aliases"
   | "api-keys"
+  | "plugins"
   | "tracing"
   | "docs";
 
@@ -334,6 +335,27 @@ export type RoutingRule = {
 export type StoreSettings = {
   defaultPassthroughAccountId?: string;
   imageRequestModelOverride?: string;
+};
+
+export type ModuleView = {
+  id: string;
+  origin: string;
+  commit: string;
+  enabled: boolean;
+  source: "external" | "bundled";
+  restartRequired?: boolean;
+  loaded: boolean;
+  healthy: boolean;
+  error?: string;
+  removable: boolean;
+  settings: Record<string, unknown>;
+  manifest?: {
+    name: string;
+    version: string;
+    description: string;
+    hooks: string[];
+    settingsSchema?: Record<string, unknown>;
+  };
 };
 
 export type ProxyApiKey = {
