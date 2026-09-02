@@ -16,6 +16,7 @@ import {
 
 const MANIFEST = "multivibe.module.json";
 const LOCK_FILE = "modules-lock.json";
+const MARKETPLACE_FILE = "marketplace.json";
 const MAX_REPOSITORY_BYTES = 256 * 1024 * 1024;
 const MAX_FILE_BYTES = 128 * 1024 * 1024;
 
@@ -35,6 +36,14 @@ export type ModuleView = ModuleLock & {
   healthy: boolean;
   error?: string;
   removable: boolean;
+};
+
+export type MarketplaceModule = {
+  id: string;
+  origin: string;
+  commit: string;
+  submittedAt: string;
+  manifest: ModuleManifest;
 };
 
 type LoadedModule = {
@@ -120,6 +129,20 @@ export async function readModuleManifest(root: string): Promise<ModuleManifest> 
   if (!Array.isArray(manifest.hooks) || manifest.hooks.some((hook: string) => !MODULE_HOOKS.includes(hook as ModuleHookName))) {
     throw new Error("Invalid module hooks");
   }
+  if (manifest.categories !== undefined && (!Array.isArray(manifest.categories) || manifest.categories.length > 8 || manifest.categories.some((category: unknown) => typeof category !== "string" || !category.trim() || category.length > 40))) {
+    throw new Error("Invalid module categories");
+  }
+  if (manifest.tags !== undefined && (!Array.isArray(manifest.tags) || manifest.tags.length > 16 || manifest.tags.some((tag: unknown) => typeof tag !== "string" || !tag.trim() || tag.length > 32))) {
+    throw new Error("Invalid module tags");
+  }
+  for (const field of ["author", "homepage"] as const) {
+    if (manifest[field] !== undefined && (typeof manifest[field] !== "string" || manifest[field].length > 200)) throw new Error(`Invalid module ${field}`);
+  }
+  if (manifest.homepage !== undefined) {
+    let homepage: URL;
+    try { homepage = new URL(manifest.homepage); } catch { throw new Error("Invalid module homepage"); }
+    if (homepage.protocol !== "https:" || homepage.username || homepage.password) throw new Error("Module homepage must be a public HTTPS URL");
+  }
   const entrypoint = path.resolve(root, String(manifest.entrypoint ?? ""));
   if (!entrypoint.startsWith(`${path.resolve(root)}${path.sep}`)) throw new Error("Module entrypoint escapes repository");
   const stat = await fs.stat(entrypoint);
@@ -152,6 +175,7 @@ function validateSettings(schema: Record<string, any> | undefined, settings: Rec
 
 export class ModuleManager {
   private locks: ModuleLock[] = [];
+  private marketplace: MarketplaceModule[] = [];
   private loaded = new Map<string, LoadedModule>();
 
   constructor(
@@ -160,6 +184,7 @@ export class ModuleManager {
   ) {}
 
   private get lockPath() { return path.join(this.root, LOCK_FILE); }
+  private get marketplacePath() { return path.join(this.root, MARKETPLACE_FILE); }
   private get checkoutRoot() { return path.join(this.root, "checkouts"); }
 
   async initialize(): Promise<void> {
@@ -170,6 +195,13 @@ export class ModuleManager {
       if (error?.code !== "ENOENT") throw error;
       this.locks = [];
     }
+    try {
+      this.marketplace = JSON.parse(await fs.readFile(this.marketplacePath, "utf8"));
+      if (!Array.isArray(this.marketplace)) this.marketplace = [];
+    } catch (error: any) {
+      if (error?.code !== "ENOENT") throw error;
+      this.marketplace = [];
+    }
     const restarted = this.locks.some((entry) => entry.restartRequired);
     if (restarted) {
       for (const lock of this.locks) delete lock.restartRequired;
@@ -178,6 +210,7 @@ export class ModuleManager {
     if (this.bundledRoot) {
       try {
         const manifest = await readModuleManifest(this.bundledRoot);
+        this.upsertMarketplace({ id: manifest.id, origin: normalizePublicGitHubUrl(manifest.repository), commit: "bundled", submittedAt: new Date(0).toISOString(), manifest });
         if (!this.locks.some((entry) => entry.id === manifest.id)) {
           this.locks.push({
             id: manifest.id,
@@ -228,6 +261,41 @@ export class ModuleManager {
     const temporary = `${this.lockPath}.${randomUUID()}.tmp`;
     await fs.writeFile(temporary, `${JSON.stringify(this.locks, null, 2)}\n`, { mode: 0o600 });
     await fs.rename(temporary, this.lockPath);
+  }
+
+  private upsertMarketplace(entry: MarketplaceModule): void {
+    const index = this.marketplace.findIndex((candidate) => candidate.id === entry.id);
+    if (index >= 0) this.marketplace[index] = entry;
+    else this.marketplace.push(entry);
+  }
+
+  private async saveMarketplace(): Promise<void> {
+    await fs.mkdir(this.root, { recursive: true });
+    const temporary = `${this.marketplacePath}.${randomUUID()}.tmp`;
+    await fs.writeFile(temporary, `${JSON.stringify(this.marketplace, null, 2)}\n`, { mode: 0o600 });
+    await fs.rename(temporary, this.marketplacePath);
+  }
+
+  marketplaceList(): MarketplaceModule[] {
+    return structuredClone(this.marketplace).sort((a, b) => a.manifest.name.localeCompare(b.manifest.name));
+  }
+
+  async submit(rawUrl: string): Promise<MarketplaceModule> {
+    const origin = normalizePublicGitHubUrl(rawUrl);
+    const staging = path.join(this.root, `.submission-${randomUUID()}`);
+    try {
+      await run("git", ["clone", "--depth", "1", "--filter=blob:none", "--no-recurse-submodules", "--", origin, staging]);
+      const commit = await run("git", ["rev-parse", "HEAD"], staging);
+      await validateTree(staging);
+      const manifest = await readModuleManifest(staging);
+      if (normalizePublicGitHubUrl(manifest.repository) !== origin) throw new Error("Manifest repository does not match submitted origin");
+      const entry = { id: manifest.id, origin, commit, submittedAt: new Date().toISOString(), manifest };
+      this.upsertMarketplace(entry);
+      await this.saveMarketplace();
+      return structuredClone(entry);
+    } finally {
+      await fs.rm(staging, { recursive: true, force: true });
+    }
   }
 
   list(): ModuleView[] {

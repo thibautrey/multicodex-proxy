@@ -24,6 +24,10 @@ export type ModuleManifest = {
   timeoutMs?: number;
   failurePolicy?: ModuleFailurePolicy;
   repository: string;
+  categories?: string[];
+  tags?: string[];
+  author?: string;
+  homepage?: string;
   settingsSchema?: Record<string, unknown>;
   defaultSettings?: Record<string, unknown>;
 };

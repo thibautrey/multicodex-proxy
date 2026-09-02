@@ -14,6 +14,7 @@ import type {
   ExposedModel,
   ModelAlias,
   ModuleView,
+  MarketplaceModule,
   PriorityClass,
   ProxyApiKey,
   CreatedProxyApiKey,
@@ -109,6 +110,7 @@ export default function App() {
   const [applicationPolicies, setApplicationPolicies] = useState<ApplicationPolicy[]>([]);
   const [settings, setSettings] = useState<StoreSettings>({});
   const [modules, setModules] = useState<ModuleView[]>([]);
+  const [marketplaceModules, setMarketplaceModules] = useState<MarketplaceModule[]>([]);
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [loginToken, setLoginToken] = useState("");
   const [loginBusy, setLoginBusy] = useState(false);
@@ -316,6 +318,7 @@ export default function App() {
     setProxyApiKeys((apiKeysRes.proxyApiKeys ?? []) as ProxyApiKey[]);
     setApplicationPolicies((policiesRes.applicationPolicies ?? []) as ApplicationPolicy[]);
     setModules((modulesRes.modules ?? []) as ModuleView[]);
+    setMarketplaceModules((modulesRes.marketplace ?? []) as MarketplaceModule[]);
   };
 
   const refreshModels = async () => {
@@ -1188,7 +1191,7 @@ export default function App() {
         )}
 
         {tab === "plugins" && (
-          <PluginsTab modules={modules} reload={loadBase} />
+          <PluginsTab modules={modules} marketplace={marketplaceModules} reload={loadBase} />
         )}
 
         {tab === "docs" && (
