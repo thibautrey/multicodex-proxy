@@ -30,20 +30,31 @@ The agent itself refuses to listen on anything other than literal `127.0.0.1`
 or `::1` port `1460`.
 
 `GET /v1/detected-models` performs an on-demand local inventory through those
-reviewed candidates only. Catalog calls are credential-free, redirect-free,
-deadline- and size-bounded, and the response contains only the adapter ID and
-validated model identifiers. Unavailable candidates expose no local error or
-network details. The inventory remains local and does not select, enroll,
-advertise or upload a model.
+reviewed candidates and explicitly configured manual endpoints only. Manual
+endpoints must use literal `127.0.0.1` or `::1`, HTTP and an explicit port;
+userinfo, paths, queries, fragments, LAN names and public addresses are
+rejected. Catalog calls are redirect-free, deadline- and size-bounded, and the
+response contains only the adapter ID and validated model identifiers.
+Unavailable candidates expose no local error or network details. The inventory
+remains local and does not select, enroll, advertise or upload a model.
+
+Core manages manual endpoints through authenticated
+`GET /v1/runtime-endpoints` and `PUT /v1/runtime-endpoints`. The state is a
+separate schema-versioned mode-`0600` document using atomic revisioned
+replacement. Optional local runtime bearers are persisted only in that file,
+are sent only to the selected loopback catalog endpoint, and are never present
+in API responses or logs. Omitting `bearer_token` preserves the secret for an
+unchanged adapter and endpoint; sending an explicit empty value removes it.
 
 The live Cloud enrollment, dedicated-tailnet `tsnet` transport, mutually authenticated HTTP/2/WebSocket fallback, signed metering envelopes, and remote workload handling remain fail-closed until their credentials, protocol and Cloud gates are implemented and verified. The current binary does not enroll, advertise capacity, accept community work, or create compensation eligibility.
 
 Core starts the embedded process with a closed environment allowlist containing
 only its loopback URL, the agent loopback listen address and the optional
-initial selected-model seed. Core separately supplies the explicit local state
-path and its newly generated control bearer. Parent-provided state paths or
-control tokens, provider credentials, Stripe or OAuth secrets, control-plane
-tokens, API keys and unrelated variables are never inherited by the agent.
+initial selected-model seed. Core separately supplies the explicit selection
+and runtime state paths plus its newly generated control bearer.
+Parent-provided state paths or control tokens, provider credentials, Stripe or
+OAuth secrets, control-plane tokens, API keys and unrelated variables are
+never inherited by the agent.
 
 The selection file and the detected inventory remain on the machine. This
 preview corridor does not submit either one to Cloud, enroll the node, publish

@@ -93,6 +93,34 @@ type ProviderAgentDetectedModels = {
   runtimes: Array<{ adapter_id: string; models: string[] }>;
 };
 
+type ProviderAgentAdapterRegistry = {
+  schema_version: "provider-runtime-registry-v2";
+  adapters: Array<{
+    id: string;
+    display_name: string;
+    authentication: "none" | "optional-bearer" | "required-bearer";
+    automatic_loopback_candidates: Array<{ endpoint: string }>;
+  }>;
+};
+
+type ProviderAgentRuntimeEndpoints = {
+  schema_version: "provider-runtime-endpoints-v1";
+  revision: number;
+  endpoints: Array<{
+    adapter_id: string;
+    endpoint: string;
+    authentication: "none" | "bearer";
+  }>;
+};
+
+type ProviderRuntimeEndpointDraft = {
+  adapterId: string;
+  endpoint: string;
+  bearerToken: string;
+  existingAuthentication: "none" | "bearer";
+  clearBearer: boolean;
+};
+
 type ProviderPreviewStatus =
   | "idle"
   | "loading"
@@ -247,6 +275,15 @@ export function AccountsTab(props: Props) {
   const [providerSelectionDraft, setProviderSelectionDraft] = useState<string[]>([]);
   const [providerDetectedModels, setProviderDetectedModels] =
     useState<ProviderAgentDetectedModels | null>(null);
+  const [providerAdapterRegistry, setProviderAdapterRegistry] =
+    useState<ProviderAgentAdapterRegistry | null>(null);
+  const [providerRuntimeEndpoints, setProviderRuntimeEndpoints] =
+    useState<ProviderAgentRuntimeEndpoints | null>(null);
+  const [providerRuntimeDrafts, setProviderRuntimeDrafts] =
+    useState<ProviderRuntimeEndpointDraft[]>([]);
+  const [providerRuntimeAdapterToAdd, setProviderRuntimeAdapterToAdd] = useState("");
+  const [providerRuntimeSaving, setProviderRuntimeSaving] = useState(false);
+  const [providerRuntimeMessage, setProviderRuntimeMessage] = useState("");
   const [providerPreviewMessage, setProviderPreviewMessage] = useState("");
   const makeMoneyDialogRef = useRef<HTMLDivElement | null>(null);
   const makeMoneyTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -284,16 +321,32 @@ export function AccountsTab(props: Props) {
     setProviderPreviewMessage("");
     setProviderSelection(null);
     setProviderDetectedModels(null);
+    setProviderAdapterRegistry(null);
+    setProviderRuntimeEndpoints(null);
+    setProviderRuntimeDrafts([]);
+    setProviderRuntimeMessage("");
 
     void Promise.all([
       api("/admin/provider-agent/selection"),
       api("/admin/provider-agent/detected-models"),
-    ]).then(([selection, detected]) => {
+      api("/admin/provider-agent/adapters"),
+      api("/admin/provider-agent/runtime-endpoints"),
+    ]).then(([selection, detected, adapters, runtimeEndpoints]) => {
       if (cancelled) return;
       const nextSelection = selection as ProviderAgentSelection;
+      const nextRuntimeEndpoints = runtimeEndpoints as ProviderAgentRuntimeEndpoints;
       setProviderSelection(nextSelection);
       setProviderSelectionDraft([...nextSelection.selected_models].sort());
       setProviderDetectedModels(detected as ProviderAgentDetectedModels);
+      setProviderAdapterRegistry(adapters as ProviderAgentAdapterRegistry);
+      setProviderRuntimeEndpoints(nextRuntimeEndpoints);
+      setProviderRuntimeDrafts(nextRuntimeEndpoints.endpoints.map((endpoint) => ({
+        adapterId: endpoint.adapter_id,
+        endpoint: endpoint.endpoint,
+        bearerToken: "",
+        existingAuthentication: endpoint.authentication,
+        clearBearer: false,
+      })));
       setProviderPreviewStatus("ready");
     }).catch((error: unknown) => {
       if (cancelled) return;
@@ -416,6 +469,69 @@ export function AccountsTab(props: Props) {
           ? "The local selection contains an invalid model identifier."
           : "The local selection could not be saved.",
       );
+    }
+  };
+
+  const saveProviderRuntimeEndpoints = async () => {
+    if (!providerRuntimeEndpoints || providerRuntimeSaving) return;
+    setProviderRuntimeSaving(true);
+    setProviderRuntimeMessage("");
+    try {
+      const next = await api("/admin/provider-agent/runtime-endpoints", {
+        method: "PUT",
+        body: JSON.stringify({
+          revision: providerRuntimeEndpoints.revision,
+          endpoints: providerRuntimeDrafts.map((draft) => ({
+            adapter_id: draft.adapterId,
+            endpoint: draft.endpoint,
+            ...(draft.clearBearer
+              ? { bearer_token: "" }
+              : draft.bearerToken
+                ? { bearer_token: draft.bearerToken }
+                : {}),
+          })),
+        }),
+      }) as ProviderAgentRuntimeEndpoints;
+      const detected = await api("/admin/provider-agent/detected-models") as ProviderAgentDetectedModels;
+      setProviderRuntimeEndpoints(next);
+      setProviderRuntimeDrafts(next.endpoints.map((endpoint) => ({
+        adapterId: endpoint.adapter_id,
+        endpoint: endpoint.endpoint,
+        bearerToken: "",
+        existingAuthentication: endpoint.authentication,
+        clearBearer: false,
+      })));
+      setProviderDetectedModels(detected);
+      setProviderRuntimeMessage(
+        "Local runtime endpoints saved and detection refreshed. Nothing was submitted to MultiVibe Cloud.",
+      );
+    } catch (error: unknown) {
+      if (error instanceof ApiError && error.status === 409) {
+        try {
+          const latest = await api("/admin/provider-agent/runtime-endpoints") as ProviderAgentRuntimeEndpoints;
+          setProviderRuntimeEndpoints(latest);
+          setProviderRuntimeDrafts(latest.endpoints.map((endpoint) => ({
+            adapterId: endpoint.adapter_id,
+            endpoint: endpoint.endpoint,
+            bearerToken: "",
+            existingAuthentication: endpoint.authentication,
+            clearBearer: false,
+          })));
+          setProviderRuntimeMessage(
+            "Runtime endpoints changed in another session. The latest local revision is shown; review it before saving again.",
+          );
+          return;
+        } catch {
+          // Fall through to the local error state below.
+        }
+      }
+      setProviderRuntimeMessage(
+        error instanceof ApiError && error.status === 400
+          ? "Use one unique adapter per entry and a literal http://127.0.0.1:port or http://[::1]:port endpoint."
+          : "The local runtime endpoints could not be saved.",
+      );
+    } finally {
+      setProviderRuntimeSaving(false);
     }
   };
 
@@ -947,6 +1063,24 @@ export function AccountsTab(props: Props) {
     (providerSelection.selected_models.length !== providerSelectionDraft.length ||
       providerSelection.selected_models.some((model, index) => model !== providerSelectionDraft[index])),
   );
+  const manuallyConfigurableProviderAdapters =
+    providerAdapterRegistry?.adapters.filter(
+      (adapter) => adapter.automatic_loopback_candidates.length === 0,
+    ) ?? [];
+  const availableProviderRuntimeAdapters = manuallyConfigurableProviderAdapters.filter(
+    (adapter) => !providerRuntimeDrafts.some((draft) => draft.adapterId === adapter.id),
+  );
+  const providerRuntimeChanged = Boolean(
+    providerRuntimeEndpoints && (
+      providerRuntimeEndpoints.endpoints.length !== providerRuntimeDrafts.length ||
+      providerRuntimeDrafts.some((draft) => {
+        const current = providerRuntimeEndpoints.endpoints.find(
+          (endpoint) => endpoint.adapter_id === draft.adapterId,
+        );
+        return !current || current.endpoint !== draft.endpoint || draft.bearerToken !== "" || draft.clearBearer;
+      })
+    ),
+  );
 
   return (
     <>
@@ -1438,6 +1572,157 @@ export function AccountsTab(props: Props) {
               catalog probes. It does not scan the LAN, inspect processes or
               files, install anything, or share the result.
             </div>
+
+            <section className="provider-selection-panel" aria-labelledby="provider-runtime-endpoints-title">
+              <div className="provider-selection-heading">
+                <div>
+                  <span className="eyebrow">Manual loopback runtimes</span>
+                  <h3 id="provider-runtime-endpoints-title">Connect a supported local server</h3>
+                  <p>
+                    Only literal <span className="mono">127.0.0.1</span> or <span className="mono">::1</span> HTTP endpoints with an explicit port are accepted.
+                    Bearers are stored only in Core&apos;s protected local file and are never returned by the API.
+                  </p>
+                </div>
+                {providerRuntimeEndpoints && (
+                  <span className="badge">
+                    {providerRuntimeDrafts.length} configured · revision {providerRuntimeEndpoints.revision}
+                  </span>
+                )}
+              </div>
+
+              {(providerPreviewStatus === "ready" || providerPreviewStatus === "saving") && providerAdapterRegistry && (
+                <>
+                  <div className="provider-runtime-editor-list">
+                    {providerRuntimeDrafts.map((draft, index) => {
+                      const adapter = manuallyConfigurableProviderAdapters.find(
+                        (candidate) => candidate.id === draft.adapterId,
+                      );
+                      return (
+                        <fieldset className="provider-runtime-editor" key={draft.adapterId}>
+                          <legend>{adapter?.display_name ?? draft.adapterId}</legend>
+                          <label>
+                            Loopback endpoint
+                            <input
+                              type="url"
+                              value={draft.endpoint}
+                              disabled={providerRuntimeSaving}
+                              placeholder="http://127.0.0.1:8000"
+                              spellCheck={false}
+                              onChange={(event) => setProviderRuntimeDrafts((current) => current.map(
+                                (entry, entryIndex) => entryIndex === index
+                                  ? { ...entry, endpoint: event.target.value }
+                                  : entry,
+                              ))}
+                            />
+                          </label>
+                          {adapter?.authentication !== "none" && (
+                            <label>
+                              Optional local bearer
+                              <input
+                                type="password"
+                                value={draft.bearerToken}
+                                disabled={providerRuntimeSaving || draft.clearBearer}
+                                placeholder={draft.existingAuthentication === "bearer"
+                                  ? "Stored locally — leave blank to keep"
+                                  : "Leave blank when authentication is disabled"}
+                                autoComplete="new-password"
+                                onChange={(event) => setProviderRuntimeDrafts((current) => current.map(
+                                  (entry, entryIndex) => entryIndex === index
+                                    ? { ...entry, bearerToken: event.target.value, clearBearer: false }
+                                    : entry,
+                                ))}
+                              />
+                            </label>
+                          )}
+                          <div className="provider-runtime-editor-actions">
+                            {draft.existingAuthentication === "bearer" && adapter?.authentication !== "none" && (
+                              <label className="provider-model-choice">
+                                <input
+                                  type="checkbox"
+                                  checked={draft.clearBearer}
+                                  disabled={providerRuntimeSaving}
+                                  onChange={(event) => setProviderRuntimeDrafts((current) => current.map(
+                                    (entry, entryIndex) => entryIndex === index
+                                      ? { ...entry, clearBearer: event.target.checked, bearerToken: "" }
+                                      : entry,
+                                  ))}
+                                />
+                                <span>Remove stored bearer</span>
+                              </label>
+                            )}
+                            <button
+                              type="button"
+                              className="btn ghost"
+                              disabled={providerRuntimeSaving}
+                              onClick={() => setProviderRuntimeDrafts((current) => current.filter(
+                                (_, entryIndex) => entryIndex !== index,
+                              ))}
+                            >
+                              Remove endpoint
+                            </button>
+                          </div>
+                        </fieldset>
+                      );
+                    })}
+                  </div>
+
+                  <div className="provider-runtime-add-row">
+                    <label className="compact-field">
+                      Runtime adapter
+                      <select
+                        value={providerRuntimeAdapterToAdd}
+                        disabled={providerRuntimeSaving || !availableProviderRuntimeAdapters.length}
+                        onChange={(event) => setProviderRuntimeAdapterToAdd(event.target.value)}
+                      >
+                        <option value="">
+                          {availableProviderRuntimeAdapters.length ? "Choose a manual adapter" : "All manual adapters are configured"}
+                        </option>
+                        {availableProviderRuntimeAdapters.map((adapter) => (
+                          <option key={adapter.id} value={adapter.id}>{adapter.display_name}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      type="button"
+                      className="btn ghost"
+                      disabled={!providerRuntimeAdapterToAdd || providerRuntimeSaving}
+                      onClick={() => {
+                        const adapterId = providerRuntimeAdapterToAdd;
+                        if (!adapterId) return;
+                        setProviderRuntimeDrafts((current) => [...current, {
+                          adapterId,
+                          endpoint: "http://127.0.0.1:8000",
+                          bearerToken: "",
+                          existingAuthentication: "none",
+                          clearBearer: false,
+                        }]);
+                        setProviderRuntimeAdapterToAdd("");
+                        setProviderRuntimeMessage("");
+                      }}
+                    >
+                      Add local endpoint
+                    </button>
+                  </div>
+
+                  {providerRuntimeMessage && (
+                    <p className="provider-selection-message" role="status">{providerRuntimeMessage}</p>
+                  )}
+                  <div className="provider-selection-actions">
+                    <span className="muted">
+                      Saving changes only the protected local runtime file and reruns bounded loopback detection.
+                    </span>
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={!providerRuntimeChanged || providerRuntimeSaving}
+                      onClick={() => void saveProviderRuntimeEndpoints()}
+                    >
+                      {providerRuntimeSaving ? "Saving locally…" : "Save endpoints locally"}
+                    </button>
+                  </div>
+                </>
+              )}
+            </section>
 
             <section className="provider-selection-panel" aria-labelledby="provider-selection-title">
               <div className="provider-selection-heading">

@@ -15,10 +15,40 @@ export type ProviderAgentDetectedModels = {
   runtimes: Array<{ adapter_id: string; models: string[] }>;
 };
 
+export type ProviderAgentRuntimeEndpointInput = {
+  adapter_id: string;
+  endpoint: string;
+  bearer_token?: string;
+};
+
+export type ProviderAgentRuntimeEndpoints = {
+  schema_version: "provider-runtime-endpoints-v1";
+  revision: number;
+  endpoints: Array<{
+    adapter_id: string;
+    endpoint: string;
+    authentication: "none" | "bearer";
+  }>;
+};
+
+export type ProviderAgentAdapterRegistry = {
+  schema_version: "provider-runtime-registry-v2";
+  adapters: Array<{
+    id: string;
+    display_name: string;
+    protocol: "openai-compatible" | "native";
+    authentication: "none" | "optional-bearer" | "required-bearer";
+    automatic_loopback_candidates: Array<{ endpoint: string }>;
+  }>;
+};
+
 export type ProviderAgentControl = {
   enabled: boolean;
   getSelection(): Promise<ProviderAgentSelection>;
   replaceSelection(revision: number, selectedModels: string[]): Promise<{ conflict: boolean; selection: ProviderAgentSelection }>;
+  getAdapters(): Promise<ProviderAgentAdapterRegistry>;
+  getRuntimeEndpoints(): Promise<ProviderAgentRuntimeEndpoints>;
+  replaceRuntimeEndpoints(revision: number, endpoints: ProviderAgentRuntimeEndpointInput[]): Promise<{ conflict: boolean; endpoints: ProviderAgentRuntimeEndpoints }>;
   detectModels(): Promise<ProviderAgentDetectedModels>;
 };
 
@@ -51,10 +81,12 @@ export function providerAgentChildEnvironment(
   source: NodeJS.ProcessEnv,
   statePath: string | undefined,
   controlToken: string,
+  runtimeStatePath?: string,
 ): NodeJS.ProcessEnv {
   return {
     ...providerAgentEnvironment(source),
     ...(statePath ? { MULTIVIBE_PROVIDER_STATE_PATH: statePath } : {}),
+    ...(runtimeStatePath ? { MULTIVIBE_PROVIDER_RUNTIME_STATE_PATH: runtimeStatePath } : {}),
     MULTIVIBE_PROVIDER_CONTROL_TOKEN: controlToken,
   };
 }
@@ -71,11 +103,39 @@ export function isValidProviderSelectedModelId(model: unknown): model is string 
   });
 }
 
+export function isValidProviderRuntimeEndpointInput(
+  value: unknown,
+): value is ProviderAgentRuntimeEndpointInput {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const input = value as Record<string, unknown>;
+  const keys = Object.keys(input);
+  if (keys.some((key) => !["adapter_id", "endpoint", "bearer_token"].includes(key))) return false;
+  if (typeof input.adapter_id !== "string" || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(input.adapter_id)) return false;
+  if (typeof input.endpoint !== "string" || input.endpoint.length > 256 || input.endpoint.trim() !== input.endpoint) return false;
+  let endpoint: URL;
+  try {
+    endpoint = new URL(input.endpoint);
+  } catch {
+    return false;
+  }
+  if (endpoint.protocol !== "http:" || endpoint.username || endpoint.password
+    || endpoint.search || endpoint.hash || (endpoint.pathname !== "/" && endpoint.pathname !== "")
+    || !endpoint.port || !["127.0.0.1", "[::1]"].includes(endpoint.hostname)) return false;
+  const port = Number(endpoint.port);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) return false;
+  if (input.bearer_token !== undefined) {
+    if (typeof input.bearer_token !== "string" || Buffer.byteLength(input.bearer_token) > 4096
+      || /\p{Cc}/u.test(input.bearer_token)) return false;
+  }
+  return true;
+}
+
 export function startEmbeddedProviderAgent(options: {
   enabled: boolean;
   binaryPath: string;
   environment?: NodeJS.ProcessEnv;
   statePath?: string;
+  runtimeStatePath?: string;
   restartLimit?: number;
 }): ProviderAgentSupervisor {
   const unavailable = async (): Promise<never> => { throw new Error("provider agent is not enabled"); };
@@ -84,11 +144,18 @@ export function startEmbeddedProviderAgent(options: {
     stop: async () => undefined,
     getSelection: unavailable,
     replaceSelection: unavailable,
+    getAdapters: unavailable,
+    getRuntimeEndpoints: unavailable,
+    replaceRuntimeEndpoints: unavailable,
     detectModels: unavailable,
   };
   if (!path.isAbsolute(options.binaryPath)) throw new Error("provider agent binary path must be absolute");
   if (options.statePath && (!path.isAbsolute(options.statePath) || path.normalize(options.statePath) !== options.statePath)) {
     throw new Error("provider agent state path must be a clean absolute path");
+  }
+  if (options.runtimeStatePath && (!path.isAbsolute(options.runtimeStatePath)
+    || path.normalize(options.runtimeStatePath) !== options.runtimeStatePath)) {
+    throw new Error("provider agent runtime state path must be a clean absolute path");
   }
   const sourceEnvironment = options.environment ?? process.env;
   const controlToken = randomBytes(32).toString("base64url");
@@ -119,7 +186,7 @@ export function startEmbeddedProviderAgent(options: {
   const launch = () => {
     if (stopped) return;
     child = spawn(options.binaryPath, [], {
-      env: providerAgentChildEnvironment(sourceEnvironment, options.statePath, controlToken),
+      env: providerAgentChildEnvironment(sourceEnvironment, options.statePath, controlToken, options.runtimeStatePath),
       shell: false,
       stdio: ["ignore", "inherit", "inherit"],
     });
@@ -142,6 +209,16 @@ export function startEmbeddedProviderAgent(options: {
         body: JSON.stringify({ revision, selected_models: selectedModels }),
       });
       return { conflict: result.response.status === 409, selection: result.value };
+    },
+    getAdapters: async () => (await request<ProviderAgentAdapterRegistry>("/v1/adapters")).value,
+    getRuntimeEndpoints: async () => (await request<ProviderAgentRuntimeEndpoints>("/v1/runtime-endpoints")).value,
+    replaceRuntimeEndpoints: async (revision, endpoints) => {
+      const result = await request<ProviderAgentRuntimeEndpoints>("/v1/runtime-endpoints", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ revision, endpoints }),
+      });
+      return { conflict: result.response.status === 409, endpoints: result.value };
     },
     detectModels: async () => (await request<ProviderAgentDetectedModels>("/v1/detected-models")).value,
     stop: async () => {

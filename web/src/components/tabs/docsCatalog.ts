@@ -522,6 +522,55 @@ export const ENDPOINTS: ApiEndpoint[] = [
     }),
   },
   {
+    id: "provider-agent-adapters",
+    group: "Configuration",
+    method: "GET",
+    path: "/admin/provider-agent/adapters",
+    title: "List embedded runtime adapters",
+    summary: "Read the bounded adapter contracts shipped with the provider agent.",
+    description:
+      "Automatic candidates exist only for reviewed Ollama and LM Studio defaults. All other adapters require one explicit literal loopback endpoint.",
+    responseExample: json({
+      schema_version: "provider-runtime-registry-v2",
+      adapters: [{ id: "vllm", display_name: "vLLM", automatic_loopback_candidates: [] }],
+    }),
+  },
+  {
+    id: "provider-agent-runtime-endpoints",
+    group: "Configuration",
+    method: "GET",
+    path: "/admin/provider-agent/runtime-endpoints",
+    title: "Read manual runtime endpoints",
+    summary: "Read the revisioned loopback runtime configuration without its bearers.",
+    description:
+      "The response reports only whether authentication is configured. Bearer values are never returned.",
+    responseExample: json({
+      schema_version: "provider-runtime-endpoints-v1",
+      revision: 2,
+      endpoints: [{ adapter_id: "vllm", endpoint: "http://127.0.0.1:8000", authentication: "bearer" }],
+    }),
+  },
+  {
+    id: "replace-provider-agent-runtime-endpoints",
+    group: "Configuration",
+    method: "PUT",
+    path: "/admin/provider-agent/runtime-endpoints",
+    title: "Replace manual runtime endpoints",
+    summary: "Atomically replace local loopback endpoints at an expected revision.",
+    description:
+      "Omit bearer_token to retain an existing secret for an unchanged endpoint, send a new value to replace it, or send an empty value to remove it. Nothing is submitted to Cloud.",
+    requestBody: json({
+      revision: 2,
+      endpoints: [{ adapter_id: "vllm", endpoint: "http://127.0.0.1:8000", bearer_token: "local-only-secret" }],
+    }),
+    responseExample: json({
+      schema_version: "provider-runtime-endpoints-v1",
+      revision: 3,
+      endpoints: [{ adapter_id: "vllm", endpoint: "http://127.0.0.1:8000", authentication: "bearer" }],
+    }),
+    destructive: true,
+  },
+  {
     id: "provider-agent-detected-models",
     group: "Configuration",
     method: "GET",

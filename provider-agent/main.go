@@ -91,10 +91,14 @@ func selectedManifestState(models []string) LifecycleState {
 }
 
 func providerHandler(core *url.URL, models []string, client *http.Client) http.Handler {
-	return providerHandlerWithSelection(core, newMemorySelectionStore(models), client, "")
+	return providerHandlerWithStores(core, newMemorySelectionStore(models), newMemoryRuntimeEndpointStore(), client, "")
 }
 
 func providerHandlerWithSelection(core *url.URL, selections *selectionStore, client *http.Client, controlToken string) http.Handler {
+	return providerHandlerWithStores(core, selections, newMemoryRuntimeEndpointStore(), client, controlToken)
+}
+
+func providerHandlerWithStores(core *url.URL, selections *selectionStore, runtimes *runtimeEndpointStore, client *http.Client, controlToken string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health/live", func(response http.ResponseWriter, _ *http.Request) {
 		response.Header().Set("content-type", "application/json")
@@ -175,10 +179,60 @@ func providerHandlerWithSelection(core *url.URL, selections *selectionStore, cli
 		response.Header().Set("content-type", "application/json")
 		_ = json.NewEncoder(response).Encode(runtimeAdapterRegistry())
 	})
-	mux.HandleFunc("GET /v1/detected-models", func(response http.ResponseWriter, request *http.Request) {
+	mux.HandleFunc("GET /v1/runtime-endpoints", func(response http.ResponseWriter, request *http.Request) {
+		if !authorizeProviderControl(request, controlToken) {
+			http.Error(response, "not found", http.StatusNotFound)
+			return
+		}
 		response.Header().Set("cache-control", "no-store")
 		response.Header().Set("content-type", "application/json")
-		_ = json.NewEncoder(response).Encode(detectedModels(request.Context(), runtimeAdapterRegistry(), client))
+		_ = json.NewEncoder(response).Encode(runtimes.snapshot())
+	})
+	mux.HandleFunc("PUT /v1/runtime-endpoints", func(response http.ResponseWriter, request *http.Request) {
+		if !authorizeProviderControl(request, controlToken) {
+			http.Error(response, "not found", http.StatusNotFound)
+			return
+		}
+		mediaType, _, mediaTypeErr := mime.ParseMediaType(request.Header.Get("content-type"))
+		if mediaTypeErr != nil || mediaType != "application/json" {
+			http.Error(response, "invalid request", http.StatusUnsupportedMediaType)
+			return
+		}
+		request.Body = http.MaxBytesReader(response, request.Body, 32*1024)
+		var update struct {
+			Revision  uint64                 `json:"revision"`
+			Endpoints []runtimeEndpointInput `json:"endpoints"`
+		}
+		decoder := json.NewDecoder(request.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&update); err != nil || ensureJSONEOF(decoder) != nil || update.Revision < 1 {
+			http.Error(response, "invalid request", http.StatusBadRequest)
+			return
+		}
+		document, conflict, err := runtimes.replaceInputs(update.Revision, update.Endpoints, runtimeAdapterRegistry())
+		if err != nil {
+			if errors.Is(err, errInvalidRuntimeEndpoints) {
+				http.Error(response, "invalid request", http.StatusBadRequest)
+				return
+			}
+			http.Error(response, "runtime endpoints unavailable", http.StatusInternalServerError)
+			return
+		}
+		response.Header().Set("cache-control", "no-store")
+		response.Header().Set("content-type", "application/json")
+		if conflict {
+			response.WriteHeader(http.StatusConflict)
+		}
+		_ = json.NewEncoder(response).Encode(document)
+	})
+	mux.HandleFunc("GET /v1/detected-models", func(response http.ResponseWriter, request *http.Request) {
+		if !authorizeProviderControl(request, controlToken) {
+			http.Error(response, "not found", http.StatusNotFound)
+			return
+		}
+		response.Header().Set("cache-control", "no-store")
+		response.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(response).Encode(detectedModels(request.Context(), runtimeAdapterRegistry(), runtimes.configured(), client))
 	})
 	return mux
 }
@@ -212,6 +266,15 @@ func main() {
 			os.Exit(2)
 		}
 	}
+	runtimeStatePath := strings.TrimSpace(os.Getenv("MULTIVIBE_PROVIDER_RUNTIME_STATE_PATH"))
+	runtimes := newMemoryRuntimeEndpointStore()
+	if runtimeStatePath != "" {
+		runtimes, err = openRuntimeEndpointStore(runtimeStatePath, runtimeAdapterRegistry())
+		if err != nil {
+			logger.Error("provider_agent_configuration_invalid", "error", err.Error())
+			os.Exit(2)
+		}
+	}
 	controlToken := strings.TrimSpace(os.Getenv("MULTIVIBE_PROVIDER_CONTROL_TOKEN"))
 	if controlToken != "" && len(controlToken) < 32 {
 		logger.Error("provider_agent_configuration_invalid", "error", "provider control token must contain at least 32 characters")
@@ -232,8 +295,8 @@ func main() {
 		logger.Error("provider_agent_listen_failed", "error", err.Error())
 		os.Exit(1)
 	}
-	logger.Info("provider_agent_started", "address", listener.Addr().String(), "selected_model_count", len(selections.snapshot().SelectedModels), "selection_persistent", statePath != "")
-	server := &http.Server{Handler: providerHandlerWithSelection(core, selections, client, controlToken), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second}
+	logger.Info("provider_agent_started", "address", listener.Addr().String(), "selected_model_count", len(selections.snapshot().SelectedModels), "selection_persistent", statePath != "", "manual_runtime_count", len(runtimes.snapshot().Endpoints), "runtime_state_persistent", runtimeStatePath != "")
+	server := &http.Server{Handler: providerHandlerWithStores(core, selections, runtimes, client, controlToken), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second}
 	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("provider_agent_failed", "error", fmt.Sprint(err))
 		os.Exit(1)

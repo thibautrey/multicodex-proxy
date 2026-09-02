@@ -2117,6 +2117,59 @@ details summary {
   margin-top: 15px;
 }
 
+.provider-runtime-editor-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 15px;
+}
+
+.provider-runtime-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-strong);
+}
+
+.provider-runtime-editor legend {
+  padding: 0 5px;
+  color: var(--muted-strong);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.provider-runtime-editor > label {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.provider-runtime-editor-actions,
+.provider-runtime-add-row {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.provider-runtime-editor-actions .provider-model-choice {
+  padding-left: 0;
+  font-size: 12px;
+}
+
+.provider-runtime-add-row {
+  margin-top: 12px;
+  align-items: end;
+}
+
 .provider-runtime-group {
   display: grid;
   gap: 6px;
@@ -3354,6 +3407,22 @@ details summary {
   }
 
   .provider-selection-actions .btn {
+    width: 100%;
+  }
+
+  .provider-runtime-editor {
+    grid-template-columns: 1fr;
+  }
+
+  .provider-runtime-editor-actions,
+  .provider-runtime-add-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .provider-runtime-editor-actions .btn,
+  .provider-runtime-add-row .compact-field,
+  .provider-runtime-add-row .btn {
     width: 100%;
   }
 

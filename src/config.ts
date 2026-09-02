@@ -9,6 +9,8 @@ export const PROVIDER_AGENT_BINARY =
 export const STORE_PATH = process.env.STORE_PATH ?? "/data/accounts.json";
 export const PROVIDER_AGENT_STATE_PATH =
   process.env.PROVIDER_AGENT_STATE_PATH ?? path.resolve(path.dirname(STORE_PATH), "provider-agent-selection.json");
+export const PROVIDER_AGENT_RUNTIME_STATE_PATH =
+  process.env.PROVIDER_AGENT_RUNTIME_STATE_PATH ?? path.resolve(path.dirname(STORE_PATH), "provider-agent-runtime-endpoints.json");
 export const OAUTH_STATE_PATH =
   process.env.OAUTH_STATE_PATH ?? "/data/oauth-state.json";
 export const TRACE_FILE_PATH =

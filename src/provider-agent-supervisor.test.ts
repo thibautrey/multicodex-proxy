@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   isValidProviderSelectedModelId,
+  isValidProviderRuntimeEndpointInput,
   providerAgentChildEnvironment,
   providerAgentEnvironment,
 } from "./provider-agent-supervisor.js";
@@ -12,6 +13,7 @@ test("provider agent inherits only its explicit local configuration", () => {
     MULTIVIBE_PROVIDER_AGENT_LISTEN: "127.0.0.1:1460",
     MULTIVIBE_PROVIDER_SELECTED_MODELS: '["publisher/model"]',
     MULTIVIBE_PROVIDER_STATE_PATH: "/must/not/be/inherited.json",
+    MULTIVIBE_PROVIDER_RUNTIME_STATE_PATH: "/must/not/be/inherited-runtime.json",
     MULTIVIBE_PROVIDER_CONTROL_TOKEN: "must-not-be-inherited-from-parent",
     STRIPE_SECRET_KEY: "must-not-cross-the-process-boundary",
     OPENAI_API_KEY: "must-not-cross-the-process-boundary",
@@ -37,7 +39,7 @@ test("provider agent environment omits unset allowlisted values", () => {
   );
 });
 
-test("provider agent child receives only the generated control token and explicit state path", () => {
+test("provider agent child receives only generated control and explicit local state paths", () => {
   const generatedControlToken = "generated-process-local-control-token";
   assert.deepEqual(
     providerAgentChildEnvironment(
@@ -49,13 +51,45 @@ test("provider agent child receives only the generated control token and explici
       },
       "/data/provider-agent-selection.json",
       generatedControlToken,
+      "/data/provider-agent-runtime-endpoints.json",
     ),
     {
       MULTIVIBE_CORE_LOOPBACK_URL: "http://127.0.0.1:1455",
       MULTIVIBE_PROVIDER_STATE_PATH: "/data/provider-agent-selection.json",
+      MULTIVIBE_PROVIDER_RUNTIME_STATE_PATH: "/data/provider-agent-runtime-endpoints.json",
       MULTIVIBE_PROVIDER_CONTROL_TOKEN: generatedControlToken,
     },
   );
+});
+
+test("provider runtime endpoints accept only bounded literal loopback HTTP targets", () => {
+  for (const endpoint of ["http://127.0.0.1:8000", "http://[::1]:8080/"]) {
+    assert.equal(isValidProviderRuntimeEndpointInput({
+      adapter_id: "manual-openai-compatible",
+      endpoint,
+      bearer_token: "local token",
+    }), true, endpoint);
+  }
+  for (const endpoint of [
+    "https://127.0.0.1:8000", "http://localhost:8000", "http://0.0.0.0:8000",
+    "http://192.168.1.4:8000", "http://127.0.0.1", "http://127.0.0.1:8000/v1",
+    "http://user:secret@127.0.0.1:8000", "http://127.0.0.1:8000?token=secret",
+  ]) {
+    assert.equal(isValidProviderRuntimeEndpointInput({
+      adapter_id: "manual-openai-compatible",
+      endpoint,
+    }), false, endpoint);
+  }
+  assert.equal(isValidProviderRuntimeEndpointInput({
+    adapter_id: "manual-openai-compatible",
+    endpoint: "http://127.0.0.1:8000",
+    bearer_token: "token\nheader",
+  }), false);
+  assert.equal(isValidProviderRuntimeEndpointInput({
+    adapter_id: "manual-openai-compatible",
+    endpoint: "http://127.0.0.1:8000",
+    bearer_token: "x".repeat(4097),
+  }), false);
 });
 
 test("provider selection model IDs match the bounded local consent contract", () => {

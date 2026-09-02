@@ -69,6 +69,7 @@ import {
 import type { SmartRoutingCoordinator } from "../../smart-routing-routes.js";
 import { discoverAndPersistLocalRuntimes } from "../../local-runtime-discovery.js";
 import {
+  isValidProviderRuntimeEndpointInput,
   isValidProviderSelectedModelId,
   ProviderAgentControlRequestError,
   type ProviderAgentControl,
@@ -630,6 +631,46 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     try {
       res.json(await options.providerAgent.getSelection());
     } catch {
+      res.status(503).json({ error: "provider_agent_unavailable" });
+    }
+  });
+
+  router.get("/provider-agent/adapters", async (_req, res) => {
+    if (!options.providerAgent?.enabled) return res.status(503).json({ error: "provider_agent_unavailable" });
+    try {
+      res.json(await options.providerAgent.getAdapters());
+    } catch {
+      res.status(503).json({ error: "provider_agent_unavailable" });
+    }
+  });
+
+  router.get("/provider-agent/runtime-endpoints", async (_req, res) => {
+    if (!options.providerAgent?.enabled) return res.status(503).json({ error: "provider_agent_unavailable" });
+    try {
+      res.setHeader("cache-control", "no-store");
+      res.json(await options.providerAgent.getRuntimeEndpoints());
+    } catch {
+      res.status(503).json({ error: "provider_agent_unavailable" });
+    }
+  });
+
+  router.put("/provider-agent/runtime-endpoints", async (req, res) => {
+    if (!options.providerAgent?.enabled) return res.status(503).json({ error: "provider_agent_unavailable" });
+    const revision = Number(req.body?.revision);
+    const endpoints = req.body?.endpoints;
+    if (!Number.isSafeInteger(revision) || revision < 1 || !Array.isArray(endpoints)
+      || endpoints.length > 28 || endpoints.some((value) => !isValidProviderRuntimeEndpointInput(value))
+      || new Set(endpoints.map((value) => value.adapter_id)).size !== endpoints.length) {
+      return res.status(400).json({ error: "invalid_provider_runtime_endpoints" });
+    }
+    try {
+      const result = await options.providerAgent.replaceRuntimeEndpoints(revision, endpoints);
+      res.setHeader("cache-control", "no-store");
+      res.status(result.conflict ? 409 : 200).json(result.endpoints);
+    } catch (error) {
+      if (error instanceof ProviderAgentControlRequestError && error.status === 400) {
+        return res.status(400).json({ error: "invalid_provider_runtime_endpoints" });
+      }
       res.status(503).json({ error: "provider_agent_unavailable" });
     }
   });
