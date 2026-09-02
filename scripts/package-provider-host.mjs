@@ -12,6 +12,7 @@ import {
   readFile,
   readdir,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { createReadStream } from "node:fs";
