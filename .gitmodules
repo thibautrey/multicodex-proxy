@@ -1,0 +1,3 @@
+[submodule "modules/security"]
+	path = modules/security
+	url = https://github.com/thibautrey/multivibe-security-module.git

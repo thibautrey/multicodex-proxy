@@ -9,6 +9,7 @@ import {
   TRACE_HEADERS_FORWARD_HEADER,
   type TraceHeaderMap,
 } from "./trace-headers.js";
+import { REQUEST_TRACE_PARENT_HEADER } from "./request-tracing.js";
 
 export const CLAUDE_CODE_MODEL_ALIASES = [
   "claude-opus-4-1",
@@ -523,7 +524,10 @@ function parseSseFrames(buffer: string): { frames: any[]; rest: string } {
   return { frames, rest };
 }
 
-function loopbackHeaders(req: express.Request): Record<string, string> {
+function loopbackHeaders(
+  req: express.Request,
+  clientRequestId?: string,
+): Record<string, string> {
   const client = isClaudeCodeRequest(req.headers)
     ? "claude-code"
     : "anthropic-compatible";
@@ -539,12 +543,12 @@ function loopbackHeaders(req: express.Request): Record<string, string> {
   const apiKey = req.header("x-api-key");
   if (authorization) headers.authorization = authorization;
   if (apiKey) headers["x-api-key"] = apiKey;
+  if (clientRequestId) headers[REQUEST_TRACE_PARENT_HEADER] = clientRequestId;
   for (const name of [
     "x-multivibe-priority",
     "x-multivibe-execution",
     "x-multivibe-max-wait-ms",
     "x-multivibe-deadline",
-    "x-multivibe-idempotency-key",
     "x-multivibe-webhook",
     "x-multivibe-internal-token",
     "x-multivibe-internal-application",
@@ -575,7 +579,12 @@ export async function handleAnthropicMessages(
   try {
     upstream = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
       method: "POST",
-      headers: loopbackHeaders(req),
+      headers: loopbackHeaders(
+        req,
+        typeof res.locals.multivibeClientRequestId === "string"
+          ? res.locals.multivibeClientRequestId
+          : undefined,
+      ),
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(10 * 60_000),
     });

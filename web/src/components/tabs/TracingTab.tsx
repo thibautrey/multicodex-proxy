@@ -403,9 +403,10 @@ function TracingTabContent(props: Props) {
   const accountSelectionSummary = traceStats.accountSelection;
   const [activeView, setActiveView] = React.useState<"overview" | "performance" | "usage" | "requests">("overview");
   const requestCount = traceStats.totals.requests;
+  const providerAttemptCount = traceStats.totals.upstreamAttempts;
   const errorCount = traceStats.totals.errors;
-  const usageCoverage = requestCount > 0 ? traceStats.totals.requestsWithUsage / requestCount : 0;
-  const pricingCoverage = requestCount > 0 ? traceStats.totals.requestsWithCost / requestCount : 0;
+  const usageCoverage = providerAttemptCount > 0 ? traceStats.totals.requestsWithUsage / providerAttemptCount : 0;
+  const pricingCoverage = providerAttemptCount > 0 ? traceStats.totals.requestsWithCost / providerAttemptCount : 0;
   const rangeLabel = traceRange === "24h"
     ? "Last 24 hours"
     : traceRange === "7d"
@@ -469,10 +470,10 @@ function TracingTabContent(props: Props) {
       {activeView === "overview" && (
         <div id="trace-view-overview" role="tabpanel" aria-labelledby="trace-tab-overview" className="trace-view-content">
           <section className="grid cards4 trace-primary-metrics">
-            <Metric title="Requests" value={`${requestCount}`} detail={rangeLabel} />
-            <Metric title="Error rate" value={pct(traceStats.totals.errorRate)} detail={`${errorCount} failed requests`} tone={traceStats.totals.errorRate > 0.05 ? "warning" : "default"} />
+            <Metric title="Client requests" value={`${requestCount}`} detail={`${providerAttemptCount} provider attempts · ${rangeLabel}`} />
+            <Metric title="Client error rate" value={pct(traceStats.totals.errorRate)} detail={`${errorCount} final failures`} tone={traceStats.totals.errorRate > 0.05 ? "warning" : "default"} />
             <Metric title="Avg latency" value={`${Math.round(traceStats.totals.latencyAvgMs)}ms`} detail="End-to-end response time" />
-            <Metric title="Total cost" value={usd(traceStats.totals.costUsd)} detail={`No-cache estimate: ${usd(traceStats.totals.costUsdWithoutCache)} · ${traceStats.totals.requestsWithCost}/${requestCount} priced`} tone={traceStats.totals.unpricedRequests > 0 ? "warning" : "default"} />
+            <Metric title="Total cost" value={usd(traceStats.totals.costUsd)} detail={`No-cache estimate: ${usd(traceStats.totals.costUsdWithoutCache)} · ${traceStats.totals.requestsWithCost}/${providerAttemptCount} attempts priced`} tone={traceStats.totals.unpricedRequests > 0 ? "warning" : "default"} />
           </section>
 
           <section className="grid trace-overview-grid">
@@ -488,12 +489,12 @@ function TracingTabContent(props: Props) {
               </div>
               <div className="trace-coverage-list">
                 <div className="trace-coverage-item">
-                  <div><strong>Token usage</strong><span>{traceStats.totals.requestsWithUsage} of {requestCount} requests</span></div>
+                  <div><strong>Token usage</strong><span>{traceStats.totals.requestsWithUsage} of {providerAttemptCount} provider attempts</span></div>
                   <strong>{pct(usageCoverage)}</strong>
                   <div className="trace-coverage-track"><span style={{ width: `${Math.min(100, usageCoverage * 100)}%` }} /></div>
                 </div>
                 <div className="trace-coverage-item">
-                  <div><strong>Cost pricing</strong><span>{traceStats.totals.requestsWithCost} of {requestCount} requests</span></div>
+                  <div><strong>Cost pricing</strong><span>{traceStats.totals.requestsWithCost} of {providerAttemptCount} provider attempts</span></div>
                   <strong>{pct(pricingCoverage)}</strong>
                   <div className="trace-coverage-track"><span style={{ width: `${Math.min(100, pricingCoverage * 100)}%` }} /></div>
                 </div>
@@ -523,6 +524,8 @@ function TracingTabContent(props: Props) {
               <div className="trace-routing-notes">
                 <span>Policy preferred <strong>{accountSelectionSummary.reasonCounts["policy-preferred"]}</strong></span>
                 <span>Quota headroom <strong>{accountSelectionSummary.reasonCounts["quota-headroom"]}</strong></span>
+                <span>Retried requests <strong>{traceStats.totals.retriedRequests}</strong></span>
+                <span>Recovered retries <strong>{traceStats.totals.recoveredRequests}</strong></span>
               </div>
             </section>
           </section>
@@ -618,9 +621,9 @@ function TracingTabContent(props: Props) {
       {activeView === "usage" && (
         <div id="trace-view-usage" role="tabpanel" aria-labelledby="trace-tab-usage" className="trace-view-content">
           <section className="grid cards4 trace-primary-metrics">
-            <Metric title="Input tokens" value={formatTokenCount(traceStats.totals.tokensInput)} detail={`${traceStats.totals.requestsWithUsage}/${requestCount} requests measured`} tone={usageCoverage < 1 ? "warning" : "default"} />
+            <Metric title="Input tokens" value={formatTokenCount(traceStats.totals.tokensInput)} detail={`${traceStats.totals.requestsWithUsage}/${providerAttemptCount} attempts measured`} tone={usageCoverage < 1 ? "warning" : "default"} />
             <Metric title="Output tokens" value={formatTokenCount(traceStats.totals.tokensOutput)} detail="Generated by providers" />
-            <Metric title="Total cost" value={usd(traceStats.totals.costUsd)} detail={`No-cache estimate: ${usd(traceStats.totals.costUsdWithoutCache)} · ${traceStats.totals.requestsWithCost}/${requestCount} priced`} tone={pricingCoverage < 1 ? "warning" : "default"} />
+            <Metric title="Total cost" value={usd(traceStats.totals.costUsd)} detail={`No-cache estimate: ${usd(traceStats.totals.costUsdWithoutCache)} · ${traceStats.totals.requestsWithCost}/${providerAttemptCount} attempts priced`} tone={pricingCoverage < 1 ? "warning" : "default"} />
             <Metric title="Inference speed" value={formatTokenRate(traceStats.totals.inferenceTokensPerSecond)} detail={`${traceStats.totals.inferenceRequests} measurable requests`} />
           </section>
 
@@ -656,7 +659,7 @@ function TracingTabContent(props: Props) {
               </div>
             </section>
             <section className="panel">
-              <div className="section-split-header"><div><h2>Requests by model</h2><p className="muted">Which models handled the most traffic.</p></div><span className="badge">requests</span></div>
+              <div className="section-split-header"><div><h2>Provider attempts by model</h2><p className="muted">Which models handled the most upstream attempts.</p></div><span className="badge">attempts</span></div>
               <div className="chart-wrap">
                 <ResponsiveContainer width="100%" height={260}>
                   <BarChart data={modelChartData}>
@@ -665,7 +668,7 @@ function TracingTabContent(props: Props) {
                     <YAxis />
                     <Tooltip />
                     <Legend />
-                    <Bar dataKey="count" name="requests" fill="var(--chart-1)" radius={[5, 5, 0, 0]} />
+                    <Bar dataKey="count" name="attempts" fill="var(--chart-1)" radius={[5, 5, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -701,7 +704,7 @@ function TracingTabContent(props: Props) {
             <div className="table-wrap">
               <table className="data-table">
                 <thead>
-                  <tr><th>Project</th><th>Requests</th><th>Errors</th><th>Input tokens</th><th>Output tokens</th><th>Total tokens</th><th>Cost</th><th>Avg latency</th><th>p95 latency</th></tr>
+                  <tr><th>Project</th><th>Attempts</th><th>Attempt errors</th><th>Input tokens</th><th>Output tokens</th><th>Total tokens</th><th>Cost</th><th>Avg latency</th><th>p95 latency</th></tr>
                 </thead>
                 <tbody>
                   {projectUsageStats.byProject.map((project) => (
@@ -710,7 +713,7 @@ function TracingTabContent(props: Props) {
                         <td>
                           <div className="mono">{project.projectId === "unattributed" ? "Unattributed" : sanitized ? "*" : project.projectName ?? project.projectId}</div>
                           {!sanitized && project.projectRemote && <div className="muted mono">{project.projectRemote}</div>}
-                          <div className="muted">{project.requestsWithCost}/{project.requests} priced</div>
+                          <div className="muted">{project.requestsWithCost}/{project.requests} priced attempts</div>
                         </td>
                         <td>{project.requests}</td><td>{project.errors}</td><td>{formatTokenCount(project.tokens.input)}</td><td>{formatTokenCount(project.tokens.output)}</td><td>{formatTokenCount(project.tokens.total)}</td><td>{usd(project.costUsd)}</td><td>{Math.round(project.avgLatencyMs)}ms</td><td>{Math.round(project.latencyP95Ms)}ms</td>
                       </tr>
@@ -720,12 +723,12 @@ function TracingTabContent(props: Props) {
                             <summary>{project.models.length} model{project.models.length === 1 ? "" : "s"} — usage and cost details</summary>
                             <div className="table-wrap project-model-table-wrap">
                               <table className="data-table project-model-table">
-                                <thead><tr><th>Model</th><th>Requests</th><th>Errors</th><th>Input</th><th>Cached input</th><th>Output</th><th>Total</th><th>Cost</th><th>Avg latency</th><th>p50</th><th>p95</th></tr></thead>
+                                <thead><tr><th>Model</th><th>Attempts</th><th>Attempt errors</th><th>Input</th><th>Cached input</th><th>Output</th><th>Total</th><th>Cost</th><th>Avg latency</th><th>p50</th><th>p95</th></tr></thead>
                                 <tbody>
                                   {project.models.map((model) => (
                                     <tr key={model.model}>
                                       <td className="mono">{model.model}</td><td>{model.requests}</td><td>{model.errors}</td><td>{formatTokenCount(model.tokens.input)}</td><td>{formatTokenCount(model.tokens.cachedInput)}</td><td>{formatTokenCount(model.tokens.output)}</td><td>{formatTokenCount(model.tokens.total)}</td>
-                                      <td>{usd(model.costUsd)}<div className="muted">{model.requestsWithCost}/{model.requests} priced</div></td>
+                                      <td>{usd(model.costUsd)}<div className="muted">{model.requestsWithCost}/{model.requests} priced attempts</div></td>
                                       <td>{Math.round(model.avgLatencyMs)}ms</td><td>{Math.round(model.latencyP50Ms)}ms</td><td>{Math.round(model.latencyP95Ms)}ms</td>
                                     </tr>
                                   ))}
@@ -779,7 +782,7 @@ function TracingTabContent(props: Props) {
                     return (
                       <React.Fragment key={t.id}>
                         <tr className={`trace-row${hasError ? " trace-row-error" : ""}`}>
-                          <td><div className="trace-cell-stack"><strong>{fmt(t.at)}</strong><span className="mono">{routeLabel(t.route)}</span></div></td>
+                          <td><div className="trace-cell-stack"><strong>{fmt(t.at)}</strong><span className="mono">{routeLabel(t.route)}</span><span className="muted">{t.traceKind === "client-request" ? `Client outcome · ${t.providerAttempts ?? 0} provider attempts` : t.traceKind === "upstream-attempt" ? `Provider attempt ${t.upstreamAttempt ?? "—"}` : t.traceKind === "diagnostic" ? "Proxy diagnostic" : "Legacy trace"}</span></div></td>
                           <td><div className="trace-cell-stack"><strong className="mono">{t.application ?? "Unspecified app"}</strong><span className="mono">{t.projectId ? sanitized ? "Private project" : t.projectName ?? t.projectId : "No project"}</span></div></td>
                           <td><div className="trace-cell-stack"><strong className="mono">{modelLabel}</strong><span className="trace-target-account">{provider && <span className="provider-badge"><img className="provider-icon" src={providerFavicon(provider)} alt="" loading="lazy" />{providerLabel(provider)}</span>}<span className="mono">{accountLabel}</span></span></div></td>
                           <td><div className="trace-cell-stack"><span><span className={`badge ${hasError ? "badge-warn" : "badge-live"}`}>{t.status}</span></span><span className={hasError ? "trace-error-copy" : "muted"}>{t.error?.slice(0, 72) ?? (hasError ? "Request failed" : "Completed")}</span></div></td>

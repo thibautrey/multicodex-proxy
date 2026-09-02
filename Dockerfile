@@ -28,7 +28,7 @@ RUN CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
 
 FROM node:22-alpine
 WORKDIR /app
-RUN apk add --no-cache libstdc++
+RUN apk add --no-cache git libstdc++
 ENV NODE_ENV=production
 ARG GIT_SHA=unknown
 ARG BUILD_ID=unknown
@@ -36,6 +36,7 @@ ENV APP_GIT_SHA=$GIT_SHA
 ENV APP_BUILD_ID=$BUILD_ID
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/web-dist ./web-dist
+COPY modules/security ./modules/security
 COPY --from=build \
   /app/scripts/codex-project-hook.mjs \
   /app/scripts/install-codex-project-hook.mjs \

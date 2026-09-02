@@ -1,7 +1,14 @@
 import type { Account, StoreSettings, TraceStats } from "../../types";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { fmt, maskEmail, maskId } from "../../lib/ui";
 import { ApiError, api } from "../../lib/api";
+import {
+  observeFloatingViewportChanges,
+  placeFloatingMenu,
+  type FloatingMenuAnchor,
+  type FloatingMenuPlacement,
+  type FloatingMenuViewport,
+} from "../../lib/floatingMenu";
 
 import { Metric } from "../Metric";
 import { createPortal } from "react-dom";
@@ -41,6 +48,22 @@ type AccountProvider =
   | "zai"
   | "xai";
 type OAuthMethod = "browser" | "device";
+
+type OpenAccountMenu = {
+  accountId: string;
+  anchor: FloatingMenuAnchor;
+  placement: FloatingMenuPlacement;
+};
+
+function currentFloatingViewport(): FloatingMenuViewport {
+  const viewport = window.visualViewport;
+  return {
+    top: viewport?.offsetTop ?? 0,
+    left: viewport?.offsetLeft ?? 0,
+    width: viewport?.width ?? window.innerWidth,
+    height: viewport?.height ?? window.innerHeight,
+  };
+}
 
 type EditAccountState = {
   id: string;
@@ -261,11 +284,9 @@ export function AccountsTab(props: Props) {
   const [oauthBusyId, setOauthBusyId] = useState<string | null>(null);
   const [oauthDialog, setOauthDialog] = useState<OAuthDialogState | null>(null);
   const devicePollInFlight = useRef(false);
-  const [openMenu, setOpenMenu] = useState<{
-    accountId: string;
-    top: number;
-    left: number;
-  } | null>(null);
+  const [openMenu, setOpenMenu] = useState<OpenAccountMenu | null>(null);
+  const accountActionMenuRef = useRef<HTMLDivElement | null>(null);
+  const accountActionTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [makeMoneyPreviewAccount, setMakeMoneyPreviewAccount] =
     useState<Account | null>(null);
   const [providerPreviewStatus, setProviderPreviewStatus] =
@@ -301,17 +322,81 @@ export function AccountsTab(props: Props) {
       if (target.closest(".account-action-menu")) return;
       closeMenu();
     };
-    const onScroll = () => closeMenu();
+    const onScroll = (event: Event) => {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest(".account-action-menu")
+      ) {
+        return;
+      }
+      closeMenu();
+    };
     const onResize = () => closeMenu();
     window.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", onResize);
+    const stopObservingVisualViewport = observeFloatingViewportChanges(
+      window.visualViewport,
+      closeMenu,
+    );
     return () => {
       window.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", onResize);
+      stopObservingVisualViewport();
     };
   }, []);
+
+  useLayoutEffect(() => {
+    const menu = accountActionMenuRef.current;
+    if (!openMenu || !menu) return;
+
+    const placement = placeFloatingMenu(
+      openMenu.anchor,
+      { width: menu.offsetWidth, height: menu.scrollHeight },
+      currentFloatingViewport(),
+    );
+    setOpenMenu((current) => {
+      if (!current || current.accountId !== openMenu.accountId) return current;
+      const previous = current.placement;
+      if (
+        previous.top === placement.top &&
+        previous.left === placement.left &&
+        previous.maxHeight === placement.maxHeight &&
+        previous.maxWidth === placement.maxWidth &&
+        previous.side === placement.side
+      ) {
+        return current;
+      }
+      return { ...current, placement };
+    });
+  }, [
+    openMenu?.accountId,
+    openMenu?.anchor.top,
+    openMenu?.anchor.bottom,
+    openMenu?.anchor.right,
+  ]);
+
+  useEffect(() => {
+    if (!openMenu) return;
+    const focusFrame = window.requestAnimationFrame(() => {
+      accountActionMenuRef.current
+        ?.querySelector<HTMLButtonElement>("button:not(:disabled)")
+        ?.focus();
+    });
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setOpenMenu(null);
+      accountActionTriggerRef.current?.focus();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [openMenu?.accountId]);
 
   useEffect(() => {
     if (!makeMoneyPreviewAccount) return;
@@ -1375,13 +1460,26 @@ export function AccountsTab(props: Props) {
                         onClick={(e) => {
                           e.stopPropagation();
                           const rect = e.currentTarget.getBoundingClientRect();
+                          accountActionTriggerRef.current = e.currentTarget;
                           setOpenMenu((current) =>
                             current?.accountId === a.id
                               ? null
                               : {
                                   accountId: a.id,
-                                  top: rect.bottom + 8,
-                                  left: rect.right - 220,
+                                  anchor: {
+                                    top: rect.top,
+                                    bottom: rect.bottom,
+                                    right: rect.right,
+                                  },
+                                  placement: placeFloatingMenu(
+                                    {
+                                      top: rect.top,
+                                      bottom: rect.bottom,
+                                      right: rect.right,
+                                    },
+                                    { width: 220, height: 0 },
+                                    currentFloatingViewport(),
+                                  ),
                                 },
                           );
                         }}
@@ -1400,8 +1498,15 @@ export function AccountsTab(props: Props) {
                       {openMenu?.accountId === a.id &&
                         createPortal(
                           <div
+                            ref={accountActionMenuRef}
                             className="account-action-menu"
-                            style={{ top: openMenu.top, left: openMenu.left }}
+                            data-placement={openMenu.placement.side}
+                            style={{
+                              top: openMenu.placement.top,
+                              left: openMenu.placement.left,
+                              maxHeight: openMenu.placement.maxHeight,
+                              maxWidth: openMenu.placement.maxWidth,
+                            }}
                             onClick={(e) => e.stopPropagation()}
                           >
                             <button

@@ -27,9 +27,10 @@ function account(id: string, primaryUsedPercent = 0): Account {
 function postJson(
   port: number,
   headers: Record<string, string>,
+  body: Record<string, unknown> = { model: MODEL, input: "hello" },
 ): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
-    const payload = JSON.stringify({ model: MODEL, input: "hello" });
+    const payload = JSON.stringify(body);
     const request = http.request(
       {
         hostname: "127.0.0.1",
@@ -243,6 +244,66 @@ test("keeps the same session affinity isolated by application", async (t) => {
     "Bearer token-account-one",
     "Bearer token-account-two",
   ]);
+});
+
+test("uses the Codex thread id as a prompt cache key fallback", async (t) => {
+  const accounts = [account("account-one")];
+  const upstreamBodies: any[] = [];
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.includes("/backend-api/codex/models")) {
+      return new Response(
+        JSON.stringify({ models: [{ slug: MODEL }] }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (url.includes("/backend-api/codex/responses")) {
+      upstreamBodies.push(JSON.parse(String(init?.body ?? "{}")));
+      return new Response(JSON.stringify(responseBody()), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const { server, port } = await startTestServer(createStore(accounts));
+  t.after(
+    () =>
+      new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      ),
+  );
+
+  const fallback = await postJson(port, { "thread-id": "thread-cache" });
+  const exact = await postJson(port, {
+    "thread-id": "thread-fallback",
+    "session-id": "session-exact",
+  });
+  const explicit = await postJson(
+    port,
+    { "thread-id": "thread-fallback" },
+    { model: MODEL, input: "hello", prompt_cache_key: "client-key" },
+  );
+  const withoutSession = await postJson(port, {});
+
+  assert.equal(fallback.status, 200);
+  assert.equal(exact.status, 200);
+  assert.equal(explicit.status, 200);
+  assert.equal(withoutSession.status, 200);
+  assert.equal(upstreamBodies.length, 4);
+  assert.equal(upstreamBodies[0].prompt_cache_key, "thread-cache");
+  assert.equal(upstreamBodies[1].prompt_cache_key, "session-exact");
+  assert.equal(upstreamBodies[2].prompt_cache_key, "client-key");
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(upstreamBodies[3], "prompt_cache_key"),
+    false,
+  );
 });
 
 test("applies quota filtering to a smart-routing fallback after affinity invalidation", async (t) => {

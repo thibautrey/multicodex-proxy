@@ -51,6 +51,11 @@ export type Trace = {
   id: string;
   at: number;
   route: string;
+  clientRequestId?: string;
+  traceKind?: "client-request" | "upstream-attempt" | "diagnostic";
+  upstreamAttempt?: number;
+  providerAttempts?: number;
+  recoveredRetry?: boolean;
   application?: string;
   projectId?: string;
   projectName?: string;
@@ -102,6 +107,9 @@ export type Trace = {
 export type TraceStats = {
   totals: {
     requests: number;
+    upstreamAttempts: number;
+    retriedRequests: number;
+    recoveredRequests: number;
     requestsWithUsage: number;
     requestsWithCost: number;
     unpricedRequests: number;
@@ -130,6 +138,9 @@ export type TraceStats = {
   timeseries: Array<{
     at: number;
     requests: number;
+    upstreamAttempts: number;
+    retriedRequests: number;
+    recoveredRequests: number;
     errors: number;
     tokensInput: number;
     tokensInputCached: number;
@@ -246,6 +257,7 @@ export type Tab =
   | "accounts"
   | "aliases"
   | "api-keys"
+  | "plugins"
   | "tracing"
   | "docs";
 
@@ -325,6 +337,39 @@ export type StoreSettings = {
   imageRequestModelOverride?: string;
   anonymousUsageSharingEnabled?: boolean;
   anonymousUsageSharingEnabledAt?: string;
+};
+
+export type ModuleView = {
+  id: string;
+  origin: string;
+  commit: string;
+  enabled: boolean;
+  source: "external" | "bundled";
+  restartRequired?: boolean;
+  loaded: boolean;
+  healthy: boolean;
+  error?: string;
+  removable: boolean;
+  settings: Record<string, unknown>;
+  manifest?: {
+    name: string;
+    version: string;
+    description: string;
+    hooks: string[];
+    categories?: string[];
+    tags?: string[];
+    author?: string;
+    homepage?: string;
+    settingsSchema?: Record<string, unknown>;
+  };
+};
+
+export type MarketplaceModule = {
+  id: string;
+  origin: string;
+  commit: string;
+  submittedAt: string;
+  manifest: NonNullable<ModuleView["manifest"]>;
 };
 
 export type ProxyApiKey = {

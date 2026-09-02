@@ -112,6 +112,7 @@ import {
   canServeStaleSnapshot,
 } from "../../async-refresh.js";
 import { fetchUpstreamWithRetry } from "../../upstream-retry.js";
+import type { RequestTraceContext } from "../../request-tracing.js";
 import {
   authorizationForAccountRequest,
   isDiscoveredLocalRuntimeAccount,
@@ -154,6 +155,7 @@ import {
   type RoutingRequest,
 } from "../../smart-routing.js";
 import type { SmartRoutingCoordinator } from "../../smart-routing-routes.js";
+import type { ModuleManager } from "../../module-manager.js";
 import {
   findSessionAffinityAccount,
   preferSessionAffinityAccount,
@@ -173,6 +175,7 @@ type ProxyRoutesOptions = {
   oauthConfig: OAuthConfig;
   capacityTracker?: CapacityTracker;
   smartRoutingCoordinator?: SmartRoutingCoordinator;
+  moduleManager?: ModuleManager;
   sessionAffinityCache?: SessionAffinityCache;
   sessionAffinityEnabled?: boolean;
 };
@@ -1893,11 +1896,11 @@ export function classifyNativeStreamCompletion(
     interrupted,
     status: sawResponseCompleted
       ? 200
-      : streamError
-      ? 599
       : clientDisconnected
         ? 499
-        : 200,
+        : streamError
+          ? 599
+          : 200,
     clientDisconnected:
       clientDisconnected && !sawResponseCompleted ? true : undefined,
     error: sawResponseCompleted
@@ -1936,6 +1939,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     oauthConfig,
     capacityTracker,
     smartRoutingCoordinator,
+    moduleManager,
   } = options;
   const { recordTrace } = traceManager;
   const router = express.Router();
@@ -1979,6 +1983,35 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     res: express.Response,
   ) {
     const startedAt = Date.now();
+    const requestTraceContext = res.locals.multivibeRequestTraceContext as
+      | RequestTraceContext
+      | undefined;
+    const clientRequestId =
+      requestTraceContext?.clientRequestId ??
+      (typeof res.locals.multivibeClientRequestId === "string"
+        ? res.locals.multivibeClientRequestId
+        : randomUUID());
+    res.locals.multivibeClientRequestId = clientRequestId;
+    let currentUpstreamAttempt: number | undefined;
+    let upstreamAttemptCount = 0;
+    res.locals.multivibeProviderAttempts = 0;
+    res.locals.multivibeSawFailedProviderAttempt = false;
+    if (requestTraceContext) {
+      requestTraceContext.providerAttempts = 0;
+      requestTraceContext.sawFailedProviderAttempt = false;
+    }
+    const setProviderAttemptCount = (count: number) => {
+      res.locals.multivibeProviderAttempts = count;
+      if (requestTraceContext) requestTraceContext.providerAttempts = count;
+    };
+    const markFailedProviderAttempt = () => {
+      res.locals.multivibeSawFailedProviderAttempt = true;
+      if (requestTraceContext) requestTraceContext.sawFailedProviderAttempt = true;
+    };
+    const setClientOutcomeStatus = (status: number) => {
+      res.locals.multivibeClientOutcomeStatus = status;
+      if (requestTraceContext) requestTraceContext.clientOutcomeStatus = status;
+    };
     const requestAbortController = new AbortController();
     const abortRequest = () => {
       if (res.writableEnded || requestAbortController.signal.aborted) return;
@@ -2017,6 +2050,24 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       typeof res.locals.proxyApplication === "string"
         ? res.locals.proxyApplication
         : undefined;
+    if (moduleManager) {
+      try {
+        const hooked = await moduleManager.runHook("request.received", req.body, {
+          requestId: clientRequestId,
+          application,
+          route: req.path,
+          transport: Boolean(req.body?.stream) ? "sse" : "http",
+          signal: requestSignal,
+        });
+        if (hooked.response) {
+          for (const [name, value] of Object.entries(hooked.response.headers ?? {})) res.setHeader(name, value);
+          return res.status(hooked.response.status).send(hooked.response.body);
+        }
+        req.body = hooked.value;
+      } catch (error) {
+        return res.status(500).json({ error: { message: "A required request module failed", type: "module_error", code: "module_failed" } });
+      }
+    }
     const affinityApplication = application ?? "default";
     const requestHeaders = TRACE_INCLUDE_HEADERS
       ? traceHeadersForRequest(req.headers)
@@ -2029,8 +2080,20 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       entry: Parameters<typeof traceManager.recordTrace>[0],
     ) => {
       observeCapacityUsage(entry.usage);
+      if (currentUpstreamAttempt !== undefined && entry.status >= 400) {
+        markFailedProviderAttempt();
+      }
+      if (entry.status >= 400 && res.writableEnded) {
+        setClientOutcomeStatus(entry.status);
+      }
       return traceManager.recordTrace({
         ...entry,
+        clientRequestId,
+        traceKind:
+          currentUpstreamAttempt === undefined
+            ? "diagnostic"
+            : "upstream-attempt",
+        upstreamAttempt: currentUpstreamAttempt,
         ...projectAttribution,
         application,
         codexSessionId,
@@ -2044,6 +2107,12 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     ) =>
       traceManager.beginTrace({
         ...entry,
+        clientRequestId,
+        traceKind:
+          currentUpstreamAttempt === undefined
+            ? "diagnostic"
+            : "upstream-attempt",
+        upstreamAttempt: currentUpstreamAttempt,
         ...projectAttribution,
         application,
         codexSessionId,
@@ -2056,8 +2125,20 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       entry: Parameters<typeof traceManager.completeTrace>[1],
     ) => {
       observeCapacityUsage(entry.usage);
+      if (currentUpstreamAttempt !== undefined && entry.status >= 400) {
+        markFailedProviderAttempt();
+      }
+      if (entry.status >= 400 && res.writableEnded) {
+        setClientOutcomeStatus(entry.status);
+      }
       return traceManager.completeTrace(id, {
         ...entry,
+        clientRequestId,
+        traceKind:
+          currentUpstreamAttempt === undefined
+            ? "diagnostic"
+            : "upstream-attempt",
+        upstreamAttempt: currentUpstreamAttempt,
         ...projectAttribution,
         application,
         codexSessionId,
@@ -2090,6 +2171,11 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       (req.originalUrl || "").includes("responses/compact");
     const clientRequestedStream = Boolean(req.body?.stream);
     const sessionId = getSessionId(req);
+    // Native Codex requests identify the conversation with `thread-id`, which
+    // is already used for session affinity and project attribution. Keep the
+    // exact session header authoritative for provider conversation routing, but
+    // use the broader Codex id as a fallback when deriving prompt_cache_key.
+    const promptCacheSessionId = sessionId ?? codexSessionId;
     const isNativeResponsesStream =
       clientRequestedStream && !isChatCompletionsPath;
     let nativeStreamTraceId: string | undefined;
@@ -2136,6 +2222,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             : JSON.stringify(error);
 
       if (isNativeResponsesStream && res.headersSent) {
+        setClientOutcomeStatus(status);
         if (nativeStreamKeepalive) {
           clearInterval(nativeStreamKeepalive);
           nativeStreamKeepalive = undefined;
@@ -2403,6 +2490,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         maxAttempts,
       );
       for (let i = 0; i < attemptsForProvider; i++) {
+        currentUpstreamAttempt = undefined;
         if (requestSignal.aborted) return;
         const usableAccounts = providerAccounts.filter(
           (account) =>
@@ -2544,8 +2632,8 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             ? { ...(req.body ?? {}) }
             : responsesToChatCompletionsPayload(req.body)
           : isChatCompletions
-            ? chatCompletionsToResponsesPayload(req.body, sessionId)
-            : normalizeResponsesPayload(req.body, sessionId);
+            ? chatCompletionsToResponsesPayload(req.body, promptCacheSessionId)
+            : normalizeResponsesPayload(req.body, promptCacheSessionId);
         if (
           shouldSendChatCompletions &&
           (candidate.provider === "openai-compatible" ||
@@ -2585,6 +2673,29 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           candidate.resolvedModel,
           discoveredModels,
         );
+        if (moduleManager) {
+          const hooked = await moduleManager.runHook(
+            "request.beforeUpstream",
+            payloadToUpstream,
+            {
+              requestId: clientRequestId,
+              sessionId: promptCacheSessionId,
+              application,
+              route: req.path,
+              transport: clientRequestedStream ? "sse" : "http",
+              provider: candidate.provider,
+              model: candidate.resolvedModel,
+              signal: requestSignal,
+            },
+          );
+          if (hooked.response) {
+            for (const [name, value] of Object.entries(hooked.response.headers ?? {})) {
+              res.setHeader(name, value);
+            }
+            return res.status(hooked.response.status).send(hooked.response.body);
+          }
+          payloadToUpstream = hooked.value;
+        }
         const imageTrace = buildImagePayloadTrace(
           req.body,
           payloadToUpstream,
@@ -2810,16 +2921,49 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           const redirect = isDiscoveredLocalRuntimeAccount(selected)
             ? "manual"
             : "follow";
-          let upstream = await fetchUpstreamWithRetry(
-            upstreamUrl,
-            {
-              method: "POST",
-              headers,
-              body: serializeUpstreamPayload(payloadToUpstream),
-              signal: requestSignal,
-              redirect,
-            },
-          );
+          let upstreamAttemptStartedAt = Date.now();
+          const recordRetriedUpstreamAttempt = (
+            status: number,
+            error?: string,
+          ) => {
+            recordTrace({
+              at: Date.now(),
+              route: req.path,
+              accountId: selected.id,
+              accountEmail: selected.email,
+              model: tracedModel,
+              ...traceModelResolution,
+              status,
+              stream: clientRequestedStream,
+              latencyMs: Date.now() - upstreamAttemptStartedAt,
+              requestBody,
+              ...traceImage,
+              error: error?.slice(0, 500),
+              upstreamError: error?.slice(0, 500),
+            });
+          };
+          const fetchWithTracing = () =>
+            fetchUpstreamWithRetry(
+              upstreamUrl,
+              {
+                method: "POST",
+                headers,
+                body: serializeUpstreamPayload(payloadToUpstream),
+                signal: requestSignal,
+                redirect,
+              },
+              {
+                onAttemptStart: () => {
+                  upstreamAttemptStartedAt = Date.now();
+                  currentUpstreamAttempt = ++upstreamAttemptCount;
+                  setProviderAttemptCount(upstreamAttemptCount);
+                },
+                onAttemptRetry: ({ status, error }) => {
+                  recordRetriedUpstreamAttempt(status ?? 599, error);
+                },
+              },
+            );
+          let upstream = await fetchWithTracing();
           if (upstream.status === 400) {
             const errorText = await upstream.text();
             const correction = applyUnsupportedValueCorrection(
@@ -2827,19 +2971,11 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               errorText,
             );
             if (correction) {
+              recordRetriedUpstreamAttempt(400, errorText);
               console.info(
                 `[proxy] Retrying ${candidate.resolvedModel ?? "model"} after correcting unsupported value ${correction.from} -> ${correction.to}`,
               );
-              upstream = await fetchUpstreamWithRetry(
-                upstreamUrl,
-                {
-                  method: "POST",
-                  headers,
-                  body: serializeUpstreamPayload(payloadToUpstream),
-                  signal: requestSignal,
-                  redirect,
-                },
-              );
+              upstream = await fetchWithTracing();
             } else {
               upstream = new Response(errorText, {
                 status: upstream.status,
@@ -2923,6 +3059,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             }
 
             if (!res.writableEnded) {
+              setClientOutcomeStatus(upstream.status);
               res.write(
                 `event: error\ndata: ${JSON.stringify({ error: upstreamError })}\n\n`,
               );
@@ -3488,7 +3625,20 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             }
 
             if (shouldReturnChatCompletions) {
-              const txt = await upstream.text();
+              let txt = await upstream.text();
+              if (moduleManager) {
+                const hooked = await moduleManager.runHook("response.received", txt, {
+                  requestId: clientRequestId,
+                  sessionId: promptCacheSessionId,
+                  application,
+                  route: req.path,
+                  transport: "http",
+                  provider: candidate.provider,
+                  model: candidate.resolvedModel,
+                  signal: requestSignal,
+                });
+                txt = hooked.value;
+              }
               const model = req.body?.model ?? payloadToUpstream?.model ?? "unknown";
               const parsedChat = txt.includes("chat.completion.chunk")
                 ? parseChatCompletionSSEToChatCompletion(txt, model)
@@ -3535,7 +3685,20 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             }
 
             if (!clientRequestedStream) {
-              const txt = await upstream.text();
+              let txt = await upstream.text();
+              if (moduleManager) {
+                const hooked = await moduleManager.runHook("response.received", txt, {
+                  requestId: clientRequestId,
+                  sessionId: promptCacheSessionId,
+                  application,
+                  route: req.path,
+                  transport: "http",
+                  provider: candidate.provider,
+                  model: candidate.resolvedModel,
+                  signal: requestSignal,
+                });
+                txt = hooked.value;
+              }
               const model = req.body?.model ?? payloadToUpstream?.model ?? "unknown";
               const rendered = renderBufferedResponsesStream(txt, model);
 
@@ -3554,9 +3717,26 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 continue;
               }
 
-              const respObj = parseResponsesSSEToResponseObject(
+              let respObj = parseResponsesSSEToResponseObject(
                 rendered.body || txt,
               );
+              if (moduleManager) {
+                const hooked = await moduleManager.runHook("response.beforeClient", respObj, {
+                  requestId: clientRequestId,
+                  sessionId: promptCacheSessionId,
+                  application,
+                  route: req.path,
+                  transport: "http",
+                  provider: candidate.provider,
+                  model: candidate.resolvedModel,
+                  signal: requestSignal,
+                });
+                if (hooked.response) {
+                  for (const [name, value] of Object.entries(hooked.response.headers ?? {})) res.setHeader(name, value);
+                  return res.status(hooked.response.status).send(hooked.response.body);
+                }
+                respObj = hooked.value;
+              }
               res.status(upstream.ok ? 200 : upstream.status).json(respObj);
               const upstreamError = !upstream.ok
                 ? txt.slice(0, 500)
@@ -3757,6 +3937,19 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           }
 
           let text = bufferedText ?? (await upstream.text());
+          if (moduleManager) {
+            const hooked = await moduleManager.runHook("response.received", text, {
+              requestId: clientRequestId,
+              sessionId: promptCacheSessionId,
+              application,
+              route: req.path,
+              transport: clientRequestedStream ? "sse" : "http",
+              provider: candidate.provider,
+              model: candidate.resolvedModel,
+              signal: requestSignal,
+            });
+            text = hooked.value;
+          }
           const upstreamEmptyBody = !text;
           if (!text)
             text = JSON.stringify({
@@ -4345,6 +4538,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             nativeStreamKeepalive = undefined;
           }
           if (isNativeResponsesStream && res.headersSent && !res.writableEnded) {
+            setClientOutcomeStatus(599);
             res.write(
               `event: error\ndata: ${JSON.stringify({
                 error: {

@@ -60,6 +60,8 @@ test("recognizes quota-like business errors even without HTTP 429", async () => 
 test("keeps same-account retries for transient server errors", async () => {
   let attempts = 0;
   const sleeps: number[] = [];
+  const attemptStarts: number[] = [];
+  const retries: Array<{ attempt: number; status?: number; error?: string }> = [];
   const response = await fetchUpstreamWithRetry(
     "https://example.invalid/responses",
     { method: "POST" },
@@ -79,17 +81,29 @@ test("keeps same-account retries for transient server errors", async () => {
             })
           : new Response("ok", { status: 200 });
       },
+      onAttemptStart: (attempt) => {
+        attemptStarts.push(attempt);
+      },
+      onAttemptRetry: (event) => {
+        retries.push(event);
+      },
     },
   );
 
   assert.equal(response.status, 200);
   assert.equal(attempts, 2);
   assert.deepEqual(sleeps, [3_000]);
+  assert.deepEqual(attemptStarts, [1, 2]);
+  assert.deepEqual(retries, [
+    { attempt: 1, status: 503, error: "service unavailable" },
+  ]);
 });
 
 test("keeps retrying transport failures but not quota exceptions", async () => {
   let transportAttempts = 0;
   const transportSleeps: number[] = [];
+  const transportAttemptStarts: number[] = [];
+  const transportRetries: Array<{ attempt: number; error?: string }> = [];
   const response = await fetchUpstreamWithRetry(
     "https://example.invalid/responses",
     { method: "POST" },
@@ -105,12 +119,23 @@ test("keeps retrying transport failures but not quota exceptions", async () => {
         if (transportAttempts === 1) throw new Error("connection refused");
         return new Response("ok", { status: 200 });
       },
+      onAttemptStart: (attempt) => {
+        transportAttemptStarts.push(attempt);
+      },
+      onAttemptRetry: (event) => {
+        transportRetries.push(event);
+      },
     },
   );
 
   assert.equal(response.status, 200);
   assert.equal(transportAttempts, 2);
   assert.deepEqual(transportSleeps, [10]);
+  assert.deepEqual(transportAttemptStarts, [1, 2]);
+  assert.deepEqual(transportRetries, [
+    { attempt: 1, error: "connection refused" },
+  ]);
+
 
   let quotaAttempts = 0;
   await assert.rejects(

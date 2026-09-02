@@ -1,6 +1,17 @@
 import os from "node:os";
 import path from "node:path";
 
+function finiteAtLeast(
+  value: string | undefined,
+  fallback: number,
+  minimum: number,
+) {
+  const parsed = Number(value ?? fallback);
+  return Number.isFinite(parsed)
+    ? Math.max(minimum, Math.floor(parsed))
+    : fallback;
+}
+
 export const PORT = Number(process.env.PORT ?? 1455);
 export const PROVIDER_AGENT_ENABLED =
   (process.env.PROVIDER_AGENT_ENABLED ?? "false") === "true";
@@ -17,6 +28,10 @@ export const PROVIDER_AGENT_ENROLLMENT_STATE_PATH =
   process.env.PROVIDER_AGENT_ENROLLMENT_STATE_PATH ?? path.resolve(path.dirname(STORE_PATH), "provider-agent-cloud-enrollment.json");
 export const PROVIDER_AGENT_CLOUD_API_URL =
   process.env.PROVIDER_AGENT_CLOUD_API_URL ?? "https://api.multivibe.cloud";
+export const MODULES_PATH =
+  process.env.MODULES_PATH ?? path.join(path.dirname(STORE_PATH), "modules");
+export const BUNDLED_SECURITY_MODULE_PATH =
+  process.env.BUNDLED_SECURITY_MODULE_PATH ?? path.resolve("modules/security");
 export const OAUTH_STATE_PATH =
   process.env.OAUTH_STATE_PATH ?? "/data/oauth-state.json";
 export const TRACE_FILE_PATH =
@@ -141,6 +156,31 @@ export const CODEX_SESSION_AFFINITY_MAX_ENTRIES = (() => {
   const value = Number(process.env.CODEX_SESSION_AFFINITY_MAX_ENTRIES ?? 10_000);
   return Number.isFinite(value) ? Math.max(1, Math.floor(value)) : 10_000;
 })();
+export const INFERENCE_IDEMPOTENCY_TTL_MS = finiteAtLeast(
+  process.env.INFERENCE_IDEMPOTENCY_TTL_MS,
+  5 * 60_000,
+  1_000,
+);
+export const INFERENCE_IDEMPOTENCY_IN_FLIGHT_TIMEOUT_MS = finiteAtLeast(
+  process.env.INFERENCE_IDEMPOTENCY_IN_FLIGHT_TIMEOUT_MS,
+  5 * 60_000,
+  1_000,
+);
+export const INFERENCE_IDEMPOTENCY_MAX_ENTRIES = finiteAtLeast(
+  process.env.INFERENCE_IDEMPOTENCY_MAX_ENTRIES,
+  1_000,
+  1,
+);
+export const INFERENCE_IDEMPOTENCY_MAX_BYTES = finiteAtLeast(
+  process.env.INFERENCE_IDEMPOTENCY_MAX_BYTES,
+  32 * 1024 * 1024,
+  1_024,
+);
+export const INFERENCE_IDEMPOTENCY_MAX_RESPONSE_BYTES = finiteAtLeast(
+  process.env.INFERENCE_IDEMPOTENCY_MAX_RESPONSE_BYTES,
+  1024 * 1024,
+  1_024,
+);
 export const PROXY_API_KEY = process.env.PROXY_API_KEY ?? "";
 export const PROXY_API_KEYS = process.env.PROXY_API_KEYS ?? "";
 export const CLAUDE_CODE_MODEL =
