@@ -394,7 +394,7 @@ async function notarizeMacApplication(application, profile, work) {
 }
 
 async function writeManifest(root, metadata) {
-  const files = await allFiles(root);
+  const files = (await allFiles(root)).sort((left, right) => left.localeCompare(right));
   const entries = [];
   for (const relative of files) {
     if (relative === "manifest.json") continue;
