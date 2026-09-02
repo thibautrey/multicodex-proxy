@@ -10,6 +10,7 @@ import {
   mkdtemp,
   open,
   readFile,
+  realpath,
   readdir,
   rm,
   stat,
@@ -524,7 +525,7 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
   return { root, baseName };
 }
 
-async function archiveBundle(bundle, options, selectedTarget) {
+export async function archiveBundle(bundle, options, selectedTarget) {
   await mkdir(options.output, { recursive: true, mode: 0o755 });
   const extension = selectedTarget.archive;
   const destination = path.join(options.output, `${bundle.baseName}.${extension}`);
@@ -532,7 +533,14 @@ async function archiveBundle(bundle, options, selectedTarget) {
   if (selectedTarget.archive === "zip") {
     await command("ditto", ["-c", "-k", "--keepParent", bundle.root, destination]);
   } else {
-    await command("tar", ["-czf", destination, "-C", path.dirname(bundle.root), path.basename(bundle.root)]);
+    await command("tar", [
+      "--format=ustar",
+      "-czf",
+      destination,
+      "-C",
+      path.dirname(bundle.root),
+      path.basename(bundle.root),
+    ]);
   }
   return destination;
 }
@@ -571,7 +579,18 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(`provider-host package failed: ${error instanceof Error ? error.message : "unknown error"}`);
-  process.exitCode = 1;
-});
+async function invokedDirectly() {
+  if (!process.argv[1]) return false;
+  try {
+    return await realpath(process.argv[1]) === await realpath(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (await invokedDirectly()) {
+  main().catch((error) => {
+    console.error(`provider-host package failed: ${error instanceof Error ? error.message : "unknown error"}`);
+    process.exitCode = 1;
+  });
+}
