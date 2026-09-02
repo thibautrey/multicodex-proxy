@@ -911,6 +911,14 @@ from GitHub's contributor graph and updates automatically.
 
 ---
 
+## 📄 License
+
+MultiVibe, including its auditable provider-host agent, is licensed under the
+[Apache License 2.0](./LICENSE). The license includes an explicit patent grant
+and permits inspection, modification, and redistribution under its terms.
+
+---
+
 ## ⭐ Star history
 
 <a href="https://www.star-history.com/#thibautrey/multivibe&Date">
