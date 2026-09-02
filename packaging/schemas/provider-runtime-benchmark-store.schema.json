@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://multivibe.cloud/schemas/provider-runtime-benchmark-store.schema.json",
+  "title": "MultiVibe bounded local benchmark store v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "results"],
+  "properties": {
+    "schema_version": { "const": "provider-runtime-benchmark-store-v1" },
+    "results": {
+      "type": "array",
+      "maxItems": 256,
+      "items": { "$ref": "provider-runtime-benchmark-result.schema.json" }
+    }
+  }
+}

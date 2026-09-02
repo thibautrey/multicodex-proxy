@@ -485,6 +485,21 @@ func allowedManagedOllamaDownloadURL(parsed *url.URL, initial bool) bool {
 }
 
 func (manager *managedOllama) ensureRuntime(ctx context.Context, policyState *capacityPolicyStateDocument, dependencyManifestPath string) (managedOllamaStatus, error) {
+	manifest, err := openManagedOllamaDependencyManifest(dependencyManifestPath)
+	if err != nil {
+		return manager.status(policyState), err
+	}
+	return manager.ensureRuntimePinned(ctx, policyState, manifest)
+}
+
+func (manager *managedOllama) ensureRuntimePinned(ctx context.Context, policyState *capacityPolicyStateDocument, manifest managedOllamaDependencyManifest) (managedOllamaStatus, error) {
+	if validateManagedOllamaDependencyManifest(manifest) != nil {
+		return manager.status(policyState), errors.New("managed Ollama dependency manifest is invalid")
+	}
+	return manager.ensureRuntimeWithManifest(ctx, policyState, manifest)
+}
+
+func (manager *managedOllama) ensureRuntimeWithManifest(ctx context.Context, policyState *capacityPolicyStateDocument, manifest managedOllamaDependencyManifest) (managedOllamaStatus, error) {
 	manager.installMu.Lock()
 	defer manager.installMu.Unlock()
 	installContext, cancel := managedOllamaBoundContext(ctx, managedOllamaDefaultInstallTimeout)
@@ -498,10 +513,6 @@ func (manager *managedOllama) ensureRuntime(ctx context.Context, policyState *ca
 		manager.mu.Unlock()
 	}()
 	if _, err := manager.authorizePolicy(policyState, true); err != nil {
-		return manager.status(policyState), err
-	}
-	manifest, err := openManagedOllamaDependencyManifest(dependencyManifestPath)
-	if err != nil {
 		return manager.status(policyState), err
 	}
 	artifact := manifest.Ollama.Artifacts[manager.platform]
@@ -1379,18 +1390,17 @@ func (manager *managedOllama) waitReady(ctx context.Context, processDone <-chan 
 
 func (manager *managedOllama) stop(ctx context.Context) error {
 	manager.lifecycleMu.Lock()
+	defer manager.lifecycleMu.Unlock()
 	manager.mu.Lock()
 	process := manager.process
 	done := manager.processDone
 	if process == nil {
 		manager.state = "stopped"
 		manager.mu.Unlock()
-		manager.lifecycleMu.Unlock()
 		return nil
 	}
 	manager.state = "stopping"
 	manager.mu.Unlock()
-	manager.lifecycleMu.Unlock()
 	if err := process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		_ = process.Kill()
 	}
@@ -1498,6 +1508,17 @@ func (manager *managedOllama) pullModel(ctx context.Context, policyState *capaci
 }
 
 func (manager *managedOllama) pullModelResult(ctx context.Context, policyState *capacityPolicyStateDocument, catalogPath string, planned plannedModelDownload) (managedOllamaModelRecord, bool, error) {
+	catalog, err := openProviderModelCatalog(catalogPath)
+	if err != nil {
+		return managedOllamaModelRecord{}, false, err
+	}
+	return manager.pullModelResultPinned(ctx, policyState, catalog, planned)
+}
+
+func (manager *managedOllama) pullModelResultPinned(ctx context.Context, policyState *capacityPolicyStateDocument, catalog providerModelCatalog, planned plannedModelDownload) (managedOllamaModelRecord, bool, error) {
+	if validateProviderModelCatalog(&catalog) != nil {
+		return managedOllamaModelRecord{}, false, errors.New("managed Ollama model catalog is invalid")
+	}
 	manager.pullMu.Lock()
 	defer manager.pullMu.Unlock()
 	pullContext, cancel := managedOllamaBoundContext(ctx, managedOllamaDefaultPullTimeout)
@@ -1511,10 +1532,6 @@ func (manager *managedOllama) pullModelResult(ctx context.Context, policyState *
 		manager.mu.Unlock()
 	}()
 	policy, err := manager.authorizePolicy(policyState, true)
-	if err != nil {
-		return managedOllamaModelRecord{}, false, err
-	}
-	catalog, err := openProviderModelCatalog(catalogPath)
 	if err != nil {
 		return managedOllamaModelRecord{}, false, err
 	}
@@ -1581,11 +1598,18 @@ func (manager *managedOllama) pullModelResult(ctx context.Context, policyState *
 }
 
 func (manager *managedOllama) deactivateModel(ctx context.Context, policyState *capacityPolicyStateDocument, catalogPath, modelID string) error {
-	if _, err := manager.authorizePolicy(policyState, false); err != nil {
-		return err
-	}
 	catalog, err := openProviderModelCatalog(catalogPath)
 	if err != nil {
+		return err
+	}
+	return manager.deactivateModelPinned(ctx, policyState, catalog, modelID)
+}
+
+func (manager *managedOllama) deactivateModelPinned(ctx context.Context, policyState *capacityPolicyStateDocument, catalog providerModelCatalog, modelID string) error {
+	if validateProviderModelCatalog(&catalog) != nil {
+		return errors.New("managed Ollama model catalog is invalid")
+	}
+	if _, err := manager.authorizePolicy(policyState, false); err != nil {
 		return err
 	}
 	entry, found := catalog.entry(modelID)
@@ -1757,11 +1781,18 @@ func (manager *managedOllama) verifyCatalogModel(modelStoragePath string, entry 
 // or routes to a model. It verifies both managed inventory and the exact pinned
 // Ollama manifest; it never discovers arbitrary Ollama models.
 func (manager *managedOllama) authorizeModelActivation(policyState *capacityPolicyStateDocument, catalogPath, modelID string) (managedOllamaModelRecord, error) {
-	policy, err := manager.authorizePolicy(policyState, false)
+	catalog, err := openProviderModelCatalog(catalogPath)
 	if err != nil {
 		return managedOllamaModelRecord{}, err
 	}
-	catalog, err := openProviderModelCatalog(catalogPath)
+	return manager.authorizeModelActivationPinned(policyState, catalog, modelID)
+}
+
+func (manager *managedOllama) authorizeModelActivationPinned(policyState *capacityPolicyStateDocument, catalog providerModelCatalog, modelID string) (managedOllamaModelRecord, error) {
+	if validateProviderModelCatalog(&catalog) != nil {
+		return managedOllamaModelRecord{}, errors.New("managed Ollama model catalog is invalid")
+	}
+	policy, err := manager.authorizePolicy(policyState, false)
 	if err != nil {
 		return managedOllamaModelRecord{}, err
 	}

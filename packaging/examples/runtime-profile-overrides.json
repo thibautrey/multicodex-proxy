@@ -1,0 +1,10 @@
+{
+  "schema_version": "provider-runtime-profile-overrides-v1",
+  "require_profile_id": "qwen2.5-0.5b-q4km-cuda8-ollama",
+  "require_backend_id": "ollama-managed",
+  "context_tokens": 4096,
+  "batch_size": 64,
+  "parallelism": 1,
+  "gpu_offload_layers": 12,
+  "maximum_memory_bytes": 2281701376
+}

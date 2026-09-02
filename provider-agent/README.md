@@ -1,5 +1,10 @@
 # Embedded provider agent
 
+The public extension contract is documented in
+[runtimebackend/CONTRIBUTING.md](runtimebackend/CONTRIBUTING.md),
+[RUNTIME_PROFILES.md](RUNTIME_PROFILES.md) and
+[RUNTIME_BENCHMARKS.md](RUNTIME_BENCHMARKS.md).
+
 The provider agent is a bounded Go component shipped with MultiVibe Core. Core supervises the packaged binary when `PROVIDER_AGENT_ENABLED=true`; no separate installer is supported.
 
 The Core container build compiles this module for its target architecture and
@@ -165,7 +170,8 @@ manufacture room for a more popular model.
 ## Signed demand and the managed Ollama runtime
 
 The managed runtime is reached through the compiled, process-local backend
-contract documented in [RUNTIME_BACKENDS.md](RUNTIME_BACKENDS.md). That
+contract documented in
+[runtimebackend/CONTRIBUTING.md](runtimebackend/CONTRIBUTING.md). That
 contract defines explicit primary/fallback selection, immutable launch and
 provenance allowlists, normalized metrics and lifecycle capabilities while
 keeping the current Ollama adapter strictly shadow-only.
@@ -215,3 +221,14 @@ split is 85% to the host operator and a 15% MultiVibe service fee for eligible,
 cleared community-workload revenue, before applicable taxes, reserves, disputes
 and reversals; the separate 5% fee applies only to customer purchases or
 top-ups. No payable or settlement is created by this code.
+
+## License
+
+The provider agent, public runtime SDK, extension contracts, examples and
+documentation in this repository are part of MultiVibe Core and are licensed
+under [Apache License 2.0](../LICENSE). See [NOTICE](../NOTICE) for attribution
+and notices.
+
+That license does not grant rights to MultiVibe Cloud, MultiVibe trademarks,
+credentials or customer data. Model weights, packaged runtimes and other
+third-party dependencies remain subject to their own licenses and notices.
