@@ -173,6 +173,13 @@ It does not submit automatically: enrollment requires an explicit one-time
 grant and exact manifest. Submission does not advertise capacity, accept
 community workloads, or enable earnings and payouts.
 
+The multiarchitecture Core container build compiles the Go agent for the same
+target OS and architecture as the final image, runs its complete Go test suite
+on the build platform, and installs the static executable at the default
+`/opt/multivibe/bin/multivibe-provider-agent` path with no separate download.
+The binary remains inert unless `PROVIDER_AGENT_ENABLED=true`; enabling it does
+not bypass any of the shadow-only routing or compensation locks above.
+
 ### Anonymous model-demand sharing
 
 Anonymous sharing is enabled by default for new and upgraded installations and can be changed immediately in the **Tracing** tab. The activation timestamp is materialized during upgrade, so historical usage from before activation is never backfilled. Re-enabling creates a new activation timestamp.

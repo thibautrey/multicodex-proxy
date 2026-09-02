@@ -2,6 +2,12 @@
 
 The provider agent is a bounded Go component shipped with MultiVibe Core. Core supervises the packaged binary when `PROVIDER_AGENT_ENABLED=true`; no separate installer is supported.
 
+The Core container build compiles this module for its target architecture and
+installs the static executable at
+`/opt/multivibe/bin/multivibe-provider-agent`. The agent is therefore present
+in every supported Core image without a runtime download, while remaining
+disabled by default until the operator explicitly enables it.
+
 This foundation exposes loopback health and a consent-bounded manifest containing only explicitly selected model identifiers. It enforces the ordered lifecycle `detected -> selected -> submitted -> approved -> online -> compensation-eligible`, with independent suspension and terminal revocation. It never scans LAN addresses, mDNS, processes, files, command lines, environment variables, or arbitrary ports.
 
 An empty selection remains `detected`; only a non-empty, explicit selection is

@@ -15,6 +15,17 @@ COPY --from=deps /app/web/node_modules ./web/node_modules
 COPY . .
 RUN npm run build
 
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS provider-agent-build
+WORKDIR /src/provider-agent
+ARG TARGETOS
+ARG TARGETARCH
+COPY provider-agent/go.mod ./
+COPY provider-agent/*.go ./
+RUN go test ./...
+RUN CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
+  go build -trimpath -buildvcs=false -ldflags="-s -w" \
+  -o /out/multivibe-provider-agent .
+
 FROM node:22-alpine
 WORKDIR /app
 RUN apk add --no-cache libstdc++
@@ -30,6 +41,9 @@ COPY --from=build \
   /app/scripts/install-codex-project-hook.mjs \
   /app/scripts/install-codex-project-hook.sh \
   ./scripts/
+COPY --from=provider-agent-build --chmod=0555 \
+  /out/multivibe-provider-agent \
+  /opt/multivibe/bin/multivibe-provider-agent
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
 EXPOSE 1455
