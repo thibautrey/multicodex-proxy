@@ -20,7 +20,7 @@ test("runs response modules for buffered native Responses streams", async () => 
   };
   const traceManager: any = { recordTrace: () => undefined, beginTrace: async () => "t", completeTrace: async () => undefined };
   const moduleManager: any = { runHook: async (hook: string, value: string) => ({ value: hook === "response.received" ? value.replaceAll("<SECRET>", "restored") : value }) };
-  const app = express(); app.use(express.json()); app.use(createProxyRouter({ store, traceManager, moduleManager, openaiBaseUrl: "http://unused", mistralBaseUrl: "http://unused", mistralUpstreamPath: "/v1/responses", mistralCompactUpstreamPath: "/v1/responses/compact", zaiBaseUrl: "http://unused", zaiUpstreamPath: "/v1/chat/completions", zaiCompactUpstreamPath: "/v1/chat/completions", oauthConfig: {} as any }));
+  const app = express(); app.use(express.json()); app.use("/v1", createProxyRouter({ store, traceManager, moduleManager, openaiBaseUrl: "http://unused", mistralBaseUrl: "http://unused", mistralUpstreamPath: "/v1/responses", mistralCompactUpstreamPath: "/v1/responses/compact", zaiBaseUrl: "http://unused", zaiUpstreamPath: "/v1/chat/completions", zaiCompactUpstreamPath: "/v1/chat/completions", oauthConfig: {} as any }));
   const server = app.listen(0, "127.0.0.1");
   await new Promise<void>((resolve) => server.once("listening", resolve));
   const port = (server.address() as any).port;
