@@ -128,6 +128,7 @@ Everything important is file-based and survives restart (if `/data` is mounted):
 - `/data/anonymous-usage-state.json` (mode `0600`, retry envelope only)
 - `/data/provider-agent-selection.json` (mode `0600`, local explicit model selection only)
 - `/data/provider-agent-runtime-endpoints.json` (mode `0600`, local loopback endpoints and optional runtime bearers)
+- `/data/provider-agent-device-identity.json` (mode `0600`, local Ed25519 device identity and relay-shadow sequence)
 - `/data/jobs.sqlite` (WAL, mode `0600`)
 
 Recent trace retention defaults to the latest **1000** entries and can be changed with `TRACE_RETENTION_MAX`.
@@ -152,6 +153,13 @@ loopback endpoint per manual adapter and persist an explicit model selection
 locally. Runtime bearers are accepted only through the local authenticated
 admin path, never returned by either API, and retained when an update omits the
 secret field.
+
+`PROVIDER_AGENT_DEVICE_KEY_PATH` selects the separate mode-`0600` Ed25519
+device identity. The agent exposes only its public key and key ID in the local
+manifest. Its authenticated relay-shadow endpoint signs Cloud-compatible
+30-second session-open envelopes with a persisted monotonic sequence and fixed
+non-commercial locks. This endpoint cannot carry customer content, open a
+socket to a relay, enable routing or create compensation eligibility.
 The local-account **Share models · Preview** experience exposes the same
 inventory and revisioned selection without requiring a separate agent UI.
 They do not enroll a node, send the inventory to Cloud, advertise capacity,
@@ -666,9 +674,11 @@ Settings endpoints:
 Embedded provider-agent endpoints:
 
 - `GET /admin/provider-agent/adapters`
+- `GET /admin/provider-agent/manifest`
 - `GET/PUT /admin/provider-agent/runtime-endpoints`
 - `GET /admin/provider-agent/detected-models`
 - `GET/PUT /admin/provider-agent/selection`
+- `POST /admin/provider-agent/relay-shadow/session-open`
 
 OAuth admin endpoints:
 
@@ -697,6 +707,7 @@ directly through `POST /admin/accounts` with `provider: "opencode"`.
 | `STORE_PATH`                      | `/data/accounts.json`                     | Accounts, aliases, API keys, and settings store                     |
 | `PROVIDER_AGENT_STATE_PATH`       | beside `STORE_PATH`                       | Mode-0600 local explicit provider model selection                   |
 | `PROVIDER_AGENT_RUNTIME_STATE_PATH` | beside `STORE_PATH`                     | Mode-0600 manual loopback endpoints and optional runtime bearers    |
+| `PROVIDER_AGENT_DEVICE_KEY_PATH`   | beside `STORE_PATH`                       | Mode-0600 Ed25519 device identity and relay-shadow sequence         |
 | `OAUTH_STATE_PATH`                | `/data/oauth-state.json`                  | OAuth flow state                                                    |
 | `TRACE_FILE_PATH`                 | `/data/requests-trace.jsonl`              | Recent request trace file                                           |
 | `TRACE_STATS_HISTORY_PATH`        | `/data/requests-stats-history.jsonl`      | Lightweight request history for long-term stats                     |

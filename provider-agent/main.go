@@ -18,9 +18,11 @@ import (
 )
 
 type manifest struct {
-	ProtocolVersion string   `json:"protocol_version"`
-	State           string   `json:"state"`
-	SelectedModels  []string `json:"selected_models"`
+	ProtocolVersion     string   `json:"protocol_version"`
+	State               string   `json:"state"`
+	SelectedModels      []string `json:"selected_models"`
+	DeviceKeyID         string   `json:"device_key_id,omitempty"`
+	DevicePublicKeySPKI string   `json:"device_public_key_spki,omitempty"`
 }
 
 func loopbackAgentAddress(raw string) (string, error) {
@@ -99,6 +101,10 @@ func providerHandlerWithSelection(core *url.URL, selections *selectionStore, cli
 }
 
 func providerHandlerWithStores(core *url.URL, selections *selectionStore, runtimes *runtimeEndpointStore, client *http.Client, controlToken string) http.Handler {
+	return providerHandlerWithStoresAndIdentity(core, selections, runtimes, nil, client, controlToken)
+}
+
+func providerHandlerWithStoresAndIdentity(core *url.URL, selections *selectionStore, runtimes *runtimeEndpointStore, identity *deviceIdentity, client *http.Client, controlToken string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health/live", func(response http.ResponseWriter, _ *http.Request) {
 		response.Header().Set("content-type", "application/json")
@@ -124,9 +130,17 @@ func providerHandlerWithStores(core *url.URL, selections *selectionStore, runtim
 	})
 	mux.HandleFunc("GET /v1/manifest", func(response http.ResponseWriter, _ *http.Request) {
 		document := selections.snapshot()
+		keyID := ""
+		publicKeySPKI := ""
+		if identity != nil {
+			keyID, publicKeySPKI = identity.publicIdentity()
+		}
 		response.Header().Set("cache-control", "no-store")
 		response.Header().Set("content-type", "application/json")
-		_ = json.NewEncoder(response).Encode(manifest{ProtocolVersion: "provider-agent-v1", State: document.State, SelectedModels: document.SelectedModels})
+		_ = json.NewEncoder(response).Encode(manifest{
+			ProtocolVersion: "provider-agent-v1", State: document.State, SelectedModels: document.SelectedModels,
+			DeviceKeyID: keyID, DevicePublicKeySPKI: publicKeySPKI,
+		})
 	})
 	mux.HandleFunc("GET /v1/selection", func(response http.ResponseWriter, request *http.Request) {
 		if !authorizeProviderControl(request, controlToken) {
@@ -234,6 +248,37 @@ func providerHandlerWithStores(core *url.URL, selections *selectionStore, runtim
 		response.Header().Set("content-type", "application/json")
 		_ = json.NewEncoder(response).Encode(detectedModels(request.Context(), runtimeAdapterRegistry(), runtimes.configured(), client))
 	})
+	mux.HandleFunc("POST /v1/relay-shadow/session-open", func(response http.ResponseWriter, request *http.Request) {
+		if !authorizeProviderControl(request, controlToken) {
+			http.Error(response, "not found", http.StatusNotFound)
+			return
+		}
+		if identity == nil {
+			http.Error(response, "provider relay shadow identity unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		mediaType, _, mediaTypeErr := mime.ParseMediaType(request.Header.Get("content-type"))
+		if mediaTypeErr != nil || mediaType != "application/json" {
+			http.Error(response, "invalid request", http.StatusUnsupportedMediaType)
+			return
+		}
+		request.Body = http.MaxBytesReader(response, request.Body, maxRelayEnvelopeBytes)
+		var session relaySessionRequest
+		decoder := json.NewDecoder(request.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&session); err != nil || ensureJSONEOF(decoder) != nil {
+			http.Error(response, "invalid request", http.StatusBadRequest)
+			return
+		}
+		envelope, err := identity.signRelaySession(session, time.Now())
+		if err != nil {
+			http.Error(response, "invalid request", http.StatusBadRequest)
+			return
+		}
+		response.Header().Set("cache-control", "no-store")
+		response.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(response).Encode(envelope)
+	})
 	return mux
 }
 
@@ -275,6 +320,15 @@ func main() {
 			os.Exit(2)
 		}
 	}
+	deviceKeyPath := strings.TrimSpace(os.Getenv("MULTIVIBE_PROVIDER_DEVICE_KEY_PATH"))
+	var identity *deviceIdentity
+	if deviceKeyPath != "" {
+		identity, err = openDeviceIdentity(deviceKeyPath)
+		if err != nil {
+			logger.Error("provider_agent_configuration_invalid", "error", err.Error())
+			os.Exit(2)
+		}
+	}
 	controlToken := strings.TrimSpace(os.Getenv("MULTIVIBE_PROVIDER_CONTROL_TOKEN"))
 	if controlToken != "" && len(controlToken) < 32 {
 		logger.Error("provider_agent_configuration_invalid", "error", "provider control token must contain at least 32 characters")
@@ -295,8 +349,8 @@ func main() {
 		logger.Error("provider_agent_listen_failed", "error", err.Error())
 		os.Exit(1)
 	}
-	logger.Info("provider_agent_started", "address", listener.Addr().String(), "selected_model_count", len(selections.snapshot().SelectedModels), "selection_persistent", statePath != "", "manual_runtime_count", len(runtimes.snapshot().Endpoints), "runtime_state_persistent", runtimeStatePath != "")
-	server := &http.Server{Handler: providerHandlerWithStores(core, selections, runtimes, client, controlToken), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second}
+	logger.Info("provider_agent_started", "address", listener.Addr().String(), "selected_model_count", len(selections.snapshot().SelectedModels), "selection_persistent", statePath != "", "manual_runtime_count", len(runtimes.snapshot().Endpoints), "runtime_state_persistent", runtimeStatePath != "", "device_identity_persistent", deviceKeyPath != "")
+	server := &http.Server{Handler: providerHandlerWithStoresAndIdentity(core, selections, runtimes, identity, client, controlToken), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second}
 	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("provider_agent_failed", "error", fmt.Sprint(err))
 		os.Exit(1)

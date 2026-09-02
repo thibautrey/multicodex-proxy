@@ -70,6 +70,7 @@ import type { SmartRoutingCoordinator } from "../../smart-routing-routes.js";
 import { discoverAndPersistLocalRuntimes } from "../../local-runtime-discovery.js";
 import {
   isValidProviderRuntimeEndpointInput,
+  isValidProviderRelayShadowSessionRequest,
   isValidProviderSelectedModelId,
   ProviderAgentControlRequestError,
   type ProviderAgentControl,
@@ -631,6 +632,33 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     try {
       res.json(await options.providerAgent.getSelection());
     } catch {
+      res.status(503).json({ error: "provider_agent_unavailable" });
+    }
+  });
+
+  router.get("/provider-agent/manifest", async (_req, res) => {
+    if (!options.providerAgent?.enabled) return res.status(503).json({ error: "provider_agent_unavailable" });
+    try {
+      res.setHeader("cache-control", "no-store");
+      res.json(await options.providerAgent.getManifest());
+    } catch {
+      res.status(503).json({ error: "provider_agent_unavailable" });
+    }
+  });
+
+  router.post("/provider-agent/relay-shadow/session-open", async (req, res) => {
+    if (!options.providerAgent?.enabled) return res.status(503).json({ error: "provider_agent_unavailable" });
+    if (!isValidProviderRelayShadowSessionRequest(req.body)) {
+      return res.status(400).json({ error: "invalid_provider_relay_shadow_session" });
+    }
+    try {
+      const envelope = await options.providerAgent.openRelayShadowSession(req.body);
+      res.setHeader("cache-control", "no-store");
+      res.json(envelope);
+    } catch (error) {
+      if (error instanceof ProviderAgentControlRequestError && error.status === 400) {
+        return res.status(400).json({ error: "invalid_provider_relay_shadow_session" });
+      }
       res.status(503).json({ error: "provider_agent_unavailable" });
     }
   });

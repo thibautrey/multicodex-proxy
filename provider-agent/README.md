@@ -48,10 +48,22 @@ unchanged adapter and endpoint; sending an explicit empty value removes it.
 
 The live Cloud enrollment, dedicated-tailnet `tsnet` transport, mutually authenticated HTTP/2/WebSocket fallback, signed metering envelopes, and remote workload handling remain fail-closed until their credentials, protocol and Cloud gates are implemented and verified. The current binary does not enroll, advertise capacity, accept community work, or create compensation eligibility.
 
+The agent does implement the transport-independent Cloud relay-shadow
+session-open envelope. A local Ed25519 identity is stored in an atomic
+mode-`0600` document together with its monotonic sequence. The local manifest
+contains only the public SPKI and its derived key ID. Authenticated
+`POST /v1/relay-shadow/session-open` generates its own 32-byte nonce, uses a
+30-second canonical UTC window and signs the exact
+`multivibe-provider-relay-shadow-v1` domain. The payload hardcodes
+`shadowOnly=true` and every customer-traffic, routing and compensation flag to
+false. It contains no prompt, output, media, usage or price and does not create
+a network session by itself.
+
 Core starts the embedded process with a closed environment allowlist containing
 only its loopback URL, the agent loopback listen address and the optional
 initial selected-model seed. Core separately supplies the explicit selection
-and runtime state paths plus its newly generated control bearer.
+and runtime state paths, the device-identity path and its newly generated
+control bearer.
 Parent-provided state paths or control tokens, provider credentials, Stripe or
 OAuth secrets, control-plane tokens, API keys and unrelated variables are
 never inherited by the agent.

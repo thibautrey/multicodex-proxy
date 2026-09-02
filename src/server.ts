@@ -38,6 +38,7 @@ import {
   OAUTH_STATE_PATH,
   PORT,
   PROVIDER_AGENT_BINARY,
+  PROVIDER_AGENT_DEVICE_KEY_PATH,
   PROVIDER_AGENT_ENABLED,
   PROVIDER_AGENT_RUNTIME_STATE_PATH,
   PROVIDER_AGENT_STATE_PATH,
@@ -130,6 +131,7 @@ const providerAgent = startEmbeddedProviderAgent({
   binaryPath: PROVIDER_AGENT_BINARY,
   statePath: PROVIDER_AGENT_STATE_PATH,
   runtimeStatePath: PROVIDER_AGENT_RUNTIME_STATE_PATH,
+  deviceKeyPath: PROVIDER_AGENT_DEVICE_KEY_PATH,
 });
 await traceManager.seedStatsHistoryIfMissing();
 const anonymousUsageSharing = createAnonymousUsageSharingWorker({
