@@ -184,23 +184,31 @@ const modelsCache: {
   at: number;
   models: ExposedModel[];
   store?: AccountStore;
-  revision: number;
+  catalogRevision: number;
 } = {
   at: 0,
   models: [],
-  revision: -1,
+  catalogRevision: -1,
 };
 const modelsRefreshCoordinator =
   new AsyncRefreshCoordinator<ExposedModel[]>();
-// Internal routing metadata. It is intentionally not exposed in /models.
-const modelAvailabilityByProvider: ModelAvailabilityByProvider = new Map();
+// Availability is paired with the exact catalog array returned to a caller.
+// A background refresh may publish a newer catalog between discovery and
+// routing; a single global availability map would then describe the wrong
+// snapshot and could incorrectly exclude accounts from the older catalog.
+const modelAvailabilityByCatalog =
+  new WeakMap<ExposedModel[], ModelAvailabilityByProvider>();
 
-type RevisionedAccountStore = AccountStore & {
+type CatalogRevisionedAccountStore = AccountStore & {
+  getCatalogRevision?: () => number;
   getRevision?: () => number;
 };
 
-function accountStoreRevision(store: AccountStore): number {
-  const revisionedStore = store as RevisionedAccountStore;
+function accountStoreCatalogRevision(store: AccountStore): number {
+  const revisionedStore = store as CatalogRevisionedAccountStore;
+  if (typeof revisionedStore.getCatalogRevision === "function") {
+    return revisionedStore.getCatalogRevision();
+  }
   return typeof revisionedStore.getRevision === "function"
     ? revisionedStore.getRevision()
     : 0;
@@ -821,12 +829,30 @@ function accountSupportsModel(
   );
   if (!discovered) return true;
 
+  const availabilityByProvider =
+    modelAvailabilityByCatalog.get(discoveredModels);
+  if (!availabilityByProvider) return true;
+
   return accountSupportsModelByAvailability(
     accountId,
     provider,
     key,
-    modelAvailabilityByProvider,
+    availabilityByProvider,
   );
+}
+
+export function filterProviderAccountsByModelAvailability<T>(
+  providerAccounts: readonly T[],
+  supportsModel: (account: T) => boolean,
+): T[] {
+  const modelCompatibleAccounts = providerAccounts.filter(supportsModel);
+  // A catalog is a cached routing hint, not current upstream authority. Keep
+  // strict per-account routing when it leaves at least one candidate, but
+  // never let a stale negative snapshot fabricate an empty provider pool.
+  // Provider and policy constraints have already been applied by the caller.
+  return modelCompatibleAccounts.length > 0
+    ? modelCompatibleAccounts
+    : [...providerAccounts];
 }
 
 function supportedToolTypesForRoute(
@@ -896,7 +922,7 @@ async function refreshModels(
   mistralBaseUrl: string,
   zaiBaseUrl: string,
 ): Promise<ExposedModel[]> {
-  const sourceRevision = accountStoreRevision(store);
+  const sourceCatalogRevision = accountStoreCatalogRevision(store);
   try {
     const accounts = await store.listAccounts();
     const byId = new Map<string, ExposedModel>();
@@ -1069,10 +1095,6 @@ async function refreshModels(
     for (const availability of discoveredAvailabilityByProvider.values()) {
       finalizeProviderModelAvailability(availability);
     }
-    modelAvailabilityByProvider.clear();
-    for (const [provider, availability] of discoveredAvailabilityByProvider) {
-      modelAvailabilityByProvider.set(provider, availability);
-    }
 
     for (const id of PROXY_MODELS) {
       if (!byId.has(id)) byId.set(id, modelObject(id, "openai"));
@@ -1120,19 +1142,23 @@ async function refreshModels(
     if (!byId.size) throw new Error("no models discovered");
 
     const merged = Array.from(byId.values());
+    modelAvailabilityByCatalog.set(
+      merged,
+      discoveredAvailabilityByProvider,
+    );
     modelsCache.at = Date.now();
     modelsCache.models = merged;
     modelsCache.store = store;
-    modelsCache.revision = sourceRevision;
+    modelsCache.catalogRevision = sourceCatalogRevision;
     updateValidationCache(merged, catalogComplete);
     return merged;
   } catch {
-    modelAvailabilityByProvider.clear();
     const fallback = fallbackModelCatalog();
+    modelAvailabilityByCatalog.set(fallback, new Map());
     modelsCache.at = Date.now();
     modelsCache.models = fallback;
     modelsCache.store = store;
-    modelsCache.revision = sourceRevision;
+    modelsCache.catalogRevision = sourceCatalogRevision;
     updateValidationCache(fallback, false);
     return fallback;
   }
@@ -1155,11 +1181,11 @@ export async function discoverModels(
   options: DiscoverModelsOptions = {},
 ): Promise<ExposedModel[]> {
   const cacheAgeMs = Math.max(0, Date.now() - modelsCache.at);
-  const storeRevision = accountStoreRevision(store);
+  const storeCatalogRevision = accountStoreCatalogRevision(store);
   const hasCurrentSnapshot =
     modelsCache.models.length > 0 &&
     modelsCache.store === store &&
-    modelsCache.revision === storeRevision;
+    modelsCache.catalogRevision === storeCatalogRevision;
   if (cacheAgeMs < MODELS_CACHE_MS && hasCurrentSnapshot) {
     options.onPrepared?.("fresh", false);
     return modelsCache.models;
@@ -1201,7 +1227,7 @@ export async function discoverModels(
   if (
     prepared.mode === "blocking" &&
     (modelsCache.store !== store ||
-      modelsCache.revision !== accountStoreRevision(store))
+      modelsCache.catalogRevision !== accountStoreCatalogRevision(store))
   ) {
     return discoverModels(
       store,
@@ -1886,29 +1912,56 @@ export function isStreamingUpstreamResponse(
 
 export function classifyNativeStreamCompletion(
   clientDisconnected: boolean,
-  sawResponseCompleted: boolean,
+  sawTerminalEvent: boolean,
   streamError?: Error,
 ) {
-  const interrupted =
-    !sawResponseCompleted &&
-    (Boolean(streamError) || clientDisconnected);
+  if (sawTerminalEvent) {
+    return {
+      interrupted: false,
+      status: 200,
+      clientDisconnected: undefined,
+      error: undefined,
+    };
+  }
+
+  const clientInterrupted = clientDisconnected;
+  const error = clientInterrupted
+    ? "client disconnected before stream completion"
+    : streamError?.message ??
+      "upstream stream ended before response.completed";
+
   return {
-    interrupted,
-    status: sawResponseCompleted
-      ? 200
-      : clientDisconnected
-        ? 499
-        : streamError
-          ? 599
-          : 200,
-    clientDisconnected:
-      clientDisconnected && !sawResponseCompleted ? true : undefined,
-    error: sawResponseCompleted
-      ? undefined
-      : clientDisconnected
-        ? "client disconnected before stream completion"
-        : streamError?.message,
+    interrupted: true,
+    status: clientInterrupted ? 499 : 599,
+    clientDisconnected: clientInterrupted ? true : undefined,
+    error,
   };
+}
+
+export function nativeResponsesErrorFrame(
+  message: string,
+  code: string,
+  sequenceNumber = 0,
+  param: string | null = null,
+): string {
+  return `event: error\ndata: ${JSON.stringify({
+    type: "error",
+    code,
+    message,
+    param,
+    sequence_number: sequenceNumber,
+  })}\n\n`;
+}
+
+export function nativeStreamInterruptionFrame(
+  message: string,
+  sequenceNumber = 0,
+): string {
+  return nativeResponsesErrorFrame(
+    message,
+    "stream_interrupted",
+    sequenceNumber,
+  );
 }
 
 function isModelNotFoundError(status: number, errorText: string): boolean {
@@ -2213,13 +2266,18 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       status: number,
       error: string | Record<string, unknown>,
     ) => {
-      const payload = { error };
       const errorMessage =
         typeof error === "string"
           ? error
           : typeof error.message === "string"
             ? error.message
             : JSON.stringify(error);
+      const errorCode =
+        typeof error === "object" &&
+        typeof error.code === "string" &&
+        error.code
+          ? error.code
+          : "proxy_preparation_error";
 
       if (isNativeResponsesStream && res.headersSent) {
         setClientOutcomeStatus(status);
@@ -2228,7 +2286,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           nativeStreamKeepalive = undefined;
         }
         if (!res.writableEnded) {
-          res.write(`event: error\ndata: ${JSON.stringify(payload)}\n\n`);
+          res.write(nativeResponsesErrorFrame(errorMessage, errorCode));
           res.end();
         }
         if (nativeStreamTracePromise) {
@@ -2471,16 +2529,20 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
               .map((entry) => entry.resource.accountId),
           )
         : undefined;
-      const providerAccounts = accounts.filter(
+      const providerScopedAccounts = accounts.filter(
         (a) =>
           normalizeProvider(a) === candidate.provider &&
+          (!policyAccountIds || policyAccountIds.has(a.id)),
+      );
+      const providerAccounts = filterProviderAccountsByModelAvailability(
+        providerScopedAccounts,
+        (account) =>
           accountSupportsModel(
-            a.id,
+            account.id,
             candidate.provider,
             candidate.resolvedModel,
             discoveredModels,
-          ) &&
-          (!policyAccountIds || policyAccountIds.has(a.id)),
+          ),
       );
       if (!providerAccounts.length) continue;
       providerTried = true;
@@ -3060,8 +3122,19 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
 
             if (!res.writableEnded) {
               setClientOutcomeStatus(upstream.status);
+              const upstreamErrorMessage =
+                typeof upstreamError?.message === "string"
+                  ? upstreamError.message
+                  : `Upstream returned HTTP ${upstream.status}`;
+              const upstreamErrorCode =
+                typeof upstreamError?.code === "string" && upstreamError.code
+                  ? upstreamError.code
+                  : "upstream_error";
               res.write(
-                `event: error\ndata: ${JSON.stringify({ error: upstreamError })}\n\n`,
+                nativeResponsesErrorFrame(
+                  upstreamErrorMessage,
+                  upstreamErrorCode,
+                ),
               );
               res.write(
                 responseObjectToSSE({
@@ -3194,26 +3267,21 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
 
               const classification = classifyNativeStreamCompletion(
                 clientDisconnected,
-                diagnostics.sawResponseCompleted,
+                Boolean(diagnostics.terminalEventType),
                 streamError,
               );
-              if (
-                streamError &&
-                !diagnostics.sawResponseCompleted &&
-                !clientDisconnected &&
-                !res.writableEnded
-              ) {
-                res.write(
-                  `event: error\ndata: ${JSON.stringify({
-                    error: {
-                      message: streamError.message,
-                      type: "upstream_error",
-                      code: "stream_interrupted",
-                    },
-                  })}\n\n`,
-                );
+              if (!clientDisconnected && !res.writableEnded) {
+                if (classification.interrupted && classification.error) {
+                  setClientOutcomeStatus(classification.status);
+                  res.write(
+                    nativeStreamInterruptionFrame(
+                      classification.error,
+                      diagnostics.eventCount,
+                    ),
+                  );
+                }
+                res.end();
               }
-              if (!clientDisconnected && !res.writableEnded) res.end();
               await completeTrace(streamTraceId, {
                 at: Date.now(),
                 startedAt,
@@ -4539,15 +4607,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           }
           if (isNativeResponsesStream && res.headersSent && !res.writableEnded) {
             setClientOutcomeStatus(599);
-            res.write(
-              `event: error\ndata: ${JSON.stringify({
-                error: {
-                  message: msg,
-                  type: "upstream_error",
-                  code: "stream_interrupted",
-                },
-              })}\n\n`,
-            );
+            res.write(nativeStreamInterruptionFrame(msg));
             res.end();
           }
           await store.upsertAccount(selected).catch((persistError) => {

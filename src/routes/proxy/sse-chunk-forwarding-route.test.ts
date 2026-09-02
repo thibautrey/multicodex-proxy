@@ -65,6 +65,19 @@ test("forwards native Responses chunks while preserving diagnostics", async (t) 
     "",
   ].join("\n");
   const upstreamBytes = new TextEncoder().encode(upstreamSSE);
+  const truncatedSSE = [
+    "event: response.output_text.delta",
+    'data: {"type":"response.output_text.delta","delta":"partial"}',
+    "",
+    "",
+  ].join("\n");
+  const failedSSE = [
+    "event: response.failed",
+    'data: {"type":"response.failed","response":{"status":"failed","error":{"code":"server_error","message":"generation failed"}}}',
+    "",
+    "",
+  ].join("\n");
+  let upstreamRequestCount = 0;
 
   globalThis.fetch = async (input) => {
     if (String(input).includes("/backend-api/codex/models")) {
@@ -77,6 +90,20 @@ test("forwards native Responses chunks while preserving diagnostics", async (t) 
           headers: { "content-type": "application/json" },
         },
       );
+    }
+
+    upstreamRequestCount += 1;
+    if (upstreamRequestCount === 2) {
+      return new Response(truncatedSSE, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    }
+    if (upstreamRequestCount === 3) {
+      return new Response(failedSSE, {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
     }
 
     return new Response(
@@ -185,6 +212,56 @@ test("forwards native Responses chunks while preserving diagnostics", async (t) 
   assert.equal(completedTraces[0].provider, "openai");
   assert.equal(typeof completedTraces[0].ttftMs, "number");
   assert.ok(completedTraces[0].ttftMs >= 0);
+
+  const truncatedResponse = await postJson(address.port, "/v1/responses", {
+    model: "gpt-5.6-sol",
+    stream: true,
+    input: "truncate",
+  });
+
+  assert.equal(truncatedResponse.status, 200);
+  assert.ok(truncatedResponse.body.startsWith(`: connected\n\n${truncatedSSE}`));
+  const interruptionFrame = truncatedResponse.body.slice(
+    `: connected\n\n${truncatedSSE}`.length,
+  );
+  assert.match(interruptionFrame, /^event: error\ndata: /);
+  const interruptionEvent = JSON.parse(
+    interruptionFrame.split("\n")[1].slice("data: ".length),
+  );
+  assert.deepEqual(interruptionEvent, {
+    type: "error",
+    code: "stream_interrupted",
+    message: "upstream stream ended before response.completed",
+    param: null,
+    sequence_number: 1,
+  });
+  assert.equal(completedTraces.length, 2);
+  assert.equal(completedTraces[1].status, 599);
+  assert.equal(completedTraces[1].lifecycleState, "interrupted");
+  assert.equal(
+    completedTraces[1].error,
+    "upstream stream ended before response.completed",
+  );
+
+  const failedResponse = await postJson(address.port, "/v1/responses", {
+    model: "gpt-5.6-sol",
+    stream: true,
+    input: "fail",
+  });
+
+  assert.equal(failedResponse.status, 200);
+  assert.equal(failedResponse.body, `: connected\n\n${failedSSE}`);
+  assert.equal(completedTraces.length, 3);
+  assert.equal(completedTraces[2].status, 200);
+  assert.equal(completedTraces[2].lifecycleState, "completed");
+  assert.equal(
+    completedTraces[2].responseStreamDiagnostics.terminalEventType,
+    "response.failed",
+  );
+  assert.equal(
+    completedTraces[2].responseStreamDiagnostics.sawResponseCompleted,
+    false,
+  );
 });
 
 test("returns an SSE error when a native Responses stream is interrupted", async (t) => {
