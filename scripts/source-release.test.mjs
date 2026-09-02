@@ -16,5 +16,13 @@ test("source archive is deterministic and bound to the tag", () => {
     const names = execFileSync("tar", ["-tzf", join(root, "a", `multivibe-${tag}-source.tar.gz`)], { encoding: "utf8" });
     assert.match(names, new RegExp(`multivibe-${tag}/LICENSE`));
     assert.match(names, new RegExp(`multivibe-${tag}/NOTICE`));
+    const notice = execFileSync("git", ["show", `${sha}:NOTICE`], { encoding: "utf8" });
+    assert.doesNotMatch(notice, /\bTHIRD_PARTY\b/, "NOTICE must not claim a nonexistent inventory");
+    const claimedPaths = [...notice.matchAll(/`([^`]+)`/g)].map((match) => match[1]);
+    assert.deepEqual(claimedPaths, ["LICENSE"], "every repository path claim must be explicit and reviewed");
+    const archived = new Set(names.trim().split("\n"));
+    for (const claimedPath of claimedPaths) {
+      assert.ok(archived.has(`multivibe-${tag}/${claimedPath}`), `NOTICE path claim is absent: ${claimedPath}`);
+    }
   } finally { execFileSync("git", ["tag", "-d", tag]); }
 });
