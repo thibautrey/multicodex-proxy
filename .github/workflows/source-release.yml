@@ -23,11 +23,9 @@ jobs:
         with:
           node-version: 22
       - name: Require immutable annotated source tag
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" == tag ]]
-          [[ "$(git rev-parse "$GITHUB_REF_NAME^{commit}")" == "$GITHUB_SHA" ]]
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/verify-source-release-tag.mjs
       - name: Build deterministic source archive and approval
         shell: bash
         run: |

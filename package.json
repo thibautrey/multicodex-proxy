@@ -14,6 +14,7 @@
     "verify:provider-host": "node scripts/verify-provider-host.mjs",
     "sign:provider-host": "node scripts/sign-provider-host-release.mjs",
     "test:source-release": "node --test scripts/source-release.test.mjs",
+    "test:source-release-tag": "node --test scripts/verify-source-release-tag.test.mjs",
     "test": "tsx --test \"src/**/*.test.ts\" \"web/test/**/*.test.ts\"",
     "start": "node --import ./dist/instrument.js dist/server.js"
   },
