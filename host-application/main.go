@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,6 +34,12 @@ type localCredentials struct {
 	SchemaVersion string `json:"schema_version"`
 	AdminToken    string `json:"admin_token"`
 	ProxyAPIKey   string `json:"proxy_api_key"`
+}
+
+type coreNetworkConfiguration struct {
+	BindAddress   string
+	Port          string
+	PublicBaseURL string
 }
 
 func main() {
@@ -334,13 +341,70 @@ func hostPort(value string) (string, error) {
 	return value, nil
 }
 
-func coreEnvironment(layout bundleLayout, dataDirectory string, credentials localCredentials, port string) []string {
-	loopback := strings.Join([]string{"127", "0", "0", "1"}, ".")
+func hostBindAddress(value string) (string, error) {
+	if value == "" {
+		return strings.Join([]string{"127", "0", "0", "1"}, "."), nil
+	}
+	for _, allowed := range []string{"127.0.0.1", "::1", "0.0.0.0", "::"} {
+		if value == allowed {
+			return value, nil
+		}
+	}
+	return "", errors.New("MULTIVIBE_HOST_BIND must be a literal loopback or wildcard address")
+}
+
+func loopbackOrigin(bindAddress, port string) string {
+	if bindAddress == "::1" {
+		return "http://[::1]:" + port
+	}
+	return "http://127.0.0.1:" + port
+}
+
+func hostPublicBaseURL(value, bindAddress, port string) (string, error) {
+	if value == "" {
+		if bindAddress == "127.0.0.1" || bindAddress == "::1" {
+			return loopbackOrigin(bindAddress, port), nil
+		}
+		return "", errors.New("MULTIVIBE_HOST_PUBLIC_URL is required when the Host binds outside loopback")
+	}
+	if strings.TrimSpace(value) != value || strings.IndexByte(value, 0) >= 0 {
+		return "", errors.New("MULTIVIBE_HOST_PUBLIC_URL must be a clean HTTP(S) origin")
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" ||
+		parsed.User != nil || parsed.Opaque != "" || parsed.RawQuery != "" || parsed.Fragment != "" ||
+		(parsed.Path != "" && parsed.Path != "/") || parsed.RawPath != "" || strings.Contains(parsed.Host, "%") {
+		return "", errors.New("MULTIVIBE_HOST_PUBLIC_URL must be a clean HTTP(S) origin")
+	}
+	if parsed.Hostname() == "" || strings.ContainsAny(parsed.Hostname(), "[]") {
+		return "", errors.New("MULTIVIBE_HOST_PUBLIC_URL must be a clean HTTP(S) origin")
+	}
+	if publicPort := parsed.Port(); publicPort != "" {
+		if _, err := hostPort(publicPort); err != nil {
+			return "", errors.New("MULTIVIBE_HOST_PUBLIC_URL must use a canonical TCP port")
+		}
+	}
+	return strings.TrimSuffix(value, "/"), nil
+}
+
+func managedDirectory(dataDirectory string) (string, error) {
+	configured := strings.TrimSpace(os.Getenv("MULTIVIBE_HOST_MANAGED_DIR"))
+	if configured == "" {
+		return filepath.Join(dataDirectory, "provider-agent-managed"), nil
+	}
+	if !filepath.IsAbs(configured) || filepath.Clean(configured) != configured || configured == string(filepath.Separator) {
+		return "", errors.New("MULTIVIBE_HOST_MANAGED_DIR must be a clean absolute non-root path")
+	}
+	return configured, nil
+}
+
+func coreEnvironment(layout bundleLayout, dataDirectory, managedDirectory string, credentials localCredentials, network coreNetworkConfiguration) []string {
 	environment := []string{
 		"NODE_ENV=production",
-		"HOST=" + loopback,
-		"PORT=" + port,
-		"PUBLIC_BASE_URL=http://" + loopback + ":" + port,
+		"HOST=" + network.BindAddress,
+		"PORT=" + network.Port,
+		"PUBLIC_BASE_URL=" + network.PublicBaseURL,
+		"OAUTH_REDIRECT_URI=" + network.PublicBaseURL + "/auth/callback",
 		"ADMIN_TOKEN=" + credentials.AdminToken,
 		"PROXY_API_KEY=" + credentials.ProxyAPIKey,
 		"STORE_PATH=" + filepath.Join(dataDirectory, "accounts.json"),
@@ -360,7 +424,7 @@ func coreEnvironment(layout bundleLayout, dataDirectory string, credentials loca
 		"PROVIDER_AGENT_DEVICE_KEY_PATH=" + filepath.Join(dataDirectory, "provider-agent-device-identity.json"),
 		"PROVIDER_AGENT_ENROLLMENT_STATE_PATH=" + filepath.Join(dataDirectory, "provider-agent-cloud-enrollment.json"),
 		"PROVIDER_AGENT_CAPACITY_POLICY_PATH=" + filepath.Join(dataDirectory, "provider-agent-capacity-policy.json"),
-		"PROVIDER_AGENT_MANAGED_ROOT=" + filepath.Join(dataDirectory, "provider-agent-managed"),
+		"PROVIDER_AGENT_MANAGED_ROOT=" + managedDirectory,
 		"PROVIDER_AGENT_BUNDLED_OLLAMA_ROOT=" + layout.BundledOllama,
 		"PROVIDER_AGENT_DEPENDENCY_MANIFEST_PATH=" + layout.DependencyManifest,
 		"PROVIDER_AGENT_MANAGED_PLANNER_STATE_PATH=" + filepath.Join(dataDirectory, "provider-agent-managed-planner-state.json"),
@@ -418,11 +482,25 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	bindAddress, err := hostBindAddress(strings.TrimSpace(os.Getenv("MULTIVIBE_HOST_BIND")))
+	if err != nil {
+		return err
+	}
+	publicBaseURL, err := hostPublicBaseURL(strings.TrimSpace(os.Getenv("MULTIVIBE_HOST_PUBLIC_URL")), bindAddress, port)
+	if err != nil {
+		return err
+	}
+	managed, err := managedDirectory(data)
+	if err != nil {
+		return err
+	}
 	entry := filepath.Join(layout.App, "dist", "server.js")
 	instrument := filepath.Join(layout.App, "dist", "instrument.js")
 	arguments := []string{layout.Node, "--import", instrument, entry}
 	if err := os.Chdir(layout.App); err != nil {
 		return errors.New("the bundled application directory is unavailable")
 	}
-	return syscall.Exec(layout.Node, arguments, coreEnvironment(layout, data, credentials, port))
+	return syscall.Exec(layout.Node, arguments, coreEnvironment(layout, data, managed, credentials, coreNetworkConfiguration{
+		BindAddress: bindAddress, Port: port, PublicBaseURL: publicBaseURL,
+	}))
 }

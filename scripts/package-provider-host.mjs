@@ -456,6 +456,7 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
   await cp(path.join(repositoryRoot, "LICENSE"), path.join(root, "LICENSE"));
   await cp(path.join(repositoryRoot, "NOTICE"), path.join(root, "NOTICE"));
   await cp(path.join(repositoryRoot, "packaging", "PROVIDER-HOST-README.md"), path.join(root, "README.md"));
+  await cp(path.join(repositoryRoot, "docker-compose.host.yml"), path.join(root, "docker-compose.host.yml"));
   const installerPlatform = selectedTarget.goos === "darwin" ? "macos" : "linux";
   for (const script of ["install.sh", "uninstall.sh"]) {
     const destination = path.join(root, script);

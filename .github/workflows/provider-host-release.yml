@@ -77,8 +77,8 @@ jobs:
         run: |
           go -C provider-agent test -race ./...
           go -C host-application test -race ./...
-      - name: Test provider archive hardening
-        run: node --test scripts/package-provider-host.test.mjs scripts/provider-host-native-dependencies.test.mjs scripts/runtime-benchmark-evidence.test.mjs scripts/verify-provider-host-archive-fixtures.test.mjs
+      - name: Test provider archive and container hardening
+        run: node --test scripts/package-provider-host.test.mjs scripts/provider-host-container.test.mjs scripts/provider-host-native-dependencies.test.mjs scripts/runtime-benchmark-evidence.test.mjs scripts/verify-provider-host-archive-fixtures.test.mjs
       - name: Install the pinned Go vulnerability scanner
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
       - name: Scan the provider agent for reachable Go vulnerabilities
@@ -171,8 +171,8 @@ jobs:
         run: |
           go -C provider-agent test -race ./...
           go -C host-application test -race ./...
-      - name: Test provider archive hardening
-        run: node --test scripts/package-provider-host.test.mjs scripts/provider-host-native-dependencies.test.mjs scripts/runtime-benchmark-evidence.test.mjs scripts/verify-provider-host-archive-fixtures.test.mjs
+      - name: Test provider archive and container hardening
+        run: node --test scripts/package-provider-host.test.mjs scripts/provider-host-container.test.mjs scripts/provider-host-native-dependencies.test.mjs scripts/runtime-benchmark-evidence.test.mjs scripts/verify-provider-host-archive-fixtures.test.mjs
       - name: Import ephemeral Apple release credentials
         shell: bash
         env:
@@ -318,8 +318,68 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
+  publish-container:
+    needs: [validate-tag, build-linux, sign-release]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: provider-host-linux
+          path: release-linux
+      - name: Build and exercise the Linux Host image
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ needs.validate-tag.outputs.version }}"
+          archive="release-linux/multivibe-host_${version}_linux_amd64.tar.gz"
+          npm run verify:provider-host -- "$archive"
+
+          context="$RUNNER_TEMP/multivibe-host-container"
+          mkdir -p "$context/bundle"
+          tar --extract --gzip --file "$archive" --directory "$context/bundle" --strip-components=1
+          rm -f -- "$archive"
+          cp packaging/container/Dockerfile "$context/Dockerfile"
+          cp packaging/container/entrypoint.sh "$context/entrypoint.sh"
+
+          source_commit="$(node --input-type=module --eval "import {readFile} from 'node:fs/promises'; const manifest=JSON.parse(await readFile(process.argv[1],'utf8')); process.stdout.write(manifest.sourceCommit)" "$context/bundle/manifest.json")"
+          test "$source_commit" = "$GITHUB_SHA"
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/multivibe-host"
+          docker build \
+            --platform linux/amd64 \
+            --build-arg "MULTIVIBE_VERSION=$version" \
+            --build-arg "MULTIVIBE_SOURCE_COMMIT=$source_commit" \
+            --tag "$image:$version" \
+            "$context"
+          test "$(docker run --rm "$image:$version" version)" = "$version"
+          test "$(docker image inspect --format '{{ index .Config.Labels \"org.opencontainers.image.revision\" }}' "$image:$version")" = "$source_commit"
+          docker tag "$image:$version" "$image:latest"
+          printf 'image=%s\nversion=%s\n' "$image" "$version" >> "$GITHUB_OUTPUT"
+      - name: Publish the immutable version and rolling latest tags
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          image="${{ steps.image.outputs.image }}"
+          version="${{ steps.image.outputs.version }}"
+          docker push "$image:$version"
+          docker push "$image:latest"
+
   publish-release:
-    needs: [validate-tag, sign-release]
+    needs: [validate-tag, sign-release, publish-container]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

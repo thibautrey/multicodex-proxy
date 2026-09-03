@@ -658,6 +658,50 @@ on the build platform, and installs the static executable at the default
 The binary remains inert unless `PROVIDER_AGENT_ENABLED=true`; enabling it does
 not bypass any of the shadow-only routing or compensation locks above.
 
+### Provider Host container (Docker Compose and Unraid)
+
+The ordinary `docker-compose.yml` runs Core as a gateway. The separate
+`docker-compose.host.yml` runs the complete security-bounded **MultiVibe Host**
+bundle for Linux amd64 systems with a supported NVIDIA GPU. Official tagged
+Host releases publish the exact verified Linux bundle as
+`ghcr.io/thibautrey/multivibe-host:<version>` and update the `latest` tag only
+after the image has started and reported the expected Host version.
+
+Set the exact URL used by browsers, then start the Host:
+
+```sh
+MULTIVIBE_HOST_PUBLIC_URL=http://192.168.1.20:1455 \
+  docker compose -f docker-compose.host.yml up -d
+```
+
+Use an HTTPS reverse-proxy origin instead when applicable. Container mode sets
+`MULTIVIBE_HOST_BIND=0.0.0.0`, but a non-loopback bind fails closed unless
+`MULTIVIBE_HOST_PUBLIC_URL` is an explicit path-free HTTP(S) origin. Core uses
+that origin for its OAuth callback. Native Host installs retain the secure
+`127.0.0.1` default and need no additional setting.
+
+Only Core port `1455` is published. The provider-agent bearer endpoint and the
+managed Ollama listener remain on literal loopback inside the same container.
+The image uses a read-only root filesystem, prepares only the two declared
+mount roots, then drops to fixed uid/gid `10001:10001` with no capabilities.
+Random admin and proxy credentials remain in `/data/host-credentials.json` and
+are never Compose or Unraid parameters.
+
+`/data` contains small private application state. `/models` is a separate
+large persistent volume; the managed runtime uses `/models/runtime`. When the
+operator explicitly creates the local capacity policy, use `/models/weights`
+as its model storage path. MultiVibe does not silently create that policy,
+enable downloads, enroll the device, accept Cloud work, or activate
+compensation.
+
+`templates/multivibe-host.xml` and `ca_profile.xml` follow the official Unraid
+Community Applications v2 layout. The template is deliberately marked beta,
+requires the Unraid Nvidia Driver runtime, keeps the app unprivileged, and
+mounts application state separately from models. The files are ready for
+validation and a later Community Applications submission; their presence in
+this source repository does not mean the app has already been accepted or
+listed in the Unraid catalog.
+
 Provider-agent admin endpoints:
 
 - `GET /admin/provider-agent/adapters`

@@ -1,0 +1,40 @@
+services:
+  multivibe-host:
+    image: ghcr.io/thibautrey/multivibe-host:${MULTIVIBE_HOST_VERSION:-latest}
+    container_name: multivibe-host
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${MULTIVIBE_HOST_PORT:-1455}:1455"
+    environment:
+      MULTIVIBE_HOST_BIND: 0.0.0.0
+      MULTIVIBE_HOST_PORT: 1455
+      MULTIVIBE_HOST_PUBLIC_URL: ${MULTIVIBE_HOST_PUBLIC_URL:?Set the exact browser-facing HTTP(S) origin}
+      MULTIVIBE_HOST_DATA_DIR: /data
+      MULTIVIBE_HOST_MANAGED_DIR: /models/runtime
+      MULTIVIBE_PROVIDER_CUDA_VISIBLE_DEVICES: "0"
+      MULTIVIBE_PROVIDER_DEMAND_TRUSTED_KEYS: ${MULTIVIBE_PROVIDER_DEMAND_TRUSTED_KEYS:-}
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      TZ: ${TZ:-UTC}
+    volumes:
+      - multivibe-host-data:/data
+      - multivibe-host-models:/models
+    gpus: all
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,mode=1777,size=512m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - FOWNER
+      - SETGID
+      - SETUID
+    stop_grace_period: 45s
+
+volumes:
+  multivibe-host-data:
+  multivibe-host-models:

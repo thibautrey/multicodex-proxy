@@ -107,6 +107,39 @@ process with MultiVibe Host. Keep the terminal or supervisor attached; use
 Ctrl-C to stop it. A default installation without systemd remains stopped and
 prints the exact foreground command.
 
+## Linux container, Docker Compose and Unraid
+
+Official tagged releases also publish the verified Linux bundle as
+`ghcr.io/thibautrey/multivibe-host:<version>`. The container supports Linux
+amd64 with an NVIDIA GPU only. It needs NVIDIA container-runtime access to one
+GPU, persistent `/data` and `/models` mounts, and an explicit browser-facing
+origin:
+
+```sh
+MULTIVIBE_HOST_PUBLIC_URL=http://192.168.1.20:1455 \
+  docker compose -f docker-compose.host.yml up -d
+```
+
+Container mode binds Core to `0.0.0.0:1455`; the Host refuses that exposed bind
+unless `MULTIVIBE_HOST_PUBLIC_URL` is a clean path-free HTTP(S) origin. Core's
+OAuth callback is derived from the same value. Provider-agent and managed
+Ollama endpoints remain loopback-only and are not published to the Docker
+network.
+
+The image starts only long enough as root to protect the two declared mount
+roots, then drops to uid/gid `10001:10001`, clears every capability and runs
+with `no-new-privileges`. Its root filesystem is read-only in the supplied
+Compose and Unraid configurations. `/data` contains private credentials,
+identity and application state. `/models/runtime` contains the managed Ollama
+runtime; choose `/models/weights` explicitly when creating the local capacity
+policy. No policy, download permission, Cloud workload consent or compensation
+state is inferred from mounting the directory.
+
+The source repository contains `templates/multivibe-host.xml` for Unraid. It is
+marked beta and requires the Unraid Nvidia Driver plugin plus an NVIDIA GPU of
+compute capability 7.0 or newer. A source template is not evidence that
+Community Applications has accepted or listed the app.
+
 ## Uninstalling
 
 Run `./uninstall.sh` from the matching release archive. On Linux it is also
