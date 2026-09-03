@@ -15,6 +15,18 @@ test("native packages include the updater and platform schedulers", async () => 
   assert.match(packager, /buildGo\(path\.join\(repositoryRoot, "host-updater"\)/u);
   assert.match(packager, /path\.join\(contents, "Resources", "update", "install\.sh"\)/u);
   assert.match(packager, /install-docker-updater\.sh/u);
+  assert.match(
+    packager,
+    /await command\("codesign", \["--verify", "--strict", "--verbose=2", node\]\)/u,
+  );
+  assert.match(
+    packager,
+    /await command\(node, \["--eval", betterSQLiteSmokeTest\]/u,
+  );
+  assert.doesNotMatch(
+    packager,
+    /\.\.\.native,\s*path\.join\(contents, "Frameworks", "node"\)/u,
+  );
   assert.match(linux, /multivibe-host-update\.timer/u);
   assert.match(linux, /multivibe-host-updater" auto/u);
   assert.match(linux, /cat > "\$UPDATE_SERVICE_STAGING" <<EOF/u);

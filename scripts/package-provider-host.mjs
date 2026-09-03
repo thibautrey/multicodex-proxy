@@ -367,6 +367,7 @@ async function allFiles(root, relative = "") {
 
 async function signMacApplication(application, identity) {
   const contents = path.join(application, "Contents");
+  const node = path.join(contents, "Frameworks", "node");
   const native = [];
   for (const file of await allFiles(contents)) {
     if (!file.startsWith(`Resources${path.sep}ollama-runtime${path.sep}`) &&
@@ -381,9 +382,13 @@ async function signMacApplication(application, identity) {
       native.push(path.join(contents, file));
     }
   }
+  // The official Node binary carries the hardened-runtime JIT entitlements it
+  // needs to execute JavaScript. Re-signing it as an ordinary nested binary
+  // strips those entitlements and makes it terminate with SIGTRAP on launch.
+  // Keep its upstream signature, then verify it before sealing the outer app.
+  await command("codesign", ["--verify", "--strict", "--verbose=2", node]);
   for (const binary of new Set([
     ...native,
-    path.join(contents, "Frameworks", "node"),
     path.join(contents, "Resources", "ollama-runtime", "ollama"),
     path.join(contents, "Helpers", "multivibe-provider-agent"),
     path.join(contents, "Helpers", "multivibe-runtime-benchmark"),
@@ -399,6 +404,9 @@ async function signMacApplication(application, identity) {
     application,
   ]);
   await command("codesign", ["--verify", "--deep", "--strict", "--verbose=2", application]);
+  await command(node, ["--eval", betterSQLiteSmokeTest], {
+    cwd: path.join(contents, "Resources", "app"),
+  });
 }
 
 async function createMacApplicationIcon(work, destination) {
