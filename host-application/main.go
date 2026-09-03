@@ -446,7 +446,7 @@ func coreEnvironment(layout bundleLayout, dataDirectory, managedDirectory string
 		"PROVIDER_AGENT_DEPENDENCY_MANIFEST_PATH=" + layout.DependencyManifest,
 		"PROVIDER_AGENT_MANAGED_PLANNER_STATE_PATH=" + filepath.Join(dataDirectory, "provider-agent-managed-planner-state.json"),
 		"PROVIDER_AGENT_MODEL_CATALOG_PATH=" + layout.ModelCatalog,
-		"PROVIDER_AGENT_CLOUD_API_URL=https://api.multivibe.cloud",
+		"PROVIDER_AGENT_CLOUD_API_URL=https://auth.multivibe.cloud",
 		"TRACE_INCLUDE_BODY=false",
 		"TRACE_INCLUDE_HEADERS=false",
 		"PATH=/usr/bin:/bin:/usr/sbin:/sbin",

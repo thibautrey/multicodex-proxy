@@ -809,15 +809,18 @@ func main() {
 	}
 	client := &http.Client{Timeout: 2 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	var enrollment *cloudEnrollmentService
+	var workerTest *workerTestService
 	if identity != nil {
 		enrollment = newCloudEnrollmentService(cloudURL, client, identity, selections, enrollmentStore)
+		workerTest = newWorkerTestService(cloudURL, client, identity, enrollmentStore, selections, runtimes)
+		go workerTest.run(context.Background())
 	}
 	listener, err := openProviderAgentListener(listenAddress, bootstrap)
 	if err != nil {
 		logger.Error("provider_agent_listen_failed", "error", err.Error())
 		os.Exit(1)
 	}
-	logger.Info("provider_agent_started", "address", listener.Addr().String(), "selected_model_count", len(selections.snapshot().SelectedModels), "selection_persistent", statePath != "", "manual_runtime_count", len(runtimes.snapshot().Endpoints), "runtime_state_persistent", runtimeStatePath != "", "device_identity_persistent", deviceKeyPath != "", "cloud_enrollment_persistent", enrollmentStatePath != "", "capacity_policy_configured", capacity.snapshot() != nil, "capacity_policy_persistent", capacityPolicyPath != "", "demand_planning_enabled", demand != nil, "demand_plan_persistent", demandPlanPath != "", "managed_ollama_enabled", controller != nil)
+	logger.Info("provider_agent_started", "address", listener.Addr().String(), "selected_model_count", len(selections.snapshot().SelectedModels), "selection_persistent", statePath != "", "manual_runtime_count", len(runtimes.snapshot().Endpoints), "runtime_state_persistent", runtimeStatePath != "", "device_identity_persistent", deviceKeyPath != "", "cloud_enrollment_persistent", enrollmentStatePath != "", "worker_test_enabled", workerTest != nil, "capacity_policy_configured", capacity.snapshot() != nil, "capacity_policy_persistent", capacityPolicyPath != "", "demand_planning_enabled", demand != nil, "demand_plan_persistent", demandPlanPath != "", "managed_ollama_enabled", controller != nil)
 	server := newProviderHTTPServer(providerHandlerWithManagedControllerAndCapability(core, selections, runtimes, identity, enrollment, capacity, demand, controller, capability, client, controlToken))
 	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("provider_agent_failed", "error", fmt.Sprint(err))
