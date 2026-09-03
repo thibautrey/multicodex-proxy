@@ -167,6 +167,8 @@ func TestHostPublicBaseURLRequiresAnExplicitCleanOriginWhenExposed(t *testing.T)
 		{"https://multivibe.example.com?redirect=elsewhere", "0.0.0.0"},
 		{"https://multivibe.example.com#fragment", "0.0.0.0"},
 		{"https://multivibe.example.com:01455", "0.0.0.0"},
+		{"https://multivibe.example.com:", "0.0.0.0"},
+		{"https://[::1]:", "0.0.0.0"},
 		{" http://192.168.1.20:1455", "0.0.0.0"},
 	} {
 		if _, err := hostPublicBaseURL(test.value, test.bind, "1455"); err == nil {

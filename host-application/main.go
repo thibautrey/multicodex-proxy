@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -379,10 +380,21 @@ func hostPublicBaseURL(value, bindAddress, port string) (string, error) {
 	if parsed.Hostname() == "" || strings.ContainsAny(parsed.Hostname(), "[]") {
 		return "", errors.New("MULTIVIBE_HOST_PUBLIC_URL must be a clean HTTP(S) origin")
 	}
-	if publicPort := parsed.Port(); publicPort != "" {
+	publicPort := parsed.Port()
+	if publicPort != "" {
 		if _, err := hostPort(publicPort); err != nil {
 			return "", errors.New("MULTIVIBE_HOST_PUBLIC_URL must use a canonical TCP port")
 		}
+	}
+	canonicalAuthority := parsed.Hostname()
+	if strings.Contains(canonicalAuthority, ":") {
+		canonicalAuthority = "[" + canonicalAuthority + "]"
+	}
+	if publicPort != "" {
+		canonicalAuthority = net.JoinHostPort(parsed.Hostname(), publicPort)
+	}
+	if parsed.Host != canonicalAuthority {
+		return "", errors.New("MULTIVIBE_HOST_PUBLIC_URL must use a canonical authority")
 	}
 	return strings.TrimSuffix(value, "/"), nil
 }

@@ -12,6 +12,7 @@ test("the Host runtime image preserves the verified bundle layout and drops priv
     read("packaging/container/Dockerfile"),
     read("packaging/container/entrypoint.sh"),
   ]);
+  assert.match(dockerfile, /^FROM debian:bookworm-slim@sha256:[0-9a-f]{64}$/mu);
   assert.match(dockerfile, /COPY --chown=10001:10001 bundle\/ \/opt\/multivibe-host\//u);
   assert.match(dockerfile, /VOLUME \["\/data", "\/models"\]/u);
   assert.match(dockerfile, /MULTIVIBE_HOST_BIND=0\.0\.0\.0/u);
@@ -72,6 +73,9 @@ test("the release workflow publishes a tested image from the verified Linux arch
   assert.match(workflow, /npm run verify:provider-host -- "\$archive"/u);
   assert.match(workflow, /packaging\/container\/Dockerfile/u);
   assert.match(workflow, /docker run --rm "\$image:\$version" version/u);
+  assert.match(workflow, /docker manifest inspect "\$image:\$version"/u);
+  assert.match(workflow, /already exists; refusing to overwrite it/u);
+  assert.match(workflow, /Could not prove that \$image:\$version is unused; refusing to publish/u);
   assert.match(workflow, /docker push "\$image:\$version"/u);
   assert.match(workflow, /docker push "\$image:latest"/u);
 });

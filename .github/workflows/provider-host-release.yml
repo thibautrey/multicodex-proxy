@@ -375,6 +375,22 @@ jobs:
           printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           image="${{ steps.image.outputs.image }}"
           version="${{ steps.image.outputs.version }}"
+
+          set +e
+          existing_manifest="$(docker manifest inspect "$image:$version" 2>&1)"
+          inspect_status=$?
+          set -e
+          if [[ "$inspect_status" -eq 0 ]]; then
+            echo "::error::The immutable container tag $image:$version already exists; refusing to overwrite it."
+            exit 1
+          fi
+          if [[ "$existing_manifest" != *"manifest unknown"* &&
+                "$existing_manifest" != *"no such manifest"* ]]; then
+            echo "::error::Could not prove that $image:$version is unused; refusing to publish."
+            printf '%s\n' "$existing_manifest" >&2
+            exit 1
+          fi
+
           docker push "$image:$version"
           docker push "$image:latest"
 
