@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { lstat, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { deflateRawSync, gzipSync } from "node:zlib";
 import test from "node:test";
 
@@ -39,6 +39,32 @@ async function runVerifier(archive) {
     child.once("exit", (code, signal) => resolve({ code, signal, stdout, stderr }));
   });
 }
+
+test("verifier child progress cannot contaminate its JSON stdout", async () => {
+  const moduleUrl = pathToFileURL(verifier).href;
+  const noisyChild = "process.stdout.write('Processing child output\\n')";
+  const probe = [
+    `import { runVerificationCommand } from ${JSON.stringify(moduleUrl)};`,
+    `await runVerificationCommand(process.execPath, ["--eval", ${JSON.stringify(noisyChild)}]);`,
+    `console.log(JSON.stringify({ verified: true }));`,
+  ].join("\n");
+  const result = await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ["--input-type=module", "--eval", probe], {
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: false,
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk) => { stdout += chunk; });
+    child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
+    child.once("error", reject);
+    child.once("exit", (code, signal) => resolve({ code, signal, stdout, stderr }));
+  });
+  assert.equal(result.signal, null);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.stdout, '{"verified":true}\n');
+  assert.equal(result.stderr, "Processing child output\n");
+});
 
 function zipArchive(entries) {
   const locals = [];

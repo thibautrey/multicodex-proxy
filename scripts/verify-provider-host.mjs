@@ -54,7 +54,9 @@ async function command(program, args, options = {}) {
     const child = spawn(program, args, {
       cwd: options.cwd,
       env: process.env,
-      stdio: options.capture ? ["ignore", "pipe", captureStderr ? "pipe" : "inherit"] : "inherit",
+      // Keep stdout reserved for this verifier's single JSON result. macOS
+      // validation tools such as `stapler` print progress on their stdout.
+      stdio: options.capture ? ["ignore", "pipe", captureStderr ? "pipe" : "inherit"] : ["inherit", process.stderr, "inherit"],
       shell: false,
     });
     let output = "";
@@ -76,6 +78,8 @@ async function command(program, args, options = {}) {
     });
   });
 }
+
+export { command as runVerificationCommand };
 
 async function sha256(file) {
   const digest = createHash("sha256");
