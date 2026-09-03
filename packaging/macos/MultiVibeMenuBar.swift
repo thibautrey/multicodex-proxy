@@ -497,12 +497,23 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDeleg
     private var statusText = "Starting…"
     private var summary: MenuBarSummary?
     private var refreshing = false
+#if DEBUG
+    private var previewWindow: NSWindow?
+#endif
 
     static func main() {
         let app = NSApplication.shared
         let delegate = MultiVibeMenuBarApp()
         app.delegate = delegate
+#if DEBUG
+        if ProcessInfo.processInfo.environment["MULTIVIBE_HOST_MENU_PREVIEW"] == "1" {
+            app.setActivationPolicy(.regular)
+        } else {
+            app.setActivationPolicy(.accessory)
+        }
+#else
         app.setActivationPolicy(.accessory)
+#endif
         app.run()
     }
 
@@ -515,10 +526,27 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDeleg
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in self?.refresh() }
 #if DEBUG
         if ProcessInfo.processInfo.environment["MULTIVIBE_HOST_MENU_PREVIEW"] == "1" {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) { [weak self] in self?.togglePopover() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) { [weak self] in self?.showPreviewWindow() }
         }
 #endif
     }
+
+#if DEBUG
+    private func showPreviewWindow() {
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: NSSize(width: 420, height: 570)),
+            styleMask: [.titled, .closable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "MultiVibe Host menu preview"
+        window.contentViewController = popoverController
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        previewWindow = window
+        NSApplication.shared.activate(ignoringOtherApps: true)
+    }
+#endif
 
     func applicationWillTerminate(_ notification: Notification) {
         refreshTimer?.invalidate()
