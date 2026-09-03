@@ -64,11 +64,8 @@ check.
 
 ## macOS Apple Silicon
 
-From the extracted archive, run:
-
-```sh
-./install.sh
-```
+Open the `.dmg`, then drag **MultiVibe Host** onto the **Applications** shortcut, just like a standard macOS app.
+The disk image and application are both signed with Developer ID and notarized by Apple.
 
 The installer requires no administrator privileges. It verifies the app's code
 signature, installs it at `~/Applications/MultiVibe Host.app`, initializes the

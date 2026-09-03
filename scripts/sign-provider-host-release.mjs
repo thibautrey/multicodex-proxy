@@ -91,7 +91,7 @@ async function main() {
   if (!directoryInfo.isDirectory() || directoryInfo.isSymbolicLink()) throw new Error("release directory is invalid");
   const directoryEntries = await readdir(directory, { withFileTypes: true });
   const entries = directoryEntries
-    .filter((entry) => entry.isFile() && /^multivibe-host_[0-9A-Za-z._-]+\.(?:zip|tar\.gz)$/u.test(entry.name))
+    .filter((entry) => entry.isFile() && /^multivibe-host_[0-9A-Za-z._-]+\.(?:dmg|tar\.gz)$/u.test(entry.name))
     .map((entry) => entry.name)
     .sort();
   if (entries.length !== 2 || !entries.some((name) => name.includes("darwin_arm64")) ||
@@ -108,7 +108,7 @@ async function main() {
     if (report.verified !== true || report.releaseReady !== true || report.sourceTreeDirty !== false || report.runtimeChecked !== false) {
       throw new Error(`release archive is not eligible for signing: ${name}`);
     }
-    const extension = report.platform === "darwin" ? "zip" : "tar.gz";
+    const extension = report.platform === "darwin" ? "dmg" : "tar.gz";
     const expected = `multivibe-host_${report.version}_${report.platform}_${report.architecture}.${extension}`;
     if (name !== expected) throw new Error(`release archive filename is inconsistent: ${name}`);
     reports.push(report);

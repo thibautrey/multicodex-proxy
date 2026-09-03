@@ -14,6 +14,7 @@ import {
   readdir,
   rm,
   stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { createReadStream } from "node:fs";
@@ -65,7 +66,7 @@ function argumentsFrom(argv) {
 
 function target() {
   if (process.platform === "darwin" && process.arch === "arm64") {
-    return { key: "darwin-arm64", goos: "darwin", goarch: "arm64", archive: "zip" };
+    return { key: "darwin-arm64", goos: "darwin", goarch: "arm64", archive: "dmg" };
   }
   if (process.platform === "linux" && process.arch === "x64") {
     return { key: "linux-amd64", goos: "linux", goarch: "amd64", archive: "tar.gz" };
@@ -397,6 +398,13 @@ async function notarizeMacApplication(application, profile, work) {
   await command("spctl", ["--assess", "--type", "execute", "--verbose=2", application]);
 }
 
+async function notarizeMacDiskImage(diskImage, profile) {
+  await command("xcrun", ["notarytool", "submit", diskImage, "--keychain-profile", profile, "--wait"]);
+  await command("xcrun", ["stapler", "staple", diskImage]);
+  await command("xcrun", ["stapler", "validate", diskImage]);
+  await command("spctl", ["--assess", "--type", "open", "--context", "context:primary-signature", "--verbose=2", diskImage]);
+}
+
 async function writeManifest(root, metadata) {
   const files = (await allFiles(root)).sort((left, right) => left.localeCompare(right));
   const entries = [];
@@ -494,16 +502,24 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
 
   let macOSSignature = null;
   if (macApplication) {
+    macOSSignature = options.notaryProfile ? "developer-id-notarized" : options.signIdentity ? "developer-id" : "unsigned-development";
+    await writeFile(path.join(macApplication, "Contents", "Resources", "provider-host-release.json"), `${JSON.stringify({
+      schemaVersion: 1,
+      product: "multivibe-host",
+      version: options.version,
+      sourceCommit,
+      platform: selectedTarget.goos,
+      architecture: selectedTarget.goarch,
+      sourceTreeDirty,
+      releaseReady: !sourceTreeDirty && macOSSignature === "developer-id-notarized",
+      macOSSignature,
+    }, null, 2)}\n`, { mode: 0o444 });
     if (!options.signIdentity && !options.allowUnsigned) throw new Error("macOS packaging requires --sign-identity");
     if (options.signIdentity) {
       await signMacApplication(macApplication, options.signIdentity);
-      macOSSignature = "developer-id";
-    } else {
-      macOSSignature = "unsigned-development";
     }
     if (options.notaryProfile) {
       await notarizeMacApplication(macApplication, options.notaryProfile, work);
-      macOSSignature = "developer-id-notarized";
     }
     else if (!options.allowUnsigned) throw new Error("macOS packaging requires --notary-profile");
   }
@@ -530,8 +546,19 @@ export async function archiveBundle(bundle, options, selectedTarget) {
   const extension = selectedTarget.archive;
   const destination = path.join(options.output, `${bundle.baseName}.${extension}`);
   await rm(destination, { force: true });
-  if (selectedTarget.archive === "zip") {
-    await command("ditto", ["-c", "-k", "--norsrc", "--keepParent", bundle.root, destination]);
+  if (selectedTarget.archive === "dmg") {
+    const diskImageRoot = path.join(path.dirname(bundle.root), "dmg-root");
+    await mkdir(diskImageRoot, { mode: 0o755 });
+    await command("ditto", [path.join(bundle.root, "MultiVibe Host.app"), path.join(diskImageRoot, "MultiVibe Host.app")]);
+    await symlink("/Applications", path.join(diskImageRoot, "Applications"));
+    await command("hdiutil", [
+      "create", "-quiet", "-volname", "MultiVibe Host", "-srcfolder", diskImageRoot,
+      "-format", "UDZO", "-imagekey", "zlib-level=9", destination,
+    ]);
+    if (options.signIdentity) {
+      await command("codesign", ["--force", "--sign", options.signIdentity, "--timestamp", destination]);
+    }
+    if (options.notaryProfile) await notarizeMacDiskImage(destination, options.notaryProfile);
   } else {
     await command("tar", [
       "--format=ustar",

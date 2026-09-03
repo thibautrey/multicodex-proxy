@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { createGunzip, createInflateRaw } from "node:zlib";
-import { chmod, copyFile, lstat, mkdir, mkdtemp, open, readFile, readdir, rm, stat } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdir, mkdtemp, open, readFile, readlink, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -1237,6 +1237,80 @@ async function validateTree(root, options, archiveRoot) {
   return { manifest, profile };
 }
 
+async function validateMacDiskImage(diskImage, work, options) {
+  if (process.platform !== "darwin" || process.arch !== "arm64") {
+    throw new Error("provider-host macOS disk image verification requires Apple Silicon macOS");
+  }
+  const mount = path.join(work, "mounted");
+  await mkdir(mount, { mode: 0o700 });
+  let mounted = false;
+  try {
+    await command("hdiutil", ["attach", "-quiet", "-readonly", "-nobrowse", "-mountpoint", mount, diskImage]);
+    mounted = true;
+    const entries = (await readdir(mount, { withFileTypes: true })).sort((left, right) => left.name.localeCompare(right.name));
+    if (entries.length !== 2 || entries[0].name !== "Applications" || !entries[0].isSymbolicLink() ||
+      entries[1].name !== "MultiVibe Host.app" || !entries[1].isDirectory() || entries[1].isSymbolicLink()) {
+      throw new Error("provider-host disk image must contain only MultiVibe Host.app and the Applications shortcut");
+    }
+    if (await readlink(path.join(mount, "Applications")) !== "/Applications") {
+      throw new Error("provider-host disk image Applications shortcut is invalid");
+    }
+    const application = path.join(mount, "MultiVibe Host.app");
+    const metadata = JSON.parse(await readFile(path.join(application, "Contents", "Resources", "provider-host-release.json"), "utf8"));
+    if (!exactKeys(metadata, ["schemaVersion", "product", "version", "sourceCommit", "platform", "architecture",
+      "sourceTreeDirty", "releaseReady", "macOSSignature"]) || metadata.schemaVersion !== 1 ||
+      metadata.product !== "multivibe-host" || typeof metadata.version !== "string" ||
+      !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(metadata.version) ||
+      typeof metadata.sourceCommit !== "string" || !/^[a-f0-9]{40}$/u.test(metadata.sourceCommit) ||
+      metadata.platform !== "darwin" || metadata.architecture !== "arm64" ||
+      typeof metadata.sourceTreeDirty !== "boolean" || typeof metadata.releaseReady !== "boolean" ||
+      !["unsigned-development", "developer-id", "developer-id-notarized"].includes(metadata.macOSSignature) ||
+      metadata.releaseReady !== (!metadata.sourceTreeDirty && metadata.macOSSignature === "developer-id-notarized")) {
+      throw new Error("provider-host disk image release metadata is invalid");
+    }
+    const plistVersion = await command("plutil", ["-extract", "CFBundleShortVersionString", "raw", "-o", "-",
+      path.join(application, "Contents", "Info.plist")], { capture: true, captureLimit: 4096 });
+    const bundleIdentifier = await command("plutil", ["-extract", "CFBundleIdentifier", "raw", "-o", "-",
+      path.join(application, "Contents", "Info.plist")], { capture: true, captureLimit: 4096 });
+    if (plistVersion !== metadata.version || bundleIdentifier !== "cloud.multivibe.host") {
+      throw new Error("provider-host disk image application identity is invalid");
+    }
+    if (metadata.macOSSignature !== "unsigned-development") {
+      await command("codesign", ["--verify", "--deep", "--strict", "--verbose=2", application]);
+      const signatureDetails = await command("codesign", ["-d", "--verbose=4", application], {
+        capture: true, captureStderr: true, captureLimit: 64 * 1024,
+      });
+      if (!signatureDetails.split("\n").some((line) => line.trim() === `TeamIdentifier=${expectedAppleTeamIdentifier}`)) {
+        throw new Error("provider-host disk image application TeamIdentifier is invalid");
+      }
+    }
+    if (metadata.macOSSignature === "developer-id-notarized") {
+      await command("codesign", ["--verify", "--strict", "--verbose=2", diskImage]);
+      await command("xcrun", ["stapler", "validate", diskImage]);
+      await command("xcrun", ["stapler", "validate", application]);
+      await command("spctl", ["--assess", "--type", "open", "--context", "context:primary-signature", "--verbose=2", diskImage]);
+      await command("spctl", ["--assess", "--type", "execute", "--verbose=2", application]);
+    }
+    if (options.requireRuntime) {
+      if (!metadata.releaseReady) throw new Error("provider-host runtime verification requires a release-ready disk image");
+      for (const [relative, label] of [
+        ["Contents/MacOS/multivibe-host", "host"],
+        ["Contents/Helpers/multivibe-provider-agent", "agent"],
+        ["Contents/Helpers/multivibe-runtime-benchmark", "benchmark"],
+      ]) {
+        const version = await command(path.join(application, relative), ["version"], { capture: true, captureLimit: 4096 });
+        if (version !== metadata.version) throw new Error(`provider-host disk image ${label} version is invalid`);
+      }
+      await command(path.join(application, "Contents", "Frameworks", "node"), ["--eval", betterSQLiteSmokeTest], {
+        cwd: path.join(application, "Contents", "Resources", "app"),
+      });
+    }
+    return metadata;
+  } finally {
+    if (mounted) await command("hdiutil", ["detach", "-quiet", mount]);
+  }
+}
+
 async function main() {
   const options = argumentsFrom(process.argv.slice(2));
   let work = null;
@@ -1251,7 +1325,8 @@ async function main() {
       }
       work = await mkdtemp(path.join(tmpdir(), "multivibe-host-verify-"));
       await chmod(work, 0o700);
-      const extension = options.archive.endsWith(".zip") ? ".zip" : options.archive.endsWith(".tar.gz") ? ".tar.gz" : null;
+      const extension = options.archive.endsWith(".dmg") ? ".dmg" : options.archive.endsWith(".zip") ? ".zip" :
+        options.archive.endsWith(".tar.gz") ? ".tar.gz" : null;
       if (extension === null) throw new Error("provider-host archive format is unsupported");
       const archiveCopy = path.join(work, `input${extension}`);
       await copyFile(options.archive, archiveCopy);
@@ -1261,6 +1336,24 @@ async function main() {
         throw new Error("provider-host private archive copy is invalid or exceeds the verification ceiling");
       }
       verifiedArchiveSha256 = await sha256(archiveCopy);
+      if (extension === ".dmg") {
+        const manifest = await validateMacDiskImage(archiveCopy, work, options);
+        console.log(JSON.stringify({
+          verified: true,
+          archive: options.archive,
+          directory: null,
+          archiveSha256: verifiedArchiveSha256,
+          version: manifest.version,
+          sourceCommit: manifest.sourceCommit,
+          sourceTreeDirty: manifest.sourceTreeDirty,
+          releaseReady: manifest.releaseReady,
+          platform: manifest.platform,
+          architecture: manifest.architecture,
+          runtimeChecked: options.requireRuntime,
+          profile: null,
+        }));
+        return;
+      }
       archiveRoot = await inspectArchive(archiveCopy);
       const extraction = path.join(work, "extracted");
       await mkdir(extraction, { mode: 0o700 });

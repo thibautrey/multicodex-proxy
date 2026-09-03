@@ -217,24 +217,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          archive="release-macos/multivibe-host_${{ needs.validate-tag.outputs.version }}_darwin_arm64.zip"
+          archive="release-macos/multivibe-host_${{ needs.validate-tag.outputs.version }}_darwin_arm64.dmg"
           npm run verify:provider-host -- "$archive"
       - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
       - name: Generate the macOS CycloneDX SBOM
         shell: bash
         run: |
           set -euo pipefail
-          archive="release-macos/multivibe-host_${{ needs.validate-tag.outputs.version }}_darwin_arm64.zip"
+          archive="release-macos/multivibe-host_${{ needs.validate-tag.outputs.version }}_darwin_arm64.dmg"
           scan_root="$RUNNER_TEMP/provider-host-macos-sbom"
           mkdir -p "$scan_root"
-          ditto -x -k "$archive" "$scan_root"
+          mount_root="$RUNNER_TEMP/provider-host-macos-volume"
+          mkdir -p "$mount_root"
+          hdiutil attach -quiet -readonly -nobrowse -mountpoint "$mount_root" "$archive"
+          trap 'hdiutil detach -quiet "$mount_root"' EXIT
+          ditto "$mount_root/MultiVibe Host.app" "$scan_root/MultiVibe Host.app"
           syft scan "dir:$scan_root" -o "cyclonedx-json=release-macos/multivibe-host_${{ needs.validate-tag.outputs.version }}_darwin_arm64.cdx.json"
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
-          subject-path: release-macos/multivibe-host_${{ needs.validate-tag.outputs.version }}_darwin_arm64.zip
+          subject-path: release-macos/multivibe-host_${{ needs.validate-tag.outputs.version }}_darwin_arm64.dmg
       - uses: actions/attest-sbom@bd218ad0dbcb3e146bd073d1d9c6d78e08aa8a0b # v2.4.0
         with:
-          subject-path: release-macos/multivibe-host_${{ needs.validate-tag.outputs.version }}_darwin_arm64.zip
+          subject-path: release-macos/multivibe-host_${{ needs.validate-tag.outputs.version }}_darwin_arm64.dmg
           sbom-path: release-macos/multivibe-host_${{ needs.validate-tag.outputs.version }}_darwin_arm64.cdx.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
