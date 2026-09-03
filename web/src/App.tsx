@@ -40,14 +40,14 @@ import {
 } from "./components/ui/ThemeSwitcher";
 import { dismissGitHubPromotion, GITHUB_NEW_ISSUE_URL, GITHUB_REPOSITORY_URL, GITHUB_STARS_URL, readGitHubPromotionState } from "./github-promotion";
 
-const TAB_ITEMS: Array<{ id: Tab; label: string; description: string }> = [
-  { id: "overview", label: "Overview", description: "Health and usage at a glance" },
-  { id: "accounts", label: "Accounts", description: "Providers, quotas and routing" },
-  { id: "aliases", label: "Aliases", description: "Model routing and fallbacks" },
-  { id: "api-keys", label: "API keys", description: "Application access and credentials" },
-  { id: "plugins", label: "Plugins", description: "Lifecycle modules and security" },
-  { id: "tracing", label: "Tracing", description: "Requests, cost and latency" },
-  { id: "docs", label: "API reference", description: "Professional reference and live request console" },
+const TAB_ITEMS: Array<{ id: Tab; label: string; description: string; group: "Operate" | "Build" | "Advanced" }> = [
+  { id: "overview", label: "Home", description: "System status and next steps", group: "Operate" },
+  { id: "accounts", label: "Providers", description: "Accounts, models and quotas", group: "Operate" },
+  { id: "aliases", label: "Routing", description: "Rules and fallbacks", group: "Operate" },
+  { id: "tracing", label: "Activity", description: "Requests, performance and cost", group: "Operate" },
+  { id: "api-keys", label: "API access", description: "Application keys and webhooks", group: "Build" },
+  { id: "docs", label: "API workspace", description: "Quick start and full reference", group: "Build" },
+  { id: "plugins", label: "Extensions", description: "Optional lifecycle modules", group: "Advanced" },
 ];
 
 function tabFromSearch(search: string): Tab {
@@ -925,10 +925,10 @@ export default function App() {
           </button>
 
           <nav className="sidebar-nav" aria-label="Primary navigation">
-            <span className="sidebar-nav-label">Workspace</span>
-            {TAB_ITEMS.map((item) => (
+            {TAB_ITEMS.map((item, index) => (
+              <React.Fragment key={item.id}>
+              {(index === 0 || TAB_ITEMS[index - 1].group !== item.group) && <span className="sidebar-nav-label">{item.group}</span>}
               <button
-                key={item.id}
                 type="button"
                 className={tab === item.id ? "nav-tab active" : "nav-tab"}
                 onClick={() => setTab(item.id)}
@@ -941,6 +941,7 @@ export default function App() {
                   <span className="nav-tab-description">{item.description}</span>
                 </span>
               </button>
+              </React.Fragment>
             ))}
           </nav>
 
@@ -1001,9 +1002,10 @@ export default function App() {
             </header>
 
             <nav className="mobile-navigation-list" aria-label="Mobile primary navigation">
-              {TAB_ITEMS.map((item) => (
+              {TAB_ITEMS.map((item, index) => (
+                <React.Fragment key={item.id}>
+                {(index === 0 || TAB_ITEMS[index - 1].group !== item.group) && <span className="mobile-navigation-group">{item.group}</span>}
                 <button
-                  key={item.id}
                   type="button"
                   className={tab === item.id ? "mobile-navigation-item active" : "mobile-navigation-item"}
                   aria-current={tab === item.id ? "page" : undefined}
@@ -1019,6 +1021,7 @@ export default function App() {
                   </span>
                   {tab === item.id && <span className="mobile-navigation-active-label">Current</span>}
                 </button>
+                </React.Fragment>
               ))}
             </nav>
 
@@ -1068,7 +1071,7 @@ export default function App() {
               <p className="muted">{activeTabItem.description}</p>
             </div>
             <div className="topbar-actions">
-              <span className="badge badge-live">
+              <span className="badge badge-live topbar-status">
                 <span className="status-dot" />
                 {sanitized ? "Sanitized" : "Live"}
               </span>
@@ -1094,9 +1097,8 @@ export default function App() {
                   </button>
                 </div>
               )}
-              <button className="btn secondary topbar-button" onClick={() => void refreshData()}>
+              <button className="btn ghost icon-button" onClick={() => void refreshData()} title="Refresh data" aria-label="Refresh data">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7h-5V2"/><path d="M20 7a9 9 0 1 0 2 7"/></svg>
-                Refresh
               </button>
               <button className="btn ghost icon-button" onClick={() => void logout()} title="Lock dashboard" aria-label="Lock dashboard">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
@@ -1115,6 +1117,7 @@ export default function App() {
             traceStats={filteredTraceStats}
             models={models}
             openModelInDocs={openModelInDocs}
+            navigate={setTab}
           />
         )}
 

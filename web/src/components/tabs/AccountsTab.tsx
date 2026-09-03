@@ -1453,6 +1453,8 @@ export function AccountsTab(props: Props) {
 
   return (
     <>
+      {accounts.length > 0 && (
+        <>
       <section className="grid cards4">
         <Metric
           title="Accounts"
@@ -1477,8 +1479,10 @@ export function AccountsTab(props: Props) {
           detail="Highest volume in the selected range"
         />
       </section>
+        </>
+      )}
 
-      <section className="panel">
+      {accounts.length > 0 && <section className="panel">
         <div className="section-split-header">
           <div>
             <h2>Default passthrough</h2>
@@ -1531,11 +1535,11 @@ export function AccountsTab(props: Props) {
             <span className="badge badge-warn">No default account selected</span>
           )}
         </div>
-      </section>
+      </section>}
 
-      <section className="panel">
+      <section className={accounts.length ? "panel" : "panel providers-empty-state"}>
         <div className="section-split-header">
-          <h2>Accounts</h2>
+          <h2>{accounts.length ? "Connected providers" : "Providers"}</h2>
           <div className="inline wrap">
             {openAiCount > 0 && (
               <span className="badge">{openAiCount} OpenAI</span>
@@ -1557,9 +1561,7 @@ export function AccountsTab(props: Props) {
             {xaiCount > 0 && (
               <span className="badge">{xaiCount} Grok Build</span>
             )}
-            <span className="badge">
-              {usageCheckedCount}/{accounts.length} usage checked
-            </span>
+            {accounts.length > 0 && <span className="badge">{usageCheckedCount}/{accounts.length} usage checked</span>}
             {usageUnsupportedCount > 0 && (
               <span className="badge">
                 {usageUnsupportedCount} usage not exposed
@@ -1570,11 +1572,17 @@ export function AccountsTab(props: Props) {
                 {usageRefreshPendingCount} refresh pending
               </span>
             )}
-            <button className="btn" onClick={() => setShowAddAccount(true)}>
-              Add account
-            </button>
+            {accounts.length > 0 && <button className="btn" onClick={() => setShowAddAccount(true)}>Add provider</button>}
           </div>
         </div>
+        {!accounts.length ? (
+          <div className="empty-state-content">
+            <span className="empty-state-icon" aria-hidden="true">+</span>
+            <h3>Connect your first provider</h3>
+            <p className="muted">Add a hosted account or a local OpenAI-compatible endpoint. MultiVibe will discover its models and make them ready for routing.</p>
+            <button className="btn" onClick={() => setShowAddAccount(true)}>Add a provider</button>
+          </div>
+        ) : (
         <div className="table-wrap">
           <table className="data-table">
             <thead>
@@ -1896,18 +1904,10 @@ export function AccountsTab(props: Props) {
                 </tr>
                 );
               })}
-              {!accounts.length && (
-                <tr>
-                  <td colSpan={8} className="muted empty-row">
-                    No accounts configured yet. Add an OpenAI,
-                    OpenAI-compatible, OpenCode, Mistral, z.ai, or Grok Build account to expose models and
-                    enable routing.
-                  </td>
-                </tr>
-              )}
             </tbody>
           </table>
         </div>
+        )}
       </section>
 
       {makeMoneyPreviewAccount &&

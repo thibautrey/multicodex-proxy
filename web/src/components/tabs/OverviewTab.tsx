@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { Metric } from "../Metric";
 import { ProgressStat } from "../ProgressStat";
-import { formatTokenCount, formatTokenRate, usd } from "../../lib/ui";
+import { usd } from "../../lib/ui";
 import type { ExposedModel, TraceStats } from "../../types";
 
 type Props = {
@@ -10,95 +10,98 @@ type Props = {
   traceStats: TraceStats;
   models: ExposedModel[];
   openModelInDocs: (modelId: string) => void;
+  navigate: (tab: "accounts" | "docs" | "tracing") => void;
 };
 
-export function OverviewTab({
-  stats,
-  usageStats,
-  traceStats,
-  models,
-  openModelInDocs,
-}: Props) {
+export function OverviewTab({ stats, usageStats, traceStats, models, openModelInDocs, navigate }: Props) {
   const [providerTab, setProviderTab] = useState<
     "all" | "openai" | "openai-compatible" | "opencode" | "mistral" | "zai" | "xai"
   >("all");
 
   const filteredModels = useMemo(() => {
     if (providerTab === "all") return models;
-
     return models.filter((model) => {
       const providers = model.metadata?.provider_candidates?.length
         ? model.metadata.provider_candidates
         : model.metadata?.provider
           ? [model.metadata.provider]
           : [];
-
       return providers.includes(providerTab);
     });
   }, [models, providerTab]);
 
+  const isReady = stats.enabled > 0 && models.length > 0;
+  const hasTraffic = traceStats.totals.requests > 0;
+
   return (
     <>
-      <section className="grid cards4">
-        <Metric title="Accounts" value={`${stats.total}`} detail="Configured provider accounts" />
-        <Metric title="Enabled" value={`${stats.enabled}`} detail="Ready to receive traffic" tone="success" />
+      <section className="overview-summary grid cards4" aria-label="System summary">
         <Metric
-          title="Blocked"
-          value={`${stats.blocked}`}
-          detail="Temporarily excluded from routing"
-          tone={stats.blocked > 0 ? "warning" : "default"}
+          title="System"
+          value={isReady ? "Ready" : "Setup"}
+          detail={isReady ? "Providers and models are available" : "Connect a provider to get started"}
+          tone={isReady ? "success" : "warning"}
         />
-        <Metric title="Models exposed" value={`${models.length}`} detail="Discovered from provider inventory" />
+        <Metric title="Providers" value={`${stats.enabled}/${stats.total}`} detail="Enabled accounts" tone={stats.enabled > 0 ? "success" : "default"} />
+        <Metric title="Requests" value={`${traceStats.totals.requests}`} detail="In the selected period" />
+        <Metric title="Cost" value={usd(traceStats.totals.costUsd)} detail="Estimated provider cost" />
       </section>
 
-      <section className="grid cards6">
-        <Metric title="Client requests" value={`${traceStats.totals.requests}`} detail={`${traceStats.totals.upstreamAttempts} provider attempts in range`} />
-        <Metric title="Input tokens" value={formatTokenCount(traceStats.totals.tokensInput)} detail="Prompt tokens sent to providers" />
-        <Metric title="Output tokens" value={formatTokenCount(traceStats.totals.tokensOutput)} detail="Generated tokens returned by providers" />
-        <Metric title="Inference speed" value={formatTokenRate(traceStats.totals.inferenceTokensPerSecond)} detail={`${traceStats.totals.inferenceRequests} measurable attempts`} />
-        <Metric title="Estimated cost" value={usd(traceStats.totals.costUsd)} detail={`No-cache estimate: ${usd(traceStats.totals.costUsdWithoutCache)}`} />
-        <Metric title="Avg latency" value={`${Math.round(traceStats.totals.latencyAvgMs)}ms`} detail="Mean client response time" />
+      <section className="panel overview-next-step">
+        <div>
+          <span className="eyebrow">Next step</span>
+          <h2>{!stats.total ? "Connect your first provider" : !models.length ? "Choose models to expose" : !hasTraffic ? "Send your first request" : "Everything is running"}</h2>
+          <p className="muted">
+            {!stats.total
+              ? "Add OpenAI, Mistral, Grok Build, OpenCode, or any OpenAI-compatible endpoint."
+              : !models.length
+                ? "Your provider is connected. Finish its model configuration before routing traffic."
+                : !hasTraffic
+                  ? "Test an exposed model from the API workspace to validate the complete route."
+                  : `${traceStats.totals.requests} requests processed with ${stats.blocked} providers requiring attention.`}
+          </p>
+        </div>
+        <button className="btn overview-primary-action" onClick={() => navigate(!stats.total || !models.length ? "accounts" : !hasTraffic ? "docs" : "tracing")}>
+          {!stats.total ? "Add a provider" : !models.length ? "Configure providers" : !hasTraffic ? "Test the API" : "View activity"}
+        </button>
       </section>
 
-        <section className="panel">
+      <section className="overview-detail-grid">
+        <div className="panel overview-usage-panel">
           <div className="section-split-header">
-            <h2>Aggregated usage</h2>
+            <div>
+              <h2>Provider capacity</h2>
+              <small>Average quota remaining across connected accounts.</small>
+            </div>
             <span className="badge">{usageStats.primaryCount + usageStats.secondaryCount} windows</span>
           </div>
-          <ProgressStat label="5h average" value={usageStats.primaryAvg} count={usageStats.primaryCount} />
-          <ProgressStat label="Weekly average" value={usageStats.secondaryAvg} count={usageStats.secondaryCount} />
-        </section>
-
-      <section className="panel">
-        <div className="section-split-header">
-          <div>
-            <h2>Models exposed</h2>
-            <small>Select a model to open a prefilled live request.</small>
-          </div>
-          <div className="inline wrap">
-            <button className={providerTab === "all" ? "tab active" : "tab"} onClick={() => setProviderTab("all")}>All</button>
-            <button className={providerTab === "openai" ? "tab active" : "tab"} onClick={() => setProviderTab("openai")}>OpenAI</button>
-            <button className={providerTab === "openai-compatible" ? "tab active" : "tab"} onClick={() => setProviderTab("openai-compatible")}>OpenAI-compatible</button>
-            <button className={providerTab === "opencode" ? "tab active" : "tab"} onClick={() => setProviderTab("opencode")}>OpenCode</button>
-            <button className={providerTab === "mistral" ? "tab active" : "tab"} onClick={() => setProviderTab("mistral")}>Mistral</button>
-            <button className={providerTab === "zai" ? "tab active" : "tab"} onClick={() => setProviderTab("zai")}>z.ai</button>
-            <button className={providerTab === "xai" ? "tab active" : "tab"} onClick={() => setProviderTab("xai")}>Grok Build</button>
-          </div>
+          <ProgressStat label="Next 5 hours" value={usageStats.primaryAvg} count={usageStats.primaryCount} />
+          <ProgressStat label="This week" value={usageStats.secondaryAvg} count={usageStats.secondaryCount} />
         </div>
-        <div className="chips">
-          {filteredModels.map((m) => (
-            <button
-              key={m.id}
-              className="chip mono model-docs-link"
-              onClick={() => openModelInDocs(m.id)}
-              aria-label={`Test ${m.id} in API reference`}
-              title="Open a prefilled request in API reference"
-            >
-              <span>{m.id}</span>
-              <span className="model-docs-link-icon" aria-hidden="true">→</span>
-            </button>
-          ))}
-          {!filteredModels.length && <span className="muted">No models exposed.</span>}
+
+        <div className="panel overview-models-panel">
+          <div className="section-split-header">
+            <div>
+              <h2>Available models</h2>
+              <small>Choose a model to open a ready-to-run request.</small>
+            </div>
+            <label className="compact-field overview-provider-filter">
+              Provider
+              <select value={providerTab} onChange={(event) => setProviderTab(event.target.value as typeof providerTab)}>
+                <option value="all">All providers</option><option value="openai">OpenAI</option>
+                <option value="openai-compatible">OpenAI-compatible</option><option value="opencode">OpenCode</option>
+                <option value="mistral">Mistral</option><option value="zai">z.ai</option><option value="xai">Grok Build</option>
+              </select>
+            </label>
+          </div>
+          <div className="chips overview-model-list">
+            {filteredModels.map((model) => (
+              <button key={model.id} className="chip mono model-docs-link" onClick={() => openModelInDocs(model.id)} aria-label={`Test ${model.id} in API reference`}>
+                <span>{model.id}</span><span className="model-docs-link-icon" aria-hidden="true">→</span>
+              </button>
+            ))}
+            {!filteredModels.length && <span className="muted">No models available for this provider.</span>}
+          </div>
         </div>
       </section>
     </>
