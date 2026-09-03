@@ -40,9 +40,9 @@ L’amélioration médiane de la phase de préparation est de **99,91 %** dans c
 test isolé. Ce résultat ne mesure pas la latence du modèle ou du réseau
 upstream.
 
-Le benchmark réel sur une copie du store private environment n’a pas été rejoué pendant
-cette itération : l’hôte `192.0.2.223` était inaccessible depuis la machine
-de développement (`Network is unreachable`). Aucune tentative n’a modifié la
+Le benchmark réel sur une copie du store distant n’a pas été rejoué pendant
+cette itération : l’hôte privé était inaccessible depuis la machine de
+développement (`Network is unreachable`). Aucune tentative n’a modifié la
 production.
 
 ## Instrumentation ajoutée

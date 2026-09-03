@@ -33,8 +33,8 @@ est validé.
 L'audit couvre le commit `5a8361b`, les chemins HTTP/SSE/WebSocket, la
 découverte de modèles, le rafraîchissement des quotas, les traces et les routes
 d'administration. Le trafic live a été lu via les endpoints d'administration
-de `http://192.0.2.149:1455/`, sans rejouer de requête vers un fournisseur et
-sans extraire de prompt.
+d'une instance privée, sans rejouer de requête vers un fournisseur et sans
+extraire de prompt.
 
 L'interface graphique n'était pas disponible dans le navigateur interne de la
 session. Les endpoints utilisés par cette interface ont toutefois fourni les
@@ -254,4 +254,3 @@ par le produit et kill switch immédiat.
 - [Redis for AI and search — vector search and semantic caching](https://redis.io/docs/latest/develop/ai/)
 - Audit local précédent : `docs/prompt-cache-breakpoint-audit.md`
 - Audit local précédent : `docs/reliability-performance-audit-2026-08-23.md`
-
