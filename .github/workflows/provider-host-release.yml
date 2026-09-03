@@ -18,7 +18,7 @@ env:
 
 jobs:
   validate-tag:
-    runs-on: macos-14
+    runs-on: ubuntu-24.04
     permissions: {}
     outputs:
       version: ${{ steps.version.outputs.value }}
@@ -249,7 +249,7 @@ jobs:
 
   sign-release:
     needs: [validate-tag, build-linux, build-macos]
-    runs-on: ubuntu-24.04
+    runs-on: macos-14
     timeout-minutes: 45
     permissions:
       contents: read
