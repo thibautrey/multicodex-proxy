@@ -3116,7 +3116,7 @@ details summary {
     var(--panel);
 }
 
-.host-harness-carousel {
+.host-harness-browser {
   display: grid;
   gap: 16px;
   overflow: hidden;
@@ -3126,20 +3126,34 @@ details summary {
     var(--panel);
 }
 
+.host-harness-rail {
+  display: flex;
+  gap: 14px;
+  margin: 0 -4px;
+  padding: 4px 4px 12px;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scroll-snap-type: inline proximity;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
 .host-harness-header {
   margin-bottom: 0;
 }
 
 .host-harness-card {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 18px;
-  min-height: 176px;
+  display: flex;
+  flex: 0 0 292px;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 16px;
+  aspect-ratio: 1;
   padding: 18px;
   border: 1px solid var(--line-strong);
   border-radius: 14px;
   background: color-mix(in srgb, var(--surface-muted) 82%, transparent);
+  scroll-snap-align: start;
 }
 
 .host-harness-card-copy {
@@ -3157,17 +3171,35 @@ details summary {
   margin: 0;
 }
 
-.host-harness-icon {
+.host-harness-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.host-harness-identity > div {
+  min-width: 0;
+}
+
+.host-harness-logo {
   display: grid;
   flex: 0 0 auto;
-  width: 42px;
-  height: 42px;
+  width: 50px;
+  height: 50px;
   place-items: center;
-  border-radius: 12px;
-  background: var(--primary-soft);
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--line-strong) 75%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, white 92%, var(--surface-muted));
   color: var(--primary);
-  font-size: 27px;
+  font-size: 15px;
   font-weight: 800;
+}
+
+.host-harness-logo img {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
 }
 
 .host-harness-badges {
@@ -3191,40 +3223,13 @@ details summary {
 
 .host-harness-actions {
   display: grid;
-  justify-items: end;
+  align-items: end;
   gap: 9px;
-  min-width: 190px;
-  text-align: right;
+  text-align: left;
 }
 
-.host-harness-navigation {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 13px;
-}
-
-.host-harness-dots {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 6px;
-  max-width: 440px;
-}
-
-.host-harness-dots button {
-  width: 7px;
-  height: 7px;
-  padding: 0;
-  border: 0;
-  border-radius: 99px;
-  background: var(--line-strong);
-  box-shadow: none;
-}
-
-.host-harness-dots button.active {
-  width: 20px;
-  background: var(--primary);
+.host-harness-actions .btn {
+  width: 100%;
 }
 
 .host-harness-feedback {
@@ -3245,13 +3250,11 @@ details summary {
 
 @media (max-width: 720px) {
   .host-harness-card {
-    grid-template-columns: minmax(0, 1fr);
+    flex-basis: min(82vw, 280px);
   }
 
   .host-harness-actions {
-    justify-items: stretch;
     min-width: 0;
-    text-align: left;
   }
 }
 
