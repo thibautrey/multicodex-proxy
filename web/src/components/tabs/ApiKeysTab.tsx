@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { HostHarnessCarousel } from "../HostHarnessCarousel";
+import { HostHarnessCards } from "../HostHarnessCarousel";
 import { copyTextToClipboard } from "../../lib/clipboard";
 import type {
   ApplicationPolicy,
@@ -78,7 +78,7 @@ export function ApiKeysTab({
 
   return (
     <>
-      <HostHarnessCarousel onApiKeysChanged={onHarnessesChanged} />
+      <HostHarnessCards onApiKeysChanged={onHarnessesChanged} />
       <section className="panel">
         <div className="section-split-header">
           <div>

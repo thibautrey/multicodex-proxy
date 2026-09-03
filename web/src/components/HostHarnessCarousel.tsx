@@ -24,10 +24,77 @@ function detectionLabel(harness: HostHarness): string {
   return location ? `Installation found in ${location.slice("path:".length)}` : "Installation found";
 }
 
-export function HostHarnessCarousel({ onApiKeysChanged }: Props) {
+const HARNESS_LOGO_DOMAINS: Record<string, string> = {
+  "claude-code": "claude.ai",
+  "openai-codex": "openai.com",
+  opencode: "opencode.ai",
+  openclaw: "openclaw.ai",
+  "hermes-agent": "nousresearch.com",
+  pi: "pi.dev",
+  goose: "block.github.io",
+  openhands: "openhands.dev",
+  cline: "cline.bot",
+  aider: "aider.chat",
+  "qwen-code": "qwenlm.github.io",
+  "gemini-cli": "gemini.google.com",
+  antigravity: "antigravity.google",
+  "github-copilot-cli": "github.com",
+  "kiro-cli": "kiro.dev",
+  "warp-agent": "warp.dev",
+  amp: "ampcode.com",
+  crush: "charm.land",
+  "kilo-code": "kilocode.ai",
+  "roo-code": "roocode.com",
+  continue: "continue.dev",
+  "open-interpreter": "openinterpreter.com",
+  "swe-agent": "swe-agent.com",
+  autocoderover: "autocoderover.dev",
+  mentat: "mentat.ai",
+  "gpt-pilot": "gpt-pilot.ai",
+  plandex: "plandex.ai",
+  "cursor-agent": "cursor.com",
+  "windsurf-cascade": "windsurf.com",
+  devin: "devin.ai",
+  pythagora: "pythagora.ai",
+  "agent-zero": "agent-zero.ai",
+  openmanus: "openmanus.dev",
+  manus: "manus.im",
+  autogen: "microsoft.github.io",
+  crewai: "crewai.com",
+  langgraph: "langchain.com",
+  smolagents: "huggingface.co",
+  letta: "letta.com",
+  autogpt: "agpt.co",
+  babyagi: "babyagi.org",
+  metagpt: "deepwisdom.ai",
+  superagi: "superagi.com",
+  agentgpt: "agentgpt.reworkd.ai",
+  camel: "camel-ai.org",
+  pydanticai: "ai.pydantic.dev",
+  mastra: "mastra.ai",
+  agno: "agno.com",
+  "semantic-kernel": "microsoft.com",
+  "llamaindex-agents": "llamaindex.ai",
+  "langchain-agents": "langchain.com",
+  "deepseek-harness": "deepseek.com",
+};
+
+function HarnessLogo({ harness }: { harness: HostHarness }) {
+  const domain = HARNESS_LOGO_DOMAINS[harness.id];
+  const initials = harness.name.split(/[\s/-]+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
+  const [failed, setFailed] = useState(false);
+  return (
+    <span className="host-harness-logo" aria-hidden="true">
+      {domain && !failed
+        ? <img src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`} alt="" loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} />
+        : <span>{initials}</span>}
+    </span>
+  );
+}
+
+export function HostHarnessCards({ onApiKeysChanged }: Props) {
   const [harnesses, setHarnesses] = useState<HostHarness[]>([]);
   const [hostApplication, setHostApplication] = useState(false);
-  const [index, setIndex] = useState(0);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -37,7 +104,6 @@ export function HostHarnessCarousel({ onApiKeysChanged }: Props) {
     const next = (result.harnesses ?? []) as HostHarness[];
     setHostApplication(Boolean(result.hostApplication));
     setHarnesses(next.filter((entry) => entry.detected));
-    setIndex((current) => Math.min(current, Math.max(0, next.length - 1)));
   }, []);
 
   useEffect(() => {
@@ -48,13 +114,12 @@ export function HostHarnessCarousel({ onApiKeysChanged }: Props) {
   }, [load]);
 
   if (!hostApplication || harnesses.length === 0) return null;
-  const harness = harnesses[index];
 
   const updateHarness = (next: HostHarness) => {
     setHarnesses((current) => current.map((entry) => entry.id === next.id ? next : entry));
   };
 
-  const connect = async () => {
+  const connect = async (harness: HostHarness) => {
     setBusyId(harness.id);
     setMessage("");
     setError("");
@@ -70,7 +135,7 @@ export function HostHarnessCarousel({ onApiKeysChanged }: Props) {
     }
   };
 
-  const disconnect = async () => {
+  const disconnect = async (harness: HostHarness) => {
     setBusyId(harness.id);
     setMessage("");
     setError("");
@@ -86,67 +151,47 @@ export function HostHarnessCarousel({ onApiKeysChanged }: Props) {
     }
   };
 
-  const connected = harness.configured || harness.managed;
   return (
-    <section className="panel host-harness-carousel" aria-labelledby="host-harness-title">
+    <section className="panel host-harness-browser" aria-labelledby="host-harness-title">
       <div className="section-split-header host-harness-header">
         <div>
           <span className="eyebrow">MultiVibe Host</span>
           <h2 id="host-harness-title">Connect your coding agents</h2>
           <p className="muted">Detected locally. MultiVibe creates a dedicated key and updates the selected harness in the background.</p>
         </div>
-        <span className="badge">{index + 1} / {harnesses.length}</span>
+        <span className="badge">{harnesses.length} detected</span>
       </div>
 
-      <div className="host-harness-card" aria-live="polite">
-        <div className="host-harness-card-copy">
-          <div className="inline wrap">
-            <span className="host-harness-icon" aria-hidden="true">⌁</span>
-            <div>
-              <h3>{harness.name}</h3>
-              <p className="muted">{detectionLabel(harness)}</p>
+      <div className="host-harness-rail" aria-label="Detected harnesses" aria-live="polite">
+        {harnesses.map((harness) => {
+          const connected = harness.configured || harness.managed;
+          return <article className="host-harness-card" key={harness.id}>
+            <div className="host-harness-card-copy">
+              <div className="host-harness-identity">
+                <HarnessLogo harness={harness} />
+                <div>
+                  <h3>{harness.name}</h3>
+                  <p className="muted">{detectionLabel(harness)}</p>
+                </div>
+              </div>
+              <div className="inline wrap host-harness-badges">
+                <span className="badge">{harness.category}</span>
+                {connected && !harness.drifted && <span className="badge badge-live">Connected</span>}
+                {harness.drifted && <span className="badge badge-warn">Configuration changed</span>}
+              </div>
+              {harness.configPath && <code className="host-harness-path">{harness.configPath}</code>}
+              {!harness.canInstall && !connected && harness.unavailableReason && <p className="host-harness-note">{harness.unavailableReason}</p>}
+              {harness.drifted && <p className="host-harness-note">MultiVibe will not overwrite this file. Restore the installed version or remove the integration manually.</p>}
             </div>
-          </div>
-          <div className="inline wrap host-harness-badges">
-            <span className="badge">{harness.category}</span>
-            {connected && !harness.drifted && <span className="badge badge-live">Connected</span>}
-            {harness.drifted && <span className="badge badge-warn">Configuration changed</span>}
-          </div>
-          {harness.configPath && <code className="host-harness-path">{harness.configPath}</code>}
-          {!harness.canInstall && !connected && harness.unavailableReason && (
-            <p className="host-harness-note">{harness.unavailableReason}</p>
-          )}
-          {harness.drifted && (
-            <p className="host-harness-note">MultiVibe will not overwrite this file. Restore the installed version or remove the integration manually.</p>
-          )}
-        </div>
-        <div className="host-harness-actions">
-          {!connected && harness.canInstall && (
-            <button className="btn" type="button" disabled={busyId === harness.id} onClick={() => void connect()}>
-              {busyId === harness.id ? "Connecting…" : "Connect automatically"}
-            </button>
-          )}
-          {harness.managed && (
-            <button className="btn secondary" type="button" disabled={busyId === harness.id || !harness.canUninstall} onClick={() => void disconnect()}>
-              {busyId === harness.id ? "Restoring…" : "Disconnect and restore"}
-            </button>
-          )}
-          {connected && !harness.managed && <span className="muted">Already configured outside MultiVibe.</span>}
-          {!harness.canInstall && !connected && <span className="muted">Manual setup required</span>}
-        </div>
+            <div className="host-harness-actions">
+              {!connected && harness.canInstall && <button className="btn" type="button" disabled={busyId === harness.id} onClick={() => void connect(harness)}>{busyId === harness.id ? "Connecting…" : "Connect automatically"}</button>}
+              {harness.managed && <button className="btn secondary" type="button" disabled={busyId === harness.id || !harness.canUninstall} onClick={() => void disconnect(harness)}>{busyId === harness.id ? "Restoring…" : "Disconnect and restore"}</button>}
+              {connected && !harness.managed && <span className="muted">Already configured outside MultiVibe.</span>}
+              {!harness.canInstall && !connected && <span className="muted">Manual setup required</span>}
+            </div>
+          </article>;
+        })}
       </div>
-
-      {harnesses.length > 1 && (
-        <div className="host-harness-navigation" aria-label="Detected harnesses">
-          <button className="btn ghost icon-button" type="button" aria-label="Previous harness" onClick={() => { setIndex((index - 1 + harnesses.length) % harnesses.length); setError(""); setMessage(""); }}>←</button>
-          <div className="host-harness-dots">
-            {harnesses.map((entry, dotIndex) => (
-              <button key={entry.id} type="button" className={dotIndex === index ? "active" : ""} aria-label={`Show ${entry.name}`} aria-current={dotIndex === index ? "true" : undefined} onClick={() => { setIndex(dotIndex); setError(""); setMessage(""); }} />
-            ))}
-          </div>
-          <button className="btn ghost icon-button" type="button" aria-label="Next harness" onClick={() => { setIndex((index + 1) % harnesses.length); setError(""); setMessage(""); }}>→</button>
-        </div>
-      )}
       {message && <p className="host-harness-feedback success" role="status">{message}</p>}
       {error && <p className="host-harness-feedback error" role="alert">{error}</p>}
     </section>
