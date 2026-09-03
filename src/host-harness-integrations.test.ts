@@ -28,6 +28,15 @@ test("the host registry covers every requested harness exactly once", () => {
   assert.equal(new Set(HOST_HARNESS_DEFINITIONS.map((entry) => entry.id)).size, HOST_HARNESS_DEFINITIONS.length);
 });
 
+test("rejects a relative host home directory", () => {
+  assert.throws(() => new HostHarnessIntegrationManager({
+    homeDirectory: "relative-home",
+    statePath: "/tmp/multivibe-harness-state.json",
+    baseUrl: "http://127.0.0.1:1455",
+    definitions: [],
+  }), /home directory must be absolute/);
+});
+
 async function fixture() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-harness-"));
   const home = path.join(root, "home");
