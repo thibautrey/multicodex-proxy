@@ -58,6 +58,20 @@ private struct DesktopSession: Decodable {
     let path: String
 }
 
+private struct HostUpdateStatus: Decodable {
+    let status: String
+    let availableVersion: String?
+    let downloaded: Bool
+    let installRequested: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case availableVersion = "available_version"
+        case downloaded
+        case installRequested = "install_requested"
+    }
+}
+
 private final class QuotaBarView: NSView {
     var remainingPercent: Double? {
         didSet { needsDisplay = true }
@@ -88,6 +102,8 @@ private final class FlippedView: NSView {
 private final class HostPopoverController: NSViewController {
     var openDashboard: (() -> Void)?
     var refresh: (() -> Void)?
+    var checkForUpdates: (() -> Void)?
+    var installUpdate: (() -> Void)?
     var quit: (() -> Void)?
 
     private let headerTitle = NSTextField(labelWithString: "MultiVibe Host")
@@ -226,7 +242,14 @@ private final class HostPopoverController: NSViewController {
         return container
     }
 
-    func render(summary: MenuBarSummary?, status: String, operational: Bool, refreshing: Bool) {
+    func render(
+        summary: MenuBarSummary?,
+        status: String,
+        operational: Bool,
+        refreshing: Bool,
+        updateStatus: HostUpdateStatus?,
+        updateBusy: Bool
+    ) {
         loadViewIfNeeded()
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
         headerTitle.stringValue = "MultiVibe Host  \(version)"
@@ -251,6 +274,8 @@ private final class HostPopoverController: NSViewController {
         }
         contentStack.addArrangedSubview(sectionLabel("EARNINGS"))
         contentStack.addArrangedSubview(earningsCard(summary?.earnings))
+        contentStack.addArrangedSubview(sectionLabel("HOST UPDATES"))
+        contentStack.addArrangedSubview(updateCard(updateStatus, busy: updateBusy))
     }
 
     private func sectionLabel(_ text: String) -> NSTextField {
@@ -421,6 +446,53 @@ private final class HostPopoverController: NSViewController {
         return container
     }
 
+    private func updateCard(_ update: HostUpdateStatus?, busy: Bool) -> NSView {
+        let container = card()
+        let title: String
+        let detail: String
+        if let version = update?.availableVersion {
+            title = "Version \(version) available"
+            detail = update?.downloaded == true ? "Verified download ready to install." : "Ready for verified background download."
+        } else if update?.status == "current" {
+            title = "MultiVibe Host is up to date"
+            detail = "The signed stable release feed is checked periodically."
+        } else {
+            title = "Automatic verified updates"
+            detail = "Check the signed release feed now or manage policy in the dashboard."
+        }
+
+        let titleLabel = label(title, size: 13, weight: .semibold)
+        let detailLabel = label(detail, size: 11, color: .secondaryLabelColor)
+        detailLabel.maximumNumberOfLines = 2
+        let checkButton = NSButton(title: busy ? "Checking…" : "Check Now", target: self, action: #selector(didCheckForUpdates))
+        checkButton.bezelStyle = .rounded
+        checkButton.isEnabled = !busy
+        let actions = NSStackView(views: [checkButton])
+        actions.orientation = .horizontal
+        actions.spacing = 8
+        if update?.availableVersion != nil {
+            let installTitle = update?.installRequested == true ? "Installation Queued" : "Install Safely"
+            let installButton = NSButton(title: installTitle, target: self, action: #selector(didInstallUpdate))
+            installButton.bezelStyle = .rounded
+            installButton.isEnabled = !busy && update?.installRequested != true
+            actions.addArrangedSubview(installButton)
+        }
+
+        let stack = NSStackView(views: [titleLabel, detailLabel, actions])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 9
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 14),
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 15),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -15),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -14),
+        ])
+        return container
+    }
+
     private func earningRow(_ title: String, value: String) -> NSView {
         let titleLabel = label(title, size: 11, color: .secondaryLabelColor)
         let valueLabel = label(value, size: 11, weight: .medium)
@@ -481,6 +553,8 @@ private final class HostPopoverController: NSViewController {
 
     @objc private func didOpenDashboard() { openDashboard?() }
     @objc private func didRefresh() { refresh?() }
+    @objc private func didCheckForUpdates() { checkForUpdates?() }
+    @objc private func didInstallUpdate() { installUpdate?() }
     @objc private func didQuit() { quit?() }
 }
 
@@ -499,6 +573,8 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDeleg
     private var statusText = "Starting…"
     private var summary: MenuBarSummary?
     private var refreshing = false
+    private var updateStatus: HostUpdateStatus?
+    private var updateBusy = false
 #if DEBUG
     private var previewWindow: NSWindow?
 #endif
@@ -583,6 +659,8 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDeleg
             self?.openDashboard()
         }
         popoverController.refresh = { [weak self] in self?.refreshNow() }
+        popoverController.checkForUpdates = { [weak self] in self?.runUpdateAction(path: "/admin/host-update/check") }
+        popoverController.installUpdate = { [weak self] in self?.runUpdateAction(path: "/admin/host-update/apply") }
         popoverController.quit = { [weak self] in self?.quitApplication() }
     }
 
@@ -608,7 +686,14 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDeleg
             button.title = ""
         }
         button.toolTip = "MultiVibe Host — \(statusText)"
-        popoverController.render(summary: summary, status: statusText, operational: operational, refreshing: refreshing)
+        popoverController.render(
+            summary: summary,
+            status: statusText,
+            operational: operational,
+            refreshing: refreshing,
+            updateStatus: updateStatus,
+            updateBusy: updateBusy
+        )
     }
 
     @objc private func togglePopover() {
@@ -673,6 +758,40 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDeleg
                 self?.summary = summary
                 self?.updateState(operational: summary.operational, status: summary.operational ? "Operational" : "Unavailable")
                 if summary.operational, self?.pendingDashboardOpen == true { self?.requestDashboardSession() }
+                self?.refreshUpdateStatus()
+            }
+        }.resume()
+    }
+
+    private func refreshUpdateStatus() {
+        guard let request = authorizedRequest(path: "/admin/host-update") else { return }
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, _ in
+            guard let data, (response as? HTTPURLResponse)?.statusCode == 200,
+                  let status = try? JSONDecoder().decode(HostUpdateStatus.self, from: data) else { return }
+            DispatchQueue.main.async {
+                self?.updateStatus = status
+                self?.updateBusy = false
+                self?.render()
+            }
+        }.resume()
+    }
+
+    private func runUpdateAction(path: String) {
+        guard var request = authorizedRequest(path: path, method: "POST") else { return }
+        updateBusy = true
+        render()
+        request.httpBody = Data("{}".utf8)
+        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        URLSession.shared.dataTask(with: request) { [weak self] _, response, _ in
+            guard let self else { return }
+            let accepted = (response as? HTTPURLResponse)?.statusCode ?? 500
+            DispatchQueue.main.async {
+                if (200...299).contains(accepted) {
+                    self.refreshUpdateStatus()
+                } else {
+                    self.updateBusy = false
+                    self.render()
+                }
             }
         }.resume()
     }

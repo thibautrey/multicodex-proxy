@@ -77,6 +77,9 @@ the archive, run:
 
 The installer verifies the release and supported NVIDIA hardware before it
 starts the Host. It installs for the current user and does not require root.
+On systems with a user systemd manager it also enables the signed automatic
+update timer. The timer checks hourly but the updater itself schedules one
+network check every 10 to 14 hours with a local random offset.
 
 ### Docker and Unraid
 
@@ -91,6 +94,19 @@ For reproducible deployments, use the versioned tag or immutable digest shown
 in the matching [latest GitHub release](https://github.com/thibautrey/multivibe/releases/latest).
 Docker Compose and Unraid setup are documented in
 [Provider Host container](#provider-host-container-docker-compose-and-unraid).
+
+Native macOS and Linux installations check an authenticated release feed and,
+by default, download and install an eligible stable release while the Host is
+idle. The updater drains new work, waits for active requests and model
+operations, verifies the archive with an embedded Ed25519 trust root, stages
+the replacement, and restores the previous version if the restarted Host does
+not pass its health check. The dashboard and macOS menu bar can switch between
+automatic installation, automatic download, and notification-only modes.
+
+Containers never receive the Docker socket and never replace themselves. For
+generic Docker Compose, install the host-side updater from the verified Linux
+archive. Unraid users may use the platform's automatic application update
+mechanism with the published `latest` tag.
 
 > [!NOTE]
 > If GHCR reports that the package is not found, no tagged Host release with

@@ -5,6 +5,7 @@ umask 077
 
 PROGRAM_NAME="MultiVibe Host installer"
 LABEL="cloud.multivibe.host"
+UPDATE_LABEL="cloud.multivibe.host.update"
 BUNDLE_IDENTIFIER="cloud.multivibe.host"
 EXPECTED_TEAM_IDENTIFIER="5E2CNR9H47"
 
@@ -15,7 +16,7 @@ fail() {
 
 usage() {
   cat <<'EOF'
-Usage: ./install.sh
+Usage: ./install.sh [--automatic-update] [--source-application /absolute/path]
 
 Install the signed MultiVibe Host application and LaunchAgent for the current
 macOS user. No administrator privileges are required.
@@ -62,8 +63,16 @@ verify_signed_application() {
   /usr/bin/xcrun stapler validate "$application" || fail "$description notarization ticket is invalid"
 }
 
+AUTOMATIC_UPDATE=false
+SOURCE_APPLICATION_OVERRIDE=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --automatic-update) AUTOMATIC_UPDATE=true ;;
+    --source-application)
+      shift
+      [ "$#" -gt 0 ] || fail "--source-application requires a value"
+      SOURCE_APPLICATION_OVERRIDE=$1
+      ;;
     -h|--help) usage; exit 0 ;;
     *) usage >&2; fail "unknown option: $1" ;;
   esac
@@ -80,11 +89,21 @@ validate_home
 SCRIPT_DIRECTORY=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P) || fail "the release directory is unavailable"
 SOURCE_ROOT=$SCRIPT_DIRECTORY
 SOURCE_APPLICATION="$SCRIPT_DIRECTORY/MultiVibe Host.app"
+if [ -n "$SOURCE_APPLICATION_OVERRIDE" ]; then
+  case "$SOURCE_APPLICATION_OVERRIDE" in
+    /*) ;;
+    *) fail "the source application must be an absolute path" ;;
+  esac
+  [ "$(basename "$SOURCE_APPLICATION_OVERRIDE")" = "MultiVibe Host.app" ] || fail "the source application name is invalid"
+  SOURCE_APPLICATION=$SOURCE_APPLICATION_OVERRIDE
+  SOURCE_ROOT=$(CDPATH='' cd -- "$(dirname -- "$SOURCE_APPLICATION")" && pwd -P) || fail "the source application directory is unavailable"
+fi
 SOURCE_HOST="$SOURCE_APPLICATION/Contents/MacOS/multivibe-host"
+SOURCE_UPDATER="$SOURCE_APPLICATION/Contents/Helpers/multivibe-host-updater"
 SOURCE_NODE="$SOURCE_APPLICATION/Contents/Frameworks/node"
 SOURCE_VERIFIER="$SOURCE_APPLICATION/Contents/Resources/verify-provider-host.mjs"
 [ -d "$SOURCE_APPLICATION" ] && [ ! -L "$SOURCE_APPLICATION" ] || fail "the extracted application bundle is unavailable"
-for executable in "$SOURCE_HOST" "$SOURCE_NODE"; do
+for executable in "$SOURCE_HOST" "$SOURCE_UPDATER" "$SOURCE_NODE"; do
   [ -f "$executable" ] && [ ! -L "$executable" ] && [ -x "$executable" ] || fail "the extracted application bundle is incomplete"
 done
 [ -f "$SOURCE_VERIFIER" ] && [ ! -L "$SOURCE_VERIFIER" ] || fail "the signed release verifier is unavailable"
@@ -92,12 +111,17 @@ done
 
 verify_signed_application "$SOURCE_APPLICATION" "the application"
 printf 'Checking the signed release bundle and this Mac...\n'
-"$SOURCE_NODE" "$SOURCE_VERIFIER" --directory "$SOURCE_ROOT" --require-runtime || fail "the signed release verifier rejected the bundle or this host"
+if [ -z "$SOURCE_APPLICATION_OVERRIDE" ]; then
+  "$SOURCE_NODE" "$SOURCE_VERIFIER" --directory "$SOURCE_ROOT" --require-runtime || fail "the signed release verifier rejected the bundle or this host"
+else
+  "$SOURCE_HOST" doctor >/dev/null || fail "the signed update application failed doctor"
+fi
 
 APPLICATIONS_DIRECTORY="$HOME/Applications"
 DESTINATION_APPLICATION="$APPLICATIONS_DIRECTORY/MultiVibe Host.app"
 LAUNCH_AGENTS_DIRECTORY="$HOME/Library/LaunchAgents"
 LAUNCH_AGENT="$LAUNCH_AGENTS_DIRECTORY/$LABEL.plist"
+UPDATE_LAUNCH_AGENT="$LAUNCH_AGENTS_DIRECTORY/$UPDATE_LABEL.plist"
 LOG_DIRECTORY="$HOME/Library/Logs/MultiVibe Host"
 USER_ID=$(id -u)
 case "$USER_ID" in
@@ -105,6 +129,7 @@ case "$USER_ID" in
 esac
 DOMAIN="gui/$USER_ID"
 SERVICE="$DOMAIN/$LABEL"
+UPDATE_SERVICE="$DOMAIN/$UPDATE_LABEL"
 
 ensure_directory "$APPLICATIONS_DIRECTORY" "the per-user Applications directory"
 ensure_directory "$HOME/Library" "the per-user Library directory"
@@ -124,6 +149,13 @@ fi
 if [ -L "$LAUNCH_AGENT" ]; then
   fail "the LaunchAgent destination must not be a symbolic link"
 fi
+if [ -L "$UPDATE_LAUNCH_AGENT" ]; then
+  fail "the update LaunchAgent destination must not be a symbolic link"
+fi
+if [ -e "$UPDATE_LAUNCH_AGENT" ]; then
+  [ -f "$UPDATE_LAUNCH_AGENT" ] || fail "the update LaunchAgent destination is not a regular file"
+  [ "$(plist_value "$UPDATE_LAUNCH_AGENT" Label)" = "$UPDATE_LABEL" ] || fail "the existing update LaunchAgent is not managed by MultiVibe Host"
+fi
 if [ -e "$LAUNCH_AGENT" ]; then
   [ -f "$LAUNCH_AGENT" ] || fail "the LaunchAgent destination is not a regular file"
   [ "$(plist_value "$LAUNCH_AGENT" Label)" = "$LABEL" ] || fail "the existing LaunchAgent is not managed by MultiVibe Host"
@@ -136,17 +168,36 @@ if ! STAGED_LAUNCH_AGENT=$(mktemp "$LAUNCH_AGENTS_DIRECTORY/.cloud.multivibe.hos
   rm -rf "$STAGING_DIRECTORY"
   fail "the LaunchAgent could not be staged"
 fi
+if ! STAGED_UPDATE_LAUNCH_AGENT=$(mktemp "$LAUNCH_AGENTS_DIRECTORY/.cloud.multivibe.host.update.plist.XXXXXX"); then
+  rm -rf "$STAGING_DIRECTORY"
+  rm -f "$STAGED_LAUNCH_AGENT"
+  fail "the update LaunchAgent could not be staged"
+fi
 BACKUP_APPLICATION=""
 BACKUP_LAUNCH_AGENT=""
+BACKUP_UPDATE_LAUNCH_AGENT=""
 APPLICATION_COMMITTED=false
 LAUNCH_AGENT_COMMITTED=false
+UPDATE_LAUNCH_AGENT_COMMITTED=false
 SERVICE_WAS_LOADED=false
+UPDATE_SERVICE_WAS_LOADED=false
+UPDATE_SERVICE_KEPT_LOADED=false
 INSTALL_SUCCEEDED=false
 
 cleanup() {
   status=$?
   trap - 0 HUP INT TERM
   if [ "$INSTALL_SUCCEEDED" != true ]; then
+    if [ "$UPDATE_LAUNCH_AGENT_COMMITTED" = true ]; then
+      if [ "$UPDATE_SERVICE_KEPT_LOADED" != true ]; then
+        /bin/launchctl bootout "$UPDATE_SERVICE" >/dev/null 2>&1 || true
+      fi
+      rm -f "$UPDATE_LAUNCH_AGENT"
+    fi
+    if [ -n "$BACKUP_UPDATE_LAUNCH_AGENT" ] && [ -f "$BACKUP_UPDATE_LAUNCH_AGENT" ]; then
+      mv "$BACKUP_UPDATE_LAUNCH_AGENT" "$UPDATE_LAUNCH_AGENT" || true
+      BACKUP_UPDATE_LAUNCH_AGENT=""
+    fi
     if [ "$LAUNCH_AGENT_COMMITTED" = true ]; then
       /bin/launchctl bootout "$SERVICE" >/dev/null 2>&1 || true
       rm -f "$LAUNCH_AGENT"
@@ -165,6 +216,9 @@ cleanup() {
     if [ "$SERVICE_WAS_LOADED" = true ] && [ -f "$LAUNCH_AGENT" ]; then
       /bin/launchctl bootstrap "$DOMAIN" "$LAUNCH_AGENT" >/dev/null 2>&1 || true
     fi
+    if [ "$UPDATE_SERVICE_WAS_LOADED" = true ] && [ "$UPDATE_SERVICE_KEPT_LOADED" != true ] && [ -f "$UPDATE_LAUNCH_AGENT" ]; then
+      /bin/launchctl bootstrap "$DOMAIN" "$UPDATE_LAUNCH_AGENT" >/dev/null 2>&1 || true
+    fi
   fi
   if [ -n "$STAGING_DIRECTORY" ] && [ -d "$STAGING_DIRECTORY" ]; then
     rm -rf "$STAGING_DIRECTORY"
@@ -172,11 +226,17 @@ cleanup() {
   if [ -n "${STAGED_LAUNCH_AGENT:-}" ] && [ -f "$STAGED_LAUNCH_AGENT" ]; then
     rm -f "$STAGED_LAUNCH_AGENT"
   fi
+  if [ -n "${STAGED_UPDATE_LAUNCH_AGENT:-}" ] && [ -f "$STAGED_UPDATE_LAUNCH_AGENT" ]; then
+    rm -f "$STAGED_UPDATE_LAUNCH_AGENT"
+  fi
   if [ -n "$BACKUP_APPLICATION" ] && [ -d "$BACKUP_APPLICATION" ]; then
     rm -rf "$BACKUP_APPLICATION"
   fi
   if [ -n "$BACKUP_LAUNCH_AGENT" ] && [ -f "$BACKUP_LAUNCH_AGENT" ]; then
     rm -f "$BACKUP_LAUNCH_AGENT"
+  fi
+  if [ -n "$BACKUP_UPDATE_LAUNCH_AGENT" ] && [ -f "$BACKUP_UPDATE_LAUNCH_AGENT" ]; then
+    rm -f "$BACKUP_UPDATE_LAUNCH_AGENT"
   fi
   exit "$status"
 }
@@ -220,9 +280,50 @@ EOF
 chmod 0600 "$STAGED_LAUNCH_AGENT"
 /usr/bin/plutil -lint "$STAGED_LAUNCH_AGENT" >/dev/null || fail "the staged LaunchAgent is invalid"
 
+cat > "$STAGED_UPDATE_LAUNCH_AGENT" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$UPDATE_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$DESTINATION_APPLICATION/Contents/Helpers/multivibe-host-updater</string>
+    <string>auto</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>3600</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>$LOG_DIRECTORY/update.log</string>
+  <key>StandardErrorPath</key>
+  <string>$LOG_DIRECTORY/update-error.log</string>
+</dict>
+</plist>
+EOF
+chmod 0600 "$STAGED_UPDATE_LAUNCH_AGENT"
+/usr/bin/plutil -lint "$STAGED_UPDATE_LAUNCH_AGENT" >/dev/null || fail "the staged update LaunchAgent is invalid"
+
 if /bin/launchctl print "$SERVICE" >/dev/null 2>&1; then
   SERVICE_WAS_LOADED=true
   /bin/launchctl bootout "$SERVICE" || fail "the existing LaunchAgent could not be stopped"
+fi
+if /bin/launchctl print "$UPDATE_SERVICE" >/dev/null 2>&1; then
+  UPDATE_SERVICE_WAS_LOADED=true
+  if [ "$AUTOMATIC_UPDATE" = true ]; then
+    # The installer is a child of this LaunchAgent during an automatic update.
+    # Booting it out here would terminate the update halfway through replacement.
+    UPDATE_SERVICE_KEPT_LOADED=true
+  else
+    /bin/launchctl bootout "$UPDATE_SERVICE" || fail "the existing update LaunchAgent could not be stopped"
+  fi
+fi
+if [ "$AUTOMATIC_UPDATE" = true ]; then
+  /usr/bin/pkill -x "MultiVibe Host" >/dev/null 2>&1 || true
 fi
 
 if [ -e "$DESTINATION_APPLICATION" ]; then
@@ -244,12 +345,37 @@ mv "$STAGED_LAUNCH_AGENT" "$LAUNCH_AGENT"
 LAUNCH_AGENT_COMMITTED=true
 STAGED_LAUNCH_AGENT=""
 
+if [ -e "$UPDATE_LAUNCH_AGENT" ]; then
+  BACKUP_UPDATE_LAUNCH_AGENT="$LAUNCH_AGENTS_DIRECTORY/.$UPDATE_LABEL.plist.previous.$$"
+  [ ! -e "$BACKUP_UPDATE_LAUNCH_AGENT" ] && [ ! -L "$BACKUP_UPDATE_LAUNCH_AGENT" ] || fail "the update LaunchAgent rollback destination already exists"
+  mv "$UPDATE_LAUNCH_AGENT" "$BACKUP_UPDATE_LAUNCH_AGENT"
+fi
+mv "$STAGED_UPDATE_LAUNCH_AGENT" "$UPDATE_LAUNCH_AGENT"
+UPDATE_LAUNCH_AGENT_COMMITTED=true
+STAGED_UPDATE_LAUNCH_AGENT=""
+
 "$DESTINATION_APPLICATION/Contents/MacOS/multivibe-host" init
 /bin/launchctl bootstrap "$DOMAIN" "$LAUNCH_AGENT" || fail "the LaunchAgent could not be loaded"
 /bin/launchctl enable "$SERVICE" || fail "the LaunchAgent could not be enabled"
 /bin/launchctl kickstart -k "$SERVICE" || fail "MultiVibe Host could not be started"
 /bin/launchctl print "$SERVICE" >/dev/null || fail "the LaunchAgent did not remain loaded"
+if [ "$UPDATE_SERVICE_KEPT_LOADED" != true ]; then
+  /bin/launchctl bootstrap "$DOMAIN" "$UPDATE_LAUNCH_AGENT" || fail "the update LaunchAgent could not be loaded"
+  /bin/launchctl enable "$UPDATE_SERVICE" || fail "the update LaunchAgent could not be enabled"
+fi
+/bin/launchctl print "$UPDATE_SERVICE" >/dev/null || fail "the update LaunchAgent did not remain loaded"
 
 version=$("$DESTINATION_APPLICATION/Contents/MacOS/multivibe-host" version)
+health_attempt=0
+health_ready=false
+while [ "$health_attempt" -lt 60 ]; do
+  if "$DESTINATION_APPLICATION/Contents/Frameworks/node" --eval "fetch('http://127.0.0.1:'+(process.env.MULTIVIBE_HOST_PORT||'1455')+'/health').then(async response=>{const body=await response.json();if(!response.ok||body.version!==process.argv[1])process.exit(1)}).catch(()=>process.exit(1))" "$version" >/dev/null 2>&1; then
+    health_ready=true
+    break
+  fi
+  health_attempt=$((health_attempt + 1))
+  sleep 2
+done
+[ "$health_ready" = true ] || fail "the updated MultiVibe Host did not pass its post-start health check"
 INSTALL_SUCCEEDED=true
-printf 'MultiVibe Host %s is installed and running from %s\n' "$version" "$DESTINATION_APPLICATION"
+printf 'MultiVibe Host %s and its verified update scheduler are installed and running from %s\n' "$version" "$DESTINATION_APPLICATION"

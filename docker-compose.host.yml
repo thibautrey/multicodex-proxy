@@ -1,6 +1,6 @@
 services:
   multivibe-host:
-    image: ghcr.io/thibautrey/multivibe-host:${MULTIVIBE_HOST_VERSION:-latest}
+    image: ${MULTIVIBE_HOST_IMAGE:-ghcr.io/thibautrey/multivibe-host:latest}
     container_name: multivibe-host
     init: true
     restart: unless-stopped

@@ -62,6 +62,7 @@ import {
   PROVIDER_AGENT_CUDA_VISIBLE_DEVICES,
   PROVIDER_AGENT_ENABLED,
   MULTIVIBE_HOST_APPLICATION,
+  MULTIVIBE_HOST_UPDATER_BINARY,
   HOST_HARNESS_INTEGRATIONS_STATE_PATH,
   HOST_HARNESS_HOME_DIRECTORY,
   PROVIDER_AGENT_RUNTIME_STATE_PATH,
@@ -95,6 +96,7 @@ import { startEmbeddedProviderAgent } from "./provider-agent-supervisor.js";
 import { createInferenceIdempotencyMiddleware } from "./inference-idempotency.js";
 import { createRequestTracingMiddleware } from "./request-tracing.js";
 import { buildHostMenuBarAccountsSummary } from "./host-menu-bar.js";
+import { HostUpdateController } from "./host-update-controller.js";
 
 const app = express();
 app.use(createBodyParserMiddleware());
@@ -183,6 +185,9 @@ const providerAgent = startEmbeddedProviderAgent({
     trustedDemandKeys: PROVIDER_AGENT_DEMAND_TRUSTED_KEYS,
   } : {}),
 });
+const hostUpdateController = MULTIVIBE_HOST_APPLICATION
+  ? new HostUpdateController(MULTIVIBE_HOST_UPDATER_BINARY, providerAgent)
+  : undefined;
 const providerWorkerEstimateClient = createProviderWorkerEstimateClient(PROVIDER_AGENT_CLOUD_API_URL);
 await traceManager.seedStatsHistoryIfMissing();
 const anonymousUsageSharing = createAnonymousUsageSharingWorker({
@@ -224,6 +229,7 @@ const adminRouter = createAdminRouter({
   hostHarnessIntegrations,
   providerWorkerEstimateClient,
   moduleManager,
+  hostUpdateController,
   storagePaths: {
     accountsPath: STORE_PATH,
     oauthStatePath: OAUTH_STATE_PATH,
@@ -557,6 +563,7 @@ const smartRoutingRouter = createSmartRoutingRouter(smartRouting);
 app.use(
   "/v1",
   proxyGuard,
+  hostUpdateController?.inferenceMiddleware ?? ((_req, _res, next) => next()),
   inferenceIdempotencyMiddleware,
   admissionMiddleware,
   smartRoutingRouter,
@@ -566,6 +573,7 @@ app.use("/v1", proxyRouter);
 app.use(
   "/",
   rootProxyGuard,
+  hostUpdateController?.inferenceMiddleware ?? ((_req, _res, next) => next()),
   inferenceIdempotencyMiddleware,
   admissionMiddleware,
   realtimeRouter,
@@ -646,11 +654,15 @@ const jobRunner = new JobRunner(
     store.getApplicationPolicy(application).webhooks.find((webhook) => webhook.id === id),
   JOB_WORKER_CONCURRENCY,
 );
+hostUpdateController?.attachJobRunner(jobRunner);
 
 installResponsesWebsocketProxy({
   server,
   port: PORT,
   authorize: (req) => hasProxyApiKey(req.headers),
+  admit: hostUpdateController?.admitWebsocket,
+  onTurnStarted: hostUpdateController?.websocketTurnStarted,
+  onTurnFinished: hostUpdateController?.websocketTurnFinished,
 });
 
 server.listen(HOST ? { port: PORT, host: HOST } : { port: PORT }, () => {

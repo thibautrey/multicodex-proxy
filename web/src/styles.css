@@ -791,6 +791,30 @@ small {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.stack {
+  display: grid;
+  gap: 18px;
+}
+
+.hero-panel,
+.section-heading,
+.actions-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.actions-row {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  margin-top: 18px;
+}
+
+.cols2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .cards4 {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }

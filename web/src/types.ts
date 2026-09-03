@@ -258,8 +258,29 @@ export type Tab =
   | "aliases"
   | "api-keys"
   | "plugins"
+  | "updates"
   | "tracing"
   | "docs";
+
+export type HostUpdateStatus = {
+  schema_version: "multivibe-host-updater-state-v1";
+  mode: "automatic" | "download" | "notify";
+  channel: "stable" | "beta";
+  current_version: string;
+  status: "idle" | "checking" | "available" | "downloading" | "downloaded" | "installing" | "current" | "deferred" | "failed";
+  last_checked_at: string | null;
+  next_check_at: string | null;
+  available_version: string | null;
+  available_critical: boolean;
+  rollout_eligible: boolean;
+  downloaded: boolean;
+  download_requested: boolean;
+  install_requested: boolean;
+  last_installed_at: string | null;
+  last_error_code: string | null;
+  last_error: string | null;
+  container_managed: boolean;
+};
 
 export type ExposedModel = {
   id: string;

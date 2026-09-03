@@ -1228,6 +1228,7 @@ async function validateTree(root, options, archiveRoot) {
   const host = manifest.platform === "darwin" ? path.join(application, "Contents", "MacOS", "multivibe-host") : path.join(root, "bin", "multivibe-host");
   const agent = manifest.platform === "darwin" ? path.join(application, "Contents", "Helpers", "multivibe-provider-agent") : path.join(root, "bin", "multivibe-provider-agent");
   const benchmark = manifest.platform === "darwin" ? path.join(application, "Contents", "Helpers", "multivibe-runtime-benchmark") : path.join(root, "bin", "multivibe-runtime-benchmark");
+  const updater = manifest.platform === "darwin" ? path.join(application, "Contents", "Helpers", "multivibe-host-updater") : path.join(root, "bin", "multivibe-host-updater");
   const applicationDirectory = manifest.platform === "darwin" ? path.join(application, "Contents", "Resources", "app") : path.join(root, "app");
   const node = manifest.platform === "darwin" ? path.join(application, "Contents", "Frameworks", "node") : path.join(root, "bin", "node");
   let profile = null;
@@ -1242,7 +1243,8 @@ async function validateTree(root, options, archiveRoot) {
     const hostVersion = await command(host, ["version"], { capture: true, captureLimit: 4096 });
     const agentVersion = await command(agent, ["version"], { capture: true, captureLimit: 4096 });
     const benchmarkVersion = await command(benchmark, ["version"], { capture: true, captureLimit: 4096 });
-    if (hostVersion !== manifest.version || agentVersion !== manifest.version || benchmarkVersion !== manifest.version) {
+    const updaterVersion = await command(updater, ["version"], { capture: true, captureLimit: 4096 });
+    if (hostVersion !== manifest.version || agentVersion !== manifest.version || benchmarkVersion !== manifest.version || updaterVersion !== manifest.version) {
       throw new Error("provider-host binary versions do not match the manifest");
     }
     await command(node, ["--eval", betterSQLiteSmokeTest], { cwd: applicationDirectory });

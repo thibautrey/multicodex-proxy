@@ -12,12 +12,14 @@ func TestExecutableLayoutIsBoundedToReleaseShape(t *testing.T) {
 	mac, err := executableLayout("/Applications/MultiVibe Host.app/Contents/MacOS/multivibe-host", "darwin")
 	if err != nil || mac.Node != "/Applications/MultiVibe Host.app/Contents/Frameworks/node" ||
 		mac.Agent != "/Applications/MultiVibe Host.app/Contents/Helpers/multivibe-provider-agent" ||
+		mac.Updater != "/Applications/MultiVibe Host.app/Contents/Helpers/multivibe-host-updater" ||
 		mac.BundledOllama != "/Applications/MultiVibe Host.app/Contents/Resources/ollama-runtime" ||
 		mac.ModelCatalog != "/Applications/MultiVibe Host.app/Contents/Resources/provider/provider-model-catalog.json" {
 		t.Fatalf("unexpected macOS layout: %#v %v", mac, err)
 	}
 	linux, err := executableLayout("/opt/multivibe-host/bin/multivibe-host", "linux")
 	if err != nil || linux.Node != "/opt/multivibe-host/bin/node" || linux.App != "/opt/multivibe-host/app" ||
+		linux.Updater != "/opt/multivibe-host/bin/multivibe-host-updater" ||
 		linux.BundledOllama != "/opt/multivibe-host/runtime/ollama" ||
 		linux.DependencyManifest != "/opt/multivibe-host/resources/provider/provider-host-dependencies.json" {
 		t.Fatalf("unexpected Linux layout: %#v %v", linux, err)
@@ -88,8 +90,10 @@ func TestCoreEnvironmentIsAllowlistedAndPinsAllState(t *testing.T) {
 	t.Setenv("MULTIVIBE_PROVIDER_DEMAND_TRUSTED_KEYS", `{"ed25519:production":"public-spki"}`)
 	t.Setenv("MULTIVIBE_PROVIDER_OLLAMA_LISTEN", "127.0.0.1:18081")
 	t.Setenv("MULTIVIBE_PROVIDER_CUDA_VISIBLE_DEVICES", "0")
+	t.Setenv("MULTIVIBE_HOST_CONTAINER", "")
 	layout := bundleLayout{
 		Agent: "/opt/multivibe/bin/agent", Security: "/opt/multivibe/app/modules/security",
+		Updater:            "/opt/multivibe/bin/updater",
 		BundledOllama:      "/opt/multivibe/runtime/ollama",
 		ModelCatalog:       "/opt/multivibe/resources/provider/provider-model-catalog.json",
 		DependencyManifest: "/opt/multivibe/resources/provider/provider-host-dependencies.json",
@@ -110,6 +114,8 @@ func TestCoreEnvironmentIsAllowlistedAndPinsAllState(t *testing.T) {
 		"STORE_PATH=/var/lib/multivibe/accounts.json",
 		"PROVIDER_AGENT_ENABLED=true", "PROVIDER_AGENT_BINARY=/opt/multivibe/bin/agent",
 		"MULTIVIBE_HOST_APPLICATION=true",
+		"MULTIVIBE_HOST_UPDATER_BINARY=/opt/multivibe/bin/updater",
+		"APP_VERSION=dev",
 		"PROVIDER_AGENT_CAPACITY_POLICY_PATH=/var/lib/multivibe/provider-agent-capacity-policy.json",
 		"PROVIDER_AGENT_MANAGED_ROOT=/srv/multivibe-managed",
 		"PROVIDER_AGENT_BUNDLED_OLLAMA_ROOT=/opt/multivibe/runtime/ollama",

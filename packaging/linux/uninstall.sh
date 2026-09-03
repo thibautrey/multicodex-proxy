@@ -4,6 +4,8 @@ set -eu
 
 PROGRAM_NAME="MultiVibe Host uninstaller"
 SERVICE_NAME="multivibe-host.service"
+UPDATE_SERVICE_NAME="multivibe-host-update.service"
+UPDATE_TIMER_NAME="multivibe-host-update.timer"
 SERVICE_MARKER="# Managed by the MultiVibe Host installer"
 LAUNCHER_MARKER="# Managed by the MultiVibe Host installer"
 
@@ -70,6 +72,8 @@ LAUNCHER="$LOCAL_ROOT/bin/multivibe-host"
 CONFIG_HOME=${XDG_CONFIG_HOME:-"$HOME/.config"}
 validate_absolute_path "$CONFIG_HOME" "XDG_CONFIG_HOME"
 UNIT_FILE="$CONFIG_HOME/systemd/user/$SERVICE_NAME"
+UPDATE_SERVICE_FILE="$CONFIG_HOME/systemd/user/$UPDATE_SERVICE_NAME"
+UPDATE_TIMER_FILE="$CONFIG_HOME/systemd/user/$UPDATE_TIMER_NAME"
 DATA_HOME=${XDG_DATA_HOME:-"$HOME/.local/share"}
 validate_absolute_path "$DATA_HOME" "XDG_DATA_HOME"
 DATA_DIRECTORY="$DATA_HOME/multivibe"
@@ -99,6 +103,11 @@ fi
 if [ -e "$UNIT_FILE" ] || [ -L "$UNIT_FILE" ]; then
   is_managed_file "$UNIT_FILE" "$SERVICE_MARKER" || fail "$UNIT_FILE is not managed by MultiVibe Host"
 fi
+for update_unit in "$UPDATE_SERVICE_FILE" "$UPDATE_TIMER_FILE"; do
+  if [ -e "$update_unit" ] || [ -L "$update_unit" ]; then
+    is_managed_file "$update_unit" "$SERVICE_MARKER" || fail "$update_unit is not managed by MultiVibe Host"
+  fi
+done
 if [ "$PURGE" = true ]; then
   if [ -L "$DATA_HOME" ]; then
     fail "the application data parent is a symbolic link; refusing to purge it"
@@ -116,11 +125,14 @@ if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/d
   SYSTEMD_AVAILABLE=true
 fi
 
-if [ -e "$UNIT_FILE" ]; then
+if [ -e "$UNIT_FILE" ] || [ -e "$UPDATE_SERVICE_FILE" ] || [ -e "$UPDATE_TIMER_FILE" ]; then
   if [ "$SYSTEMD_AVAILABLE" = true ]; then
     systemctl --user disable --now "$SERVICE_NAME" >/dev/null 2>&1 || true
+    systemctl --user disable --now "$UPDATE_TIMER_NAME" >/dev/null 2>&1 || true
   fi
   rm -f "$UNIT_FILE"
+  rm -f "$UPDATE_SERVICE_FILE"
+  rm -f "$UPDATE_TIMER_FILE"
   if [ "$SYSTEMD_AVAILABLE" = true ]; then
     systemctl --user daemon-reload >/dev/null 2>&1 || true
   fi

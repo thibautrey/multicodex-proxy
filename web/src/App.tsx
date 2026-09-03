@@ -33,6 +33,7 @@ import { TracingTab } from "./components/tabs/TracingTab";
 import { AliasesTab } from "./components/tabs/AliasesTab";
 import { ApiKeysTab } from "./components/tabs/ApiKeysTab";
 import { PluginsTab } from "./components/tabs/PluginsTab";
+import { UpdatesTab } from "./components/tabs/UpdatesTab";
 import {
   initialThemeMode,
   ThemeSwitcher,
@@ -48,6 +49,7 @@ const TAB_ITEMS: Array<{ id: Tab; label: string; description: string; group: "Op
   { id: "api-keys", label: "API access", description: "Application keys and webhooks", group: "Build" },
   { id: "docs", label: "API workspace", description: "Quick start and full reference", group: "Build" },
   { id: "plugins", label: "Extensions", description: "Optional lifecycle modules", group: "Advanced" },
+  { id: "updates", label: "Host updates", description: "Verified releases and update policy", group: "Advanced" },
 ];
 
 function tabFromSearch(search: string): Tab {
@@ -80,6 +82,9 @@ function TabIcon({ tab }: { tab: Tab }) {
   }
   if (tab === "plugins") {
     return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3v4M16 3v4M5 7h14v4a7 7 0 0 1-14 0z"/><path d="M12 18v3"/></svg>;
+  }
+  if (tab === "updates") {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 20h14"/></svg>;
   }
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h5M8 12h8M8 16h8"/></svg>;
 }
@@ -1204,6 +1209,8 @@ export default function App() {
         {tab === "plugins" && (
           <PluginsTab modules={modules} marketplace={marketplaceModules} reload={loadBase} />
         )}
+
+        {tab === "updates" && <UpdatesTab />}
 
         {tab === "docs" && (
           <DocsTab

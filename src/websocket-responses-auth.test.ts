@@ -61,3 +61,26 @@ test("protects Responses websocket upgrades with the configured authorizer", asy
     await closeServer(server);
   }
 });
+
+test("rejects a new turn on an existing websocket after update drain begins", async () => {
+  const server = http.createServer();
+  let accepting = true;
+  installResponsesWebsocketProxy({ server, port: 0, admit: () => accepting });
+  const port = await listen(server);
+  const websocket = new WebSocket(`ws://127.0.0.1:${port}/v1/responses`);
+
+  try {
+    await once(websocket, "open");
+    accepting = false;
+    websocket.send(JSON.stringify({ type: "response.create", model: "test", input: [] }));
+    const [message] = await once(websocket, "message");
+    const frame = JSON.parse(message.toString());
+    assert.equal(frame.type, "error");
+    assert.equal(frame.status, 503);
+    assert.equal(frame.error.code, "host_update_draining");
+  } finally {
+    websocket.close();
+    await once(websocket, "close").catch(() => undefined);
+    await closeServer(server);
+  }
+});

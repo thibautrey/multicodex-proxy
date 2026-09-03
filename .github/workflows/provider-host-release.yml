@@ -77,8 +77,9 @@ jobs:
         run: |
           go -C provider-agent test -race ./...
           go -C host-application test -race ./...
+          go -C host-updater test -race ./...
       - name: Test provider archive and container hardening
-        run: node --test scripts/package-provider-host.test.mjs scripts/provider-host-container.test.mjs scripts/provider-host-native-dependencies.test.mjs scripts/runtime-benchmark-evidence.test.mjs scripts/verify-provider-host-archive-fixtures.test.mjs
+        run: node --test scripts/package-provider-host.test.mjs scripts/provider-host-container.test.mjs scripts/provider-host-native-dependencies.test.mjs scripts/provider-host-update-feed.test.mjs scripts/provider-host-update-packaging.test.mjs scripts/runtime-benchmark-evidence.test.mjs scripts/verify-provider-host-archive-fixtures.test.mjs
       - name: Install the pinned Go vulnerability scanner
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
       - name: Scan the provider agent for reachable Go vulnerabilities
@@ -86,6 +87,9 @@ jobs:
         run: govulncheck ./...
       - name: Scan the host launcher for reachable Go vulnerabilities
         working-directory: host-application
+        run: govulncheck ./...
+      - name: Scan the Host updater for reachable Go vulnerabilities
+        working-directory: host-updater
         run: govulncheck ./...
       - name: Build the autonomous Linux archive
         run: >-
@@ -171,8 +175,9 @@ jobs:
         run: |
           go -C provider-agent test -race ./...
           go -C host-application test -race ./...
+          go -C host-updater test -race ./...
       - name: Test provider archive and container hardening
-        run: node --test scripts/package-provider-host.test.mjs scripts/provider-host-container.test.mjs scripts/provider-host-native-dependencies.test.mjs scripts/runtime-benchmark-evidence.test.mjs scripts/verify-provider-host-archive-fixtures.test.mjs
+        run: node --test scripts/package-provider-host.test.mjs scripts/provider-host-container.test.mjs scripts/provider-host-native-dependencies.test.mjs scripts/provider-host-update-feed.test.mjs scripts/provider-host-update-packaging.test.mjs scripts/runtime-benchmark-evidence.test.mjs scripts/verify-provider-host-archive-fixtures.test.mjs
       - name: Import ephemeral Apple release credentials
         shell: bash
         env:
@@ -446,6 +451,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          MULTIVIBE_UPDATE_SIGNING_KEY_BASE64: ${{ secrets.MULTIVIBE_UPDATE_SIGNING_KEY_BASE64 }}
         run: |
           set -euo pipefail
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
@@ -453,11 +459,32 @@ jobs:
             exit 1
           fi
           version="${{ needs.validate-tag.outputs.version }}"
+          if [[ -z "${MULTIVIBE_UPDATE_SIGNING_KEY_BASE64:-}" ]]; then
+            echo "::error::Missing required update-feed signing credential."
+            exit 1
+          fi
           node scripts/provider-host-container-release.mjs verify \
             container-release/container-release.json "$version" "$GITHUB_SHA"
+          if [[ "$version" == *-* ]]; then
+            channel=beta
+            release_kind=(--prerelease)
+          else
+            channel=stable
+            release_kind=()
+          fi
+          node scripts/build-provider-host-update-feed.mjs \
+            --version "$version" \
+            --commit "$GITHUB_SHA" \
+            --channel "$channel" \
+            --release-dir release \
+            --container-metadata container-release/container-release.json \
+            --trusted-key-id 701058786335e61e \
+            --trusted-public-key-base64 PToWAREA+GGggKzfdhP6Z6i3IqX/SsBwFmHOrtz3Dj0= \
+            --output "release/multivibe-host-update-$channel.json"
           container_notes="$(<container-release/container-release-notes.md)"
           gh release create "$GITHUB_REF_NAME" release/* container-release/container-release.json \
             --verify-tag \
+            "${release_kind[@]}" \
             --title "MultiVibe Host ${{ needs.validate-tag.outputs.version }}" \
             --notes "$container_notes" \
             --generate-notes

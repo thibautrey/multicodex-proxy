@@ -387,6 +387,7 @@ async function signMacApplication(application, identity) {
     path.join(contents, "Resources", "ollama-runtime", "ollama"),
     path.join(contents, "Helpers", "multivibe-provider-agent"),
     path.join(contents, "Helpers", "multivibe-runtime-benchmark"),
+    path.join(contents, "Helpers", "multivibe-host-updater"),
     path.join(contents, "MacOS", "multivibe-host"),
     path.join(contents, "MacOS", "MultiVibe Host"),
   ])) {
@@ -463,6 +464,16 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
     await cp(path.join(repositoryRoot, "packaging", installerPlatform, script), destination);
     await chmod(destination, 0o555);
   }
+  if (selectedTarget.goos === "linux") {
+    for (const [source, destinationName] of [
+      ["install-host-updater.sh", "install-docker-updater.sh"],
+      ["uninstall-host-updater.sh", "uninstall-docker-updater.sh"],
+    ]) {
+      const destination = path.join(root, destinationName);
+      await cp(path.join(repositoryRoot, "packaging", "docker", source), destination);
+      await chmod(destination, 0o555);
+    }
+  }
   await mkdir(path.join(root, "THIRD_PARTY"), { mode: 0o755 });
   await cp(path.join(repositoryRoot, "packaging", "third-party", "ollama-LICENSE"), path.join(root, "THIRD_PARTY", "ollama-LICENSE"));
   await cp(path.join(repositoryRoot, "packaging", "provider-host-dependencies.json"), path.join(root, "THIRD_PARTY", "provider-host-dependencies.json"));
@@ -477,6 +488,7 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
   let nodeDestination;
   let ollamaDestination;
   let agentDestination;
+  let updaterDestination;
   let benchmarkDestination;
   let hostDestination;
   let menuBarDestination;
@@ -490,6 +502,7 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
     nodeDestination = path.join(contents, "Frameworks", "node");
     ollamaDestination = path.join(contents, "Resources", "ollama-runtime");
     agentDestination = path.join(contents, "Helpers", "multivibe-provider-agent");
+    updaterDestination = path.join(contents, "Helpers", "multivibe-host-updater");
     benchmarkDestination = path.join(contents, "Helpers", "multivibe-runtime-benchmark");
     hostDestination = path.join(contents, "MacOS", "multivibe-host");
     menuBarDestination = path.join(contents, "MacOS", "MultiVibe Host");
@@ -506,11 +519,18 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
       path.join(repositoryRoot, "web", "public", "assets", "brand", "favicon-32x32.png"),
       path.join(contents, "Resources", "MultiVibeMenuBarIcon.png"),
     );
+    await mkdir(path.join(contents, "Resources", "update"), { recursive: true, mode: 0o755 });
+    await cp(
+      path.join(repositoryRoot, "packaging", "macos", "install.sh"),
+      path.join(contents, "Resources", "update", "install.sh"),
+    );
+    await chmod(path.join(contents, "Resources", "update", "install.sh"), 0o555);
     await createMacApplicationIcon(work, path.join(contents, "Resources", "MultiVibe.icns"));
   } else {
     applicationDirectory = path.join(root, "app");
     nodeDestination = path.join(root, "bin", "node");
     agentDestination = path.join(root, "bin", "multivibe-provider-agent");
+    updaterDestination = path.join(root, "bin", "multivibe-host-updater");
     benchmarkDestination = path.join(root, "bin", "multivibe-runtime-benchmark");
     hostDestination = path.join(root, "bin", "multivibe-host");
     ollamaDestination = path.join(root, "runtime", "ollama");
@@ -534,6 +554,7 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
   await command(nodeDestination, ["--eval", betterSQLiteSmokeTest], { cwd: applicationDirectory });
   await ollamaRuntime(work, ollamaDestination, dependencies.ollama.artifacts[selectedTarget.key], selectedTarget, dependencies.ollama.version);
   await buildGo(path.join(repositoryRoot, "provider-agent"), agentDestination, "providerAgentVersion", options.version, selectedTarget);
+  await buildGo(path.join(repositoryRoot, "host-updater"), updaterDestination, "hostUpdaterVersion", options.version, selectedTarget);
   await buildGo(
     path.join(repositoryRoot, "provider-agent"), benchmarkDestination, "runtimeBenchmarkVersion", options.version,
     selectedTarget, "./cmd/runtime-benchmark",

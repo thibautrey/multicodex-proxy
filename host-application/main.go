@@ -24,6 +24,7 @@ type bundleLayout struct {
 	Root               string
 	Node               string
 	Agent              string
+	Updater            string
 	App                string
 	Security           string
 	BundledOllama      string
@@ -89,6 +90,7 @@ func executableLayout(executable, goos string) (bundleLayout, error) {
 			Root:               filepath.Dir(contents),
 			Node:               filepath.Join(contents, "Frameworks", "node"),
 			Agent:              filepath.Join(contents, "Helpers", "multivibe-provider-agent"),
+			Updater:            filepath.Join(contents, "Helpers", "multivibe-host-updater"),
 			App:                filepath.Join(contents, "Resources", "app"),
 			Security:           filepath.Join(contents, "Resources", "app", "modules", "security"),
 			BundledOllama:      filepath.Join(contents, "Resources", "ollama-runtime"),
@@ -108,6 +110,7 @@ func executableLayout(executable, goos string) (bundleLayout, error) {
 		Root:               root,
 		Node:               filepath.Join(bin, "node"),
 		Agent:              filepath.Join(bin, "multivibe-provider-agent"),
+		Updater:            filepath.Join(bin, "multivibe-host-updater"),
 		App:                filepath.Join(root, "app"),
 		Security:           filepath.Join(root, "app", "modules", "security"),
 		BundledOllama:      filepath.Join(root, "runtime", "ollama"),
@@ -142,6 +145,7 @@ func validateLayout(layout bundleLayout) error {
 	}{
 		{layout.Node, true},
 		{layout.Agent, true},
+		{layout.Updater, true},
 		{filepath.Join(layout.App, "dist", "server.js"), false},
 		{filepath.Join(layout.App, "dist", "instrument.js"), false},
 		{filepath.Join(layout.App, "package.json"), false},
@@ -413,6 +417,7 @@ func managedDirectory(dataDirectory string) (string, error) {
 func coreEnvironment(layout bundleLayout, dataDirectory, managedDirectory string, credentials localCredentials, network coreNetworkConfiguration) []string {
 	environment := []string{
 		"NODE_ENV=production",
+		"APP_VERSION=" + hostApplicationVersion,
 		"HOST=" + network.BindAddress,
 		"PORT=" + network.Port,
 		"PUBLIC_BASE_URL=" + network.PublicBaseURL,
@@ -445,6 +450,9 @@ func coreEnvironment(layout bundleLayout, dataDirectory, managedDirectory string
 		"TRACE_INCLUDE_BODY=false",
 		"TRACE_INCLUDE_HEADERS=false",
 		"PATH=/usr/bin:/bin:/usr/sbin:/sbin",
+	}
+	if inheritedEnvironment("MULTIVIBE_HOST_CONTAINER") != "true" {
+		environment = append(environment, "MULTIVIBE_HOST_UPDATER_BINARY="+layout.Updater)
 	}
 	for _, name := range []string{"HOME", "LANG", "LC_ALL", "SSL_CERT_DIR", "SSL_CERT_FILE", "TMPDIR", "TZ"} {
 		if value := inheritedEnvironment(name); value != "" {

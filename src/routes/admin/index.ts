@@ -86,6 +86,7 @@ import {
   unavailableProviderWorkerEstimate,
   type ProviderWorkerEstimateClient,
 } from "../../provider-worker-estimate.js";
+import type { HostUpdateController, HostUpdateStatus } from "../../host-update-controller.js";
 
 type StoragePaths = {
   accountsPath: string;
@@ -114,6 +115,7 @@ export type AdminRoutesOptions = {
   hostHarnessIntegrations?: HostHarnessIntegrationManager;
   providerWorkerEstimateClient?: ProviderWorkerEstimateClient;
   moduleManager?: ModuleManager;
+  hostUpdateController?: HostUpdateController;
 };
 
 function proxyApiKeyPreview(key: string): string {
@@ -403,6 +405,99 @@ export function createAdminRouter(options: AdminRoutesOptions) {
   } = traceManager;
 
   const router = express.Router();
+
+  router.get("/host-update", async (_req, res) => {
+    res.setHeader("cache-control", "no-store");
+    if (!options.hostApplication || !options.hostUpdateController?.available()) {
+      return res.status(404).json({ error: "Host updater is unavailable" });
+    }
+    try {
+      return res.json(await options.hostUpdateController.status());
+    } catch (error: any) {
+      return res.status(503).json({ error: error?.message ?? "Host updater failed" });
+    }
+  });
+
+  router.post("/host-update/check", async (_req, res) => {
+    res.setHeader("cache-control", "no-store");
+    if (!options.hostApplication || !options.hostUpdateController?.available()) {
+      return res.status(404).json({ error: "Host updater is unavailable" });
+    }
+    try {
+      return res.json(await options.hostUpdateController.check());
+    } catch (error: any) {
+      return res.status(503).json({ error: error?.message ?? "Update check failed" });
+    }
+  });
+
+  router.post("/host-update/download", async (_req, res) => {
+    res.setHeader("cache-control", "no-store");
+    if (!options.hostApplication || !options.hostUpdateController?.available()) {
+      return res.status(404).json({ error: "Host updater is unavailable" });
+    }
+    try {
+      return res.json(await options.hostUpdateController.download());
+    } catch (error: any) {
+      return res.status(503).json({ error: error?.message ?? "Update download failed" });
+    }
+  });
+
+  router.patch("/host-update", async (req, res) => {
+    res.setHeader("cache-control", "no-store");
+    if (!options.hostApplication || !options.hostUpdateController?.available()) {
+      return res.status(404).json({ error: "Host updater is unavailable" });
+    }
+    const mode = String(req.body?.mode ?? "") as HostUpdateStatus["mode"];
+    const channel = String(req.body?.channel ?? "") as HostUpdateStatus["channel"];
+    if (!["automatic", "download", "notify"].includes(mode) || !["stable", "beta"].includes(channel)) {
+      return res.status(400).json({ error: "Invalid Host update policy" });
+    }
+    try {
+      return res.json(await options.hostUpdateController.configure(mode, channel));
+    } catch (error: any) {
+      return res.status(503).json({ error: error?.message ?? "Update policy failed" });
+    }
+  });
+
+  router.post("/host-update/apply", async (_req, res) => {
+    res.setHeader("cache-control", "no-store");
+    if (!options.hostApplication || !options.hostUpdateController?.available()) {
+      return res.status(404).json({ error: "Host updater is unavailable" });
+    }
+    try {
+      return res.status(202).json(await options.hostUpdateController.apply());
+    } catch (error: any) {
+      return res.status(503).json({ error: error?.message ?? "Update installation could not be queued" });
+    }
+  });
+
+  router.post("/host-update/drain", async (_req, res) => {
+    if (!options.hostApplication || !options.hostUpdateController?.available()) {
+      return res.status(404).json({ error: "Host updater is unavailable" });
+    }
+    options.hostUpdateController.beginDrain();
+    return res.json(await options.hostUpdateController.readiness());
+  });
+
+  router.post("/host-update/resume", (_req, res) => {
+    if (!options.hostApplication || !options.hostUpdateController?.available()) {
+      return res.status(404).json({ error: "Host updater is unavailable" });
+    }
+    options.hostUpdateController.resume();
+    return res.json({ resumed: true });
+  });
+
+  router.get("/host-update/readiness", async (_req, res) => {
+    res.setHeader("cache-control", "no-store");
+    if (!options.hostApplication || !options.hostUpdateController?.available()) {
+      return res.status(404).json({ error: "Host updater is unavailable" });
+    }
+    try {
+      return res.json(await options.hostUpdateController.readiness());
+    } catch {
+      return res.status(503).json({ error: "Host update readiness is unavailable" });
+    }
+  });
 
   router.get("/host-harnesses", async (_req, res) => {
     res.setHeader("cache-control", "no-store");

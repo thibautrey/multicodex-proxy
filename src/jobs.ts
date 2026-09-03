@@ -649,6 +649,10 @@ export class JobRunner {
     this.timer = undefined;
   }
 
+  activeCount() {
+    return this.active.size;
+  }
+
   async tick() {
     while (this.active.size < this.maxConcurrency) {
       const job = this.jobs.acquire(this.owner);

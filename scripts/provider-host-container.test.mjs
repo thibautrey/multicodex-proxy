@@ -22,6 +22,7 @@ test("the Host runtime image preserves the verified bundle layout and drops priv
   assert.match(dockerfile, /VOLUME \["\/data", "\/models"\]/u);
   assert.match(dockerfile, /MULTIVIBE_HOST_BIND=0\.0\.0\.0/u);
   assert.match(dockerfile, /MULTIVIBE_HOST_MANAGED_DIR=\/models\/runtime/u);
+  assert.match(dockerfile, /MULTIVIBE_HOST_CONTAINER=true/u);
   assert.match(dockerfile, /ENTRYPOINT \["\/usr\/local\/bin\/multivibe-host-container"\]/u);
   assert.match(entrypoint, /APPLICATION_USER_ID=10001/u);
   assert.match(entrypoint, /--bounding-set=-all/u);
@@ -32,7 +33,7 @@ test("the Host runtime image preserves the verified bundle layout and drops priv
 
 test("the Compose deployment exposes only Core and keeps state and models separate", async () => {
   const compose = await read("docker-compose.host.yml");
-  assert.match(compose, /image: ghcr\.io\/thibautrey\/multivibe-host:/u);
+  assert.match(compose, /image: \$\{MULTIVIBE_HOST_IMAGE:-ghcr\.io\/thibautrey\/multivibe-host:latest\}/u);
   assert.doesNotMatch(compose, /^\s+build:/mu);
   assert.match(compose, /MULTIVIBE_HOST_BIND: 0\.0\.0\.0/u);
   assert.match(compose, /MULTIVIBE_HOST_PUBLIC_URL: \$\{MULTIVIBE_HOST_PUBLIC_URL:\?/u);
@@ -101,6 +102,10 @@ test("the release workflow publishes a tested image from the verified Linux arch
   assert.match(workflow, /push-to-registry: true/u);
   assert.match(workflow, /name: provider-host-container-release/u);
   assert.match(workflow, /container-release\/container-release\.json/u);
+  assert.match(workflow, /MULTIVIBE_UPDATE_SIGNING_KEY_BASE64/u);
+  assert.match(workflow, /build-provider-host-update-feed\.mjs/u);
+  assert.match(workflow, /--trusted-key-id 701058786335e61e/u);
+  assert.match(workflow, /--trusted-public-key-base64 PToWAREA\+GGggKzfdhP6Z6i3IqX\/SsBwFmHOrtz3Dj0=/u);
   assert.match(workflow, /--notes "\$container_notes"/u);
 });
 

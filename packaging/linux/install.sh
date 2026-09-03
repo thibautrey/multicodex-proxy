@@ -5,6 +5,8 @@ umask 077
 
 PROGRAM_NAME="MultiVibe Host installer"
 SERVICE_NAME="multivibe-host.service"
+UPDATE_SERVICE_NAME="multivibe-host-update.service"
+UPDATE_TIMER_NAME="multivibe-host-update.timer"
 SERVICE_MARKER="# Managed by the MultiVibe Host installer"
 LAUNCHER_MARKER="# Managed by the MultiVibe Host installer"
 
@@ -15,7 +17,7 @@ fail() {
 
 usage() {
   cat <<'EOF'
-Usage: ./install.sh [--foreground]
+Usage: ./install.sh [--foreground] [--automatic-update]
 
 Install MultiVibe Host for the current user. When a usable systemd user
 manager is present, the default mode installs and starts a user service.
@@ -72,6 +74,7 @@ MODE=service
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --foreground) MODE=foreground ;;
+    --automatic-update) ;;
     -h|--help) usage; exit 0 ;;
     *) usage >&2; fail "unknown option: $1" ;;
   esac
@@ -87,11 +90,12 @@ SCRIPT_DIRECTORY=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P) || fail "the 
 SOURCE_ROOT=$SCRIPT_DIRECTORY
 SOURCE_HOST="$SOURCE_ROOT/bin/multivibe-host"
 SOURCE_AGENT="$SOURCE_ROOT/bin/multivibe-provider-agent"
+SOURCE_UPDATER="$SOURCE_ROOT/bin/multivibe-host-updater"
 SOURCE_NODE="$SOURCE_ROOT/bin/node"
 SOURCE_VERIFIER="$SOURCE_ROOT/verify-provider-host.mjs"
 SOURCE_MANIFEST="$SOURCE_ROOT/manifest.json"
 
-for required in "$SOURCE_HOST" "$SOURCE_AGENT" "$SOURCE_NODE"; do
+for required in "$SOURCE_HOST" "$SOURCE_AGENT" "$SOURCE_UPDATER" "$SOURCE_NODE"; do
   [ -f "$required" ] && [ ! -L "$required" ] && [ -x "$required" ] || fail "the extracted release is incomplete"
 done
 [ -f "$SOURCE_VERIFIER" ] && [ ! -L "$SOURCE_VERIFIER" ] || fail "the release verifier is unavailable"
@@ -107,8 +111,13 @@ BIN_DIRECTORY="$LOCAL_ROOT/bin"
 LAUNCHER="$BIN_DIRECTORY/multivibe-host"
 CONFIG_HOME=${XDG_CONFIG_HOME:-"$HOME/.config"}
 validate_absolute_path "$CONFIG_HOME" "XDG_CONFIG_HOME"
+DATA_HOME=${XDG_DATA_HOME:-"$HOME/.local/share"}
+validate_absolute_path "$DATA_HOME" "XDG_DATA_HOME"
+DATA_DIRECTORY="$DATA_HOME/multivibe"
 SYSTEMD_DIRECTORY="$CONFIG_HOME/systemd/user"
 UNIT_FILE="$SYSTEMD_DIRECTORY/$SERVICE_NAME"
+UPDATE_SERVICE_FILE="$SYSTEMD_DIRECTORY/$UPDATE_SERVICE_NAME"
+UPDATE_TIMER_FILE="$SYSTEMD_DIRECTORY/$UPDATE_TIMER_NAME"
 
 for configuration_directory in "$CONFIG_HOME" "$CONFIG_HOME/systemd" "$SYSTEMD_DIRECTORY"; do
   if [ -L "$configuration_directory" ]; then
@@ -140,6 +149,11 @@ fi
 if [ -e "$UNIT_FILE" ] || [ -L "$UNIT_FILE" ]; then
   is_managed_file "$UNIT_FILE" "$SERVICE_MARKER" || fail "$UNIT_FILE already exists and is not managed by MultiVibe Host"
 fi
+for update_unit in "$UPDATE_SERVICE_FILE" "$UPDATE_TIMER_FILE"; do
+  if [ -e "$update_unit" ] || [ -L "$update_unit" ]; then
+    is_managed_file "$update_unit" "$SERVICE_MARKER" || fail "$update_unit already exists and is not managed by MultiVibe Host"
+  fi
+done
 
 SYSTEMD_AVAILABLE=false
 if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
@@ -148,11 +162,19 @@ fi
 
 SERVICE_WAS_RUNNING=false
 SERVICE_WAS_ENABLED=false
+UPDATE_TIMER_WAS_ACTIVE=false
+UPDATE_TIMER_WAS_ENABLED=false
 if [ "$SYSTEMD_AVAILABLE" = true ] && systemctl --user is-active --quiet "$SERVICE_NAME" >/dev/null 2>&1; then
   SERVICE_WAS_RUNNING=true
 fi
 if [ "$SYSTEMD_AVAILABLE" = true ] && systemctl --user is-enabled --quiet "$SERVICE_NAME" >/dev/null 2>&1; then
   SERVICE_WAS_ENABLED=true
+fi
+if [ "$SYSTEMD_AVAILABLE" = true ] && systemctl --user is-active --quiet "$UPDATE_TIMER_NAME" >/dev/null 2>&1; then
+  UPDATE_TIMER_WAS_ACTIVE=true
+fi
+if [ "$SYSTEMD_AVAILABLE" = true ] && systemctl --user is-enabled --quiet "$UPDATE_TIMER_NAME" >/dev/null 2>&1; then
+  UPDATE_TIMER_WAS_ENABLED=true
 fi
 
 STAGING_DIRECTORY=$(mktemp -d "$LIBRARY_DIRECTORY/.multivibe-host.install.XXXXXX") || fail "the application staging directory could not be created"
@@ -162,17 +184,40 @@ esac
 BACKUP_DIRECTORY=""
 LAUNCHER_BACKUP=""
 UNIT_BACKUP=""
+UPDATE_SERVICE_BACKUP=""
+UPDATE_TIMER_BACKUP=""
 LAUNCHER_STAGING=""
 UNIT_STAGING=""
+UPDATE_SERVICE_STAGING=""
+UPDATE_TIMER_STAGING=""
 INSTALL_COMMITTED=false
 LAUNCHER_COMMITTED=false
 UNIT_CHANGED=false
+UPDATE_SERVICE_CHANGED=false
+UPDATE_TIMER_CHANGED=false
 INSTALL_SUCCEEDED=false
 
 cleanup() {
   status=$?
   trap - 0 HUP INT TERM
   if [ "$INSTALL_SUCCEEDED" != true ]; then
+    if [ "$SYSTEMD_AVAILABLE" = true ]; then
+      systemctl --user disable --now "$UPDATE_TIMER_NAME" >/dev/null 2>&1 || true
+    fi
+    if [ "$UPDATE_TIMER_CHANGED" = true ]; then
+      rm -f "$UPDATE_TIMER_FILE"
+      if [ -n "$UPDATE_TIMER_BACKUP" ] && [ -f "$UPDATE_TIMER_BACKUP" ]; then
+        mv "$UPDATE_TIMER_BACKUP" "$UPDATE_TIMER_FILE" || true
+        UPDATE_TIMER_BACKUP=""
+      fi
+    fi
+    if [ "$UPDATE_SERVICE_CHANGED" = true ]; then
+      rm -f "$UPDATE_SERVICE_FILE"
+      if [ -n "$UPDATE_SERVICE_BACKUP" ] && [ -f "$UPDATE_SERVICE_BACKUP" ]; then
+        mv "$UPDATE_SERVICE_BACKUP" "$UPDATE_SERVICE_FILE" || true
+        UPDATE_SERVICE_BACKUP=""
+      fi
+    fi
     if [ "$UNIT_CHANGED" = true ]; then
       if [ "$SYSTEMD_AVAILABLE" = true ]; then
         systemctl --user disable --now "$SERVICE_NAME" >/dev/null 2>&1 || true
@@ -199,6 +244,12 @@ cleanup() {
     fi
     if [ "$SYSTEMD_AVAILABLE" = true ]; then
       systemctl --user daemon-reload >/dev/null 2>&1 || true
+      if [ "$UPDATE_TIMER_WAS_ENABLED" = true ]; then
+        systemctl --user enable "$UPDATE_TIMER_NAME" >/dev/null 2>&1 || true
+      fi
+      if [ "$UPDATE_TIMER_WAS_ACTIVE" = true ]; then
+        systemctl --user start "$UPDATE_TIMER_NAME" >/dev/null 2>&1 || true
+      fi
       if [ "$SERVICE_WAS_ENABLED" = true ]; then
         systemctl --user enable "$SERVICE_NAME" >/dev/null 2>&1 || true
       fi
@@ -219,11 +270,23 @@ cleanup() {
   if [ -n "$UNIT_STAGING" ] && [ -f "$UNIT_STAGING" ]; then
     rm -f "$UNIT_STAGING"
   fi
+  if [ -n "$UPDATE_SERVICE_STAGING" ] && [ -f "$UPDATE_SERVICE_STAGING" ]; then
+    rm -f "$UPDATE_SERVICE_STAGING"
+  fi
+  if [ -n "$UPDATE_TIMER_STAGING" ] && [ -f "$UPDATE_TIMER_STAGING" ]; then
+    rm -f "$UPDATE_TIMER_STAGING"
+  fi
   if [ -n "$LAUNCHER_BACKUP" ] && [ -f "$LAUNCHER_BACKUP" ]; then
     rm -f "$LAUNCHER_BACKUP"
   fi
   if [ -n "$UNIT_BACKUP" ] && [ -f "$UNIT_BACKUP" ]; then
     rm -f "$UNIT_BACKUP"
+  fi
+  if [ -n "$UPDATE_SERVICE_BACKUP" ] && [ -f "$UPDATE_SERVICE_BACKUP" ]; then
+    rm -f "$UPDATE_SERVICE_BACKUP"
+  fi
+  if [ -n "$UPDATE_TIMER_BACKUP" ] && [ -f "$UPDATE_TIMER_BACKUP" ]; then
+    rm -f "$UPDATE_TIMER_BACKUP"
   fi
   exit "$status"
 }
@@ -269,6 +332,21 @@ LAUNCHER_COMMITTED=true
 "$INSTALL_ROOT/bin/multivibe-host" init
 
 if [ "$MODE" = foreground ]; then
+  if [ "$SYSTEMD_AVAILABLE" = true ]; then
+    systemctl --user disable --now "$UPDATE_TIMER_NAME" >/dev/null 2>&1 || true
+  fi
+  if [ -e "$UPDATE_TIMER_FILE" ]; then
+    UPDATE_TIMER_BACKUP="$SYSTEMD_DIRECTORY/.multivibe-host-update.timer.previous.$$"
+    [ ! -e "$UPDATE_TIMER_BACKUP" ] && [ ! -L "$UPDATE_TIMER_BACKUP" ] || fail "the update timer rollback destination already exists"
+    mv "$UPDATE_TIMER_FILE" "$UPDATE_TIMER_BACKUP"
+    UPDATE_TIMER_CHANGED=true
+  fi
+  if [ -e "$UPDATE_SERVICE_FILE" ]; then
+    UPDATE_SERVICE_BACKUP="$SYSTEMD_DIRECTORY/.multivibe-host-update.service.previous.$$"
+    [ ! -e "$UPDATE_SERVICE_BACKUP" ] && [ ! -L "$UPDATE_SERVICE_BACKUP" ] || fail "the update service rollback destination already exists"
+    mv "$UPDATE_SERVICE_FILE" "$UPDATE_SERVICE_BACKUP"
+    UPDATE_SERVICE_CHANGED=true
+  fi
   if [ -e "$UNIT_FILE" ]; then
     if [ "$SYSTEMD_AVAILABLE" = true ]; then
       systemctl --user disable --now "$SERVICE_NAME" || fail "the existing user service could not be disabled"
@@ -315,13 +393,85 @@ EOF
     mv "$UNIT_STAGING" "$UNIT_FILE"
     UNIT_STAGING=""
     UNIT_CHANGED=true
+
+    UPDATE_SERVICE_STAGING=$(mktemp "$SYSTEMD_DIRECTORY/.multivibe-host-update.service.XXXXXX") || fail "the update service could not be staged"
+    cat > "$UPDATE_SERVICE_STAGING" <<EOF
+# Managed by the MultiVibe Host installer
+[Unit]
+Description=Check and install verified MultiVibe Host updates
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart="$INSTALL_ROOT/bin/multivibe-host-updater" auto
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths="$LIBRARY_DIRECTORY" "$BIN_DIRECTORY" "$DATA_DIRECTORY" "$SYSTEMD_DIRECTORY"
+TimeoutStartSec=45min
+EOF
+    chmod 0600 "$UPDATE_SERVICE_STAGING"
+    if [ -e "$UPDATE_SERVICE_FILE" ]; then
+      UPDATE_SERVICE_BACKUP="$SYSTEMD_DIRECTORY/.multivibe-host-update.service.previous.$$"
+      [ ! -e "$UPDATE_SERVICE_BACKUP" ] && [ ! -L "$UPDATE_SERVICE_BACKUP" ] || fail "the update service rollback destination already exists"
+      mv "$UPDATE_SERVICE_FILE" "$UPDATE_SERVICE_BACKUP"
+      UPDATE_SERVICE_CHANGED=true
+    fi
+    mv "$UPDATE_SERVICE_STAGING" "$UPDATE_SERVICE_FILE"
+    UPDATE_SERVICE_STAGING=""
+    UPDATE_SERVICE_CHANGED=true
+
+    UPDATE_TIMER_STAGING=$(mktemp "$SYSTEMD_DIRECTORY/.multivibe-host-update.timer.XXXXXX") || fail "the update timer could not be staged"
+    cat > "$UPDATE_TIMER_STAGING" <<'EOF'
+# Managed by the MultiVibe Host installer
+[Unit]
+Description=Schedule verified MultiVibe Host update checks
+
+[Timer]
+OnBootSec=5m
+OnUnitActiveSec=1h
+RandomizedDelaySec=20m
+Persistent=true
+Unit=multivibe-host-update.service
+
+[Install]
+WantedBy=timers.target
+EOF
+    chmod 0600 "$UPDATE_TIMER_STAGING"
+    if [ -e "$UPDATE_TIMER_FILE" ]; then
+      UPDATE_TIMER_BACKUP="$SYSTEMD_DIRECTORY/.multivibe-host-update.timer.previous.$$"
+      [ ! -e "$UPDATE_TIMER_BACKUP" ] && [ ! -L "$UPDATE_TIMER_BACKUP" ] || fail "the update timer rollback destination already exists"
+      mv "$UPDATE_TIMER_FILE" "$UPDATE_TIMER_BACKUP"
+      UPDATE_TIMER_CHANGED=true
+    fi
+    mv "$UPDATE_TIMER_STAGING" "$UPDATE_TIMER_FILE"
+    UPDATE_TIMER_STAGING=""
+    UPDATE_TIMER_CHANGED=true
+
     systemctl --user daemon-reload || fail "the systemd user manager could not reload its units"
     systemctl --user enable --now "$SERVICE_NAME" || fail "the MultiVibe Host user service could not be started"
+    systemctl --user enable --now "$UPDATE_TIMER_NAME" || fail "the MultiVibe Host update timer could not be started"
     systemctl --user is-active --quiet "$SERVICE_NAME" || fail "the MultiVibe Host user service did not remain active"
+    systemctl --user is-active --quiet "$UPDATE_TIMER_NAME" || fail "the MultiVibe Host update timer did not remain active"
   fi
 fi
 
 version=$("$INSTALL_ROOT/bin/multivibe-host" version)
+if [ "$SYSTEMD_AVAILABLE" = true ] && [ "$MODE" = service ]; then
+  health_attempt=0
+  health_ready=false
+  while [ "$health_attempt" -lt 60 ]; do
+    if "$INSTALL_ROOT/bin/node" --eval "fetch('http://127.0.0.1:'+(process.env.MULTIVIBE_HOST_PORT||'1455')+'/health').then(async response=>{const body=await response.json();if(!response.ok||body.version!==process.argv[1])process.exit(1)}).catch(()=>process.exit(1))" "$version" >/dev/null 2>&1; then
+      health_ready=true
+      break
+    fi
+    health_attempt=$((health_attempt + 1))
+    sleep 2
+  done
+  [ "$health_ready" = true ] || fail "the updated MultiVibe Host did not pass its post-start health check"
+fi
 INSTALL_SUCCEEDED=true
 printf 'MultiVibe Host %s is installed in %s\n' "$version" "$INSTALL_ROOT"
 
@@ -339,7 +489,7 @@ if [ "$MODE" = foreground ]; then
   trap - 0 HUP INT TERM
   exec "$INSTALL_ROOT/bin/multivibe-host" run
 elif [ "$SYSTEMD_AVAILABLE" = true ]; then
-  printf 'The systemd user service is enabled and running.\n'
+  printf 'The systemd user service and verified update timer are enabled and running.\n'
 else
   printf 'No systemd user manager is available; the application was installed but not started.\n'
   printf 'Run %s run, or rerun this installer with --foreground.\n' "$LAUNCHER"

@@ -21,6 +21,9 @@ type InstallResponsesWebsocketProxyOptions = {
   server: http.Server;
   port: number;
   authorize?: (req: http.IncomingMessage) => boolean;
+  admit?: () => boolean;
+  onTurnStarted?: () => void;
+  onTurnFinished?: () => void;
 };
 
 type FunctionCallRecord = {
@@ -705,6 +708,9 @@ export function installResponsesWebsocketProxy({
   server,
   port,
   authorize,
+  admit,
+  onTurnStarted,
+  onTurnFinished,
 }: InstallResponsesWebsocketProxyOptions) {
   const wss = new WebSocketServer({ noServer: true });
 
@@ -717,6 +723,13 @@ export function installResponsesWebsocketProxy({
     if (authorize && !authorize(req)) {
       socket.write(
         "HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+      );
+      socket.destroy();
+      return;
+    }
+    if (admit && !admit()) {
+      socket.write(
+        "HTTP/1.1 503 Service Unavailable\r\nRetry-After: 60\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
       );
       socket.destroy();
       return;
@@ -750,6 +763,16 @@ export function installResponsesWebsocketProxy({
         return;
       }
 
+      if (admit && !admit()) {
+        sendError(
+          ws,
+          "MultiVibe Host is draining for a verified update",
+          503,
+          "host_update_draining",
+        );
+        return;
+      }
+
       if (inFlight) {
         sendError(
           ws,
@@ -761,6 +784,7 @@ export function installResponsesWebsocketProxy({
       }
 
       inFlight = true;
+      onTurnStarted?.();
       try {
         await forwardFrame(
           ws,
@@ -781,6 +805,7 @@ export function installResponsesWebsocketProxy({
         }
       } finally {
         inFlight = false;
+        onTurnFinished?.();
       }
     });
 

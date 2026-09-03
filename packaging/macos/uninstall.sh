@@ -4,6 +4,7 @@ set -eu
 
 PROGRAM_NAME="MultiVibe Host uninstaller"
 LABEL="cloud.multivibe.host"
+UPDATE_LABEL="cloud.multivibe.host.update"
 BUNDLE_IDENTIFIER="cloud.multivibe.host"
 
 fail() {
@@ -50,6 +51,7 @@ validate_home
 
 DESTINATION_APPLICATION="$HOME/Applications/MultiVibe Host.app"
 LAUNCH_AGENT="$HOME/Library/LaunchAgents/$LABEL.plist"
+UPDATE_LAUNCH_AGENT="$HOME/Library/LaunchAgents/$UPDATE_LABEL.plist"
 DATA_DIRECTORY="$HOME/Library/Application Support/MultiVibe"
 LOG_DIRECTORY="$HOME/Library/Logs/MultiVibe Host"
 USER_ID=$(id -u)
@@ -57,6 +59,7 @@ case "$USER_ID" in
   ''|*[!0-9]*) fail "the current user identifier is invalid" ;;
 esac
 SERVICE="gui/$USER_ID/$LABEL"
+UPDATE_SERVICE="gui/$USER_ID/$UPDATE_LABEL"
 MANAGED_INSTALL_PRESENT=false
 
 for managed_parent in "$HOME/Applications" "$HOME/Library" "$HOME/Library/LaunchAgents"; do
@@ -87,6 +90,15 @@ if [ -e "$LAUNCH_AGENT" ]; then
   [ "$(plist_value "$LAUNCH_AGENT" ProgramArguments:0)" = "$DESTINATION_APPLICATION/Contents/MacOS/multivibe-host" ] || fail "the LaunchAgent targets another application"
   MANAGED_INSTALL_PRESENT=true
 fi
+if [ -L "$UPDATE_LAUNCH_AGENT" ]; then
+  fail "the update LaunchAgent destination is a symbolic link; refusing to remove it"
+fi
+if [ -e "$UPDATE_LAUNCH_AGENT" ]; then
+  [ -f "$UPDATE_LAUNCH_AGENT" ] || fail "the update LaunchAgent destination is not a regular file"
+  [ "$(plist_value "$UPDATE_LAUNCH_AGENT" Label)" = "$UPDATE_LABEL" ] || fail "the update LaunchAgent is not managed by MultiVibe Host"
+  [ "$(plist_value "$UPDATE_LAUNCH_AGENT" ProgramArguments:0)" = "$DESTINATION_APPLICATION/Contents/Helpers/multivibe-host-updater" ] || fail "the update LaunchAgent targets another application"
+  MANAGED_INSTALL_PRESENT=true
+fi
 if [ "$PURGE" = true ]; then
   for data_parent in "$HOME/Library/Application Support" "$HOME/Library/Logs"; do
     if [ -L "$data_parent" ]; then
@@ -108,9 +120,13 @@ fi
 
 if [ "$MANAGED_INSTALL_PRESENT" = true ]; then
   /bin/launchctl bootout "$SERVICE" >/dev/null 2>&1 || true
+  /bin/launchctl bootout "$UPDATE_SERVICE" >/dev/null 2>&1 || true
 fi
 if [ -f "$LAUNCH_AGENT" ]; then
   rm -f "$LAUNCH_AGENT"
+fi
+if [ -f "$UPDATE_LAUNCH_AGENT" ]; then
+  rm -f "$UPDATE_LAUNCH_AGENT"
 fi
 if [ -d "$DESTINATION_APPLICATION" ]; then
   rm -rf "$DESTINATION_APPLICATION"

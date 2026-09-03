@@ -32,6 +32,7 @@ ENV HOME=/data \
     MULTIVIBE_HOST_MANAGED_DIR=/models/runtime \
     MULTIVIBE_HOST_BIND=0.0.0.0 \
     MULTIVIBE_HOST_PORT=1455 \
+    MULTIVIBE_HOST_CONTAINER=true \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
 VOLUME ["/data", "/models"]

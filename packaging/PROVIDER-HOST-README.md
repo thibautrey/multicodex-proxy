@@ -87,6 +87,14 @@ private state directory, and loads
 `~/Library/LaunchAgents/cloud.multivibe.host.plist`. Logs are written below
 `~/Library/Logs/MultiVibe Host`.
 
+The installer also loads `cloud.multivibe.host.update`, a per-user LaunchAgent
+that wakes hourly. The updater stores a randomized next-check time, so public
+release metadata is fetched only every 10 to 14 hours. Stable updates are
+downloaded while the Host is running, then installed only after active HTTP,
+WebSocket, deferred-job, and managed-runtime operations have drained. The old
+application remains available until the new service passes `/health` with the
+expected version. A failure restores the previous application and LaunchAgents.
+
 ## Linux amd64 with NVIDIA
 
 From the extracted archive, run:
@@ -112,6 +120,15 @@ process with MultiVibe Host. Keep the terminal or supervisor attached; use
 Ctrl-C to stop it. A default installation without systemd remains stopped and
 prints the exact foreground command.
 
+With a user systemd manager the native installer also enables
+`multivibe-host-update.timer`. It invokes the separate updater process hourly;
+the randomized 10-to-14-hour schedule in the updater avoids synchronized
+release checks. The service stages and verifies the complete archive before it
+stops MultiVibe, and the installer retains the previous directory and unit
+files until the new process reports the exact release version through
+`/health`. Foreground installations do not enable an automatic timer because
+MultiVibe cannot safely control an unknown external supervisor.
+
 ## Linux container, Docker Compose and Unraid
 
 Official tagged releases also publish the verified Linux bundle as
@@ -131,6 +148,47 @@ release notes include both the versioned pull command and digest-pinned image
 reference. The rolling `latest` tag is kept for Unraid updates and convenience;
 use the versioned tag or immutable digest for reproducible deployments and
 rollbacks.
+
+The container deliberately cannot update itself and does not need the Docker
+socket. To enable verified automatic updates on a Linux Docker Compose host,
+extract the signed Linux archive and run:
+
+```sh
+./install-docker-updater.sh \
+  --compose-file /absolute/path/docker-compose.host.yml \
+  --project-directory /absolute/path/to/the/compose/project
+```
+
+The host-side systemd timer authenticates `multivibe-host-update-stable.json`,
+pulls the signed immutable image digest, writes a private Compose override,
+recreates only `multivibe-host`, waits up to 120 seconds for Docker health, and
+restores the previous image reference if the update fails. Remove only this
+timer with `./uninstall-docker-updater.sh`; volumes and images are preserved.
+The supplied Compose file accepts a complete immutable reference through
+`MULTIVIBE_HOST_IMAGE`. Do not mount `/var/run/docker.sock` into MultiVibe or an
+updater sidecar.
+
+On Unraid, the template intentionally follows the official `latest` tag so the
+Unraid update checker and Community Applications Auto Update plugin can manage
+container recreation. The versioned digest in the matching GitHub release
+remains the rollback reference.
+
+## Update trust and policy
+
+Every release attaches `multivibe-host-update-stable.json` or, for a
+prerelease, `multivibe-host-update-beta.json`. Its payload is signed with a
+dedicated Ed25519 key whose public half is compiled into the updater. It binds
+one semantic version and source commit to the exact SHA-256 and byte length of
+each native archive and to the immutable GHCR digest. Signed publication and
+expiry timestamps, a minimum compatible version, a critical-update flag and a
+local rollout percentage are checked before any download. GitHub and TLS are
+transport and discovery layers; they are not the update trust root.
+
+The default policy is `automatic` on the `stable` channel. In the dashboard's
+**Host updates** page it can be changed to `download` or `notify`, and the beta
+channel can be selected explicitly. Update state contains no prompt, response,
+account, hardware identifier, provider key, or Cloud credential. The rollout
+bucket is generated and evaluated locally and is never transmitted.
 
 Container mode binds Core to `0.0.0.0:1455`; the Host refuses that exposed bind
 unless `MULTIVIBE_HOST_PUBLIC_URL` is a clean path-free HTTP(S) origin. Core's
