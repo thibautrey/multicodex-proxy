@@ -9,7 +9,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: provider-host-release-${{ github.ref }}
+  group: provider-host-release
   cancel-in-progress: false
 
 env:
@@ -325,6 +325,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -367,6 +369,7 @@ jobs:
           docker tag "$image:$version" "$image:latest"
           printf 'image=%s\nversion=%s\n' "$image" "$version" >> "$GITHUB_OUTPUT"
       - name: Publish the immutable version and rolling latest tags
+        id: publish
         shell: bash
         env:
           GHCR_TOKEN: ${{ github.token }}
@@ -394,6 +397,32 @@ jobs:
           docker push "$image:$version"
           docker push "$image:latest"
 
+          digest="$(docker buildx imagetools inspect "$image:$version" --format '{{.Manifest.Digest}}')"
+          latest_digest="$(docker buildx imagetools inspect "$image:latest" --format '{{.Manifest.Digest}}')"
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ || "$latest_digest" != "$digest" ]]; then
+            echo "::error::Published container tags do not resolve to one valid release digest."
+            exit 1
+          fi
+          node scripts/provider-host-container-release.mjs build \
+            "$image" "$version" "$digest" "$GITHUB_SHA" container-release
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+      - name: Attest the published container image
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-name: ${{ steps.image.outputs.image }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true
+      - name: Attest the container release metadata
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: container-release/container-release.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: provider-host-container-release
+          path: container-release/*
+          if-no-files-found: error
+          compression-level: 0
+
   publish-release:
     needs: [validate-tag, sign-release, publish-container]
     runs-on: ubuntu-24.04
@@ -409,6 +438,10 @@ jobs:
         with:
           name: provider-host-signed-release
           path: release
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: provider-host-container-release
+          path: container-release
       - name: Publish the immutable GitHub release
         shell: bash
         env:
@@ -419,7 +452,12 @@ jobs:
             echo "::error::A GitHub release already exists for $GITHUB_REF_NAME; refusing to overwrite it."
             exit 1
           fi
-          gh release create "$GITHUB_REF_NAME" release/* \
+          version="${{ needs.validate-tag.outputs.version }}"
+          node scripts/provider-host-container-release.mjs verify \
+            container-release/container-release.json "$version" "$GITHUB_SHA"
+          container_notes="$(<container-release/container-release-notes.md)"
+          gh release create "$GITHUB_REF_NAME" release/* container-release/container-release.json \
             --verify-tag \
             --title "MultiVibe Host ${{ needs.validate-tag.outputs.version }}" \
+            --notes "$container_notes" \
             --generate-notes

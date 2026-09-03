@@ -3,6 +3,11 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import {
+  createContainerReleaseMetadata,
+  renderContainerReleaseNotes,
+  validateContainerReleaseMetadata,
+} from "./provider-host-container-release.mjs";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (relative) => readFile(path.join(repositoryRoot, relative), "utf8");
@@ -78,4 +83,39 @@ test("the release workflow publishes a tested image from the verified Linux arch
   assert.match(workflow, /Could not prove that \$image:\$version is unused; refusing to publish/u);
   assert.match(workflow, /docker push "\$image:\$version"/u);
   assert.match(workflow, /docker push "\$image:latest"/u);
+  assert.match(workflow, /docker buildx imagetools inspect "\$image:\$version"/u);
+  assert.match(workflow, /latest_digest.*!= "\$digest"/u);
+  assert.match(workflow, /subject-digest: \$\{\{ steps\.publish\.outputs\.digest \}\}/u);
+  assert.match(workflow, /push-to-registry: true/u);
+  assert.match(workflow, /name: provider-host-container-release/u);
+  assert.match(workflow, /container-release\/container-release\.json/u);
+  assert.match(workflow, /--notes "\$container_notes"/u);
+});
+
+test("container release metadata binds the GitHub release to one immutable image", () => {
+  const image = "ghcr.io/thibautrey/multivibe-host";
+  const version = "0.3.0-rc.1";
+  const digest = `sha256:${"a".repeat(64)}`;
+  const commit = "b".repeat(40);
+  const metadata = createContainerReleaseMetadata(image, version, digest, commit);
+  assert.deepEqual(metadata.platform, { os: "linux", architecture: "amd64", accelerator: "nvidia" });
+  assert.equal(metadata.versionTag, `${image}:${version}`);
+  assert.equal(metadata.immutableReference, `${image}@${digest}`);
+  assert.equal(validateContainerReleaseMetadata(metadata, version, commit), metadata);
+  const notes = renderContainerReleaseNotes(metadata);
+  assert.match(notes, new RegExp(`docker pull ${image}:${version}`, "u"));
+  assert.match(notes, new RegExp(`${image}@sha256:${"a".repeat(64)}`, "u"));
+  assert.match(notes, /latest.*not immutable/u);
+});
+
+test("container release metadata rejects mismatched or noncanonical identities", () => {
+  const image = "ghcr.io/thibautrey/multivibe-host";
+  const digest = `sha256:${"a".repeat(64)}`;
+  const commit = "b".repeat(40);
+  assert.throws(() => createContainerReleaseMetadata("docker.io/multivibe-host", "0.3.0", digest, commit), /canonical GHCR/u);
+  assert.throws(() => createContainerReleaseMetadata(image, "v0.3.0", digest, commit), /semantic versioning/u);
+  assert.throws(() => createContainerReleaseMetadata(image, "0.3.0", "sha256:short", commit), /SHA-256/u);
+  const metadata = createContainerReleaseMetadata(image, "0.3.0", digest, commit);
+  assert.throws(() => validateContainerReleaseMetadata({ ...metadata, rollingTag: `${image}:stable` }, "0.3.0", commit), /release identity/u);
+  assert.throws(() => validateContainerReleaseMetadata(metadata, "0.3.1", commit), /release identity/u);
 });

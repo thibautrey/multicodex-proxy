@@ -120,6 +120,13 @@ MULTIVIBE_HOST_PUBLIC_URL=http://192.168.1.20:1455 \
   docker compose -f docker-compose.host.yml up -d
 ```
 
+The matching GitHub release attaches `container-release.json`, which binds the
+version, source commit, supported platform and immutable GHCR digest. Its
+release notes include both the versioned pull command and digest-pinned image
+reference. The rolling `latest` tag is kept for Unraid updates and convenience;
+use the versioned tag or immutable digest for reproducible deployments and
+rollbacks.
+
 Container mode binds Core to `0.0.0.0:1455`; the Host refuses that exposed bind
 unless `MULTIVIBE_HOST_PUBLIC_URL` is a clean path-free HTTP(S) origin. Core's
 OAuth callback is derived from the same value. Provider-agent and managed
