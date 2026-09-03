@@ -1,4 +1,5 @@
 import express from "express";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as Sentry from "@sentry/node";
@@ -9,6 +10,7 @@ import { createTraceManager } from "./traces.js";
 import { createAdminRouter } from "./routes/admin/index.js";
 import { createProxyRouter } from "./routes/proxy/index.js";
 import { createRealtimeRouter } from "./realtime-proxy.js";
+import { HostHarnessIntegrationManager } from "./host-harness-integrations.js";
 import { installResponsesWebsocketProxy } from "./websocket-responses.js";
 import { oauthConfig } from "./oauth-config.js";
 import {
@@ -61,6 +63,7 @@ import {
   PROVIDER_AGENT_CUDA_VISIBLE_DEVICES,
   PROVIDER_AGENT_ENABLED,
   MULTIVIBE_HOST_APPLICATION,
+  HOST_HARNESS_INTEGRATIONS_STATE_PATH,
   PROVIDER_AGENT_RUNTIME_STATE_PATH,
   PROVIDER_AGENT_STATE_PATH,
   PROXY_API_KEY,
@@ -122,6 +125,13 @@ const dataDir = path.dirname(STORE_PATH);
 await cleanupOrphanedTmpFiles(dataDir);
 
 const store = new AccountStore(STORE_PATH);
+const hostHarnessIntegrations = MULTIVIBE_HOST_APPLICATION
+  ? new HostHarnessIntegrationManager({
+      homeDirectory: os.homedir(),
+      statePath: HOST_HARNESS_INTEGRATIONS_STATE_PATH,
+      baseUrl: `http://127.0.0.1:${PORT}`,
+    })
+  : undefined;
 const capacityTracker = new CapacityTracker();
 const jobStore = new JobStore(
   JOBS_DB_PATH,
@@ -210,6 +220,7 @@ const adminRouter = createAdminRouter({
   anonymousUsageSharing,
   providerAgent,
   hostApplication: MULTIVIBE_HOST_APPLICATION,
+  hostHarnessIntegrations,
   providerWorkerEstimateClient,
   moduleManager,
   storagePaths: {

@@ -1175,6 +1175,7 @@ export default function App() {
             setApplicationWeight={setApplicationWeight}
             createWebhook={createApplicationWebhook}
             deleteWebhook={deleteApplicationWebhook}
+            onHarnessesChanged={loadBase}
           />
         )}
 

@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { HostHarnessCarousel } from "../HostHarnessCarousel";
 import { copyTextToClipboard } from "../../lib/clipboard";
 import type {
   ApplicationPolicy,
@@ -15,6 +16,7 @@ type Props = {
   setApplicationWeight: (application: string, weight: number) => Promise<void>;
   createWebhook: (application: string, url: string) => Promise<ApplicationWebhook>;
   deleteWebhook: (application: string, id: string) => Promise<void>;
+  onHarnessesChanged: () => Promise<void>;
 };
 
 export function ApiKeysTab({
@@ -25,6 +27,7 @@ export function ApiKeysTab({
   setApplicationWeight,
   createWebhook,
   deleteWebhook,
+  onHarnessesChanged,
 }: Props) {
   const [application, setApplication] = useState("");
   const [isCreating, setIsCreating] = useState(false);
@@ -75,6 +78,7 @@ export function ApiKeysTab({
 
   return (
     <>
+      <HostHarnessCarousel onApiKeysChanged={onHarnessesChanged} />
       <section className="panel">
         <div className="section-split-header">
           <div>

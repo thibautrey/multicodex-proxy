@@ -79,6 +79,10 @@ import {
 } from "../../provider-agent-supervisor.js";
 import type { ModuleManager } from "../../module-manager.js";
 import {
+  HostHarnessIntegrationError,
+  type HostHarnessIntegrationManager,
+} from "../../host-harness-integrations.js";
+import {
   unavailableProviderWorkerEstimate,
   type ProviderWorkerEstimateClient,
 } from "../../provider-worker-estimate.js";
@@ -107,6 +111,7 @@ export type AdminRoutesOptions = {
   anonymousUsageSharing?: AnonymousUsageSharingController;
   providerAgent?: ProviderAgentControl;
   hostApplication?: boolean;
+  hostHarnessIntegrations?: HostHarnessIntegrationManager;
   providerWorkerEstimateClient?: ProviderWorkerEstimateClient;
   moduleManager?: ModuleManager;
 };
@@ -399,6 +404,74 @@ export function createAdminRouter(options: AdminRoutesOptions) {
 
   const router = express.Router();
 
+  router.get("/host-harnesses", async (_req, res) => {
+    res.setHeader("cache-control", "no-store");
+    if (!options.hostApplication || !options.hostHarnessIntegrations) {
+      return res.json({ hostApplication: false, harnesses: [] });
+    }
+    try {
+      const harnesses = (await options.hostHarnessIntegrations.list()).filter((entry) => entry.detected);
+      return res.json({ hostApplication: true, harnesses });
+    } catch (error: any) {
+      const status = error instanceof HostHarnessIntegrationError ? error.status : 500;
+      return res.status(status).json({ error: error?.message ?? "Harness detection failed" });
+    }
+  });
+
+  router.post("/host-harnesses/:id/install", async (req, res) => {
+    res.setHeader("cache-control", "no-store");
+    if (!options.hostApplication || !options.hostHarnessIntegrations) {
+      return res.status(404).json({ error: "Harness integrations are available only in MultiVibe Host" });
+    }
+    const id = String(req.params.id ?? "");
+    let createdId: string | undefined;
+    try {
+      const current = await options.hostHarnessIntegrations.get(id);
+      if (current.configured || current.managed) return res.json({ harness: current });
+      if (!current.canInstall) {
+        return res.status(409).json({ error: current.unavailableReason ?? `${current.name} cannot be configured automatically` });
+      }
+      const application = `harness-${id}`;
+      const existing = [...configuredProxyApiKeys, ...store.getCachedProxyApiKeys()]
+        .find((entry) => entry.application === application);
+      if (existing) {
+        return res.status(409).json({ error: `An API key already exists for ${application}; revoke it before reconnecting this harness` });
+      }
+      createdId = randomUUID();
+      const key = `mv_${randomBytes(32).toString("base64url")}`;
+      await store.addProxyApiKey({ id: createdId, application, key, createdAt: Date.now() });
+      const harness = await options.hostHarnessIntegrations.install(id, {
+        apiKeyId: createdId,
+        apiKey: key,
+        application,
+      });
+      if (!harness.managed) {
+        await store.deleteProxyApiKey(createdId);
+        createdId = undefined;
+      }
+      return res.status(201).json({ harness });
+    } catch (error: any) {
+      if (createdId) await store.deleteProxyApiKey(createdId).catch(() => undefined);
+      const status = error instanceof HostHarnessIntegrationError ? error.status : 500;
+      return res.status(status).json({ error: error?.message ?? "Harness installation failed" });
+    }
+  });
+
+  router.delete("/host-harnesses/:id/install", async (req, res) => {
+    res.setHeader("cache-control", "no-store");
+    if (!options.hostApplication || !options.hostHarnessIntegrations) {
+      return res.status(404).json({ error: "Harness integrations are available only in MultiVibe Host" });
+    }
+    try {
+      const result = await options.hostHarnessIntegrations.uninstall(String(req.params.id ?? ""));
+      if (result.apiKeyId) await store.deleteProxyApiKey(result.apiKeyId);
+      return res.json({ harness: result.view });
+    } catch (error: any) {
+      const status = error instanceof HostHarnessIntegrationError ? error.status : 500;
+      return res.status(status).json({ error: error?.message ?? "Harness removal failed" });
+    }
+  });
+
   router.get("/modules", (_req, res) => {
     if (!moduleManager) return res.status(503).json({ error: "Module manager is unavailable" });
     return res.json({ modules: moduleManager.list(), marketplace: moduleManager.marketplaceList() });
@@ -681,6 +754,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
   router.get("/config", (_req, res) => {
     res.json({
       ok: true,
+      hostApplication: Boolean(options.hostApplication),
       oauthRedirectUri: oauthConfig.redirectUri,
       xaiAuthPath: XAI_AUTH_PATH,
       usageCacheTtlMs: USAGE_CACHE_TTL_MS,
