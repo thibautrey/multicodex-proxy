@@ -82,7 +82,7 @@ func executableLayout(executable, goos string) (bundleLayout, error) {
 			Agent:              filepath.Join(contents, "Helpers", "multivibe-provider-agent"),
 			App:                filepath.Join(contents, "Resources", "app"),
 			Security:           filepath.Join(contents, "Resources", "app", "modules", "security"),
-			BundledOllama:      filepath.Join(contents, "Helpers", "ollama-runtime"),
+			BundledOllama:      filepath.Join(contents, "Resources", "ollama-runtime"),
 			ModelCatalog:       filepath.Join(contents, "Resources", "provider", "provider-model-catalog.json"),
 			DependencyManifest: filepath.Join(contents, "Resources", "provider", "provider-host-dependencies.json"),
 		}, nil
