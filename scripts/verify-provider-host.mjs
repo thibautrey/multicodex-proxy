@@ -14,6 +14,12 @@ const maximumArchiveBytes = 6 * 1024 * 1024 * 1024;
 const maximumExtractedBytes = 6 * 1024 * 1024 * 1024;
 const maximumArchiveEntries = 100_000;
 const maximumArchiveMetadataBytes = 4 * 1024 * 1024;
+
+function archiveMetadataCeilingError(metadataBytes, entryCount) {
+  return new Error(
+    `provider-host archive metadata exceeds the ceiling (${metadataBytes} bytes across ${entryCount} entries; limit ${maximumArchiveMetadataBytes} bytes)`,
+  );
+}
 const maximumZipCentralDirectoryBytes = 128 * 1024 * 1024;
 const maximumTarStreamBytes = maximumExtractedBytes + maximumArchiveEntries * 1024 + maximumArchiveMetadataBytes + 1024;
 const maximumCommandOutputBytes = 64 * 1024 * 1024;
@@ -258,7 +264,7 @@ async function inspectZipArchive(archive, archiveInfo) {
       const canonicalName = name.endsWith("/") ? name.slice(0, -1) : name;
       const foldedName = canonicalName.toLowerCase();
       metadataBytes += nameLength + extraLength + entryCommentLength;
-      if (metadataBytes > maximumArchiveMetadataBytes) throw new Error("provider-host archive metadata exceeds the ceiling");
+      if (metadataBytes > maximumArchiveMetadataBytes) throw archiveMetadataCeilingError(metadataBytes, entryCount);
       validateZipExtra(extra);
       if (!safeArchiveEntry(name)) throw new Error("provider-host archive contains an unsafe path");
       if (names.has(canonicalName) || foldedNames.has(foldedName)) {
@@ -299,7 +305,7 @@ async function inspectZipArchive(archive, archiveInfo) {
       const localName = localMetadata.subarray(0, localNameLength);
       const localExtra = localMetadata.subarray(localNameLength);
       metadataBytes += localNameLength + localExtraLength;
-      if (metadataBytes > maximumArchiveMetadataBytes) throw new Error("provider-host archive metadata exceeds the ceiling");
+      if (metadataBytes > maximumArchiveMetadataBytes) throw archiveMetadataCeilingError(metadataBytes, entryCount);
       validateZipExtra(localExtra);
       if (!localName.equals(Buffer.from(entry.name, "ascii"))) {
         throw new Error("provider-host zip local path differs from its central path");
@@ -519,11 +525,11 @@ async function inspectTarArchive(archive) {
       const type = typeByte === 0 ? "0" : String.fromCharCode(typeByte);
       const headerSize = parseTarNumber(header.subarray(124, 136), "size");
       metadataBytes += Buffer.byteLength(headerName) + Buffer.byteLength(prefix) + Buffer.byteLength(linkName);
-      if (metadataBytes > maximumArchiveMetadataBytes) throw new Error("provider-host archive metadata exceeds the ceiling");
+      if (metadataBytes > maximumArchiveMetadataBytes) throw archiveMetadataCeilingError(metadataBytes, entryCount);
 
       if (type === "x" || type === "L") {
         if (headerSize > maximumArchiveMetadataBytes - metadataBytes) {
-          throw new Error("provider-host archive metadata exceeds the ceiling");
+          throw archiveMetadataCeilingError(metadataBytes + headerSize, entryCount);
         }
         const payload = await reader.read(headerSize);
         await reader.skip((512 - (headerSize % 512)) % 512);
