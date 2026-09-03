@@ -681,12 +681,12 @@ async function validateNativeFiles(root, manifest) {
   const mac = manifest.platform === "darwin";
   const prefix = mac ? "MultiVibe Host.app/Contents/" : "";
   const explicit = mac ? [
-    `${prefix}Frameworks/node`, `${prefix}Helpers/ollama-runtime/ollama`, `${prefix}Helpers/ollama-runtime/llama-server`,
-    `${prefix}Helpers/ollama-runtime/llama-quantize`, `${prefix}Helpers/multivibe-provider-agent`,
+    `${prefix}Frameworks/node`, `${prefix}Resources/ollama-runtime/ollama`, `${prefix}Resources/ollama-runtime/llama-server`,
+    `${prefix}Resources/ollama-runtime/llama-quantize`, `${prefix}Helpers/multivibe-provider-agent`,
     `${prefix}Helpers/multivibe-runtime-benchmark`,
     `${prefix}MacOS/multivibe-host`,
   ] : ["bin/node", "runtime/ollama/bin/ollama", "bin/multivibe-provider-agent", "bin/multivibe-runtime-benchmark", "bin/multivibe-host"];
-  const runtimePrefix = mac ? `${prefix}Helpers/ollama-runtime/` : "runtime/ollama/";
+  const runtimePrefix = mac ? `${prefix}Resources/ollama-runtime/` : "runtime/ollama/";
   const native = manifest.files.filter((entry) => explicit.includes(entry.path) ||
     (mac ? /\.(?:dylib|node|so)$/u.test(entry.path) : /(?:\.node|\.so(?:\.|$))/u.test(entry.path)) ||
     (entry.path.startsWith(runtimePrefix) && (entry.mode & 0o111) !== 0));
@@ -1125,9 +1125,9 @@ async function validateTree(root, options, archiveRoot) {
   const required = ["LICENSE", "NOTICE", "README.md", "install.sh", "uninstall.sh", "THIRD_PARTY/node-LICENSE",
     "THIRD_PARTY/ollama-LICENSE", "THIRD_PARTY/provider-host-dependencies.json"];
   if (manifest.platform === "darwin") required.push(
-    `${macPrefix}/Frameworks/node`, `${macPrefix}/Helpers/ollama-runtime/ollama`, `${macPrefix}/Helpers/ollama-runtime/llama-server`,
-    `${macPrefix}/Helpers/ollama-runtime/llama-quantize`,
-    `${macPrefix}/Helpers/ollama-runtime/.multivibe-bundle.json`, `${macPrefix}/Helpers/multivibe-provider-agent`,
+    `${macPrefix}/Frameworks/node`, `${macPrefix}/Resources/ollama-runtime/ollama`, `${macPrefix}/Resources/ollama-runtime/llama-server`,
+    `${macPrefix}/Resources/ollama-runtime/llama-quantize`,
+    `${macPrefix}/Resources/ollama-runtime/.multivibe-bundle.json`, `${macPrefix}/Helpers/multivibe-provider-agent`,
     `${macPrefix}/Helpers/multivibe-runtime-benchmark`,
     `${macPrefix}/MacOS/multivibe-host`, `${macPrefix}/Resources/app/dist/server.js`,
     `${macPrefix}/Resources/app/dist/instrument.js`, `${macPrefix}/Resources/provider/provider-model-catalog.json`,
@@ -1171,7 +1171,7 @@ async function validateTree(root, options, archiveRoot) {
     throw new Error("provider runtime dependency metadata is inconsistent");
   }
   const runtimeMarkerPath = manifest.platform === "darwin" ?
-    path.join(root, macPrefix, "Helpers", "ollama-runtime", ".multivibe-bundle.json") :
+    path.join(root, macPrefix, "Resources", "ollama-runtime", ".multivibe-bundle.json") :
     path.join(root, "runtime", "ollama", ".multivibe-bundle.json");
   const selectedTarget = `${manifest.platform}-${manifest.architecture}`;
   const marker = JSON.parse(await readFile(runtimeMarkerPath, "utf8"));

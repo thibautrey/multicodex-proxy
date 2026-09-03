@@ -358,7 +358,7 @@ async function signMacApplication(application, identity) {
   const contents = path.join(application, "Contents");
   const native = [];
   for (const file of await allFiles(contents)) {
-    if (!file.startsWith(`Helpers${path.sep}ollama-runtime${path.sep}`) &&
+    if (!file.startsWith(`Resources${path.sep}ollama-runtime${path.sep}`) &&
       !file.endsWith(".node") && !file.endsWith(".dylib") && !file.endsWith(".so")) continue;
     const handle = await open(path.join(contents, file), "r");
     const header = Buffer.alloc(4);
@@ -373,7 +373,7 @@ async function signMacApplication(application, identity) {
   for (const binary of new Set([
     ...native,
     path.join(contents, "Frameworks", "node"),
-    path.join(contents, "Helpers", "ollama-runtime", "ollama"),
+    path.join(contents, "Resources", "ollama-runtime", "ollama"),
     path.join(contents, "Helpers", "multivibe-provider-agent"),
     path.join(contents, "Helpers", "multivibe-runtime-benchmark"),
     path.join(contents, "MacOS", "multivibe-host"),
@@ -446,7 +446,7 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
     const contents = path.join(macApplication, "Contents");
     applicationDirectory = path.join(contents, "Resources", "app");
     nodeDestination = path.join(contents, "Frameworks", "node");
-    ollamaDestination = path.join(contents, "Helpers", "ollama-runtime");
+    ollamaDestination = path.join(contents, "Resources", "ollama-runtime");
     agentDestination = path.join(contents, "Helpers", "multivibe-provider-agent");
     benchmarkDestination = path.join(contents, "Helpers", "multivibe-runtime-benchmark");
     hostDestination = path.join(contents, "MacOS", "multivibe-host");

@@ -12,7 +12,7 @@ func TestExecutableLayoutIsBoundedToReleaseShape(t *testing.T) {
 	mac, err := executableLayout("/Applications/MultiVibe Host.app/Contents/MacOS/multivibe-host", "darwin")
 	if err != nil || mac.Node != "/Applications/MultiVibe Host.app/Contents/Frameworks/node" ||
 		mac.Agent != "/Applications/MultiVibe Host.app/Contents/Helpers/multivibe-provider-agent" ||
-		mac.BundledOllama != "/Applications/MultiVibe Host.app/Contents/Helpers/ollama-runtime" ||
+		mac.BundledOllama != "/Applications/MultiVibe Host.app/Contents/Resources/ollama-runtime" ||
 		mac.ModelCatalog != "/Applications/MultiVibe Host.app/Contents/Resources/provider/provider-model-catalog.json" {
 		t.Fatalf("unexpected macOS layout: %#v %v", mac, err)
 	}
