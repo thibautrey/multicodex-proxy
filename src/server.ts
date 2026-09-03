@@ -94,6 +94,7 @@ import {
 import { startEmbeddedProviderAgent } from "./provider-agent-supervisor.js";
 import { createInferenceIdempotencyMiddleware } from "./inference-idempotency.js";
 import { createRequestTracingMiddleware } from "./request-tracing.js";
+import { buildHostMenuBarAccountsSummary } from "./host-menu-bar.js";
 
 const app = express();
 app.use(createBodyParserMiddleware());
@@ -470,9 +471,12 @@ app.get("/admin/session", (req, res) => {
   res.json({ authenticated: !ADMIN_TOKEN || hasAdminSession(req) });
 });
 
-app.get("/admin/host/menu-bar", adminGuard, (_req, res) => {
+app.get("/admin/host/menu-bar", adminGuard, async (_req, res) => {
+  res.setHeader("cache-control", "no-store");
+  const accountSummary = buildHostMenuBarAccountsSummary(await store.listAccounts());
   res.json({
     operational: true,
+    ...accountSummary,
     earnings: {
       available: false,
       currency: null,

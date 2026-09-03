@@ -60,6 +60,10 @@ Open the latest release and choose the disk image for your Mac:
 
 Open the DMG, drag **MultiVibe Host** to **Applications**, then launch it. The
 app is signed with Developer ID, notarized by Apple, and runs from the menu bar.
+Its menu-bar label shows aggregate remaining OpenAI weekly and five-hour
+capacity when available. Opening it presents a native account overview with
+per-account quota windows, reset times, and health without exposing account
+tokens to the interface process.
 
 ### Linux
 

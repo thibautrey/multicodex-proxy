@@ -71,7 +71,12 @@ The disk image and application are both signed with Developer ID and notarized b
 Opening **MultiVibe Host** starts a menu-bar application using the official
 MultiVibe icon. It starts the loopback-only host when necessary, reports its
 operational state, and opens the protected local web dashboard without putting
-the persistent admin credential in the browser URL. Daily, weekly and monthly
+the persistent admin credential in the browser URL. When OpenAI quota data is
+available, the menu-bar label mirrors the former SwiftBar summary and its native
+popover shows aggregate and per-account five-hour, weekly, and monthly remaining
+capacity, reset times, and account health. The Host exposes only the fields
+needed by this view; account tokens, internal identifiers, and upstream errors
+are excluded. Daily, weekly and monthly
 earnings remain explicitly unavailable until the separate Cloud workload and
 compensation service is active; the application never derives or invents
 earnings from local inference-cost estimates.

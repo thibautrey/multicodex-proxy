@@ -16,6 +16,29 @@ private struct HostCredentials: Decodable {
     }
 }
 
+private struct QuotaWindow: Decodable {
+    let remainingPercent: Double
+    let resetAt: Double?
+}
+
+private struct MenuBarAccount: Decodable {
+    let displayName: String
+    let enabled: Bool
+    let status: String
+    let usageStatus: String
+    let fetchedAt: Double?
+    let fiveHour: QuotaWindow?
+    let weekly: QuotaWindow?
+    let monthly: QuotaWindow?
+}
+
+private struct MenuBarQuota: Decodable {
+    let fiveHourRemainingPercent: Double?
+    let fiveHourAccountCount: Int
+    let weeklyRemainingPercent: Double?
+    let weeklyAccountCount: Int
+}
+
 private struct MenuBarSummary: Decodable {
     struct Earnings: Decodable {
         let available: Bool
@@ -26,6 +49,8 @@ private struct MenuBarSummary: Decodable {
     }
 
     let operational: Bool
+    let accounts: [MenuBarAccount]
+    let quota: MenuBarQuota
     let earnings: Earnings
 }
 
@@ -33,9 +58,435 @@ private struct DesktopSession: Decodable {
     let path: String
 }
 
+private final class QuotaBarView: NSView {
+    var remainingPercent: Double? {
+        didSet { needsDisplay = true }
+    }
+
+    override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: 7) }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        let track = NSBezierPath(roundedRect: bounds, xRadius: 3.5, yRadius: 3.5)
+        NSColor.quaternaryLabelColor.withAlphaComponent(0.6).setFill()
+        track.fill()
+        guard let remainingPercent else { return }
+        let safeValue = max(0, min(100, remainingPercent))
+        let fillRect = NSRect(x: 0, y: 0, width: bounds.width * safeValue / 100, height: bounds.height)
+        guard fillRect.width > 0 else { return }
+        let fill = NSBezierPath(roundedRect: fillRect, xRadius: 3.5, yRadius: 3.5)
+        let color: NSColor = safeValue <= 10 ? .systemRed : safeValue <= 30 ? .systemOrange : .controlAccentColor
+        color.setFill()
+        fill.fill()
+    }
+}
+
+private final class FlippedView: NSView {
+    override var isFlipped: Bool { true }
+}
+
+private final class HostPopoverController: NSViewController {
+    var openDashboard: (() -> Void)?
+    var refresh: (() -> Void)?
+    var quit: (() -> Void)?
+
+    private let headerTitle = NSTextField(labelWithString: "MultiVibe Host")
+    private let headerStatus = NSTextField(labelWithString: "Starting…")
+    private let contentStack = NSStackView()
+    private let primaryButton = NSButton(title: "Open Dashboard", target: nil, action: nil)
+    private let refreshButton = NSButton(title: "Refresh", target: nil, action: nil)
+
+    override func loadView() {
+        let background = NSVisualEffectView()
+        background.material = .popover
+        background.blendingMode = .behindWindow
+        background.state = .active
+        view = background
+
+        let header = makeHeader()
+        let scrollView = NSScrollView()
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        let document = FlippedView()
+        document.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.orientation = .vertical
+        contentStack.alignment = .leading
+        contentStack.spacing = 12
+        contentStack.edgeInsets = NSEdgeInsets(top: 14, left: 18, bottom: 16, right: 18)
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        document.addSubview(contentStack)
+        scrollView.documentView = document
+
+        let footer = makeFooter()
+        background.addSubview(header)
+        background.addSubview(scrollView)
+        background.addSubview(footer)
+
+        NSLayoutConstraint.activate([
+            background.widthAnchor.constraint(equalToConstant: 420),
+            background.heightAnchor.constraint(equalToConstant: 570),
+            header.topAnchor.constraint(equalTo: background.topAnchor),
+            header.leadingAnchor.constraint(equalTo: background.leadingAnchor),
+            header.trailingAnchor.constraint(equalTo: background.trailingAnchor),
+            header.heightAnchor.constraint(equalToConstant: 72),
+            scrollView.topAnchor.constraint(equalTo: header.bottomAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: background.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: background.trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: footer.topAnchor),
+            footer.leadingAnchor.constraint(equalTo: background.leadingAnchor),
+            footer.trailingAnchor.constraint(equalTo: background.trailingAnchor),
+            footer.bottomAnchor.constraint(equalTo: background.bottomAnchor),
+            footer.heightAnchor.constraint(equalToConstant: 62),
+            document.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+            contentStack.topAnchor.constraint(equalTo: document.topAnchor),
+            contentStack.leadingAnchor.constraint(equalTo: document.leadingAnchor),
+            contentStack.trailingAnchor.constraint(equalTo: document.trailingAnchor),
+            contentStack.bottomAnchor.constraint(equalTo: document.bottomAnchor),
+        ])
+    }
+
+    private func makeHeader() -> NSView {
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+
+        let icon = NSImageView()
+        icon.image = appIcon()
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.translatesAutoresizingMaskIntoConstraints = false
+
+        headerTitle.font = .systemFont(ofSize: 16, weight: .semibold)
+        headerStatus.font = .systemFont(ofSize: 12, weight: .medium)
+        headerStatus.textColor = .secondaryLabelColor
+        let labels = NSStackView(views: [headerTitle, headerStatus])
+        labels.orientation = .vertical
+        labels.alignment = .leading
+        labels.spacing = 3
+        labels.translatesAutoresizingMaskIntoConstraints = false
+
+        let divider = NSBox()
+        divider.boxType = .separator
+        divider.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(icon)
+        container.addSubview(labels)
+        container.addSubview(divider)
+
+        NSLayoutConstraint.activate([
+            icon.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 18),
+            icon.centerYAnchor.constraint(equalTo: container.centerYAnchor, constant: -1),
+            icon.widthAnchor.constraint(equalToConstant: 38),
+            icon.heightAnchor.constraint(equalToConstant: 38),
+            labels.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 12),
+            labels.centerYAnchor.constraint(equalTo: icon.centerYAnchor),
+            labels.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -18),
+            divider.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            divider.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            divider.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        return container
+    }
+
+    private func makeFooter() -> NSView {
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        let divider = NSBox()
+        divider.boxType = .separator
+        divider.translatesAutoresizingMaskIntoConstraints = false
+
+        primaryButton.bezelStyle = .rounded
+        primaryButton.controlSize = .large
+        primaryButton.target = self
+        primaryButton.action = #selector(didOpenDashboard)
+        refreshButton.bezelStyle = .rounded
+        refreshButton.target = self
+        refreshButton.action = #selector(didRefresh)
+        let quitButton = NSButton(title: "Quit", target: self, action: #selector(didQuit))
+        quitButton.bezelStyle = .rounded
+
+        let actions = NSStackView(views: [primaryButton, refreshButton, quitButton])
+        actions.orientation = .horizontal
+        actions.alignment = .centerY
+        actions.spacing = 8
+        actions.translatesAutoresizingMaskIntoConstraints = false
+        primaryButton.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        container.addSubview(divider)
+        container.addSubview(actions)
+        NSLayoutConstraint.activate([
+            divider.topAnchor.constraint(equalTo: container.topAnchor),
+            divider.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            divider.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            actions.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 18),
+            actions.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -18),
+            actions.centerYAnchor.constraint(equalTo: container.centerYAnchor, constant: 1),
+            primaryButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 170),
+        ])
+        return container
+    }
+
+    func render(summary: MenuBarSummary?, status: String, operational: Bool, refreshing: Bool) {
+        loadViewIfNeeded()
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+        headerTitle.stringValue = "MultiVibe Host  \(version)"
+        headerStatus.stringValue = status
+        headerStatus.textColor = operational ? .systemGreen : .secondaryLabelColor
+        primaryButton.title = operational ? "Open Dashboard" : "Start Host"
+        refreshButton.title = refreshing ? "Refreshing…" : "Refresh"
+        refreshButton.isEnabled = !refreshing
+
+        for child in contentStack.arrangedSubviews {
+            contentStack.removeArrangedSubview(child)
+            child.removeFromSuperview()
+        }
+
+        contentStack.addArrangedSubview(sectionLabel("OPENAI CAPACITY"))
+        contentStack.addArrangedSubview(summaryCard(summary?.quota))
+        contentStack.addArrangedSubview(sectionLabel("ACCOUNTS"))
+        if let accounts = summary?.accounts, !accounts.isEmpty {
+            for account in accounts { contentStack.addArrangedSubview(accountCard(account)) }
+        } else {
+            contentStack.addArrangedSubview(emptyAccountsCard(operational: operational))
+        }
+        contentStack.addArrangedSubview(sectionLabel("EARNINGS"))
+        contentStack.addArrangedSubview(earningsCard(summary?.earnings))
+    }
+
+    private func sectionLabel(_ text: String) -> NSTextField {
+        label(text, size: 11, weight: .semibold, color: .secondaryLabelColor)
+    }
+
+    private func card() -> NSView {
+        let view = NSView()
+        view.wantsLayer = true
+        view.layer?.cornerRadius = 12
+        view.layer?.borderWidth = 0.5
+        view.layer?.borderColor = NSColor.separatorColor.withAlphaComponent(0.7).cgColor
+        view.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.72).cgColor
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.widthAnchor.constraint(equalToConstant: 384).isActive = true
+        return view
+    }
+
+    private func summaryCard(_ quota: MenuBarQuota?) -> NSView {
+        let container = card()
+        let fiveHour = quotaCell(title: "5 hours", value: quota?.fiveHourRemainingPercent, detail: accountCount(quota?.fiveHourAccountCount ?? 0))
+        let weekly = quotaCell(title: "Weekly", value: quota?.weeklyRemainingPercent, detail: accountCount(quota?.weeklyAccountCount ?? 0))
+        let stack = NSStackView(views: [fiveHour, weekly])
+        stack.orientation = .horizontal
+        stack.distribution = .fillEqually
+        stack.spacing = 18
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 14),
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -14),
+        ])
+        return container
+    }
+
+    private func quotaCell(title: String, value: Double?, detail: String) -> NSView {
+        let titleLabel = label(title, size: 12, weight: .medium, color: .secondaryLabelColor)
+        let valueLabel = label(percent(value), size: 22, weight: .semibold)
+        valueLabel.font = .monospacedDigitSystemFont(ofSize: 22, weight: .semibold)
+        let detailLabel = label(detail, size: 11, color: .tertiaryLabelColor)
+        let bar = QuotaBarView()
+        bar.remainingPercent = value
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        let stack = NSStackView(views: [titleLabel, valueLabel, bar, detailLabel])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 6
+        bar.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        return stack
+    }
+
+    private func accountCard(_ account: MenuBarAccount) -> NSView {
+        let container = card()
+        let name = label(account.displayName, size: 13, weight: .semibold)
+        name.lineBreakMode = .byTruncatingMiddle
+        name.maximumNumberOfLines = 1
+        let state = statusBadge(account.status)
+        let header = NSStackView(views: [name, NSView(), state])
+        header.orientation = .horizontal
+        header.alignment = .centerY
+        header.spacing = 8
+
+        let unsupported = account.usageStatus == "unsupported"
+        let windows = NSStackView(views: [
+            compactQuota(title: "5H", window: account.fiveHour, unsupported: unsupported),
+            compactQuota(title: "WEEK", window: account.weekly, unsupported: unsupported),
+            compactQuota(title: "MONTH", window: account.monthly, unsupported: unsupported),
+        ])
+        windows.orientation = .horizontal
+        windows.distribution = .fillEqually
+        windows.spacing = 12
+
+        let updated = label(usageDetail(account), size: 10, color: .tertiaryLabelColor)
+        let stack = NSStackView(views: [header, windows, updated])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 11
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        header.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        windows.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 13),
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 15),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -15),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -13),
+        ])
+        return container
+    }
+
+    private func compactQuota(title: String, window: QuotaWindow?, unsupported: Bool) -> NSView {
+        let titleLabel = label(title, size: 10, weight: .semibold, color: .secondaryLabelColor)
+        let value = label(unsupported ? "N/A" : percent(window?.remainingPercent), size: 17, weight: .semibold)
+        value.font = .monospacedDigitSystemFont(ofSize: 17, weight: .semibold)
+        let reset = label(unsupported ? "Not exposed" : resetText(window?.resetAt), size: 10, color: .tertiaryLabelColor)
+        reset.lineBreakMode = .byTruncatingTail
+        let bar = QuotaBarView()
+        bar.remainingPercent = unsupported ? nil : window?.remainingPercent
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        let stack = NSStackView(views: [titleLabel, value, bar, reset])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 5
+        bar.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        return stack
+    }
+
+    private func statusBadge(_ status: String) -> NSTextField {
+        let copy: String
+        let color: NSColor
+        switch status {
+        case "ready": (copy, color) = ("Ready", .systemGreen)
+        case "paused": (copy, color) = ("Paused", .secondaryLabelColor)
+        case "limited": (copy, color) = ("Limited", .systemOrange)
+        default: (copy, color) = ("Attention", .systemRed)
+        }
+        let badge = label("  \(copy)  ", size: 10, weight: .semibold, color: color)
+        badge.wantsLayer = true
+        badge.layer?.cornerRadius = 7
+        badge.layer?.backgroundColor = color.withAlphaComponent(0.12).cgColor
+        return badge
+    }
+
+    private func emptyAccountsCard(operational: Bool) -> NSView {
+        let container = card()
+        let title = label(operational ? "No OpenAI account yet" : "Host data unavailable", size: 13, weight: .semibold)
+        let detail = label(
+            operational ? "Add an account from the dashboard to see its quota here." : "Start or refresh MultiVibe Host to load your accounts.",
+            size: 11,
+            color: .secondaryLabelColor
+        )
+        detail.maximumNumberOfLines = 2
+        let stack = NSStackView(views: [title, detail])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 5
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 15),
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 15),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -15),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -15),
+        ])
+        return container
+    }
+
+    private func earningsCard(_ earnings: MenuBarSummary.Earnings?) -> NSView {
+        let container = card()
+        let rows = NSStackView(views: [
+            earningRow("Today", value: earningText(earnings?.today, earnings: earnings)),
+            earningRow("This week", value: earningText(earnings?.week, earnings: earnings)),
+            earningRow("This month", value: earningText(earnings?.month, earnings: earnings)),
+        ])
+        rows.orientation = .vertical
+        rows.alignment = .leading
+        rows.spacing = 8
+        rows.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(rows)
+        NSLayoutConstraint.activate([
+            rows.topAnchor.constraint(equalTo: container.topAnchor, constant: 13),
+            rows.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 15),
+            rows.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -15),
+            rows.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -13),
+        ])
+        return container
+    }
+
+    private func earningRow(_ title: String, value: String) -> NSView {
+        let titleLabel = label(title, size: 11, color: .secondaryLabelColor)
+        let valueLabel = label(value, size: 11, weight: .medium)
+        let row = NSStackView(views: [titleLabel, NSView(), valueLabel])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.widthAnchor.constraint(equalToConstant: 354).isActive = true
+        return row
+    }
+
+    private func label(_ text: String, size: CGFloat, weight: NSFont.Weight = .regular, color: NSColor = .labelColor) -> NSTextField {
+        let field = NSTextField(labelWithString: text)
+        field.font = .systemFont(ofSize: size, weight: weight)
+        field.textColor = color
+        return field
+    }
+
+    private func appIcon() -> NSImage? {
+        let url = Bundle.main.resourceURL?.appendingPathComponent("MultiVibeMenuBarIcon.png")
+        return url.flatMap(NSImage.init(contentsOf:)) ?? NSImage(systemSymbolName: "waveform.path", accessibilityDescription: "MultiVibe")
+    }
+
+    private func percent(_ value: Double?) -> String {
+        guard let value, value.isFinite else { return "—" }
+        return "\(Int(value.rounded()))%"
+    }
+
+    private func accountCount(_ count: Int) -> String {
+        count == 1 ? "1 account" : "\(count) accounts"
+    }
+
+    private func resetText(_ timestamp: Double?) -> String {
+        guard let timestamp, timestamp.isFinite else { return "No reset time" }
+        let date = Date(timeIntervalSince1970: timestamp / 1_000)
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return "Resets \(formatter.localizedString(for: date, relativeTo: Date()))"
+    }
+
+    private func usageDetail(_ account: MenuBarAccount) -> String {
+        if account.usageStatus == "unsupported" { return "OpenAI does not expose quota usage for this account." }
+        guard let fetchedAt = account.fetchedAt, fetchedAt.isFinite else { return "Waiting for the first quota refresh." }
+        let date = Date(timeIntervalSince1970: fetchedAt / 1_000)
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return "Updated \(formatter.localizedString(for: date, relativeTo: Date()))"
+    }
+
+    private func earningText(_ value: Decimal?, earnings: MenuBarSummary.Earnings?) -> String {
+        guard let earnings, earnings.available, let value, let currency = earnings.currency else { return "Not available" }
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencyCode = currency
+        return formatter.string(from: value as NSDecimalNumber) ?? "\(value) \(currency)"
+    }
+
+    @objc private func didOpenDashboard() { openDashboard?() }
+    @objc private func didRefresh() { refresh?() }
+    @objc private func didQuit() { quit?() }
+}
+
 @main
-final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate {
-    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
+    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    private let popover = NSPopover()
+    private let popoverController = HostPopoverController()
     private var refreshTimer: Timer?
     private var signalSources: [DispatchSourceSignal] = []
     private var ownedService: Process?
@@ -44,7 +495,8 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate {
     private var pendingDashboardOpen = false
     private var operational = false
     private var statusText = "Starting…"
-    private var earnings: MenuBarSummary.Earnings?
+    private var summary: MenuBarSummary?
+    private var refreshing = false
 
     static func main() {
         let app = NSApplication.shared
@@ -56,19 +508,16 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureStatusItem()
+        configurePopover()
         configureTerminationSignals()
-        rebuildMenu()
+        render()
         ensureServiceIsRunning()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
-            self?.refresh()
-        }
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in self?.refresh() }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         refreshTimer?.invalidate()
-        if let process = ownedService, process.isRunning {
-            process.terminate()
-        }
+        if let process = ownedService, process.isRunning { process.terminate() }
     }
 
     private func configureStatusItem() {
@@ -81,7 +530,25 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate {
         } else {
             button.image = NSImage(systemSymbolName: "waveform.path", accessibilityDescription: "MultiVibe")
         }
+        button.imagePosition = .imageLeading
+        button.target = self
+        button.action = #selector(togglePopover)
+        button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         button.toolTip = "MultiVibe Host"
+    }
+
+    private func configurePopover() {
+        popover.behavior = .transient
+        popover.animates = true
+        popover.contentSize = NSSize(width: 420, height: 570)
+        popover.contentViewController = popoverController
+        popover.delegate = self
+        popoverController.openDashboard = { [weak self] in
+            self?.popover.performClose(nil)
+            self?.openDashboard()
+        }
+        popoverController.refresh = { [weak self] in self?.refreshNow() }
+        popoverController.quit = { [weak self] in self?.quitApplication() }
     }
 
     private func configureTerminationSignals() {
@@ -94,58 +561,31 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func rebuildMenu() {
-        let menu = NSMenu()
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
-        let title = NSMenuItem(title: "MultiVibe Host \(version)", action: nil, keyEquivalent: "")
-        title.isEnabled = false
-        menu.addItem(title)
-
-        let state = NSMenuItem(title: "Status: \(statusText)", action: nil, keyEquivalent: "")
-        state.isEnabled = false
-        menu.addItem(state)
-        menu.addItem(.separator())
-
-        let earningsTitle = NSMenuItem(title: "Earnings", action: nil, keyEquivalent: "")
-        earningsTitle.isEnabled = false
-        menu.addItem(earningsTitle)
-        menu.addItem(disabledItem("Today", value: earningText(\.today)))
-        menu.addItem(disabledItem("This week", value: earningText(\.week)))
-        menu.addItem(disabledItem("This month", value: earningText(\.month)))
-        menu.addItem(.separator())
-
-        let dashboard = NSMenuItem(title: "Open Dashboard", action: #selector(openDashboard), keyEquivalent: "d")
-        dashboard.target = self
-        menu.addItem(dashboard)
-        if !operational {
-            let start = NSMenuItem(title: "Start Service", action: #selector(startService), keyEquivalent: "")
-            start.target = self
-            menu.addItem(start)
+    private func render() {
+        guard let button = statusItem.button else { return }
+        if let quota = summary?.quota, operational {
+            var parts: [String] = []
+            if let weekly = quota.weeklyRemainingPercent { parts.append("W:\(Int(weekly.rounded()))%") }
+            if let fiveHour = quota.fiveHourRemainingPercent { parts.append("5h:\(Int(fiveHour.rounded()))%") }
+            button.title = parts.isEmpty ? "" : "  " + parts.joined(separator: "  ")
+            button.font = .monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
+        } else {
+            button.title = ""
         }
-        let refresh = NSMenuItem(title: "Refresh", action: #selector(refreshNow), keyEquivalent: "r")
-        refresh.target = self
-        menu.addItem(refresh)
-        menu.addItem(.separator())
-        let quit = NSMenuItem(title: "Quit MultiVibe Host", action: #selector(quitApplication), keyEquivalent: "q")
-        quit.target = self
-        menu.addItem(quit)
-        statusItem.menu = menu
+        button.toolTip = "MultiVibe Host — \(statusText)"
+        popoverController.render(summary: summary, status: statusText, operational: operational, refreshing: refreshing)
     }
 
-    private func disabledItem(_ label: String, value: String) -> NSMenuItem {
-        let item = NSMenuItem(title: "\(label): \(value)", action: nil, keyEquivalent: "")
-        item.isEnabled = false
-        return item
-    }
-
-    private func earningText(_ keyPath: KeyPath<MenuBarSummary.Earnings, Decimal?>) -> String {
-        guard let earnings, earnings.available, let value = earnings[keyPath: keyPath], let currency = earnings.currency else {
-            return "Not available"
+    @objc private func togglePopover() {
+        guard let button = statusItem.button else { return }
+        if popover.isShown {
+            popover.performClose(nil)
+        } else {
+            render()
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            NSApplication.shared.activate(ignoringOtherApps: true)
+            refresh()
         }
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .currency
-        formatter.currencyCode = currency
-        return formatter.string(from: value as NSDecimalNumber) ?? "\(value) \(currency)"
     }
 
     private func credentialsURL() -> URL? {
@@ -173,11 +613,13 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate {
     }
 
     private func refresh() {
+        guard !refreshing else { return }
+        refreshing = true
+        render()
         guard let request = authorizedRequest(path: "/admin/host/menu-bar") else {
-            updateState(operational: false, status: "Starting…", earnings: nil)
-            if ownedService?.isRunning != true {
-                ensureServiceIsRunning()
-            }
+            refreshing = false
+            updateState(operational: false, status: "Starting…")
+            if ownedService?.isRunning != true { ensureServiceIsRunning() }
             return
         }
         URLSession.shared.dataTask(with: request) { [weak self] data, response, _ in
@@ -185,51 +627,41 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate {
             guard let data, http?.statusCode == 200,
                   let summary = try? JSONDecoder().decode(MenuBarSummary.self, from: data) else {
                 DispatchQueue.main.async {
-                    self?.updateState(operational: false, status: "Unavailable", earnings: nil)
-                    if self?.ownedService?.isRunning != true {
-                        self?.launchService(avoidingOccupiedPort: http != nil)
-                    }
+                    self?.refreshing = false
+                    self?.updateState(operational: false, status: "Unavailable")
+                    if self?.ownedService?.isRunning != true { self?.launchService(avoidingOccupiedPort: http != nil) }
                 }
                 return
             }
             DispatchQueue.main.async {
-                self?.updateState(
-                    operational: summary.operational,
-                    status: summary.operational ? "Operational" : "Unavailable",
-                    earnings: summary.earnings
-                )
-                if summary.operational, self?.pendingDashboardOpen == true {
-                    self?.requestDashboardSession()
-                }
+                self?.refreshing = false
+                self?.summary = summary
+                self?.updateState(operational: summary.operational, status: summary.operational ? "Operational" : "Unavailable")
+                if summary.operational, self?.pendingDashboardOpen == true { self?.requestDashboardSession() }
             }
         }.resume()
     }
 
-    private func updateState(operational: Bool, status: String, earnings: MenuBarSummary.Earnings?) {
+    private func updateState(operational: Bool, status: String) {
         self.operational = operational
         self.statusText = status
-        self.earnings = earnings
-        statusItem.button?.toolTip = "MultiVibe Host — \(status)"
-        rebuildMenu()
+        render()
     }
 
     private func ensureServiceIsRunning() {
         if ownedService?.isRunning == true {
+            refreshing = false
             refresh()
             return
         }
         if let request = authorizedRequest(path: "/admin/host/menu-bar") {
             URLSession.shared.dataTask(with: request) { [weak self] data, response, _ in
                 let http = response as? HTTPURLResponse
-                let isOurs = http?.statusCode == 200 && data.flatMap {
-                    try? JSONDecoder().decode(MenuBarSummary.self, from: $0)
-                } != nil
+                let isOurs = http?.statusCode == 200 && data.flatMap { try? JSONDecoder().decode(MenuBarSummary.self, from: $0) } != nil
                 DispatchQueue.main.async {
-                    if isOurs {
-                        self?.refresh()
-                    } else {
-                        self?.launchService(avoidingOccupiedPort: http != nil)
-                    }
+                    self?.refreshing = false
+                    if isOurs { self?.refresh() }
+                    else { self?.launchService(avoidingOccupiedPort: http != nil) }
                 }
             }.resume()
             return
@@ -238,6 +670,7 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate {
         health.timeoutInterval = 1
         URLSession.shared.dataTask(with: health) { [weak self] _, response, _ in
             DispatchQueue.main.async {
+                self?.refreshing = false
                 self?.launchService(avoidingOccupiedPort: response != nil)
             }
         }.resume()
@@ -250,7 +683,7 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate {
             usesFallbackPort = true
         }
         guard let executable = Bundle.main.executableURL else {
-            updateState(operational: false, status: "Bundle error", earnings: nil)
+            updateState(operational: false, status: "Bundle error")
             return
         }
         let command = executable.deletingLastPathComponent().appendingPathComponent("multivibe-host")
@@ -263,31 +696,28 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate {
         process.terminationHandler = { [weak self] _ in
             DispatchQueue.main.async {
                 self?.ownedService = nil
-                self?.updateState(operational: false, status: "Stopped", earnings: nil)
+                self?.updateState(operational: false, status: "Stopped")
             }
         }
         do {
             try process.run()
             ownedService = process
-            updateState(operational: false, status: "Starting…", earnings: nil)
+            updateState(operational: false, status: "Starting…")
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.refresh() }
         } catch {
-            updateState(operational: false, status: "Failed to start", earnings: nil)
+            updateState(operational: false, status: "Failed to start")
         }
     }
 
-    @objc private func startService() {
-        ensureServiceIsRunning()
-    }
-
     @objc private func refreshNow() {
+        refreshing = false
         refresh()
     }
 
     @objc private func openDashboard() {
         pendingDashboardOpen = true
         if !operational {
-            updateState(operational: false, status: "Starting…", earnings: nil)
+            updateState(operational: false, status: "Starting…")
             ensureServiceIsRunning()
             return
         }
