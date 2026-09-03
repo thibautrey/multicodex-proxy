@@ -50,7 +50,9 @@ test("local matching selects the closest same-chip cohort without uploading hard
   assert.equal(estimate.amount, "214.75");
   assert.equal(estimate.basis, "same_chip");
   assert.deepEqual(urls, ["http://127.0.0.1:8765/provider/v1/public/hardware-earnings-estimates"]);
-  assert.doesNotMatch(urls[0]!, /4090|chip|hardware/u);
+  const requested = new URL(urls[0]!);
+  assert.equal(requested.search, "");
+  assert.doesNotMatch(requested.search, /4090|chip/u);
 });
 
 test("local matching uses the fleet fallback and rejects undersized cohorts", () => {
