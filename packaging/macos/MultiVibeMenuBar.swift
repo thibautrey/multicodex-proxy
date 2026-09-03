@@ -456,6 +456,7 @@ private final class HostPopoverController: NSViewController {
         guard let timestamp, timestamp.isFinite else { return "No reset time" }
         let date = Date(timeIntervalSince1970: timestamp / 1_000)
         let formatter = RelativeDateTimeFormatter()
+        formatter.locale = Locale(identifier: "en")
         formatter.unitsStyle = .short
         return "Resets \(formatter.localizedString(for: date, relativeTo: Date()))"
     }
@@ -465,6 +466,7 @@ private final class HostPopoverController: NSViewController {
         guard let fetchedAt = account.fetchedAt, fetchedAt.isFinite else { return "Waiting for the first quota refresh." }
         let date = Date(timeIntervalSince1970: fetchedAt / 1_000)
         let formatter = RelativeDateTimeFormatter()
+        formatter.locale = Locale(identifier: "en")
         formatter.unitsStyle = .short
         return "Updated \(formatter.localizedString(for: date, relativeTo: Date()))"
     }
