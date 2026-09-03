@@ -66,6 +66,18 @@ test("the Unraid template is beta, GPU-bounded and does not request credentials"
   assert.doesNotMatch(template, /ADMIN_TOKEN|PROXY_API_KEY/u);
 });
 
+test("the root README offers truthful latest-release paths for every Host format", async () => {
+  const readme = await read("README.md");
+  assert.match(readme, /## ⬇️ Download MultiVibe Host/u);
+  assert.match(readme, /Signed and notarized `\.dmg` for Apple Silicon and Intel/u);
+  assert.match(readme, /Linux `x86_64` with an NVIDIA GPU, compute capability 7\.0\+/u);
+  assert.match(readme, /Docker \/ Unraid[\s\S]*GitHub Container Registry/u);
+  assert.match(readme, /https:\/\/github\.com\/thibautrey\/multivibe\/releases\/latest/u);
+  assert.match(readme, /docker pull ghcr\.io\/thibautrey\/multivibe-host:latest/u);
+  assert.match(readme, /no tagged Host release with[\s\S]*Docker publishing has completed yet/u);
+  assert.doesNotMatch(readme, /thibautrey\/multicodex-proxy/u);
+});
+
 test("the release workflow publishes a tested image from the verified Linux archive", async () => {
   const [workflow, packager] = await Promise.all([
     read(".github/workflows/provider-host-release.yml"),

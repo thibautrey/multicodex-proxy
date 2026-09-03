@@ -7,22 +7,25 @@
 </p>
 
 <p align="center">
-  <strong>One OpenAI-compatible endpoint. Multiple providers, accounts, quotas, and routing policies.</strong>
+  <strong>One local AI gateway for every provider, account, coding agent, and supported GPU.</strong>
 </p>
 
 <p align="center">
-  <a href="https://github.com/thibautrey/multicodex-proxy/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/thibautrey/multicodex-proxy?style=for-the-badge" /></a>
-  <a href="https://github.com/thibautrey/multicodex-proxy/network/members"><img alt="GitHub forks" src="https://img.shields.io/github/forks/thibautrey/multicodex-proxy?style=for-the-badge" /></a>
-  <a href="https://github.com/thibautrey/multicodex-proxy/issues"><img alt="GitHub issues" src="https://img.shields.io/github/issues/thibautrey/multicodex-proxy?style=for-the-badge" /></a>
+  <a href="https://github.com/thibautrey/multivibe/releases/latest"><img alt="Latest MultiVibe release" src="https://img.shields.io/github/v/release/thibautrey/multivibe?display_name=tag&amp;sort=semver&amp;style=for-the-badge" /></a>
+  <a href="https://github.com/thibautrey/multivibe/releases"><img alt="MultiVibe downloads" src="https://img.shields.io/github/downloads/thibautrey/multivibe/total?style=for-the-badge" /></a>
+  <a href="https://github.com/thibautrey/multivibe/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/thibautrey/multivibe?style=for-the-badge" /></a>
+  <a href="./LICENSE"><img alt="Apache 2.0 license" src="https://img.shields.io/github/license/thibautrey/multivibe?style=for-the-badge" /></a>
 </p>
 
-MultiVibe is a self-hosted TypeScript gateway for routing OpenAI, Anthropic,
-Codex, and OpenAI-compatible client traffic across several provider accounts.
-It combines quota-aware failover, policy-based model aliases, deferred jobs,
-Realtime/WebSocket support, and an administration dashboard behind one stable
-API surface.
+MultiVibe is a self-hosted AI gateway and native Provider Host. Use one stable,
+OpenAI-compatible endpoint to route OpenAI, Anthropic, Codex, and compatible
+clients across provider accounts, or run local models on your own supported
+hardware. Quota-aware failover, model policies, deferred jobs, Realtime and
+WebSocket support, and the administration dashboard stay under your control.
 
-[Quick start](#-quick-start) ·
+[Download MultiVibe Host](#download-multivibe-host) ·
+[Run the gateway](#-quick-start) ·
+[Latest release](https://github.com/thibautrey/multivibe/releases/latest) ·
 [Dashboard](#-dashboard) ·
 [Providers](#-providers-and-onboarding) ·
 [API](#-api-surface) ·
@@ -31,6 +34,69 @@ API surface.
 [Configuration](#-configuration) ·
 [Development](#-local-development) ·
 [Brand kit](./assets/brand/README.md)
+
+---
+
+<a id="download-multivibe-host"></a>
+
+## ⬇️ Download MultiVibe Host
+
+MultiVibe Host is the fastest way to run the complete, security-bounded local
+Host: gateway, dashboard, private device identity, provider agent, and managed
+model runtime. Official builds are published together in one verified release.
+
+| Platform | Official package | Requirements | Download |
+| --- | --- | --- | --- |
+| **macOS** | Signed and notarized `.dmg` for Apple Silicon and Intel | Apple Silicon (`arm64`) or Intel (`amd64`) Mac | **[Download the latest macOS release →](https://github.com/thibautrey/multivibe/releases/latest)** |
+| **Linux** | Signed native Host archive | Linux `x86_64` with an NVIDIA GPU, compute capability 7.0+ | **[Download the latest Linux release →](https://github.com/thibautrey/multivibe/releases/latest)** |
+| **Docker / Unraid** | Hardened image on GitHub Container Registry | Linux `x86_64`, Docker or Unraid, NVIDIA container runtime | **[Open the latest Docker release →](https://github.com/thibautrey/multivibe/releases/latest)** |
+
+### macOS
+
+Open the latest release and choose the disk image for your Mac:
+
+- `darwin_arm64.dmg` for Apple Silicon (M1 or newer)
+- `darwin_amd64.dmg` for Intel
+
+Open the DMG, drag **MultiVibe Host** to **Applications**, then launch it. The
+app is signed with Developer ID, notarized by Apple, and runs from the menu bar.
+
+### Linux
+
+Download the Linux `amd64` release assets and follow `LINUX-MULTIPART.txt` when
+the archive is split into several parts. After reconstructing and extracting
+the archive, run:
+
+```sh
+./install.sh
+```
+
+The installer verifies the release and supported NVIDIA hardware before it
+starts the Host. It installs for the current user and does not require root.
+
+### Docker and Unraid
+
+The current Host release workflow publishes the same verified Linux bundle to
+GHCR as both an immutable version and the rolling `latest` tag:
+
+```sh
+docker pull ghcr.io/thibautrey/multivibe-host:latest
+```
+
+For reproducible deployments, use the versioned tag or immutable digest shown
+in the matching [latest GitHub release](https://github.com/thibautrey/multivibe/releases/latest).
+Docker Compose and Unraid setup are documented in
+[Provider Host container](#provider-host-container-docker-compose-and-unraid).
+
+> [!NOTE]
+> If GHCR reports that the package is not found, no tagged Host release with
+> Docker publishing has completed yet. Use an official native release or build
+> from this repository instead of installing an unverified third-party image.
+
+> [!TIP]
+> Native archives include signed checksums, SBOMs, and GitHub build-provenance
+> attestations. See the [verification and installation guide](./packaging/PROVIDER-HOST-README.md)
+> before deploying a Host on shared or production infrastructure.
 
 ---
 
@@ -62,8 +128,8 @@ LiteLLM-style discovery are also available.
 ### 1. Clone and secure the deployment
 
 ~~~bash
-git clone https://github.com/thibautrey/multicodex-proxy.git
-cd multicodex-proxy
+git clone https://github.com/thibautrey/multivibe.git
+cd multivibe
 ~~~
 
 > [!WARNING]
