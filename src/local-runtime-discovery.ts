@@ -169,10 +169,14 @@ export type LocalRuntimeDiscoveryOptions = {
   adapters?: readonly LocalRuntimeAdapter[];
 };
 
-function automaticRuntimeBoundary(id: LocalRuntimeAdapterId) {
-  return id === "lm-studio" || id === "omlx"
-    ? AUTOMATIC_LOCAL_RUNTIME_BOUNDARIES[id]
-    : undefined;
+function isAutomaticLocalRuntimeAdapterId(
+  id: LocalRuntimeAdapterId,
+): id is AutomaticLocalRuntimeAdapterId {
+  return id === "lm-studio" || id === "omlx";
+}
+
+function automaticRuntimeBoundary(id: AutomaticLocalRuntimeAdapterId) {
+  return AUTOMATIC_LOCAL_RUNTIME_BOUNDARIES[id];
 }
 
 function hasExactAutomaticRuntimeOrigin(id: AutomaticLocalRuntimeAdapterId, raw: string): boolean {
@@ -261,15 +265,15 @@ export function isDiscoveredLocalRuntimeAccount(account: Account): boolean {
   ) {
     return false;
   }
-  const boundary = automaticRuntimeBoundary(account.localRuntime.adapter);
-  if (!boundary) return false;
+  const adapter = account.localRuntime.adapter;
+  if (!isAutomaticLocalRuntimeAdapterId(adapter)) return false;
   try {
     const baseUrl = parseAutomaticRuntimeEndpoint(
-      account.localRuntime.adapter,
+      adapter,
       account.baseUrl,
     );
     const endpoint = parseAutomaticRuntimeEndpoint(
-      account.localRuntime.adapter,
+      adapter,
       account.localRuntime.endpoint,
     );
     return baseUrl.origin === endpoint.origin;
@@ -365,10 +369,10 @@ export async function probeLocalRuntimeCandidate(
   candidate: LocalRuntimeCandidate,
   options: LocalRuntimeDiscoveryOptions = {},
 ): Promise<LocalRuntimeProbeSuccess> {
-  const boundary = automaticRuntimeBoundary(adapter.id);
-  if (!boundary) {
+  if (!isAutomaticLocalRuntimeAdapterId(adapter.id)) {
     throw new Error(`automatic discovery is not configured for ${adapter.id}`);
   }
+  const boundary = automaticRuntimeBoundary(adapter.id);
   const endpoint = parseAutomaticRuntimeEndpoint(adapter.id, candidate.endpoint);
   const modelsUrl = parseAutomaticRuntimeRequestUrl(adapter.id, candidate.modelsUrl);
   if (endpoint.origin !== modelsUrl.origin || modelsUrl.pathname !== "/v1/models") {
