@@ -513,6 +513,11 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDeleg
         render()
         ensureServiceIsRunning()
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in self?.refresh() }
+#if DEBUG
+        if ProcessInfo.processInfo.environment["MULTIVIBE_HOST_MENU_PREVIEW"] == "1" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) { [weak self] in self?.togglePopover() }
+        }
+#endif
     }
 
     func applicationWillTerminate(_ notification: Notification) {
