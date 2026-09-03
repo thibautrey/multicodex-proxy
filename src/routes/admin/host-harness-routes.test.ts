@@ -82,7 +82,7 @@ test("install provisions one private key and never returns it to the browser", a
       return connected;
     },
     uninstall: async () => ({ view: disconnected, apiKeyId: String(added[0]?.id) }),
-  } as AdminRoutesOptions["hostHarnessIntegrations"];
+  } as unknown as AdminRoutesOptions["hostHarnessIntegrations"];
   const store = {
     getCachedProxyApiKeys: () => [],
     addProxyApiKey: async (entry: Record<string, unknown>) => { added.push(entry); return entry; },
