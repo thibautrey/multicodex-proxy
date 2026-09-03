@@ -531,7 +531,7 @@ export async function archiveBundle(bundle, options, selectedTarget) {
   const destination = path.join(options.output, `${bundle.baseName}.${extension}`);
   await rm(destination, { force: true });
   if (selectedTarget.archive === "zip") {
-    await command("ditto", ["-c", "-k", "--keepParent", bundle.root, destination]);
+    await command("ditto", ["-c", "-k", "--norsrc", "--keepParent", bundle.root, destination]);
   } else {
     await command("tar", [
       "--format=ustar",
