@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   accountNeedsRequestPreparation,
   ensureValidToken,
+  isAccountReauthenticationError,
   isTokenRefreshNeeded,
 } from "./account-utils.js";
 import type { OAuthConfig } from "./oauth.js";
@@ -28,6 +29,26 @@ function account(overrides: Partial<Account> = {}): Account {
     ...overrides,
   };
 }
+
+test("detects authentication responses that require OAuth reconnection", () => {
+  for (const provider of ["openai", "opencode", "xai"] as const) {
+    assert.equal(
+      isAccountReauthenticationError(account({ provider }), 401),
+      true,
+    );
+  }
+  assert.equal(
+    isAccountReauthenticationError(
+      account({ provider: "openai-compatible" }),
+      401,
+    ),
+    false,
+  );
+  assert.equal(
+    isAccountReauthenticationError(account({ provider: "openai" }), 403),
+    false,
+  );
+});
 
 test("returns the original account when the token is still valid", async () => {
   const original = account({ expiresAt: Date.now() + 60 * 60_000 });

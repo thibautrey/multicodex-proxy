@@ -12,6 +12,15 @@ import { refreshOpenCodeAccessToken } from "./opencode.js";
 const xaiRefreshes = new Map<string, Promise<Account>>();
 const openCodeRefreshes = new Map<string, Promise<Account>>();
 
+export function isAccountReauthenticationError(
+  account: Account,
+  status: number,
+): boolean {
+  const provider = normalizeProvider(account);
+  return status === 401 &&
+    (provider === "openai" || provider === "opencode" || provider === "xai");
+}
+
 export function isTokenRefreshNeeded(
   account: Account,
   now = Date.now(),

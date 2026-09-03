@@ -1346,6 +1346,33 @@ export function AccountsTab(props: Props) {
     }
   };
 
+  const reauthOAuthAccount = async (account: Account) => {
+    const provider = account.provider ?? "openai";
+    if (provider === "openai") {
+      await reauthAccount(account);
+      return;
+    }
+    if (provider === "opencode") {
+      await reauthOpenCodeAccount(account);
+      return;
+    }
+    if (provider !== "xai") return;
+
+    setOpenMenu(null);
+    setOauthBusyId(account.id);
+    try {
+      await openOAuthDialog({
+        email: account.email?.trim() ?? "",
+        method: "device",
+        provider: "xai",
+        mode: "reauth",
+        accountId: account.id,
+      });
+    } finally {
+      setOauthBusyId(null);
+    }
+  };
+
   const openAiCount = accounts.filter(
     (account) => (account.provider ?? "openai") === "openai",
   ).length;
@@ -1600,9 +1627,38 @@ export function AccountsTab(props: Props) {
             <tbody>
               {accounts.map((a) => {
                 const modelBlocks = activeModelBlocks(a);
+                const needsReauthentication =
+                  a.state?.needsTokenRefresh === true &&
+                  ["openai", "opencode", "xai"].includes(
+                    a.provider ?? "openai",
+                  );
                 return (
-                <tr key={a.id}>
+                <tr
+                  key={a.id}
+                  className={
+                    needsReauthentication ? "account-row-needs-reauth" : undefined
+                  }
+                >
                   <td>
+                    {needsReauthentication && (
+                      <div
+                        className="account-reauth-overlay"
+                        role="status"
+                        aria-label="This account needs to be reconnected"
+                      >
+                        <span>This account needs to be reconnected</span>
+                        <button
+                          type="button"
+                          className="btn account-reauth-button"
+                          disabled={oauthBusyId === a.id}
+                          onClick={() => void reauthOAuthAccount(a)}
+                        >
+                          {oauthBusyId === a.id
+                            ? "Opening..."
+                            : "Reauth this account"}
+                        </button>
+                      </div>
+                    )}
                     <span className="provider-badge">
                       <img
                         className="provider-icon"

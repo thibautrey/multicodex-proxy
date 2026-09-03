@@ -102,6 +102,7 @@ import {
 import {
   accountNeedsRequestPreparation,
   ensureValidToken,
+  isAccountReauthenticationError,
 } from "../../account-utils.js";
 import express from "express";
 import { randomUUID } from "node:crypto";
@@ -3050,6 +3051,17 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           latencyBreakdown.upstreamHeadersMs =
             Date.now() - upstreamStartedAt;
 
+          if (
+            candidate.provider !== "xai" &&
+            isAccountReauthenticationError(selected, upstream.status)
+          ) {
+            selected.state = {
+              ...selected.state,
+              needsTokenRefresh: true,
+            };
+            await store.upsertAccount(selected);
+          }
+
           const contentType = upstream.headers.get("content-type") ?? "";
           const isStream = isStreamingUpstreamResponse(
             contentType,
@@ -4819,6 +4831,14 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         headers: requestHeadersForPassthrough(req, selected),
         body: requestBodyForPassthrough(req),
       });
+
+      if (isAccountReauthenticationError(selected, upstream.status)) {
+        selected.state = {
+          ...selected.state,
+          needsTokenRefresh: true,
+        };
+        await store.upsertAccount(selected);
+      }
 
       res.status(upstream.status);
       setForwardHeaders(upstream, res);
