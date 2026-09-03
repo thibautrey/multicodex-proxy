@@ -949,12 +949,6 @@ Pleiades Solutions trademarks beyond Apache-2.0 Section 6.
 
 ---
 
-## ⭐ Star history
+## ⭐ Star History
 
-<a href="https://www.star-history.com/#thibautrey/multivibe&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=thibautrey/multivibe&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=thibautrey/multivibe&type=Date&theme=light" />
-    <img alt="MultiVibe Star History chart" src="https://api.star-history.com/svg?repos=thibautrey/multivibe&type=Date&theme=light" />
-  </picture>
-</a>
+[![Star History Chart](https://api.star-history.com/chart?repos=thibautrey/multivibe&type=date&legend=top-left&sealed_token=HNRI8FsHB7vycjFAz99i9g07ASo4jQ9PmgMO-7Qjd2tDmJuyh-lY3LP_dfsgMVGBf1aAj8IkxZHpw35SzDq8vQCTfhAdeKiM21fIi-j2yvfGHknKXLSZVw)](https://www.star-history.com/?type=date&repos=thibautrey%2Fmultivibe)
