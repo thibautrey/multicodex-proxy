@@ -94,7 +94,7 @@ func TestCoreEnvironmentIsAllowlistedAndPinsAllState(t *testing.T) {
 		ModelCatalog:       "/opt/multivibe/resources/provider/provider-model-catalog.json",
 		DependencyManifest: "/opt/multivibe/resources/provider/provider-host-dependencies.json",
 	}
-	environment := coreEnvironment(layout, "/var/lib/multivibe", localCredentials{AdminToken: "admin", ProxyAPIKey: "proxy"})
+	environment := coreEnvironment(layout, "/var/lib/multivibe", localCredentials{AdminToken: "admin", ProxyAPIKey: "proxy"}, "1455")
 	joined := strings.Join(environment, "\n")
 	for _, expected := range []string{
 		"HOST=127.0.0.1", "STORE_PATH=/var/lib/multivibe/accounts.json",
@@ -116,5 +116,18 @@ func TestCoreEnvironmentIsAllowlistedAndPinsAllState(t *testing.T) {
 	}
 	if strings.Contains(joined, "UNRELATED_SECRET") || strings.Contains(joined, "must-not-leak") {
 		t.Fatalf("parent environment leaked: %s", joined)
+	}
+}
+
+func TestHostPortIsBoundedAndCanonical(t *testing.T) {
+	for input, expected := range map[string]string{"": "1455", "1": "1", "1455": "1455", "65535": "65535"} {
+		if actual, err := hostPort(input); err != nil || actual != expected {
+			t.Fatalf("unexpected host port for %q: %q %v", input, actual, err)
+		}
+	}
+	for _, input := range []string{"0", "01", "65536", "-1", "1455 ", "http://127.0.0.1:1455"} {
+		if _, err := hostPort(input); err == nil {
+			t.Fatalf("accepted invalid host port %q", input)
+		}
 	}
 }

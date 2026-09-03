@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 )
@@ -322,13 +323,24 @@ func inheritedEnvironment(name string) string {
 	return value
 }
 
-func coreEnvironment(layout bundleLayout, dataDirectory string, credentials localCredentials) []string {
+func hostPort(value string) (string, error) {
+	if value == "" {
+		return "1455", nil
+	}
+	port, err := strconv.ParseUint(value, 10, 16)
+	if err != nil || port == 0 || strconv.FormatUint(port, 10) != value {
+		return "", errors.New("MULTIVIBE_HOST_PORT must be a canonical TCP port")
+	}
+	return value, nil
+}
+
+func coreEnvironment(layout bundleLayout, dataDirectory string, credentials localCredentials, port string) []string {
 	loopback := strings.Join([]string{"127", "0", "0", "1"}, ".")
 	environment := []string{
 		"NODE_ENV=production",
 		"HOST=" + loopback,
-		"PORT=1455",
-		"PUBLIC_BASE_URL=http://" + loopback + ":1455",
+		"PORT=" + port,
+		"PUBLIC_BASE_URL=http://" + loopback + ":" + port,
 		"ADMIN_TOKEN=" + credentials.AdminToken,
 		"PROXY_API_KEY=" + credentials.ProxyAPIKey,
 		"STORE_PATH=" + filepath.Join(dataDirectory, "accounts.json"),
@@ -401,11 +413,15 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	port, err := hostPort(strings.TrimSpace(os.Getenv("MULTIVIBE_HOST_PORT")))
+	if err != nil {
+		return err
+	}
 	entry := filepath.Join(layout.App, "dist", "server.js")
 	instrument := filepath.Join(layout.App, "dist", "instrument.js")
 	arguments := []string{layout.Node, "--import", instrument, entry}
 	if err := os.Chdir(layout.App); err != nil {
 		return errors.New("the bundled application directory is unavailable")
 	}
-	return syscall.Exec(layout.Node, arguments, coreEnvironment(layout, data, credentials))
+	return syscall.Exec(layout.Node, arguments, coreEnvironment(layout, data, credentials, port))
 }

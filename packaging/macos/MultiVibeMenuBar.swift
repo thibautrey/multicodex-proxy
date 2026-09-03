@@ -1,7 +1,11 @@
 import AppKit
 import Foundation
 
-private let dashboardURL = URL(string: "http://127.0.0.1:1455")!
+private let dashboardURL: URL = {
+    let configured = ProcessInfo.processInfo.environment["MULTIVIBE_HOST_PORT"] ?? "1455"
+    let port = Int(configured).flatMap { (1...65535).contains($0) ? $0 : nil } ?? 1455
+    return URL(string: "http://127.0.0.1:\(port)")!
+}()
 
 private struct HostCredentials: Decodable {
     let adminToken: String
