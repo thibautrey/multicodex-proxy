@@ -695,6 +695,7 @@ async function validateNativeFiles(root, manifest) {
     `${prefix}Resources/ollama-runtime/llama-quantize`, `${prefix}Helpers/multivibe-provider-agent`,
     `${prefix}Helpers/multivibe-runtime-benchmark`,
     `${prefix}MacOS/multivibe-host`,
+    `${prefix}MacOS/MultiVibe Host`,
   ] : ["bin/node", "runtime/ollama/bin/ollama", "bin/multivibe-provider-agent", "bin/multivibe-runtime-benchmark", "bin/multivibe-host"];
   const runtimePrefix = mac ? `${prefix}Resources/ollama-runtime/` : "runtime/ollama/";
   const native = manifest.files.filter((entry) => explicit.includes(entry.path) ||
@@ -1141,7 +1142,8 @@ async function validateTree(root, options, archiveRoot) {
     `${macPrefix}/Resources/ollama-runtime/llama-quantize`,
     `${macPrefix}/Resources/ollama-runtime/.multivibe-bundle.json`, `${macPrefix}/Helpers/multivibe-provider-agent`,
     `${macPrefix}/Helpers/multivibe-runtime-benchmark`,
-    `${macPrefix}/MacOS/multivibe-host`, `${macPrefix}/Resources/app/dist/server.js`,
+    `${macPrefix}/MacOS/multivibe-host`, `${macPrefix}/MacOS/MultiVibe Host`,
+    `${macPrefix}/Resources/MultiVibeMenuBarIcon.png`, `${macPrefix}/Resources/app/dist/server.js`,
     `${macPrefix}/Resources/app/dist/instrument.js`, `${macPrefix}/Resources/provider/provider-model-catalog.json`,
     `${macPrefix}/Resources/provider/provider-runtime-profiles.json`,
     `${macPrefix}/Resources/provider/schemas/provider-runtime-profiles.schema.json`,
@@ -1279,7 +1281,12 @@ async function validateMacDiskImage(diskImage, work, options) {
       path.join(application, "Contents", "Info.plist")], { capture: true, captureLimit: 4096 });
     const bundleIdentifier = await command("plutil", ["-extract", "CFBundleIdentifier", "raw", "-o", "-",
       path.join(application, "Contents", "Info.plist")], { capture: true, captureLimit: 4096 });
-    if (plistVersion !== metadata.version || bundleIdentifier !== "cloud.multivibe.host") {
+    const bundleExecutable = await command("plutil", ["-extract", "CFBundleExecutable", "raw", "-o", "-",
+      path.join(application, "Contents", "Info.plist")], { capture: true, captureLimit: 4096 });
+    const menuBarOnly = await command("plutil", ["-extract", "LSUIElement", "raw", "-o", "-",
+      path.join(application, "Contents", "Info.plist")], { capture: true, captureLimit: 4096 });
+    if (plistVersion !== metadata.version || bundleIdentifier !== "cloud.multivibe.host" ||
+      bundleExecutable !== "MultiVibe Host" || menuBarOnly !== "true") {
       throw new Error("provider-host disk image application identity is invalid");
     }
     if (metadata.macOSSignature !== "unsigned-development") {

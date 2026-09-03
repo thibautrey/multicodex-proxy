@@ -68,6 +68,14 @@ Download the `.dmg` matching the Mac architecture, open it, then drag
 **MultiVibe Host** onto the **Applications** shortcut, just like a standard macOS app.
 The disk image and application are both signed with Developer ID and notarized by Apple.
 
+Opening **MultiVibe Host** starts a menu-bar application using the official
+MultiVibe icon. It starts the loopback-only host when necessary, reports its
+operational state, and opens the protected local web dashboard without putting
+the persistent admin credential in the browser URL. Daily, weekly and monthly
+earnings remain explicitly unavailable until the separate Cloud workload and
+compensation service is active; the application never derives or invents
+earnings from local inference-cost estimates.
+
 The installer requires no administrator privileges. It verifies the app's code
 signature, installs it at `~/Applications/MultiVibe Host.app`, initializes the
 private state directory, and loads

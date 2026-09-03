@@ -381,6 +381,7 @@ async function signMacApplication(application, identity) {
     path.join(contents, "Helpers", "multivibe-provider-agent"),
     path.join(contents, "Helpers", "multivibe-runtime-benchmark"),
     path.join(contents, "MacOS", "multivibe-host"),
+    path.join(contents, "MacOS", "MultiVibe Host"),
   ])) {
     await command("codesign", ["--force", "--sign", identity, "--options", "runtime", "--timestamp", binary]);
   }
@@ -449,6 +450,7 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
   let agentDestination;
   let benchmarkDestination;
   let hostDestination;
+  let menuBarDestination;
   let resourceDirectory;
   let verifierDestination;
   let macApplication;
@@ -461,6 +463,7 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
     agentDestination = path.join(contents, "Helpers", "multivibe-provider-agent");
     benchmarkDestination = path.join(contents, "Helpers", "multivibe-runtime-benchmark");
     hostDestination = path.join(contents, "MacOS", "multivibe-host");
+    menuBarDestination = path.join(contents, "MacOS", "MultiVibe Host");
     resourceDirectory = path.join(contents, "Resources", "provider");
     verifierDestination = path.join(contents, "Resources", "verify-provider-host.mjs");
     for (const directory of [applicationDirectory, path.dirname(nodeDestination), path.dirname(agentDestination), path.dirname(hostDestination)]) {
@@ -470,6 +473,10 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
       .replaceAll("__MULTIVIBE_VERSION__", options.version)
       .replaceAll("__MULTIVIBE_BUILD__", buildNumber);
     await writeFile(path.join(contents, "Info.plist"), info);
+    await cp(
+      path.join(repositoryRoot, "web", "public", "assets", "brand", "favicon-32x32.png"),
+      path.join(contents, "Resources", "MultiVibeMenuBarIcon.png"),
+    );
   } else {
     applicationDirectory = path.join(root, "app");
     nodeDestination = path.join(root, "bin", "node");
@@ -502,6 +509,17 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
     selectedTarget, "./cmd/runtime-benchmark",
   );
   await buildGo(path.join(repositoryRoot, "host-application"), hostDestination, "hostApplicationVersion", options.version, selectedTarget);
+  if (menuBarDestination) {
+    const swiftArchitecture = selectedTarget.goarch === "arm64" ? "arm64" : "x86_64";
+    await command("xcrun", [
+      "swiftc", "-parse-as-library", "-O", "-whole-module-optimization",
+      "-target", `${swiftArchitecture}-apple-macos14.0`,
+      "-framework", "AppKit",
+      path.join(repositoryRoot, "packaging", "macos", "MultiVibeMenuBar.swift"),
+      "-o", menuBarDestination,
+    ]);
+    await chmod(menuBarDestination, 0o555);
+  }
 
   let macOSSignature = null;
   if (macApplication) {

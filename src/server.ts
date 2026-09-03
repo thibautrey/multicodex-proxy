@@ -244,6 +244,8 @@ const realtimeRouter = createRealtimeRouter({
 
 const ADMIN_SESSION_COOKIE = "multivibe_admin_session";
 const ADMIN_SESSION_MAX_AGE_MS = 400 * 24 * 60 * 60 * 1000;
+const DESKTOP_SESSION_MAX_AGE_MS = 60 * 1000;
+const desktopSessionCodes = new Map<string, number>();
 const INTERNAL_JOB_TOKEN = crypto.randomBytes(32).toString("base64url");
 
 function safeEqual(a: string, b: string): boolean {
@@ -450,6 +452,49 @@ app.head("/api/hello", (_req, res) => res.sendStatus(200));
 
 app.get("/admin/session", (req, res) => {
   res.json({ authenticated: !ADMIN_TOKEN || hasAdminSession(req) });
+});
+
+app.get("/admin/host/menu-bar", adminGuard, (_req, res) => {
+  res.json({
+    operational: true,
+    earnings: {
+      available: false,
+      currency: null,
+      today: null,
+      week: null,
+      month: null,
+      reason: "provider_earnings_not_active",
+    },
+  });
+});
+
+app.post("/admin/desktop-session", adminGuard, (_req, res) => {
+  const now = Date.now();
+  for (const [code, expiresAt] of desktopSessionCodes) {
+    if (expiresAt <= now) desktopSessionCodes.delete(code);
+  }
+  if (desktopSessionCodes.size >= 16) {
+    const oldest = desktopSessionCodes.keys().next().value;
+    if (oldest) desktopSessionCodes.delete(oldest);
+  }
+  const code = crypto.randomBytes(32).toString("base64url");
+  desktopSessionCodes.set(code, now + DESKTOP_SESSION_MAX_AGE_MS);
+  res.setHeader("cache-control", "no-store");
+  res.json({ path: `/desktop/session?code=${encodeURIComponent(code)}` });
+});
+
+app.get("/desktop/session", (req, res) => {
+  const code = typeof req.query.code === "string" ? req.query.code : "";
+  const expiresAt = desktopSessionCodes.get(code);
+  if (!code || !expiresAt || expiresAt <= Date.now()) {
+    if (code) desktopSessionCodes.delete(code);
+    return res.status(401).type("text/plain").send("This desktop session link is invalid or expired.");
+  }
+  desktopSessionCodes.delete(code);
+  setAdminSession(req, res);
+  res.setHeader("cache-control", "no-store");
+  res.setHeader("referrer-policy", "no-referrer");
+  return res.redirect(303, "/");
 });
 
 app.post(

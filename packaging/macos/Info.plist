@@ -7,7 +7,7 @@
   <key>CFBundleDisplayName</key>
   <string>MultiVibe Host</string>
   <key>CFBundleExecutable</key>
-  <string>multivibe-host</string>
+  <string>MultiVibe Host</string>
   <key>CFBundleIdentifier</key>
   <string>cloud.multivibe.host</string>
   <key>CFBundleInfoDictionaryVersion</key>
@@ -23,6 +23,8 @@
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <key>LSUIElement</key>
+  <true/>
+  <key>LSMultipleInstancesProhibited</key>
   <true/>
   <key>NSHighResolutionCapable</key>
   <true/>
