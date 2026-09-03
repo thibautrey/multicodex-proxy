@@ -154,6 +154,7 @@ import {
   type CapacityTracker,
   type PolicyDecision,
   type RoutingRequest,
+  type ScoredRoutingCandidate,
 } from "../../smart-routing.js";
 import type { SmartRoutingCoordinator } from "../../smart-routing-routes.js";
 import type { ModuleManager } from "../../module-manager.js";
@@ -243,7 +244,7 @@ const HOP_BY_HOP_HEADERS = new Set([
   "upgrade",
 ]);
 
-type ExposedModel = {
+export type ExposedModel = {
   id: string;
   object: "model";
   created: number;
@@ -814,6 +815,27 @@ function providersForModel(
   }
 
   return [inferProviderFromModel(model, discoveredModels)];
+}
+
+export function policyEntriesSupportedByDiscoveredModels(
+  entries: readonly ScoredRoutingCandidate[],
+  discoveredModels: readonly ExposedModel[],
+): ScoredRoutingCandidate[] {
+  return entries.filter((entry) => {
+    const modelKey = normalizeModelLookupKey(entry.config.model);
+    const discovered = discoveredModels.find(
+      (candidate) => normalizeModelLookupKey(candidate.id) === modelKey,
+    );
+    if (!discovered) return true;
+
+    const providers = discovered.metadata.provider_candidates ?? [
+      discovered.metadata.provider,
+    ];
+    if (!providers.includes(entry.resource.provider)) return false;
+
+    const accountIds = discovered.metadata.account_ids;
+    return !accountIds?.length || accountIds.includes(entry.resource.accountId);
+  });
 }
 
 function accountSupportsModel(
@@ -2468,6 +2490,12 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         routingRequest,
       );
     }
+    const eligiblePolicyEntries = policyDecision
+      ? policyEntriesSupportedByDiscoveredModels(
+          policyDecision.eligible,
+          discoveredModels,
+        )
+      : [];
     res.once("finish", () => {
       if (
         res.statusCode < 500 &&
@@ -2482,9 +2510,9 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
         );
       }
     });
-    if (policyDecision?.eligible.length) {
+    if (eligiblePolicyEntries.length) {
       const rank = new Map(
-        policyDecision.eligible.map((entry, index) => [
+        eligiblePolicyEntries.map((entry, index) => [
           `${normalizeModelLookupKey(entry.config.model)}::${entry.resource.provider}`,
           index,
         ]),
@@ -2519,9 +2547,9 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
 
     for (const candidate of routingCandidates) {
       if (requestSignal.aborted) return;
-      const policyAccountIds = policyDecision?.eligible.length
+      const policyAccountIds = eligiblePolicyEntries.length
         ? new Set(
-            policyDecision.eligible
+            eligiblePolicyEntries
               .filter(
                 (entry) =>
                   normalizeModelLookupKey(entry.config.model) ===
@@ -2561,7 +2589,7 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             !tried.has(account.id) &&
             accountUsable(account, candidate.resolvedModel),
         );
-        const preferredResource = policyDecision?.eligible.find(
+        const preferredResource = eligiblePolicyEntries.find(
           (entry) =>
             normalizeModelLookupKey(entry.config.model) ===
               normalizeModelLookupKey(candidate.resolvedModel) &&

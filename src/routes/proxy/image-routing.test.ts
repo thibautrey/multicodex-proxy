@@ -12,6 +12,7 @@ import {
   isStreamingUpstreamResponse,
   nativeStreamInterruptionFrame,
   payloadHasImage,
+  policyEntriesSupportedByDiscoveredModels,
 } from "./index.js";
 
 const discoveredModels: any[] = [
@@ -45,6 +46,42 @@ const aliases: any[] = [
     targets: ["alias-model"],
   },
 ];
+
+test("policy entries cannot assign a discovered local model to unrelated cloud accounts", () => {
+  const localModel: any = {
+    id: "local-model",
+    object: "model",
+    created: 0,
+    owned_by: "openai-compatible",
+    metadata: {
+      provider: "openai-compatible",
+      provider_candidates: ["openai-compatible"],
+      account_ids: ["local-runtime-omlx"],
+    },
+  };
+  const entries: any[] = [
+    {
+      config: { model: "local-model" },
+      resource: { accountId: "cloud-openai", provider: "openai" },
+    },
+    {
+      config: { model: "local-model" },
+      resource: {
+        accountId: "local-runtime-omlx",
+        provider: "openai-compatible",
+      },
+    },
+    {
+      config: { model: "unknown-model" },
+      resource: { accountId: "cloud-openai", provider: "openai" },
+    },
+  ];
+
+  assert.deepEqual(
+    policyEntriesSupportedByDiscoveredModels(entries, [localModel]),
+    [entries[1], entries[2]],
+  );
+});
 
 test("detects images without building a detailed payload summary", () => {
   assert.equal(
