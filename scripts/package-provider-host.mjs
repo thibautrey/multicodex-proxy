@@ -220,6 +220,13 @@ async function productionApplication(destination, selectedTarget) {
   await copySource(path.join(repositoryRoot, "web-dist"), path.join(destination, "web-dist"));
   await mkdir(path.join(destination, "modules"), { recursive: true, mode: 0o755 });
   await copySource(path.join(repositoryRoot, "modules", "security"), path.join(destination, "modules", "security"));
+  for (const relative of ["multivibe.module.json", path.join("dist", "index.js")]) {
+    const source = path.join(destination, "modules", "security", relative);
+    const info = await lstat(source).catch(() => null);
+    if (!info?.isFile() || info.isSymbolicLink() || info.size < 1) {
+      throw new Error(`bundled Security module is incomplete: ${relative}`);
+    }
+  }
 }
 
 async function nodeRuntime(work, destination, dependency) {

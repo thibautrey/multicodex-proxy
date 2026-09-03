@@ -52,6 +52,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+          submodules: true
       - name: Require Linux amd64
         shell: bash
         run: |
@@ -145,6 +146,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+          submodules: true
       - name: Require the selected macOS architecture
         shell: bash
         run: |

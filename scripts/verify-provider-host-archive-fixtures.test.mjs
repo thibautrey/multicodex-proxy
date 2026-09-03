@@ -243,6 +243,8 @@ function completeLinuxBundleTar(mutateFiles = () => {}) {
     ["app/dist/anthropic-compat.js", { data: Buffer.from("export {};\n"), mode: 0o644 }],
     ["app/dist/instrument.js", { data: Buffer.from("export {};\n"), mode: 0o644 }],
     ["app/dist/server.js", { data: Buffer.from("export {};\n"), mode: 0o644 }],
+    ["app/modules/security/multivibe.module.json", { data: Buffer.from("{}\n"), mode: 0o644 }],
+    ["app/modules/security/dist/index.js", { data: Buffer.from("export {};\n"), mode: 0o644 }],
     ["bin/multivibe-host", { data: elf, mode: 0o755 }],
     ["bin/multivibe-provider-agent", { data: elf, mode: 0o755 }],
     ["bin/multivibe-runtime-benchmark", { data: elf, mode: 0o755 }],

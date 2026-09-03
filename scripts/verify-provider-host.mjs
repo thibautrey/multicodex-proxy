@@ -1145,6 +1145,8 @@ async function validateTree(root, options, archiveRoot) {
     `${macPrefix}/MacOS/multivibe-host`, `${macPrefix}/MacOS/MultiVibe Host`,
     `${macPrefix}/Resources/MultiVibeMenuBarIcon.png`, `${macPrefix}/Resources/app/dist/server.js`,
     `${macPrefix}/Resources/app/dist/instrument.js`, `${macPrefix}/Resources/provider/provider-model-catalog.json`,
+    `${macPrefix}/Resources/app/modules/security/multivibe.module.json`,
+    `${macPrefix}/Resources/app/modules/security/dist/index.js`,
     `${macPrefix}/Resources/provider/provider-runtime-profiles.json`,
     `${macPrefix}/Resources/provider/schemas/provider-runtime-profiles.schema.json`,
     `${macPrefix}/Resources/provider/schemas/provider-runtime-profile-overrides.schema.json`,
@@ -1158,6 +1160,7 @@ async function validateTree(root, options, archiveRoot) {
   );
   else required.push("bin/node", "runtime/ollama/bin/ollama", "runtime/ollama/.multivibe-bundle.json",
     "bin/multivibe-provider-agent", "bin/multivibe-runtime-benchmark", "bin/multivibe-host", "app/dist/server.js", "app/dist/instrument.js",
+    "app/modules/security/multivibe.module.json", "app/modules/security/dist/index.js",
     "resources/provider/provider-model-catalog.json", "resources/provider/provider-runtime-profiles.json",
     "resources/provider/schemas/provider-runtime-profiles.schema.json",
     "resources/provider/schemas/provider-runtime-profile-overrides.schema.json",
