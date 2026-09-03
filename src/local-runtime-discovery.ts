@@ -8,18 +8,38 @@ import type { AccountStore } from "./store.js";
 export const LOCAL_RUNTIME_DISCOVERY_TIMEOUT_MS = 1_500;
 export const LOCAL_RUNTIME_MAX_RESPONSE_BYTES = 256 * 1024;
 export const LM_STUDIO_ALLOWED_PORTS = [1234] as const;
+export const OMLX_ALLOWED_PORTS = [8000] as const;
 
 const LM_STUDIO_ORIGINS = [
   "http://127.0.0.1:1234",
   "http://[::1]:1234",
 ] as const;
-const LM_STUDIO_REQUEST_PATHS = new Set([
+const OMLX_ORIGINS = [
+  "http://127.0.0.1:8000",
+  "http://[::1]:8000",
+] as const;
+const LOCAL_RUNTIME_REQUEST_PATHS = new Set([
   "/v1/models",
   "/v1/responses",
   "/v1/chat/completions",
   "/v1/completions",
   "/v1/embeddings",
 ]);
+
+type AutomaticLocalRuntimeAdapterId = "lm-studio" | "omlx";
+
+const AUTOMATIC_LOCAL_RUNTIME_BOUNDARIES = {
+  "lm-studio": {
+    name: "LM Studio",
+    origins: LM_STUDIO_ORIGINS,
+    ports: LM_STUDIO_ALLOWED_PORTS,
+  },
+  omlx: {
+    name: "OMLX",
+    origins: OMLX_ORIGINS,
+    ports: OMLX_ALLOWED_PORTS,
+  },
+} as const;
 
 type FetchLike = (
   input: string | URL | Request,
@@ -87,7 +107,22 @@ export const LOCAL_RUNTIME_ADAPTERS: readonly LocalRuntimeAdapter[] = [
   registeredAdapter("transformers-serve", "Transformers Serve"),
   registeredAdapter("xinference", "Xinference"),
   registeredAdapter("mlx-lm", "MLX-LM"),
-  registeredAdapter("omlx", "OMLX"),
+  {
+    id: "omlx",
+    displayName: "OMLX",
+    ...DEFAULT_ADAPTER_CONTRACT,
+    authentication: "none",
+    candidates: [
+      {
+        endpoint: "http://127.0.0.1:8000",
+        modelsUrl: "http://127.0.0.1:8000/v1/models",
+      },
+      {
+        endpoint: "http://[::1]:8000",
+        modelsUrl: "http://[::1]:8000/v1/models",
+      },
+    ],
+  },
   registeredAdapter("mlc-llm", "MLC LLM"),
   registeredAdapter("exo", "Exo"),
   registeredAdapter("jan", "Jan"),
@@ -134,13 +169,20 @@ export type LocalRuntimeDiscoveryOptions = {
   adapters?: readonly LocalRuntimeAdapter[];
 };
 
-function hasExactLmStudioOrigin(raw: string): boolean {
-  return LM_STUDIO_ORIGINS.some(
+function automaticRuntimeBoundary(id: LocalRuntimeAdapterId) {
+  return id === "lm-studio" || id === "omlx"
+    ? AUTOMATIC_LOCAL_RUNTIME_BOUNDARIES[id]
+    : undefined;
+}
+
+function hasExactAutomaticRuntimeOrigin(id: AutomaticLocalRuntimeAdapterId, raw: string): boolean {
+  return AUTOMATIC_LOCAL_RUNTIME_BOUNDARIES[id].origins.some(
     (origin) => raw === origin || raw === `${origin}/`,
   );
 }
 
-function parseLmStudioEndpoint(raw: string): URL {
+function parseAutomaticRuntimeEndpoint(id: AutomaticLocalRuntimeAdapterId, raw: string): URL {
+  const boundary = AUTOMATIC_LOCAL_RUNTIME_BOUNDARIES[id];
   let url: URL;
   try {
     url = new URL(raw);
@@ -148,11 +190,9 @@ function parseLmStudioEndpoint(raw: string): URL {
     throw new Error("local runtime endpoint must be a valid URL");
   }
   if (
-    !hasExactLmStudioOrigin(raw) ||
+    !hasExactAutomaticRuntimeOrigin(id, raw) ||
     url.protocol !== "http:" ||
-    !LM_STUDIO_ALLOWED_PORTS.includes(
-      Number(url.port) as (typeof LM_STUDIO_ALLOWED_PORTS)[number],
-    ) ||
+    !(boundary.ports as readonly number[]).includes(Number(url.port)) ||
     url.username ||
     url.password ||
     url.search ||
@@ -160,36 +200,35 @@ function parseLmStudioEndpoint(raw: string): URL {
     url.pathname !== "/"
   ) {
     throw new Error(
-      "LM Studio endpoint must be credential-free HTTP on 127.0.0.1 or ::1 port 1234",
+      `${boundary.name} endpoint must be credential-free HTTP on 127.0.0.1 or ::1 port ${boundary.ports.join(" or ")}`,
     );
   }
   return url;
 }
 
-function parseLmStudioRequestUrl(raw: string): URL {
+function parseAutomaticRuntimeRequestUrl(id: AutomaticLocalRuntimeAdapterId, raw: string): URL {
+  const boundary = AUTOMATIC_LOCAL_RUNTIME_BOUNDARIES[id];
   let url: URL;
   try {
     url = new URL(raw);
   } catch {
     throw new Error("local runtime request must use a valid URL");
   }
-  const hasExactRequestUrl = LM_STUDIO_ORIGINS.some((origin) =>
-    LM_STUDIO_REQUEST_PATHS.has(raw.slice(origin.length)) &&
+  const hasExactRequestUrl = boundary.origins.some((origin) =>
+    LOCAL_RUNTIME_REQUEST_PATHS.has(raw.slice(origin.length)) &&
     raw === `${origin}${url.pathname}`,
   );
   if (
     !hasExactRequestUrl ||
     url.protocol !== "http:" ||
-    !LM_STUDIO_ALLOWED_PORTS.includes(
-      Number(url.port) as (typeof LM_STUDIO_ALLOWED_PORTS)[number],
-    ) ||
+    !(boundary.ports as readonly number[]).includes(Number(url.port)) ||
     url.username ||
     url.password ||
     url.search ||
     url.hash ||
-    !LM_STUDIO_REQUEST_PATHS.has(url.pathname)
+    !LOCAL_RUNTIME_REQUEST_PATHS.has(url.pathname)
   ) {
-    throw new Error("request is outside the discovered LM Studio API boundary");
+    throw new Error(`request is outside the discovered ${boundary.name} API boundary`);
   }
   return url;
 }
@@ -216,16 +255,23 @@ export function isDiscoveredLocalRuntimeAccount(account: Account): boolean {
     account.location !== "local" ||
     account.accessToken !== "" ||
     account.localRuntime?.source !== "multivibe-local-discovery" ||
-    account.localRuntime.adapter !== "lm-studio" ||
     account.localRuntime.authentication !== "none" ||
     !account.baseUrl ||
     !validConfirmedModelIds(account.localRuntime.confirmedModelIds)
   ) {
     return false;
   }
+  const boundary = automaticRuntimeBoundary(account.localRuntime.adapter);
+  if (!boundary) return false;
   try {
-    const baseUrl = parseLmStudioEndpoint(account.baseUrl);
-    const endpoint = parseLmStudioEndpoint(account.localRuntime.endpoint);
+    const baseUrl = parseAutomaticRuntimeEndpoint(
+      account.localRuntime.adapter,
+      account.baseUrl,
+    );
+    const endpoint = parseAutomaticRuntimeEndpoint(
+      account.localRuntime.adapter,
+      account.localRuntime.endpoint,
+    );
     return baseUrl.origin === endpoint.origin;
   } catch {
     return false;
@@ -240,8 +286,9 @@ export function authorizationForAccountRequest(
   if (!isDiscoveredLocalRuntimeAccount(account)) {
     throw new Error("account has no credential and is not a discovered local runtime");
   }
-  const request = parseLmStudioRequestUrl(requestUrl);
-  const endpoint = parseLmStudioEndpoint(account.localRuntime!.endpoint);
+  const adapter = account.localRuntime!.adapter as AutomaticLocalRuntimeAdapterId;
+  const request = parseAutomaticRuntimeRequestUrl(adapter, requestUrl);
+  const endpoint = parseAutomaticRuntimeEndpoint(adapter, account.localRuntime!.endpoint);
   if (request.origin !== endpoint.origin) {
     throw new Error("request origin does not match the discovered local runtime");
   }
@@ -318,13 +365,14 @@ export async function probeLocalRuntimeCandidate(
   candidate: LocalRuntimeCandidate,
   options: LocalRuntimeDiscoveryOptions = {},
 ): Promise<LocalRuntimeProbeSuccess> {
-  if (adapter.id !== "lm-studio") {
+  const boundary = automaticRuntimeBoundary(adapter.id);
+  if (!boundary) {
     throw new Error(`automatic discovery is not configured for ${adapter.id}`);
   }
-  const endpoint = parseLmStudioEndpoint(candidate.endpoint);
-  const modelsUrl = parseLmStudioRequestUrl(candidate.modelsUrl);
+  const endpoint = parseAutomaticRuntimeEndpoint(adapter.id, candidate.endpoint);
+  const modelsUrl = parseAutomaticRuntimeRequestUrl(adapter.id, candidate.modelsUrl);
   if (endpoint.origin !== modelsUrl.origin || modelsUrl.pathname !== "/v1/models") {
-    throw new Error("model catalog URL does not match the LM Studio endpoint");
+    throw new Error(`model catalog URL does not match the ${boundary.name} endpoint`);
   }
 
   const fetchFn = options.fetchFn ?? fetch;
