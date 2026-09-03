@@ -1299,8 +1299,11 @@ async function validateMacDiskImage(diskImage, work, options) {
       path.join(application, "Contents", "Info.plist")], { capture: true, captureLimit: 4096 });
     const menuBarOnly = await command("plutil", ["-extract", "LSUIElement", "raw", "-o", "-",
       path.join(application, "Contents", "Info.plist")], { capture: true, captureLimit: 4096 });
+    const workerHandoffScheme = await command("plutil", ["-extract", "CFBundleURLTypes.0.CFBundleURLSchemes.0", "raw", "-o", "-",
+      path.join(application, "Contents", "Info.plist")], { capture: true, captureLimit: 4096 });
     if (plistVersion !== metadata.version || bundleIdentifier !== "cloud.multivibe.host" ||
-      bundleExecutable !== "MultiVibe Host" || bundleIcon !== "MultiVibe.icns" || menuBarOnly !== "true") {
+      bundleExecutable !== "MultiVibe Host" || bundleIcon !== "MultiVibe.icns" || menuBarOnly !== "true" ||
+      workerHandoffScheme !== "multivibe") {
       throw new Error("provider-host disk image application identity is invalid");
     }
     if (metadata.macOSSignature !== "unsigned-development") {

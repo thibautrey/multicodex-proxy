@@ -75,6 +75,7 @@ import {
   isValidProviderRelayShadowSessionRequest,
   isValidProviderSelectedModelId,
   ProviderAgentControlRequestError,
+  providerCloudEnrollmentRequestFromLocalState,
   type ProviderAgentControl,
 } from "../../provider-agent-supervisor.js";
 import type { ModuleManager } from "../../module-manager.js";
@@ -116,6 +117,7 @@ export type AdminRoutesOptions = {
   providerWorkerEstimateClient?: ProviderWorkerEstimateClient;
   moduleManager?: ModuleManager;
   hostUpdateController?: HostUpdateController;
+  appVersion?: string;
 };
 
 function proxyApiKeyPreview(key: string): string {
@@ -972,6 +974,42 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       }
       if (error instanceof ProviderAgentControlRequestError && error.status === 409) {
         return res.status(409).json({ error: "provider_cloud_enrollment_conflict" });
+      }
+      res.status(503).json({ error: "provider_agent_unavailable" });
+    }
+  });
+
+  router.post("/provider-agent/cloud-shadow/enroll-handoff", async (req, res) => {
+    if (!options.providerAgent?.enabled) return res.status(503).json({ error: "provider_agent_unavailable" });
+    const body = req.body as Record<string, unknown> | undefined;
+    if (!body || Array.isArray(body) || Object.keys(body).join(",") !== "enrollment_token"
+      || typeof body.enrollment_token !== "string" || !/^mve_[A-Za-z0-9_-]{43}$/.test(body.enrollment_token)) {
+      return res.status(400).json({ error: "invalid_provider_cloud_handoff" });
+    }
+    try {
+      const [manifest, detectedModels] = await Promise.all([
+        options.providerAgent.getManifest(),
+        options.providerAgent.detectModels(),
+      ]);
+      const enrollment = await options.providerAgent.enrollCloud(
+        providerCloudEnrollmentRequestFromLocalState({
+          enrollmentToken: body.enrollment_token,
+          coreVersion: options.appVersion ?? "unknown",
+          manifest,
+          detectedModels,
+        }),
+      );
+      res.setHeader("cache-control", "no-store");
+      res.status(201).json(enrollment);
+    } catch (error) {
+      if (error instanceof ProviderAgentControlRequestError && error.status === 409) {
+        return res.status(409).json({ error: "provider_cloud_enrollment_conflict" });
+      }
+      if (error instanceof ProviderAgentControlRequestError && error.status === 400) {
+        return res.status(400).json({ error: "invalid_provider_cloud_handoff" });
+      }
+      if (error instanceof Error && !error.message.includes("provider agent")) {
+        return res.status(409).json({ error: "provider_cloud_handoff_not_ready", message: error.message });
       }
       res.status(503).json({ error: "provider_agent_unavailable" });
     }

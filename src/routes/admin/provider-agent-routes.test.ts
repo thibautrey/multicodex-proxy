@@ -563,3 +563,98 @@ test("admin Cloud enrollment forwards explicit consent once and never returns th
     assert.equal(invalid.status, 400);
   });
 });
+
+test("the macOS handoff derives the selected runtime and submits the local key flow automatically", async () => {
+  const grant = `mve_${"h".repeat(43)}`;
+  let received: unknown;
+  const view = {
+    schema_version: "provider-cloud-enrollment-v1" as const,
+    revision: 1 as const,
+    state: "submitted" as const,
+    provider_id: "10000000-0000-4000-8000-000000000001",
+    node_id: "20000000-0000-4000-8000-000000000002",
+    device_key_id: `ed25519:${"b".repeat(43)}`,
+    credential_epoch: 1,
+    manifest_digest: "c".repeat(64),
+    runtime_family: "omlx" as const,
+    declared_max_concurrency: 1,
+    cloud_api_origin: "https://api.multivibe.cloud",
+    submitted_at: "2026-09-03T20:00:00.000Z",
+    routing_eligible: false as const,
+    compensation_eligible: false as const,
+    safety_profile: "shadow_only_no_routing_no_compensation" as const,
+  };
+  const control = providerAgentControl({
+    getManifest: async () => ({
+      protocol_version: "provider-agent-v1",
+      state: "selected",
+      selected_models: ["Qwen3.8-27B-4bit"],
+      device_key_id: `ed25519:${"b".repeat(43)}`,
+      device_public_key_spki: "public-only",
+    }),
+    detectModels: async () => ({
+      schema_version: "provider-detected-models-v1",
+      runtimes: [
+        { adapter_id: "lm-studio", models: ["another-model"] },
+        { adapter_id: "omlx", models: ["Qwen3.8-27B-4bit"] },
+      ],
+    }),
+    enrollCloud: async (request) => {
+      received = request;
+      return view;
+    },
+  });
+  await withAdminServer(control, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/admin/provider-agent/cloud-shadow/enroll-handoff`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enrollment_token: grant }),
+    });
+    const body = await response.text();
+    assert.equal(response.status, 201);
+    assert.deepEqual(received, {
+      enrollment_token: grant,
+      core_version: "0.2.0",
+      runtime_family: "omlx",
+      selected_models: [{ reported_id: "Qwen3.8-27B-4bit", modalities: ["text"] }],
+      declared_max_concurrency: 1,
+    });
+    assert.doesNotMatch(body, /mve_|enrollment_token|device_public_key_spki/);
+    assert.match(body, /"state":"submitted"/);
+  }, { appVersion: "0.2.0" });
+});
+
+test("the macOS handoff fails closed when no single selected runtime can be proved", async () => {
+  let enrollCalls = 0;
+  const control = providerAgentControl({
+    getManifest: async () => ({
+      protocol_version: "provider-agent-v1",
+      state: "selected",
+      selected_models: ["shared-model"],
+    }),
+    detectModels: async () => ({
+      schema_version: "provider-detected-models-v1",
+      runtimes: [
+        { adapter_id: "lm-studio", models: ["shared-model"] },
+        { adapter_id: "omlx", models: ["shared-model"] },
+      ],
+    }),
+    enrollCloud: async () => {
+      enrollCalls += 1;
+      throw new Error("must not enroll");
+    },
+  });
+  await withAdminServer(control, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/admin/provider-agent/cloud-shadow/enroll-handoff`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enrollment_token: `mve_${"a".repeat(43)}` }),
+    });
+    assert.equal(response.status, 409);
+    assert.equal(enrollCalls, 0);
+    assert.deepEqual(await response.json(), {
+      error: "provider_cloud_handoff_not_ready",
+      message: "The selected local model belongs to more than one runtime",
+    });
+  }, { appVersion: "0.2.0" });
+});

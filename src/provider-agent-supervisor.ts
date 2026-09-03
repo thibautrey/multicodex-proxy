@@ -487,6 +487,42 @@ export function isValidProviderCloudEnrollmentRequest(
   return true;
 }
 
+export function providerCloudEnrollmentRequestFromLocalState(input: {
+  enrollmentToken: string;
+  coreVersion: string;
+  manifest: ProviderAgentManifest;
+  detectedModels: ProviderAgentDetectedModels;
+}): ProviderCloudEnrollmentRequest {
+  if (input.manifest.state !== "selected" || input.manifest.selected_models.length < 1) {
+    throw new Error("Select at least one local model before connecting this device");
+  }
+  const selected = [...new Set(input.manifest.selected_models)];
+  if (selected.length !== input.manifest.selected_models.length
+    || selected.some((model) => !isValidProviderSelectedModelId(model))) {
+    throw new Error("The selected local model list is invalid");
+  }
+  const candidates = input.detectedModels.runtimes.filter((runtime) => (
+    PROVIDER_RUNTIME_FAMILY_SET.has(runtime.adapter_id)
+    && selected.every((model) => runtime.models.includes(model))
+  ));
+  if (candidates.length !== 1) {
+    throw new Error(candidates.length === 0
+      ? "The selected local model is not available"
+      : "The selected local model belongs to more than one runtime");
+  }
+  const request: ProviderCloudEnrollmentRequest = {
+    enrollment_token: input.enrollmentToken,
+    core_version: input.coreVersion,
+    runtime_family: candidates[0]!.adapter_id as ProviderRuntimeFamily,
+    selected_models: selected.map((reported_id) => ({ reported_id, modalities: ["text"] })),
+    declared_max_concurrency: 1,
+  };
+  if (!isValidProviderCloudEnrollmentRequest(request)) {
+    throw new Error("The local Cloud enrollment request is invalid");
+  }
+  return request;
+}
+
 export function isValidProviderCapacityPolicy(value: unknown): value is ProviderCapacityPolicy {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const document = value as Record<string, unknown>;

@@ -72,6 +72,10 @@ private struct HostUpdateStatus: Decodable {
     }
 }
 
+private struct CloudEnrollmentResult: Decodable {
+    let state: String
+}
+
 private final class QuotaBarView: NSView {
     var remainingPercent: Double? {
         didSet { needsDisplay = true }
@@ -575,6 +579,9 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDeleg
     private var refreshing = false
     private var updateStatus: HostUpdateStatus?
     private var updateBusy = false
+    private var didFinishLaunching = false
+    private var pendingEnrollmentToken: String?
+    private var enrollmentInProgress = false
 #if DEBUG
     private var previewWindow: NSWindow?
 #endif
@@ -596,17 +603,106 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDeleg
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        didFinishLaunching = true
         configureStatusItem()
         configurePopover()
         configureTerminationSignals()
         render()
         ensureServiceIsRunning()
+        if pendingEnrollmentToken != nil {
+            DispatchQueue.main.async { [weak self] in self?.presentPendingEnrollmentConfirmation() }
+        }
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in self?.refresh() }
 #if DEBUG
         if ProcessInfo.processInfo.environment["MULTIVIBE_HOST_MENU_PREVIEW"] == "1" {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) { [weak self] in self?.showPreviewWindow() }
         }
 #endif
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard urls.count == 1, let token = enrollmentToken(from: urls[0]) else {
+            if didFinishLaunching { showEnrollmentAlert(success: false, invalidLink: true) }
+            return
+        }
+        guard pendingEnrollmentToken == nil, !enrollmentInProgress else { return }
+        pendingEnrollmentToken = token
+        if didFinishLaunching { presentPendingEnrollmentConfirmation() }
+    }
+
+    private func enrollmentToken(from url: URL) -> String? {
+        guard url.absoluteString.count <= 256,
+              url.scheme?.lowercased() == "multivibe",
+              url.host?.lowercased() == "add-worker",
+              url.path.isEmpty,
+              url.port == nil,
+              url.user == nil,
+              url.password == nil,
+              url.query == nil,
+              let fragment = url.fragment,
+              let fragmentComponents = URLComponents(string: "multivibe://fragment?\(fragment)"),
+              let items = fragmentComponents.queryItems,
+              items.count == 1,
+              items[0].name == "enrollment_token",
+              let token = items[0].value,
+              token.range(of: #"^mve_[A-Za-z0-9_-]{43}$"#, options: .regularExpression) != nil
+        else { return nil }
+        return token
+    }
+
+    private func presentPendingEnrollmentConfirmation() {
+        guard pendingEnrollmentToken != nil, !enrollmentInProgress else { return }
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = "Add this Mac to MultiVibe Cloud?"
+        alert.informativeText = "MultiVibe Host will share its public device identity and selected local models. Your private key stays on this Mac."
+        alert.addButton(withTitle: "Add this Mac")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            pendingEnrollmentToken = nil
+            return
+        }
+        if operational { submitPendingEnrollment() }
+        else {
+            updateState(operational: false, status: "Connecting…")
+            ensureServiceIsRunning()
+        }
+    }
+
+    private func submitPendingEnrollment() {
+        guard let token = pendingEnrollmentToken, !enrollmentInProgress,
+              var request = authorizedRequest(path: "/admin/provider-agent/cloud-shadow/enroll-handoff", method: "POST")
+        else { return }
+        enrollmentInProgress = true
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["enrollment_token": token])
+        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, _ in
+            guard let self else { return }
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let connected = (200...299).contains(status)
+                && data.flatMap { try? JSONDecoder().decode(CloudEnrollmentResult.self, from: $0) }?.state == "submitted"
+            DispatchQueue.main.async {
+                self.pendingEnrollmentToken = nil
+                self.enrollmentInProgress = false
+                self.showEnrollmentAlert(success: connected, invalidLink: false)
+                self.refreshNow()
+            }
+        }.resume()
+    }
+
+    private func showEnrollmentAlert(success: Bool, invalidLink: Bool) {
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = success ? .informational : .warning
+        alert.messageText = success ? "This Mac is connected" : "This Mac could not be connected"
+        alert.informativeText = success
+            ? "Its public identity and selected local model were registered securely."
+            : (invalidLink
+                ? "The MultiVibe connection link is invalid or incomplete. Start again from MultiVibe Cloud."
+                : "Make sure one local model is selected in MultiVibe Host, then try again from MultiVibe Cloud.")
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
 #if DEBUG
@@ -758,6 +854,7 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDeleg
                 self?.summary = summary
                 self?.updateState(operational: summary.operational, status: summary.operational ? "Operational" : "Unavailable")
                 if summary.operational, self?.pendingDashboardOpen == true { self?.requestDashboardSession() }
+                if summary.operational, self?.pendingEnrollmentToken != nil { self?.submitPendingEnrollment() }
                 self?.refreshUpdateStatus()
             }
         }.resume()

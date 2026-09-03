@@ -230,6 +230,7 @@ const adminRouter = createAdminRouter({
   providerWorkerEstimateClient,
   moduleManager,
   hostUpdateController,
+  appVersion: process.env.APP_VERSION ?? "unknown",
   storagePaths: {
     accountsPath: STORE_PATH,
     oauthStatePath: OAUTH_STATE_PATH,
