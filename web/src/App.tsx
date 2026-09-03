@@ -34,12 +34,14 @@ import { AliasesTab } from "./components/tabs/AliasesTab";
 import { ApiKeysTab } from "./components/tabs/ApiKeysTab";
 import { PluginsTab } from "./components/tabs/PluginsTab";
 import { UpdatesTab } from "./components/tabs/UpdatesTab";
+import { HostOnboarding } from "./components/HostOnboarding";
 import {
   initialThemeMode,
   ThemeSwitcher,
   type ThemeMode,
 } from "./components/ui/ThemeSwitcher";
 import { dismissGitHubPromotion, GITHUB_NEW_ISSUE_URL, GITHUB_REPOSITORY_URL, GITHUB_STARS_URL, readGitHubPromotionState } from "./github-promotion";
+import { completeHostOnboarding, hasCompletedHostOnboarding, shouldShowHostOnboarding } from "./host-onboarding";
 
 const TAB_ITEMS: Array<{ id: Tab; label: string; description: string; group: "Operate" | "Build" | "Advanced" }> = [
   { id: "overview", label: "Home", description: "System status and next steps", group: "Operate" },
@@ -104,6 +106,13 @@ export default function App() {
   const [locationSearch, setLocationSearch] = useState(window.location.search);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [localWorker, setLocalWorker] = useState<LocalWorkerProvider | null>(null);
+  const [hostApplication, setHostApplication] = useState(false);
+  const [baseLoaded, setBaseLoaded] = useState(false);
+  const [hostOnboardingComplete, setHostOnboardingComplete] = useState(() =>
+    hasCompletedHostOnboarding(localStorage),
+  );
+  const [providerSetupRequest, setProviderSetupRequest] = useState(0);
+  const [providerSetupActive, setProviderSetupActive] = useState(false);
   const [traces, setTraces] = useState<Trace[]>([]);
   const [traceStats, setTraceStats] = useState<TraceStats>(EMPTY_TRACE_STATS);
   const [projectUsageStats, setProjectUsageStats] = useState<ProjectUsageStats>({
@@ -316,6 +325,7 @@ export default function App() {
     ]);
     setAccounts((acc.accounts ?? []) as Account[]);
     setLocalWorker((localWorkerRes.localWorker ?? null) as LocalWorkerProvider | null);
+    setHostApplication(Boolean(cfg.hostApplication));
     if (Number.isFinite(Number(cfg.usageCacheTtlMs)) && Number(cfg.usageCacheTtlMs) > 0) {
       setUsageCacheTtlMs(Number(cfg.usageCacheTtlMs));
     }
@@ -327,6 +337,19 @@ export default function App() {
     setApplicationPolicies((policiesRes.applicationPolicies ?? []) as ApplicationPolicy[]);
     setModules((modulesRes.modules ?? []) as ModuleView[]);
     setMarketplaceModules((modulesRes.marketplace ?? []) as MarketplaceModule[]);
+    setBaseLoaded(true);
+  };
+
+  const finishHostOnboarding = () => {
+    completeHostOnboarding(localStorage);
+    setHostOnboardingComplete(true);
+    setProviderSetupActive(false);
+  };
+
+  const openOnboardingProviderSetup = () => {
+    setProviderSetupActive(true);
+    setTab("accounts");
+    setProviderSetupRequest((current) => current + 1);
   };
 
   const refreshModels = async () => {
@@ -1073,6 +1096,21 @@ export default function App() {
           </div>
         )}
 
+        {shouldShowHostOnboarding({
+          baseLoaded,
+          completed: hostOnboardingComplete,
+          hostApplication,
+          sanitized,
+        }) && !providerSetupActive && (
+          <HostOnboarding
+            accountCount={accounts.length}
+            cloudUrl="https://app.multivibe.cloud"
+            onComplete={finishHostOnboarding}
+            onHarnessesChanged={loadBase}
+            onOpenProviderSetup={openOnboardingProviderSetup}
+          />
+        )}
+
         <div className="workspace">
           <header className="topbar">
             <div className="topbar-title">
@@ -1154,6 +1192,10 @@ export default function App() {
             pollDeviceOAuth={pollDeviceOAuth}
             completeOAuth={completeOAuth}
             oauthRedirectUri={oauthRedirectUri}
+            providerSetupRequest={providerSetupRequest}
+            onboardingProviderSetup={providerSetupActive}
+            onProviderSetupClosed={() => setProviderSetupActive(false)}
+            onSkipOnboarding={finishHostOnboarding}
           />
         )}
 

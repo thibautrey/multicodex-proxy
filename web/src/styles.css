@@ -2476,6 +2476,204 @@ details summary {
   box-shadow: var(--shadow-md);
 }
 
+.host-onboarding-backdrop {
+  z-index: 1200;
+}
+
+.host-onboarding-modal {
+  display: grid;
+  width: min(720px, 100%);
+  min-height: min(610px, 90vh);
+  grid-template-rows: auto 1fr auto;
+  padding: 0;
+  overflow: hidden;
+}
+
+.host-onboarding-header,
+.host-onboarding-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 22px;
+}
+
+.onboarding-provider-modal {
+  width: min(620px, 100%);
+}
+
+.host-onboarding-header {
+  border-bottom: 1px solid var(--line);
+}
+
+.host-onboarding-header > div {
+  display: grid;
+  gap: 10px;
+}
+
+.host-onboarding-steps {
+  display: flex;
+  gap: 16px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.host-onboarding-steps span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.host-onboarding-steps i {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  font-style: normal;
+}
+
+.host-onboarding-steps .active {
+  color: var(--text);
+}
+
+.host-onboarding-steps .active i,
+.host-onboarding-steps .complete i {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: white;
+}
+
+.host-onboarding-content {
+  display: grid;
+  align-content: start;
+  gap: 22px;
+  min-height: 0;
+  padding: 28px;
+  overflow: auto;
+}
+
+.host-onboarding-copy {
+  display: grid;
+  justify-items: start;
+  gap: 7px;
+  text-align: left;
+}
+
+.host-onboarding-copy h2,
+.host-onboarding-copy p {
+  margin: 0;
+}
+
+.host-onboarding-copy h2 {
+  font-size: clamp(1.55rem, 4vw, 2rem);
+  letter-spacing: -0.04em;
+}
+
+.host-onboarding-copy p {
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.host-onboarding-simple-step {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 20px;
+  min-height: 360px;
+  text-align: center;
+}
+
+.host-onboarding-simple-step .host-onboarding-copy {
+  justify-items: center;
+  text-align: center;
+}
+
+.host-onboarding-step-icon,
+.host-onboarding-cloud-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 18px;
+}
+
+.host-onboarding-step-icon {
+  display: grid;
+  place-items: center;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 34px;
+  font-weight: 500;
+}
+
+.host-onboarding-cloud-icon {
+  box-shadow: var(--shadow-sm);
+}
+
+.host-onboarding-ready {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--success-soft);
+  color: var(--success);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.host-onboarding-actions {
+  border-top: 1px solid var(--line);
+  background: var(--surface-muted);
+}
+
+.host-harness-onboarding {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.host-harness-onboarding .host-harness-card {
+  flex-basis: 250px;
+  aspect-ratio: auto;
+  min-height: 265px;
+}
+
+@media (max-width: 620px) {
+  .host-onboarding-modal {
+    min-height: min(680px, 94vh);
+  }
+
+  .host-onboarding-header,
+  .host-onboarding-content,
+  .host-onboarding-actions {
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+
+  .host-onboarding-header {
+    align-items: flex-start;
+  }
+
+  .host-onboarding-steps {
+    gap: 8px;
+  }
+
+  .host-onboarding-steps span {
+    font-size: 0;
+  }
+
+  .host-onboarding-steps i {
+    font-size: 11px;
+  }
+
+  .host-onboarding-skip {
+    flex: 0 0 auto;
+  }
+}
+
 .make-money-preview-modal {
   width: min(780px, 100%);
   padding: 0;

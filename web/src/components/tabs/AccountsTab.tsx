@@ -39,6 +39,10 @@ type Props = {
   pollDeviceOAuth: (flowId: string) => Promise<any>;
   completeOAuth: (flowId: string, input: string) => Promise<any>;
   oauthRedirectUri: string;
+  providerSetupRequest?: number;
+  onboardingProviderSetup?: boolean;
+  onProviderSetupClosed?: () => void;
+  onSkipOnboarding?: () => void;
 };
 
 export type LocalWorkerProvider = {
@@ -459,6 +463,10 @@ export function AccountsTab(props: Props) {
     pollDeviceOAuth,
     completeOAuth,
     oauthRedirectUri,
+    providerSetupRequest,
+    onboardingProviderSetup = false,
+    onProviderSetupClosed,
+    onSkipOnboarding,
   } = props;
   const [showAddAccount, setShowAddAccount] = useState(false);
   const [provider, setProvider] = useState<AccountProvider>("openai");
@@ -523,6 +531,10 @@ export function AccountsTab(props: Props) {
   const makeMoneyDialogRef = useRef<HTMLDivElement | null>(null);
   const makeMoneyTriggerRef = useRef<HTMLButtonElement | null>(null);
   const makeMoneyCloseRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (providerSetupRequest) setShowAddAccount(true);
+  }, [providerSetupRequest]);
 
   useEffect(() => {
     const closeMenu = () => setOpenMenu(null);
@@ -1067,6 +1079,7 @@ export function AccountsTab(props: Props) {
     setManualMetricsUrl("");
     setIsSubmitting(false);
     sessionStorage.removeItem("multivibe-oauth-pending");
+    onProviderSetupClosed?.();
   };
 
   const closeEditModal = () => {
@@ -2732,12 +2745,22 @@ export function AccountsTab(props: Props) {
 
       {showAddAccount && (
         <div className="modal-backdrop" onClick={closeModal}>
-          <div className="modal panel" onClick={(e) => e.stopPropagation()}>
+          <div className={`modal panel${onboardingProviderSetup ? " onboarding-provider-modal" : ""}`} onClick={(e) => e.stopPropagation()}>
             <div className="inline wrap row-between">
               <h2>Add account</h2>
-              <button className="btn ghost" onClick={closeModal}>
-                Close
-              </button>
+              <div className="inline wrap">
+                {onboardingProviderSetup && (
+                  <button className="btn ghost" onClick={() => {
+                    closeModal();
+                    onSkipOnboarding?.();
+                  }}>
+                    Skip setup
+                  </button>
+                )}
+                <button className="btn ghost" onClick={closeModal}>
+                  {onboardingProviderSetup ? "Back" : "Close"}
+                </button>
+              </div>
             </div>
             <div className="grid modal-grid">
               <label>
@@ -2795,7 +2818,7 @@ export function AccountsTab(props: Props) {
                   />
                 </label>
               )}
-              <label>
+              {!onboardingProviderSetup && <label>
                 Upstream mode (optional)
                 <select
                   value={manualUpstreamMode}
@@ -2811,8 +2834,8 @@ export function AccountsTab(props: Props) {
                     Force `/v1/chat/completions`
                   </option>
                 </select>
-              </label>
-              {isManualTokenProvider(provider) && (
+              </label>}
+              {!onboardingProviderSetup && isManualTokenProvider(provider) && (
                 <>
                   <label>Execution location<select value={manualLocation} onChange={(e) => setManualLocation(e.target.value as "" | "local" | "cloud")}><option value="">Infer from URL/provider</option><option value="local">Local</option><option value="cloud">Cloud</option></select></label>
                   <label>Concurrent slots<input type="number" min="1" value={manualMaxConcurrent} onChange={(e) => setManualMaxConcurrent(e.target.value)} placeholder="1 local / 8 cloud" /></label>
@@ -2833,14 +2856,14 @@ export function AccountsTab(props: Props) {
                       placeholder="Required"
                     />
                   </label>
-                  <label>
+                  {!onboardingProviderSetup && <label>
                     Refresh token (optional)
                     <input
                       value={manualRefreshToken}
                       onChange={(e) => setManualRefreshToken(e.target.value)}
                       placeholder="Optional"
                     />
-                  </label>
+                  </label>}
                 </>
               ) : (
                 <div className="muted">
@@ -2854,22 +2877,22 @@ export function AccountsTab(props: Props) {
                   Enter an OpenCode API key, or use the device-login button below to connect an OpenCode Console account. Go quotas are detected automatically.
                 </div>
               )}
-              <label>
+              {!onboardingProviderSetup && <label>
                 Priority
                 <input
                   value={manualPriority}
                   onChange={(e) => setManualPriority(e.target.value)}
                   placeholder="0"
                 />
-              </label>
-              <label className="inline">
+              </label>}
+              {!onboardingProviderSetup && <label className="inline">
                 <input
                   type="checkbox"
                   checked={manualEnabled}
                   onChange={(e) => setManualEnabled(e.target.checked)}
                 />
                 Enabled
-              </label>
+              </label>}
             </div>
             <div className="inline wrap">
               <button
@@ -3139,9 +3162,20 @@ export function AccountsTab(props: Props) {
                   ? `Complete ${oauthProviderLabel(oauthDialog.provider)} OAuth`
                   : `Complete ${oauthProviderLabel(oauthDialog.provider)} reauth`}
               </h2>
-              <button className="btn ghost" onClick={closeOauthDialog}>
-                Close
-              </button>
+              <div className="inline wrap">
+                {onboardingProviderSetup && (
+                  <button className="btn ghost" onClick={() => {
+                    closeOauthDialog();
+                    closeModal();
+                    onSkipOnboarding?.();
+                  }}>
+                    Skip setup
+                  </button>
+                )}
+                <button className="btn ghost" onClick={closeOauthDialog}>
+                  Close
+                </button>
+              </div>
             </div>
             <div className="grid modal-grid">
               <label>

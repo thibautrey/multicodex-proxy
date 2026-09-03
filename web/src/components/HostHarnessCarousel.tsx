@@ -4,6 +4,7 @@ import type { HostHarness } from "../types";
 
 type Props = {
   onApiKeysChanged?: () => void | Promise<void>;
+  variant?: "default" | "onboarding";
 };
 
 function errorMessage(error: unknown): string {
@@ -92,9 +93,10 @@ function HarnessLogo({ harness }: { harness: HostHarness }) {
   );
 }
 
-export function HostHarnessCards({ onApiKeysChanged }: Props) {
+export function HostHarnessCards({ onApiKeysChanged, variant = "default" }: Props) {
   const [harnesses, setHarnesses] = useState<HostHarness[]>([]);
   const [hostApplication, setHostApplication] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -104,16 +106,18 @@ export function HostHarnessCards({ onApiKeysChanged }: Props) {
     const next = (result.harnesses ?? []) as HostHarness[];
     setHostApplication(Boolean(result.hostApplication));
     setHarnesses(next.filter((entry) => entry.detected));
+    setLoaded(true);
   }, []);
 
   useEffect(() => {
     void load().catch(() => {
       setHostApplication(false);
       setHarnesses([]);
+      setLoaded(true);
     });
   }, [load]);
 
-  if (!hostApplication || harnesses.length === 0) return null;
+  if (variant === "default" && (!hostApplication || harnesses.length === 0)) return null;
 
   const updateHarness = (next: HostHarness) => {
     setHarnesses((current) => current.map((entry) => entry.id === next.id ? next : entry));
@@ -152,17 +156,28 @@ export function HostHarnessCards({ onApiKeysChanged }: Props) {
   };
 
   return (
-    <section className="panel host-harness-browser" aria-labelledby="host-harness-title">
-      <div className="section-split-header host-harness-header">
+    <section
+      className={`panel host-harness-browser host-harness-${variant}`}
+      aria-label={variant === "onboarding" ? "Detected coding tools" : undefined}
+      aria-labelledby={variant === "default" ? "host-harness-title" : undefined}
+    >
+      {variant === "default" && <div className="section-split-header host-harness-header">
         <div>
           <span className="eyebrow">MultiVibe Host</span>
           <h2 id="host-harness-title">Connect your coding agents</h2>
           <p className="muted">Detected locally. MultiVibe creates a dedicated key and updates the selected harness in the background.</p>
         </div>
         <span className="badge">{harnesses.length} detected</span>
-      </div>
+      </div>}
 
-      <div className="host-harness-rail" aria-label="Detected harnesses" aria-live="polite">
+      {loaded && harnesses.length === 0 && variant === "onboarding" && (
+        <div className="compact-empty-state">
+          <strong>No supported harness detected</strong>
+          <span>You can continue and connect one later.</span>
+        </div>
+      )}
+      {!loaded && variant === "onboarding" && <p className="muted">Looking for coding tools…</p>}
+      {harnesses.length > 0 && <div className="host-harness-rail" aria-label="Detected harnesses" aria-live="polite">
         {harnesses.map((harness) => {
           const connected = harness.configured || harness.managed;
           return <article className="host-harness-card" key={harness.id}>
@@ -191,7 +206,7 @@ export function HostHarnessCards({ onApiKeysChanged }: Props) {
             </div>
           </article>;
         })}
-      </div>
+      </div>}
       {message && <p className="host-harness-feedback success" role="status">{message}</p>}
       {error && <p className="host-harness-feedback error" role="alert">{error}</p>}
     </section>
