@@ -9,26 +9,31 @@ import (
 )
 
 func TestDetectHostCapabilityAcceptsAppleSiliconAndIntelMacOS(t *testing.T) {
-	var observedName string
-	var observedArguments []string
+	var observedCalls [][]string
 	runner := func(ctx context.Context, name string, arguments ...string) ([]byte, error) {
 		if _, ok := ctx.Deadline(); !ok {
 			t.Fatal("Apple memory probe did not receive a timeout")
 		}
-		observedName = name
-		observedArguments = append([]string(nil), arguments...)
+		observedCalls = append(observedCalls, append([]string{name}, arguments...))
+		if reflect.DeepEqual(arguments, []string{"-n", "machdep.cpu.brand_string"}) {
+			return []byte("Apple M4 Max\n"), nil
+		}
 		return []byte("17179869184\n"), nil
 	}
 	supported := detectHostCapability(context.Background(), "darwin", "arm64", runner)
-	if !supported.Supported || supported.Profile != "apple-silicon" || supported.Accelerator != "metal" || supported.AcceleratorMemoryBytes != 8*1024*1024*1024 {
+	if !supported.Supported || supported.Profile != "apple-silicon" || supported.Accelerator != "metal" || supported.HardwareModel != "Apple M4 Max" || supported.AcceleratorMemoryBytes != 8*1024*1024*1024 {
 		t.Fatalf("unexpected Apple Silicon capability: %#v", supported)
 	}
-	if observedName != "sysctl" || !reflect.DeepEqual(observedArguments, []string{"-n", "hw.memsize"}) {
-		t.Fatalf("unexpected Apple memory probe: %q %#v", observedName, observedArguments)
+	if !reflect.DeepEqual(observedCalls, [][]string{{"sysctl", "-n", "hw.memsize"}, {"sysctl", "-n", "machdep.cpu.brand_string"}}) {
+		t.Fatalf("unexpected Apple probes: %#v", observedCalls)
 	}
+	observedCalls = nil
 	intel := detectHostCapability(context.Background(), "darwin", "amd64", runner)
 	if !intel.Supported || intel.Profile != "intel-mac" || intel.Accelerator != "metal" || intel.AcceleratorMemoryBytes != 8*1024*1024*1024 {
 		t.Fatalf("unexpected Intel Mac capability: %#v", intel)
+	}
+	if !reflect.DeepEqual(observedCalls, [][]string{{"sysctl", "-n", "hw.memsize"}}) {
+		t.Fatalf("unexpected Intel probes: %#v", observedCalls)
 	}
 }
 
@@ -98,6 +103,26 @@ func TestParseDarwinUnifiedMemoryRejectsMalformedOrUnboundedValues(t *testing.T)
 	}
 	if _, err := parseDarwinUnifiedMemory([]byte{'1', 0, '2'}); err == nil {
 		t.Fatal("NUL-containing Apple unified memory response was accepted")
+	}
+}
+
+func TestParseDarwinHardwareModelIsBoundedAndDoesNotAffectCapability(t *testing.T) {
+	if model, err := parseDarwinHardwareModel([]byte("Apple M3 Ultra\n")); err != nil || model != "Apple M3 Ultra" {
+		t.Fatalf("valid Apple hardware model rejected: %q %v", model, err)
+	}
+	for _, invalid := range [][]byte{nil, []byte(" Apple M3"), []byte("Apple M3\n\n"), {'A', 0, 'B'}, []byte(strings.Repeat("x", 129))} {
+		if _, err := parseDarwinHardwareModel(invalid); err == nil {
+			t.Fatalf("invalid Apple hardware model accepted: %q", invalid)
+		}
+	}
+	capability := detectHostCapability(context.Background(), "darwin", "arm64", func(_ context.Context, _ string, arguments ...string) ([]byte, error) {
+		if reflect.DeepEqual(arguments, []string{"-n", "hw.memsize"}) {
+			return []byte("17179869184\n"), nil
+		}
+		return nil, errors.New("model unavailable")
+	})
+	if !capability.Supported || capability.HardwareModel != "" {
+		t.Fatalf("optional model probe changed support: %#v", capability)
 	}
 }
 

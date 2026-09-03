@@ -1417,6 +1417,119 @@ td .muted {
   background: color-mix(in srgb, var(--primary-soft) 72%, var(--surface));
 }
 
+.local-worker-provider {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.35fr) minmax(230px, .8fr) minmax(260px, .85fr);
+  gap: 18px;
+  align-items: center;
+  margin-bottom: 14px;
+  padding: 18px;
+  border: 1px solid color-mix(in srgb, var(--primary) 26%, var(--line));
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--surface-accent), var(--surface));
+}
+
+.local-worker-provider-identity {
+  display: flex;
+  gap: 13px;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.local-worker-provider-icon {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  border-radius: 11px;
+  box-shadow: var(--shadow-xs);
+}
+
+.local-worker-provider h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.local-worker-provider-identity p {
+  margin: 7px 0 0;
+  font-size: 12px;
+}
+
+.local-worker-provider-lock {
+  color: var(--muted-strong);
+}
+
+.local-worker-provider-estimate {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding-left: 18px;
+  border-left: 1px solid var(--line);
+}
+
+.local-worker-provider-estimate > span,
+.local-worker-provider-estimate > small,
+.local-worker-provider-actions > small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.local-worker-provider-estimate strong {
+  color: var(--primary-strong);
+  font-size: 1.55rem;
+  letter-spacing: -.04em;
+}
+
+.local-worker-provider-estimate strong small {
+  margin-left: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: normal;
+}
+
+.local-worker-provider-estimate p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.local-worker-provider-actions {
+  display: grid;
+  gap: 8px;
+  justify-items: stretch;
+}
+
+.local-worker-provider-actions .btn {
+  justify-content: center;
+  text-align: center;
+}
+
+@media (max-width: 1050px) {
+  .local-worker-provider {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .local-worker-provider-actions {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 680px) {
+  .local-worker-provider {
+    grid-template-columns: 1fr;
+  }
+
+  .local-worker-provider-estimate {
+    padding: 14px 0 0;
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+
+  .local-worker-provider-actions {
+    grid-column: auto;
+  }
+}
+
 .usage-cell {
   display: grid;
   gap: 6px;

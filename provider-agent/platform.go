@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -39,6 +40,7 @@ type hostCapability struct {
 	OS            string `json:"os"`
 	Architecture  string `json:"architecture"`
 	Accelerator   string `json:"accelerator,omitempty"`
+	HardwareModel string `json:"hardware_model,omitempty"`
 	// AcceleratorMemoryBytes is the capacity safe for planning before the
 	// operator's gpu_vram_percent policy is applied. On Apple Silicon this is
 	// deliberately capped below total unified memory.
@@ -101,6 +103,11 @@ func detectHostCapability(ctx context.Context, goos, goarch string, command plat
 			result.Profile = "intel-mac"
 		}
 		result.Accelerator = "metal"
+		if goarch == "arm64" {
+			if hardwareModel, modelErr := command(probeContext, "sysctl", "-n", "machdep.cpu.brand_string"); modelErr == nil {
+				result.HardwareModel, _ = parseDarwinHardwareModel(hardwareModel)
+			}
+		}
 		// Keep half of host memory reserved for macOS, the CPU workload and
 		// memory pressure. This is also the conservative planning ceiling on
 		// Intel Macs, irrespective of whether Ollama selects CPU or Metal.
@@ -143,6 +150,25 @@ func detectHostCapability(ctx context.Context, goos, goarch string, command plat
 	result.Profile = "linux-nvidia"
 	result.Accelerator = "cuda"
 	return result
+}
+
+func parseDarwinHardwareModel(output []byte) (string, error) {
+	if len(output) == 0 || len(output) > 128 || bytes.IndexByte(output, 0) >= 0 || !utf8.Valid(output) {
+		return "", errors.New("Apple hardware model response is invalid")
+	}
+	value := string(output)
+	if strings.HasSuffix(value, "\n") {
+		value = strings.TrimSuffix(value, "\n")
+	}
+	if value == "" || strings.TrimSpace(value) != value {
+		return "", errors.New("Apple hardware model response is invalid")
+	}
+	for _, character := range value {
+		if unicode.IsControl(character) {
+			return "", errors.New("Apple hardware model response is invalid")
+		}
+	}
+	return value, nil
 }
 
 func currentHostCapability() hostCapability {

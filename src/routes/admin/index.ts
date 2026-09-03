@@ -78,6 +78,10 @@ import {
   type ProviderAgentControl,
 } from "../../provider-agent-supervisor.js";
 import type { ModuleManager } from "../../module-manager.js";
+import {
+  unavailableProviderWorkerEstimate,
+  type ProviderWorkerEstimateClient,
+} from "../../provider-worker-estimate.js";
 
 type StoragePaths = {
   accountsPath: string;
@@ -102,6 +106,8 @@ export type AdminRoutesOptions = {
   smartRouting?: SmartRoutingCoordinator;
   anonymousUsageSharing?: AnonymousUsageSharingController;
   providerAgent?: ProviderAgentControl;
+  hostApplication?: boolean;
+  providerWorkerEstimateClient?: ProviderWorkerEstimateClient;
   moduleManager?: ModuleManager;
 };
 
@@ -396,6 +402,53 @@ export function createAdminRouter(options: AdminRoutesOptions) {
   router.get("/modules", (_req, res) => {
     if (!moduleManager) return res.status(503).json({ error: "Module manager is unavailable" });
     return res.json({ modules: moduleManager.list(), marketplace: moduleManager.marketplaceList() });
+  });
+
+  router.get("/provider-agent/local-worker", async (_req, res) => {
+    res.setHeader("cache-control", "no-store");
+    if (!options.hostApplication || !options.providerAgent?.enabled) {
+      return res.json({ localWorker: null });
+    }
+    try {
+      const capability = await options.providerAgent.getCapability();
+      const eligible = capability.supported &&
+        ((capability.profile === "apple-silicon" && capability.accelerator === "metal") ||
+         (capability.profile === "linux-nvidia" && capability.accelerator === "cuda"));
+      if (!eligible) return res.json({ localWorker: null });
+
+      const selectedGPU = capability.accelerator === "cuda"
+        ? capability.gpus?.[capability.cuda_device ?? 0]
+        : undefined;
+      const [manifest, estimate] = await Promise.all([
+        options.providerAgent.getManifest(),
+        options.providerWorkerEstimateClient
+          ? options.providerWorkerEstimateClient.estimate(capability).catch(() => unavailableProviderWorkerEstimate())
+          : Promise.resolve(unavailableProviderWorkerEstimate()),
+      ]);
+      return res.json({
+        localWorker: {
+          id: "multivibe-worker-local",
+          kind: "system-local-worker",
+          name: "MultiVibe Worker",
+          location: "local",
+          configuration_state: manifest.state === "submitted" ? "submitted" : "unconfigured",
+          agent_state: manifest.state,
+          removable: false,
+          routing_eligible: false,
+          compensation_eligible: false,
+          capability: {
+            profile: capability.profile,
+            accelerator: capability.accelerator,
+            hardware: capability.hardware_model ?? selectedGPU?.name ?? capability.profile,
+            accelerator_memory_bytes: capability.accelerator_memory_bytes ?? 0,
+          },
+          estimated_monthly_earnings: estimate,
+          connect_url: "https://app.multivibe.cloud/earnings",
+        },
+      });
+    } catch {
+      return res.status(503).json({ error: "provider_agent_unavailable" });
+    }
   });
 
   router.post("/modules/submit", async (req, res) => {

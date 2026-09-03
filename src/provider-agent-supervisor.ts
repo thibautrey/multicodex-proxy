@@ -20,6 +20,25 @@ export type ProviderAgentManifest = {
   device_public_key_spki?: string;
 };
 
+export type ProviderHostCapability = {
+  schema_version: "multivibe-host-capability-v1";
+  agent_version: string;
+  supported: boolean;
+  profile?: "apple-silicon" | "intel-mac" | "linux-nvidia";
+  os: string;
+  architecture: string;
+  accelerator?: "metal" | "cuda";
+  hardware_model?: string;
+  accelerator_memory_bytes?: number;
+  gpus?: Array<{
+    name: string;
+    memory_mib: number;
+    compute_capability: number;
+  }>;
+  cuda_device?: number;
+  reason?: string;
+};
+
 export type ProviderRelayShadowSessionRequest = {
   session_id: string;
   organization_id: string;
@@ -189,6 +208,7 @@ export type ProviderManagedOllamaReconcileFence = {
 export type ProviderAgentControl = {
   enabled: boolean;
   getManifest(): Promise<ProviderAgentManifest>;
+  getCapability(): Promise<ProviderHostCapability>;
   getSelection(): Promise<ProviderAgentSelection>;
   replaceSelection(revision: number, selectedModels: string[]): Promise<{ conflict: boolean; selection: ProviderAgentSelection }>;
   getAdapters(): Promise<ProviderAgentAdapterRegistry>;
@@ -535,6 +555,7 @@ export function startEmbeddedProviderAgent(options: {
     enabled: false,
     stop: async () => undefined,
     getManifest: unavailable,
+    getCapability: unavailable,
     getSelection: unavailable,
     replaceSelection: unavailable,
     getAdapters: unavailable,
@@ -725,6 +746,7 @@ export function startEmbeddedProviderAgent(options: {
   return {
     enabled: true,
     getManifest: async () => (await request<ProviderAgentManifest>("/v1/manifest")).value,
+    getCapability: async () => (await request<ProviderHostCapability>("/v1/capability")).value,
     getSelection: async () => (await request<ProviderAgentSelection>("/v1/selection")).value,
     replaceSelection: async (revision, selectedModels) => {
       const result = await request<ProviderAgentSelection>("/v1/selection", {

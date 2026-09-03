@@ -99,6 +99,7 @@ func TestCoreEnvironmentIsAllowlistedAndPinsAllState(t *testing.T) {
 	for _, expected := range []string{
 		"HOST=127.0.0.1", "STORE_PATH=/var/lib/multivibe/accounts.json",
 		"PROVIDER_AGENT_ENABLED=true", "PROVIDER_AGENT_BINARY=/opt/multivibe/bin/agent",
+		"MULTIVIBE_HOST_APPLICATION=true",
 		"PROVIDER_AGENT_CAPACITY_POLICY_PATH=/var/lib/multivibe/provider-agent-capacity-policy.json",
 		"PROVIDER_AGENT_MANAGED_ROOT=/var/lib/multivibe/provider-agent-managed",
 		"PROVIDER_AGENT_BUNDLED_OLLAMA_ROOT=/opt/multivibe/runtime/ollama",

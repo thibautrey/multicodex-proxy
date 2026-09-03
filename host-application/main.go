@@ -353,6 +353,7 @@ func coreEnvironment(layout bundleLayout, dataDirectory string, credentials loca
 		"CODEX_PROJECTS_PATH=" + filepath.Join(dataDirectory, "codex-projects.json"),
 		"JOBS_DB_PATH=" + filepath.Join(dataDirectory, "jobs.sqlite"),
 		"PROVIDER_AGENT_ENABLED=true",
+		"MULTIVIBE_HOST_APPLICATION=true",
 		"PROVIDER_AGENT_BINARY=" + layout.Agent,
 		"PROVIDER_AGENT_STATE_PATH=" + filepath.Join(dataDirectory, "provider-agent-selection.json"),
 		"PROVIDER_AGENT_RUNTIME_STATE_PATH=" + filepath.Join(dataDirectory, "provider-agent-runtime-endpoints.json"),

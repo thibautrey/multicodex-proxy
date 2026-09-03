@@ -131,6 +131,10 @@ func providerHandlerWithDemandService(core *url.URL, selections *selectionStore,
 }
 
 func providerHandlerWithManagedController(core *url.URL, selections *selectionStore, runtimes *runtimeEndpointStore, identity *deviceIdentity, enrollment *cloudEnrollmentService, capacity *capacityPolicyStore, demand *providerDemandService, controller *managedProviderController, client *http.Client, controlToken string) http.Handler {
+	return providerHandlerWithManagedControllerAndCapability(core, selections, runtimes, identity, enrollment, capacity, demand, controller, hostCapability{}, client, controlToken)
+}
+
+func providerHandlerWithManagedControllerAndCapability(core *url.URL, selections *selectionStore, runtimes *runtimeEndpointStore, identity *deviceIdentity, enrollment *cloudEnrollmentService, capacity *capacityPolicyStore, demand *providerDemandService, controller *managedProviderController, capability hostCapability, client *http.Client, controlToken string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health/live", func(response http.ResponseWriter, _ *http.Request) {
 		response.Header().Set("content-type", "application/json")
@@ -171,6 +175,15 @@ func providerHandlerWithManagedController(core *url.URL, selections *selectionSt
 			ProtocolVersion: "provider-agent-v1", State: state, SelectedModels: document.SelectedModels,
 			DeviceKeyID: keyID, DevicePublicKeySPKI: publicKeySPKI,
 		})
+	})
+	mux.HandleFunc("GET /v1/capability", func(response http.ResponseWriter, request *http.Request) {
+		if !authorizeProviderControl(request, controlToken) {
+			http.Error(response, "not found", http.StatusNotFound)
+			return
+		}
+		response.Header().Set("cache-control", "no-store")
+		response.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(response).Encode(capability)
 	})
 	mux.HandleFunc("GET /v1/selection", func(response http.ResponseWriter, request *http.Request) {
 		if !authorizeProviderControl(request, controlToken) {
@@ -805,7 +818,7 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("provider_agent_started", "address", listener.Addr().String(), "selected_model_count", len(selections.snapshot().SelectedModels), "selection_persistent", statePath != "", "manual_runtime_count", len(runtimes.snapshot().Endpoints), "runtime_state_persistent", runtimeStatePath != "", "device_identity_persistent", deviceKeyPath != "", "cloud_enrollment_persistent", enrollmentStatePath != "", "capacity_policy_configured", capacity.snapshot() != nil, "capacity_policy_persistent", capacityPolicyPath != "", "demand_planning_enabled", demand != nil, "demand_plan_persistent", demandPlanPath != "", "managed_ollama_enabled", controller != nil)
-	server := newProviderHTTPServer(providerHandlerWithManagedController(core, selections, runtimes, identity, enrollment, capacity, demand, controller, client, controlToken))
+	server := newProviderHTTPServer(providerHandlerWithManagedControllerAndCapability(core, selections, runtimes, identity, enrollment, capacity, demand, controller, capability, client, controlToken))
 	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("provider_agent_failed", "error", fmt.Sprint(err))
 		os.Exit(1)

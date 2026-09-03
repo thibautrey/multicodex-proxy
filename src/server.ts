@@ -60,6 +60,7 @@ import {
   PROVIDER_AGENT_OLLAMA_LISTEN,
   PROVIDER_AGENT_CUDA_VISIBLE_DEVICES,
   PROVIDER_AGENT_ENABLED,
+  MULTIVIBE_HOST_APPLICATION,
   PROVIDER_AGENT_RUNTIME_STATE_PATH,
   PROVIDER_AGENT_STATE_PATH,
   PROXY_API_KEY,
@@ -70,6 +71,7 @@ import {
   REALTIME_WEBRTC_CALL_URL,
 } from "./config.js";
 import { ModuleManager } from "./module-manager.js";
+import { createProviderWorkerEstimateClient } from "./provider-worker-estimate.js";
 import { createBodyParserMiddleware } from "./middleware/decompression.js";
 import http from "node:http";
 import { startScheduledWeeklyResetMonitor } from "./rate-limit-reset.js";
@@ -170,6 +172,7 @@ const providerAgent = startEmbeddedProviderAgent({
     trustedDemandKeys: PROVIDER_AGENT_DEMAND_TRUSTED_KEYS,
   } : {}),
 });
+const providerWorkerEstimateClient = createProviderWorkerEstimateClient(PROVIDER_AGENT_CLOUD_API_URL);
 await traceManager.seedStatsHistoryIfMissing();
 const anonymousUsageSharing = createAnonymousUsageSharingWorker({
   settingsStore: store,
@@ -206,6 +209,8 @@ const adminRouter = createAdminRouter({
   smartRouting,
   anonymousUsageSharing,
   providerAgent,
+  hostApplication: MULTIVIBE_HOST_APPLICATION,
+  providerWorkerEstimateClient,
   moduleManager,
   storagePaths: {
     accountsPath: STORE_PATH,

@@ -16,6 +16,8 @@ export const PORT = Number(process.env.PORT ?? 1455);
 export const HOST = process.env.HOST?.trim() || undefined;
 export const PROVIDER_AGENT_ENABLED =
   (process.env.PROVIDER_AGENT_ENABLED ?? "false") === "true";
+export const MULTIVIBE_HOST_APPLICATION =
+  (process.env.MULTIVIBE_HOST_APPLICATION ?? "false") === "true";
 export const PROVIDER_AGENT_BINARY =
   process.env.PROVIDER_AGENT_BINARY ?? "/opt/multivibe/bin/multivibe-provider-agent";
 export const STORE_PATH = process.env.STORE_PATH ?? "/data/accounts.json";

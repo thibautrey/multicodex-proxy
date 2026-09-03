@@ -16,6 +16,7 @@ import { createPortal } from "react-dom";
 type Props = {
   traceStats: TraceStats;
   accounts: Account[];
+  localWorker: LocalWorkerProvider | null;
   usageCacheTtlMs: number;
   settings: StoreSettings;
   sanitized: boolean;
@@ -38,6 +39,34 @@ type Props = {
   pollDeviceOAuth: (flowId: string) => Promise<any>;
   completeOAuth: (flowId: string, input: string) => Promise<any>;
   oauthRedirectUri: string;
+};
+
+export type LocalWorkerProvider = {
+  id: "multivibe-worker-local";
+  kind: "system-local-worker";
+  name: "MultiVibe Worker";
+  location: "local";
+  configuration_state: "unconfigured" | "submitted";
+  agent_state: "detected" | "selected" | "submitted";
+  removable: false;
+  routing_eligible: false;
+  compensation_eligible: false;
+  capability: {
+    profile: "apple-silicon" | "linux-nvidia";
+    accelerator: "metal" | "cuda";
+    hardware: string;
+    accelerator_memory_bytes: number;
+  };
+  estimated_monthly_earnings: {
+    currency: "USD";
+    period: "month";
+    amount: string;
+    basis: "same_chip" | "fleet_median" | "no_observations" | "catalog_unavailable";
+    sample_count: number;
+    as_of_date?: string;
+    disclaimer: string;
+  };
+  connect_url: string;
 };
 
 type AccountProvider =
@@ -393,10 +422,26 @@ function usageStatusLabel(account: Account, usageCacheTtlMs: number) {
   return "Usage checked";
 }
 
+function localWorkerEstimateLabel(worker: LocalWorkerProvider): string {
+  const amount = Number(worker.estimated_monthly_earnings.amount);
+  return Number.isFinite(amount)
+    ? new Intl.NumberFormat(undefined, { style: "currency", currency: "USD" }).format(amount)
+    : "$0.00";
+}
+
+function localWorkerEstimateBasis(worker: LocalWorkerProvider): string {
+  const estimate = worker.estimated_monthly_earnings;
+  if (estimate.basis === "same_chip") return `Median for the same chip · ${estimate.sample_count} qualifying hosts`;
+  if (estimate.basis === "fleet_median") return `Fleet median fallback · ${estimate.sample_count} qualifying hosts`;
+  if (estimate.basis === "catalog_unavailable") return "Estimate catalog temporarily unavailable";
+  return "No qualifying observations yet · conservative fallback";
+}
+
 export function AccountsTab(props: Props) {
   const {
     traceStats,
     accounts,
+    localWorker,
     usageCacheTtlMs,
     settings,
     sanitized,
@@ -1411,6 +1456,7 @@ export function AccountsTab(props: Props) {
       typeof account.usage?.fetchedAt === "number" &&
       Date.now() - account.usage.fetchedAt >= usageCacheTtlMs,
   ).length;
+  const hasAnyProvider = accounts.length > 0 || localWorker !== null;
 
   const renderUsageCell = (
     value?: number,
@@ -1480,13 +1526,13 @@ export function AccountsTab(props: Props) {
 
   return (
     <>
-      {accounts.length > 0 && (
+      {hasAnyProvider && (
         <>
       <section className="grid cards4">
         <Metric
-          title="Accounts"
-          value={`${accounts.length}`}
-          detail="Total configured providers"
+          title="Providers"
+          value={`${accounts.length + (localWorker ? 1 : 0)}`}
+          detail={localWorker ? "Configured accounts and local Host worker" : "Total configured providers"}
         />
         <Metric
           title="Enabled"
@@ -1564,7 +1610,7 @@ export function AccountsTab(props: Props) {
         </div>
       </section>}
 
-      <section className={accounts.length ? "panel" : "panel providers-empty-state"}>
+      <section className={hasAnyProvider ? "panel" : "panel providers-empty-state"}>
         <div className="section-split-header">
           <h2>{accounts.length ? "Connected providers" : "Providers"}</h2>
           <div className="inline wrap">
@@ -1588,6 +1634,7 @@ export function AccountsTab(props: Props) {
             {xaiCount > 0 && (
               <span className="badge">{xaiCount} Grok Build</span>
             )}
+            {localWorker && <span className="badge">1 MultiVibe Worker</span>}
             {accounts.length > 0 && <span className="badge">{usageCheckedCount}/{accounts.length} usage checked</span>}
             {usageUnsupportedCount > 0 && (
               <span className="badge">
@@ -1599,17 +1646,58 @@ export function AccountsTab(props: Props) {
                 {usageRefreshPendingCount} refresh pending
               </span>
             )}
-            {accounts.length > 0 && <button className="btn" onClick={() => setShowAddAccount(true)}>Add provider</button>}
+            {hasAnyProvider && <button className="btn" onClick={() => setShowAddAccount(true)}>Add provider</button>}
           </div>
         </div>
-        {!accounts.length ? (
+        {localWorker && (
+          <article className="local-worker-provider" aria-labelledby="local-worker-provider-title">
+            <div className="local-worker-provider-identity">
+              <img
+                className="local-worker-provider-icon"
+                src="/assets/brand/multivibe-app-icon.svg"
+                alt=""
+              />
+              <div>
+                <div className="inline wrap">
+                  <h3 id="local-worker-provider-title">{localWorker.name}</h3>
+                  <span className="badge badge-warn">
+                    {localWorker.configuration_state === "submitted" ? "Submitted" : "Unconfigured"}
+                  </span>
+                  <span className="badge">Local · managed by MultiVibe Host</span>
+                </div>
+                <p className="muted">
+                  {localWorker.capability.hardware} · {localWorker.capability.accelerator.toUpperCase()} · {Math.round(localWorker.capability.accelerator_memory_bytes / (1024 ** 3))} GiB usable capacity
+                </p>
+                <p className="local-worker-provider-lock">
+                  System provider · cannot be removed while Core runs through MultiVibe Host
+                </p>
+              </div>
+            </div>
+            <div className="local-worker-provider-estimate">
+              <span>Estimated monthly earnings</span>
+              <strong>{localWorkerEstimateLabel(localWorker)}<small>/month</small></strong>
+              <small>{localWorkerEstimateBasis(localWorker)}</small>
+              {localWorker.estimated_monthly_earnings.as_of_date && (
+                <small>Data through {localWorker.estimated_monthly_earnings.as_of_date}</small>
+              )}
+              <p>{localWorker.estimated_monthly_earnings.disclaimer}</p>
+            </div>
+            <div className="local-worker-provider-actions">
+              <a className="btn" href={localWorker.connect_url} target="_blank" rel="noreferrer">
+                Connect Multivibe Cloud and start earning
+              </a>
+              <small>Connecting is explicit and does not enable workloads or payouts automatically.</small>
+            </div>
+          </article>
+        )}
+        {!accounts.length && !localWorker ? (
           <div className="empty-state-content">
             <span className="empty-state-icon" aria-hidden="true">+</span>
             <h3>Connect your first provider</h3>
             <p className="muted">Add a hosted account or a local OpenAI-compatible endpoint. MultiVibe will discover its models and make them ready for routing.</p>
             <button className="btn" onClick={() => setShowAddAccount(true)}>Add a provider</button>
           </div>
-        ) : (
+        ) : accounts.length > 0 ? (
         <div className="table-wrap">
           <table className="data-table">
             <thead>
@@ -1963,7 +2051,7 @@ export function AccountsTab(props: Props) {
             </tbody>
           </table>
         </div>
-        )}
+        ) : null}
       </section>
 
       {makeMoneyPreviewAccount &&

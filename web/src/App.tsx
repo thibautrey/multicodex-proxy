@@ -26,7 +26,7 @@ import type {
   TraceRangePreset,
   TraceStats,
 } from "./types";
-import { AccountsTab } from "./components/tabs/AccountsTab";
+import { AccountsTab, type LocalWorkerProvider } from "./components/tabs/AccountsTab";
 import { DocsTab } from "./components/tabs/DocsTab";
 import { OverviewTab } from "./components/tabs/OverviewTab";
 import { TracingTab } from "./components/tabs/TracingTab";
@@ -98,6 +98,7 @@ export default function App() {
   const [tab, setTab] = useState<Tab>(initialTab);
   const [locationSearch, setLocationSearch] = useState(window.location.search);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [localWorker, setLocalWorker] = useState<LocalWorkerProvider | null>(null);
   const [traces, setTraces] = useState<Trace[]>([]);
   const [traceStats, setTraceStats] = useState<TraceStats>(EMPTY_TRACE_STATS);
   const [projectUsageStats, setProjectUsageStats] = useState<ProjectUsageStats>({
@@ -297,8 +298,9 @@ export default function App() {
   };
 
   const loadBase = async () => {
-    const [acc, cfg, mdl, aliasRes, settingsRes, apiKeysRes, policiesRes, modulesRes] = await Promise.all([
+    const [acc, localWorkerRes, cfg, mdl, aliasRes, settingsRes, apiKeysRes, policiesRes, modulesRes] = await Promise.all([
       api("/admin/accounts"),
+      api("/admin/provider-agent/local-worker").catch(() => ({ localWorker: null })),
       api("/admin/config"),
       fetch("/v1/models").then((r) => r.json()),
       api("/admin/model-aliases"),
@@ -308,6 +310,7 @@ export default function App() {
       api("/admin/modules"),
     ]);
     setAccounts((acc.accounts ?? []) as Account[]);
+    setLocalWorker((localWorkerRes.localWorker ?? null) as LocalWorkerProvider | null);
     if (Number.isFinite(Number(cfg.usageCacheTtlMs)) && Number(cfg.usageCacheTtlMs) > 0) {
       setUsageCacheTtlMs(Number(cfg.usageCacheTtlMs));
     }
@@ -429,6 +432,7 @@ export default function App() {
     }
     setAuthenticated(false);
     setAccounts([]);
+    setLocalWorker(null);
     setTraces([]);
     setAliases([]);
     setError("");
@@ -1125,6 +1129,7 @@ export default function App() {
           <AccountsTab
             traceStats={filteredTraceStats}
             accounts={accounts}
+            localWorker={localWorker}
             usageCacheTtlMs={usageCacheTtlMs}
             settings={settings}
             sanitized={sanitized}

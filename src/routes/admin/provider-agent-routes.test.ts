@@ -5,6 +5,7 @@ import express from "express";
 import { createAdminRouter, type AdminRoutesOptions } from "./index.js";
 import type {
   ProviderAgentControl,
+  ProviderHostCapability,
   ProviderAgentRuntimeEndpointInput,
   ProviderCapacityPolicy,
   ProviderManagedOllamaView,
@@ -36,10 +37,11 @@ function adminOptions(providerAgent: ProviderAgentControl): AdminRoutesOptions {
 async function withAdminServer(
   providerAgent: ProviderAgentControl,
   run: (baseUrl: string) => Promise<void>,
+  overrides: Partial<AdminRoutesOptions> = {},
 ) {
   const app = express();
   app.use(express.json());
-  app.use("/admin", createAdminRouter(adminOptions(providerAgent)));
+  app.use("/admin", createAdminRouter({ ...adminOptions(providerAgent), ...overrides }));
   const server = app.listen(0, "127.0.0.1");
   await new Promise<void>((resolve, reject) => {
     server.once("listening", resolve);
@@ -58,6 +60,7 @@ function providerAgentControl(overrides: Partial<ProviderAgentControl> = {}): Pr
   return {
     enabled: true,
     getManifest: unavailable,
+    getCapability: unavailable,
     getSelection: unavailable,
     replaceSelection: unavailable,
     getAdapters: unavailable,
@@ -79,6 +82,75 @@ function providerAgentControl(overrides: Partial<ProviderAgentControl> = {}): Pr
     ...overrides,
   };
 }
+
+const appleCapability = (): ProviderHostCapability => ({
+  schema_version: "multivibe-host-capability-v1",
+  agent_version: "test",
+  supported: true,
+  profile: "apple-silicon",
+  os: "darwin",
+  architecture: "arm64",
+  accelerator: "metal",
+  hardware_model: "Apple M4 Max",
+  accelerator_memory_bytes: 32 * 1024 ** 3,
+});
+
+test("Host projects a supported local worker as an unconfigured non-removable provider", async () => {
+  const control = providerAgentControl({
+    getCapability: async () => appleCapability(),
+    getManifest: async () => ({
+      protocol_version: "provider-agent-v1",
+      state: "detected",
+      selected_models: [],
+    }),
+  });
+  await withAdminServer(control, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/admin/provider-agent/local-worker`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    const payload = await response.json() as { localWorker: Record<string, any> };
+    assert.equal(payload.localWorker.name, "MultiVibe Worker");
+    assert.equal(payload.localWorker.configuration_state, "unconfigured");
+    assert.equal(payload.localWorker.removable, false);
+    assert.equal(payload.localWorker.routing_eligible, false);
+    assert.equal(payload.localWorker.compensation_eligible, false);
+    assert.equal(payload.localWorker.capability.hardware, "Apple M4 Max");
+    assert.equal(payload.localWorker.estimated_monthly_earnings.amount, "184.25");
+    assert.equal(payload.localWorker.estimated_monthly_earnings.basis, "same_chip");
+    assert.equal(payload.localWorker.connect_url, "https://app.multivibe.cloud/earnings");
+  }, {
+    hostApplication: true,
+    providerWorkerEstimateClient: {
+      async estimate(capability) {
+        assert.equal(capability.hardware_model, "Apple M4 Max");
+        return {
+          currency: "USD", period: "month", amount: "184.25", basis: "same_chip",
+          sample_count: 12, as_of_date: "2026-09-02", disclaimer: "Advisory and not payable.",
+        };
+      },
+    },
+  });
+});
+
+test("local worker projection is absent outside Host and for unsupported hosting hardware", async () => {
+  let capabilityCalls = 0;
+  const control = providerAgentControl({
+    getCapability: async () => {
+      capabilityCalls += 1;
+      return { ...appleCapability(), supported: false, profile: "intel-mac", architecture: "amd64" };
+    },
+  });
+  await withAdminServer(control, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/admin/provider-agent/local-worker`);
+    assert.deepEqual(await response.json(), { localWorker: null });
+    assert.equal(capabilityCalls, 0);
+  });
+  await withAdminServer(control, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/admin/provider-agent/local-worker`);
+    assert.deepEqual(await response.json(), { localWorker: null });
+    assert.equal(capabilityCalls, 1);
+  }, { hostApplication: true });
+});
 
 const capacityPolicy = (): ProviderCapacityPolicy => ({
   schema_version: "provider-capacity-policy-state-v1",
