@@ -13,7 +13,7 @@ import { pathToFileURL } from "node:url";
 const maximumArchiveBytes = 6 * 1024 * 1024 * 1024;
 const maximumExtractedBytes = 6 * 1024 * 1024 * 1024;
 const maximumArchiveEntries = 100_000;
-const maximumArchiveMetadataBytes = 4 * 1024 * 1024;
+const maximumArchiveMetadataBytes = 8 * 1024 * 1024;
 
 function archiveMetadataCeilingError(metadataBytes, entryCount) {
   return new Error(
