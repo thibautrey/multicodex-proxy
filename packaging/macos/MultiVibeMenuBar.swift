@@ -1,11 +1,12 @@
 import AppKit
 import Foundation
 
-private let dashboardURL: URL = {
+private let configuredHostPort: Int = {
     let configured = ProcessInfo.processInfo.environment["MULTIVIBE_HOST_PORT"] ?? "1455"
-    let port = Int(configured).flatMap { (1...65535).contains($0) ? $0 : nil } ?? 1455
-    return URL(string: "http://127.0.0.1:\(port)")!
+    return Int(configured).flatMap { (1...65535).contains($0) ? $0 : nil } ?? 1455
 }()
+
+private let hasExplicitHostPort = ProcessInfo.processInfo.environment["MULTIVIBE_HOST_PORT"] != nil
 
 private struct HostCredentials: Decodable {
     let adminToken: String
@@ -38,6 +39,9 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate {
     private var refreshTimer: Timer?
     private var signalSources: [DispatchSourceSignal] = []
     private var ownedService: Process?
+    private var dashboardURL = URL(string: "http://127.0.0.1:\(configuredHostPort)")!
+    private var usesFallbackPort = false
+    private var pendingDashboardOpen = false
     private var operational = false
     private var statusText = "Starting…"
     private var earnings: MenuBarSummary.Earnings?
@@ -171,7 +175,9 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate {
     private func refresh() {
         guard let request = authorizedRequest(path: "/admin/host/menu-bar") else {
             updateState(operational: false, status: "Starting…", earnings: nil)
-            ensureServiceIsRunning()
+            if ownedService?.isRunning != true {
+                ensureServiceIsRunning()
+            }
             return
         }
         URLSession.shared.dataTask(with: request) { [weak self] data, response, _ in
@@ -180,6 +186,9 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate {
                   let summary = try? JSONDecoder().decode(MenuBarSummary.self, from: data) else {
                 DispatchQueue.main.async {
                     self?.updateState(operational: false, status: "Unavailable", earnings: nil)
+                    if self?.ownedService?.isRunning != true {
+                        self?.launchService(avoidingOccupiedPort: http != nil)
+                    }
                 }
                 return
             }
@@ -189,6 +198,9 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate {
                     status: summary.operational ? "Operational" : "Unavailable",
                     earnings: summary.earnings
                 )
+                if summary.operational, self?.pendingDashboardOpen == true {
+                    self?.requestDashboardSession()
+                }
             }
         }.resume()
     }
@@ -202,19 +214,41 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate {
     }
 
     private func ensureServiceIsRunning() {
+        if ownedService?.isRunning == true {
+            refresh()
+            return
+        }
+        if let request = authorizedRequest(path: "/admin/host/menu-bar") {
+            URLSession.shared.dataTask(with: request) { [weak self] data, response, _ in
+                let http = response as? HTTPURLResponse
+                let isOurs = http?.statusCode == 200 && data.flatMap {
+                    try? JSONDecoder().decode(MenuBarSummary.self, from: $0)
+                } != nil
+                DispatchQueue.main.async {
+                    if isOurs {
+                        self?.refresh()
+                    } else {
+                        self?.launchService(avoidingOccupiedPort: http != nil)
+                    }
+                }
+            }.resume()
+            return
+        }
         var health = URLRequest(url: dashboardURL.appendingPathComponent("health"))
         health.timeoutInterval = 1
         URLSession.shared.dataTask(with: health) { [weak self] _, response, _ in
-            if (response as? HTTPURLResponse)?.statusCode == 200 {
-                DispatchQueue.main.async { self?.refresh() }
-                return
+            DispatchQueue.main.async {
+                self?.launchService(avoidingOccupiedPort: response != nil)
             }
-            DispatchQueue.main.async { self?.launchService() }
         }.resume()
     }
 
-    private func launchService() {
+    private func launchService(avoidingOccupiedPort: Bool = false) {
         if let process = ownedService, process.isRunning { return }
+        if avoidingOccupiedPort && !hasExplicitHostPort && !usesFallbackPort {
+            dashboardURL = URL(string: "http://127.0.0.1:1456")!
+            usesFallbackPort = true
+        }
         guard let executable = Bundle.main.executableURL else {
             updateState(operational: false, status: "Bundle error", earnings: nil)
             return
@@ -223,6 +257,9 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate {
         let process = Process()
         process.executableURL = command
         process.arguments = ["run"]
+        var environment = ProcessInfo.processInfo.environment
+        environment["MULTIVIBE_HOST_PORT"] = String(dashboardURL.port ?? configuredHostPort)
+        process.environment = environment
         process.terminationHandler = { [weak self] _ in
             DispatchQueue.main.async {
                 self?.ownedService = nil
@@ -248,17 +285,31 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openDashboard() {
+        pendingDashboardOpen = true
+        if !operational {
+            updateState(operational: false, status: "Starting…", earnings: nil)
+            ensureServiceIsRunning()
+            return
+        }
+        requestDashboardSession()
+    }
+
+    private func requestDashboardSession() {
         guard var request = authorizedRequest(path: "/admin/desktop-session", method: "POST") else {
             ensureServiceIsRunning()
             return
         }
         request.httpBody = Data("{}".utf8)
         request.setValue("application/json", forHTTPHeaderField: "content-type")
-        URLSession.shared.dataTask(with: request) { data, response, _ in
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, _ in
+            guard let self else { return }
             guard let data, (response as? HTTPURLResponse)?.statusCode == 200,
                   let session = try? JSONDecoder().decode(DesktopSession.self, from: data),
-                  let url = URL(string: session.path, relativeTo: dashboardURL) else { return }
-            DispatchQueue.main.async { NSWorkspace.shared.open(url) }
+                  let url = URL(string: session.path, relativeTo: self.dashboardURL) else { return }
+            DispatchQueue.main.async {
+                self.pendingDashboardOpen = false
+                NSWorkspace.shared.open(url)
+            }
         }.resume()
     }
 
