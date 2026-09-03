@@ -163,9 +163,7 @@ export function HostHarnessCards({ onApiKeysChanged, variant = "default" }: Prop
     >
       {variant === "default" && <div className="section-split-header host-harness-header">
         <div>
-          <span className="eyebrow">MultiVibe Host</span>
           <h2 id="host-harness-title">Connect your coding agents</h2>
-          <p className="muted">Detected locally. MultiVibe creates a dedicated key and updates the selected harness in the background.</p>
         </div>
         <span className="badge">{harnesses.length} detected</span>
       </div>}

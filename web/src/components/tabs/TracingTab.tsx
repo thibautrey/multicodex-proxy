@@ -129,7 +129,6 @@ export function TtftLatencyBoard({ traceStats }: { traceStats: TraceStats }) {
         <div className="section-split-header">
           <div>
             <h2>Time to first token</h2>
-            <p className="muted">Completed HTTP SSE requests grouped by provider and context.</p>
           </div>
           <span className="badge">No measurements</span>
         </div>
@@ -143,7 +142,6 @@ export function TtftLatencyBoard({ traceStats }: { traceStats: TraceStats }) {
       <div className="section-split-header">
         <div>
           <h2>Time to first token</h2>
-          <p className="muted">Completed HTTP SSE requests grouped by provider and context.</p>
         </div>
         <div className="ttft-context-picker" role="tablist" aria-label="Input context range">
           {bucketCounts.map(({ bucket, label, samples }) => (
@@ -443,10 +441,9 @@ function TracingTabContent(props: Props) {
         </nav>
         <div className="trace-sharing-setting">
           <div>
-            <span className="eyebrow">Anonymous model demand</span>
             <h2>Help rank useful self-hosted models</h2>
             <p id="anonymous-usage-sharing-description" className="muted">
-              Once per completed UTC day, MultiVibe can share only exact public model IDs from the hosted-inference allowlist, output-token totals rounded down to thousands and capped at one billion tokens per model, a random per-day event ID, and the daily window. It never sends prompts, responses, input-token totals, projects, accounts, emails, hardware, hostnames, headers, or a stable installation ID. Only usage after activation is eligible.
+              MultiVibe shares only anonymous daily model usage totals—never your prompts, responses, or personal data.
             </p>
           </div>
           <div className="trace-sharing-action">
@@ -461,7 +458,7 @@ function TracingTabContent(props: Props) {
               />
               <span>Share anonymous model demand</span>
             </label>
-            <small id="anonymous-usage-sharing-default" className="muted">Enabled by default. Uncheck to stop immediately and delete any unsent envelope.</small>
+            <small id="anonymous-usage-sharing-default" className="muted">Uncheck to stop immediately and delete any unsent envelope.</small>
             <span className="muted" role="status" aria-live="polite">{sharingNotice}</span>
           </div>
         </div>
@@ -481,7 +478,6 @@ function TracingTabContent(props: Props) {
               <div className="section-split-header">
                 <div>
                   <h2>Data coverage</h2>
-                  <p className="muted">Know how much of the traffic can support reliable usage and cost analysis.</p>
                 </div>
                 <span className={`badge ${requestCount > 0 && usageCoverage === 1 && pricingCoverage === 1 ? "badge-live" : "badge-warn"}`}>
                   {requestCount === 0 ? "No data" : usageCoverage === 1 && pricingCoverage === 1 ? "Complete" : "Partial"}

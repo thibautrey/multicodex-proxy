@@ -930,8 +930,7 @@ export default function App() {
           <div className="sidebar-brand">
             <img className="brand-mark" src="/assets/brand/multivibe-app-icon.svg" alt="" />
             <div className="brand-copy">
-              <strong>MultiVibe</strong>
-              <span>Proxy control plane</span>
+              <strong>MultiVibe.cloud</strong>
             </div>
           </div>
 

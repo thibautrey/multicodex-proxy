@@ -45,7 +45,7 @@ export function UpdatesTab() {
   const canInstall = Boolean(status.available_version && status.rollout_eligible);
   return <div className="stack">
     <section className="panel hero-panel">
-      <div><span className="eyebrow">Verified updates</span><h2>MultiVibe Host {status.current_version}</h2><p className="muted">Updates are authenticated with the embedded MultiVibe release key, staged before shutdown, and rolled back automatically if the new Host does not become healthy.</p></div>
+      <div><span className="eyebrow">Verified updates</span><h2>MultiVibe Host {status.current_version}</h2></div>
       <span className={`badge ${status.status === "current" ? "badge-live" : ""}`}>{status.status}</span>
     </section>
 

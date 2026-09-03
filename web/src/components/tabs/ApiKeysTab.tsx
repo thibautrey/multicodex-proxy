@@ -108,7 +108,6 @@ export function ApiKeysTab({
         <div className="section-split-header">
           <div>
             <h2>Active keys</h2>
-            <p className="muted">Environment-managed keys are read-only and must be changed in deployment configuration.</p>
           </div>
         </div>
         {!apiKeys.length ? (

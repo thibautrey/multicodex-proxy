@@ -1681,9 +1681,7 @@ export function AccountsTab(props: Props) {
                 <p className="muted">
                   {localWorker.capability.hardware} · {localWorker.capability.accelerator.toUpperCase()} · {Math.round(localWorker.capability.accelerator_memory_bytes / (1024 ** 3))} GiB usable capacity
                 </p>
-                <p className="local-worker-provider-lock">
-                  System provider · cannot be removed while Core runs through MultiVibe Host
-                </p>
+                
               </div>
             </div>
             <div className="local-worker-provider-estimate">
@@ -1699,7 +1697,6 @@ export function AccountsTab(props: Props) {
               <a className="btn" href={localWorker.connect_url} target="_blank" rel="noreferrer">
                 Connect Multivibe Cloud and start earning
               </a>
-              <small>Connecting is explicit and does not enable workloads or payouts automatically.</small>
             </div>
           </article>
         )}

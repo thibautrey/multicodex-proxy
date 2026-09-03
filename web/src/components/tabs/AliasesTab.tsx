@@ -246,8 +246,7 @@ export function AliasesTab({
       <section className="panel alias-workspace-nav">
         <div className="section-split-header">
           <div>
-            <h2>Alias workspace</h2>
-            <p className="muted">Manage routing policies, test their decisions, and set the image fallback in separate workspaces.</p>
+            <h2>Alias</h2>
           </div>
           {originalId && <span className="badge badge-live">Editing <span className="mono">{originalId}</span></span>}
         </div>
@@ -273,7 +272,6 @@ export function AliasesTab({
         <div className="section-split-header">
           <div>
             <h2>Smart routing policies</h2>
-            <p className="muted">Versioned rules choose local or cloud capacity and decide whether work is queued.</p>
           </div>
           <button className="btn" type="button" onClick={() => { selectDraft(); setActiveSection("editor"); }} title="Start a new routing policy">New policy</button>
         </div>
@@ -307,7 +305,7 @@ export function AliasesTab({
             <p className="muted">
               {originalId || creationScenario === "advanced"
                 ? "Rules run top to bottom. Candidate order breaks score ties."
-                : "Start with the outcome you want. MultiVibe will prepare the routing policy."}
+                : ""}
             </p>
           </div>
           {(originalId || creationScenario === "advanced") && <div className="inline wrap">
@@ -421,7 +419,7 @@ export function AliasesTab({
 
       {activeSection === "simulation" && <section className="smart-routing-observability" id="alias-panel-simulation" role="tabpanel">
         <div className="panel">
-          <div className="section-heading-with-help"><div><h2>Policy simulator</h2><p className="muted">Run a sample request through the policy currently open in the editor.</p></div><HelpTooltip text="Simulation does not send a real request. It shows which rule and candidate would be selected." /></div>
+          <div className="section-heading-with-help"><div><h2>Policy simulator</h2></div><HelpTooltip text="Simulation does not send a real request. It shows which rule and candidate would be selected." /></div>
           <div className="grid smart-simulator-grid">
             <label><span className="field-label">Application <HelpTooltip text="The application name used to test application-specific matching." /></span><input value={simulationRequest.application} onChange={(event) => setSimulationRequest({ ...simulationRequest, application: event.target.value })} /></label>
             <label><span className="field-label">Priority <HelpTooltip text="The priority used to find a matching rule." /></span><select value={simulationRequest.priority} onChange={(event) => setSimulationRequest({ ...simulationRequest, priority: event.target.value as PriorityClass })}>{PRIORITIES.map((priority) => <option key={priority}>{priority}</option>)}</select></label>
@@ -434,7 +432,7 @@ export function AliasesTab({
           {simulation && <pre className="smart-result mono">{JSON.stringify(simulation, null, 2)}</pre>}
         </div>
         <div className="panel">
-          <div className="section-heading-with-help"><div><h2>Capacity and queue</h2><p className="muted">Inspect the capacity decision for the selected priority.</p></div><HelpTooltip text="This check reads current capacity and queue data for the policy alias." /></div>
+          <div className="section-heading-with-help"><div><h2>Capacity and queue</h2></div><HelpTooltip text="This check reads current capacity and queue data for the policy alias." /></div>
           <div className="inline wrap">
             <label><span className="sr-only">Capacity priority</span><select value={capacityPriority} onChange={(event) => setCapacityPriority(event.target.value as PriorityClass)}>{PRIORITIES.map((priority) => <option key={priority}>{priority}</option>)}</select></label>
             <button className="btn" type="button" disabled={!draft.id} onClick={() => void loadCapacity(draft.id, capacityPriority).then(setCapacity)} title={!draft.id ? "Open or create a policy first" : "Refresh capacity and queue data"}>Refresh</button>

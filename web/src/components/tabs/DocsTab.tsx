@@ -324,28 +324,6 @@ export function DocsTab({ models, initialEndpointId, initialModel }: Props) {
   return (
     <div className="docs-page">
       <section className="docs-hero">
-        <div className="docs-hero-copy">
-          <span className="docs-kicker">
-            <span className="status-dot" /> API platform
-          </span>
-          <h2>Build, route and observe from one API.</h2>
-          <p>
-            OpenAI and Anthropic-compatible inference with smart routing,
-            deferred execution, project attribution and operational visibility
-            built in.
-          </p>
-          <div className="docs-hero-badges">
-            <span>
-              <Icon name="check" /> OpenAI compatible
-            </span>
-            <span>
-              <Icon name="check" /> Anthropic compatible
-            </span>
-            <span>
-              <Icon name="lock" /> Session authenticated
-            </span>
-          </div>
-        </div>
         <div className="docs-base-url-card">
           <div>
             <span className="control-label">Base URL</span>
