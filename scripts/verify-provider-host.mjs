@@ -13,7 +13,7 @@ import { pathToFileURL } from "node:url";
 const maximumArchiveBytes = 6 * 1024 * 1024 * 1024;
 const maximumExtractedBytes = 6 * 1024 * 1024 * 1024;
 const maximumArchiveEntries = 100_000;
-const maximumArchiveMetadataBytes = 1024 * 1024;
+const maximumArchiveMetadataBytes = 4 * 1024 * 1024;
 const maximumZipCentralDirectoryBytes = 128 * 1024 * 1024;
 const maximumTarStreamBytes = maximumExtractedBytes + maximumArchiveEntries * 1024 + maximumArchiveMetadataBytes + 1024;
 const maximumCommandOutputBytes = 64 * 1024 * 1024;

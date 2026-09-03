@@ -310,7 +310,7 @@ test("ZIP preflight rejects traversal, links, duplicates and declared zip bombs"
 
 test("ZIP preflight bounds cumulative path metadata", async () => {
   const entries = [{ name: "root/" }];
-  for (let index = 0; index < 1200; index += 1) {
+  for (let index = 0; index < 5000; index += 1) {
     entries.push({ name: `root/${String(index).padStart(4, "0")}-${"a".repeat(430)}` });
   }
   await expectArchiveFailure(".zip", zipArchive(entries), /metadata exceeds the ceiling/u);
@@ -327,7 +327,7 @@ test("tar preflight rejects traversal, links, special entries, duplicates and de
     name: "root/bomb", size: extractedCeiling + 1, base256Size: true,
   }]), /extracted-size ceiling/u);
   await expectArchiveFailure(".tar.gz", tarGzip([{
-    name: "PaxHeaders/root", type: "x", size: 1024 * 1024 + 1,
+    name: "PaxHeaders/root", type: "x", size: 4 * 1024 * 1024 + 1,
   }]), /metadata exceeds the ceiling/u);
 });
 
