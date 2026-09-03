@@ -3116,6 +3116,145 @@ details summary {
     var(--panel);
 }
 
+.host-harness-carousel {
+  display: grid;
+  gap: 16px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 92% 8%, color-mix(in srgb, var(--primary) 14%, transparent), transparent 34%),
+    linear-gradient(135deg, color-mix(in srgb, var(--primary) 6%, transparent), transparent 62%),
+    var(--panel);
+}
+
+.host-harness-header {
+  margin-bottom: 0;
+}
+
+.host-harness-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  min-height: 176px;
+  padding: 18px;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface-muted) 82%, transparent);
+}
+
+.host-harness-card-copy {
+  display: grid;
+  gap: 11px;
+  min-width: 0;
+}
+
+.host-harness-card h3 {
+  margin: 0 0 3px;
+  font-size: 18px;
+}
+
+.host-harness-card p {
+  margin: 0;
+}
+
+.host-harness-icon {
+  display: grid;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 12px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-size: 27px;
+  font-weight: 800;
+}
+
+.host-harness-badges {
+  gap: 7px;
+}
+
+.host-harness-path {
+  width: fit-content;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: var(--muted-strong);
+  font-size: 11px;
+}
+
+.host-harness-note {
+  max-width: 720px;
+  color: var(--muted-strong);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.host-harness-actions {
+  display: grid;
+  justify-items: end;
+  gap: 9px;
+  min-width: 190px;
+  text-align: right;
+}
+
+.host-harness-navigation {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 13px;
+}
+
+.host-harness-dots {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  max-width: 440px;
+}
+
+.host-harness-dots button {
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  border: 0;
+  border-radius: 99px;
+  background: var(--line-strong);
+  box-shadow: none;
+}
+
+.host-harness-dots button.active {
+  width: 20px;
+  background: var(--primary);
+}
+
+.host-harness-feedback {
+  padding: 10px 12px;
+  border-radius: 9px;
+  font-size: 12px;
+}
+
+.host-harness-feedback.success {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.host-harness-feedback.error {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+@media (max-width: 720px) {
+  .host-harness-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .host-harness-actions {
+    justify-items: stretch;
+    min-width: 0;
+    text-align: left;
+  }
+}
+
 .api-key-notice {
   display: grid;
   gap: 3px;

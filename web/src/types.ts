@@ -384,6 +384,21 @@ export type CreatedProxyApiKey = ProxyApiKey & {
   key: string;
 };
 
+export type HostHarness = {
+  id: string;
+  name: string;
+  category: "cli" | "editor" | "agent" | "framework" | "service";
+  detected: boolean;
+  detectedBy: string[];
+  configured: boolean;
+  managed: boolean;
+  drifted: boolean;
+  canInstall: boolean;
+  canUninstall: boolean;
+  configPath?: string;
+  unavailableReason?: string;
+};
+
 export type ApplicationWebhook = {
   id: string;
   url: string;
