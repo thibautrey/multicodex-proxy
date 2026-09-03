@@ -40,15 +40,18 @@ Le proxy :
 - ne configure pas `context_management.compact_threshold` ;
 - ne mesure pas `cache_write_tokens` ni le nombre d’éléments de compaction.
 
-Une observation agrégée en lecture seule a confirmé l'utilité du cache fournisseur. Les volumes et percentiles de l'instance privée ne sont pas conservés dans le dépôt.
+Une observation agrégée en lecture seule a confirmé que le cache fournisseur
+est largement utilisé par `/responses`, contrairement au trafic
+`/chat/completions` observé. Les volumes et percentiles de l'instance privée ne
+sont pas conservés dans le dépôt. Les tokens mis en cache restent présents dans
+`usage.input_tokens`.
 
 ### Gestion actuelle des longues conversations
 
-Les rollouts Codex locaux montrent que le client compacte déjà certaines
-sessions. Sur un exemple long, l’appel de compaction a traité environ a large number of
-tokens non cachés pour produire une nouvelle fenêtre d’environ a smaller number of tokens.
-L’opération devient donc rentable seulement si la fenêtre réduite est réutilisée
-sur suffisamment de tours.
+Les observations locales montrent que le client compacte déjà certaines
+sessions. L’opération devient rentable seulement si la fenêtre réduite est
+réutilisée sur suffisamment de tours ; les métriques de sessions privées ne
+sont pas conservées dans le dépôt.
 
 `previous_response_id` n’est pas un levier de réduction brute : la
 documentation OpenAI précise que les anciens tokens de la chaîne restent
@@ -59,7 +62,7 @@ retiré avant le relais HTTP pour préserver la compatibilité existante.
 
 ### Isolation et confidentialité
 
-- La production private environment n’a pas été modifiée.
+- L'environnement distant n’a pas été modifié.
 - Une copie temporaire du store de comptes a été placée dans un répertoire
   `0700`, avec le fichier en `0600`.
 - MultiVibe a été lancé localement sur le port 1456 avec des fichiers de trace

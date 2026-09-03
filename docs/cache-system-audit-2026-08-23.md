@@ -32,15 +32,10 @@ est validé.
 
 L'audit couvre le commit `5a8361b`, les chemins HTTP/SSE/WebSocket, la
 découverte de modèles, le rafraîchissement des quotas, les traces et les routes
-d'administration. Le trafic live a été lu via les endpoints d'administration
-d'une instance privée, sans rejouer de requête vers un fournisseur et sans
-extraire de prompt.
-
-L'interface graphique n'était pas disponible dans le navigateur interne de la
-session. Les endpoints utilisés par cette interface ont toutefois fourni les
-agrégats et les traces structurées nécessaires. `TRACE_INCLUDE_BODY` est
-désactivé sur les traces observées : c'est une bonne propriété de sécurité,
-mais cela empêche de calculer rétroactivement le taux de doublons exacts.
+d'administration. Une observation agrégée en lecture seule a été utilisée sans
+rejouer de requête fournisseur ni extraire de prompt. Les volumes, horaires,
+adresses et caractéristiques de l'instance privée ne sont pas conservés dans
+le dépôt.
 
 CCE a été lancé avant les lectures larges. Le serveur répondait, mais la
 synchronisation du snapshot est restée bloquée ; l'analyse a continué avec les
@@ -48,7 +43,12 @@ lectures ciblées, Git et les endpoints live.
 
 ## Observation agrégée
 
-Les statistiques exactes et les constats de configuration de l'instance observée ne sont pas conservés dans le dépôt.
+Les deux routes principales ont des profils suffisamment différents pour ne
+pas partager une stratégie de cache transparente. Le trafic conversationnel
+long bénéficie déjà fortement du cache fournisseur, tandis que les abandons
+client doivent être traités par l'idempotence plutôt que par un cache de
+réponse. Les statistiques exactes et les constats de configuration de
+l'instance observée ont été retirés de cette version publique.
 
 ## Ce qui existe déjà
 

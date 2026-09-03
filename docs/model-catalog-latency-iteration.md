@@ -58,9 +58,9 @@ Ce benchmark mesure uniquement l'attente locale liée à un catalogue expiré.
 Il ne mesure pas la latence du modèle, le temps au premier token ou le réseau
 bout en bout.
 
-Le benchmark live sur une copie du store private environment n'a pas été rejoué : l'hôte
-restait inaccessible et aucun tunnel local n'écoutait sur le port 1455. La
-production n'a pas été modifiée.
+Le benchmark sur une copie privée du store n'a pas été rejoué : l'environnement
+de validation distant était indisponible. Aucun environnement distant n'a été
+modifié.
 
 ## Reproduction
 

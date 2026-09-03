@@ -951,4 +951,4 @@ Pleiades Solutions trademarks beyond Apache-2.0 Section 6.
 
 ## ⭐ Star History
 
-[![Star History Chart](https://api.star-history.com/chart?repos=thibautrey/multivibe&type=date&legend=top-left&token_removed)](https://www.star-history.com/?type=date&repos=thibautrey%2Fmultivibe)
+[View the public star history](https://www.star-history.com/?type=date&repos=thibautrey%2Fmultivibe).

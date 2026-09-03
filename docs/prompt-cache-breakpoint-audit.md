@@ -84,13 +84,9 @@ explicitement par un client.
 
 ## Limite du benchmark live
 
-Un A/B upstream n'a pas pu être exécuté :
-
-- la connexion SSH vers private environment a expiré ;
-- aucun tunnel n'écoutait sur `127.0.0.1:1455`.
-
-La production n'a pas été modifiée. Aucun store de comptes distant n'a été lu
-ou copié pendant cette itération.
+Un A/B upstream n'a pas pu être exécuté car l'environnement de validation
+distant était indisponible. Aucun environnement ni store distant n'a été
+modifié ou copié pendant cette itération.
 
 Lorsque l'hôte sera de nouveau accessible, le test utile consistera à :
 

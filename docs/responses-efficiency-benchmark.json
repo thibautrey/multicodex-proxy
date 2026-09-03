@@ -16,7 +16,7 @@
   "medianPreparationImprovementRatio": 0.999140283499159,
   "liveBenchmark": {
     "completed": false,
-    "reason": "private environment host unreachable from the development machine"
+    "reason": "Private benchmark host unavailable"
   },
   "rawContentCommitted": false
 }
