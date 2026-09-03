@@ -30,7 +30,7 @@ var (
 	containerDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 	commitPattern          = regexp.MustCompile(`^[0-9a-f]{40}$`)
 	trustedUpdateKeys      = map[string]string{
-		"701058786335e61e": "PToWAREA+GGggKzfdhP6Z6i3IqX/SsBwFmHOrtz3Dj0=",
+		"8041964146f75ff5": "/TAkcZv7iyGJrPJY1ds1WGxrS7LvoUYnUrYERX2FOgU=",
 	}
 )
 

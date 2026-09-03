@@ -478,8 +478,8 @@ jobs:
             --channel "$channel" \
             --release-dir release \
             --container-metadata container-release/container-release.json \
-            --trusted-key-id 701058786335e61e \
-            --trusted-public-key-base64 PToWAREA+GGggKzfdhP6Z6i3IqX/SsBwFmHOrtz3Dj0= \
+            --trusted-key-id 8041964146f75ff5 \
+            --trusted-public-key-base64 /TAkcZv7iyGJrPJY1ds1WGxrS7LvoUYnUrYERX2FOgU= \
             --output "release/multivibe-host-update-$channel.json"
           container_notes="$(<container-release/container-release-notes.md)"
           gh release create "$GITHUB_REF_NAME" release/* container-release/container-release.json \

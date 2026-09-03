@@ -82,7 +82,7 @@ func TestCompareVersions(t *testing.T) {
 
 func TestTrustedProductionKeyIdentity(t *testing.T) {
 	ids := trustedKeyIDs()
-	if len(ids) != 1 || ids[0] != "701058786335e61e" {
+	if len(ids) != 1 || ids[0] != "8041964146f75ff5" {
 		t.Fatalf("unexpected production trust roots: %v", ids)
 	}
 }

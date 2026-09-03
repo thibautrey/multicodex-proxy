@@ -104,8 +104,8 @@ test("the release workflow publishes a tested image from the verified Linux arch
   assert.match(workflow, /container-release\/container-release\.json/u);
   assert.match(workflow, /MULTIVIBE_UPDATE_SIGNING_KEY_BASE64/u);
   assert.match(workflow, /build-provider-host-update-feed\.mjs/u);
-  assert.match(workflow, /--trusted-key-id 701058786335e61e/u);
-  assert.match(workflow, /--trusted-public-key-base64 PToWAREA\+GGggKzfdhP6Z6i3IqX\/SsBwFmHOrtz3Dj0=/u);
+  assert.match(workflow, /--trusted-key-id 8041964146f75ff5/u);
+  assert.match(workflow, /--trusted-public-key-base64 \/TAkcZv7iyGJrPJY1ds1WGxrS7LvoUYnUrYERX2FOgU=/u);
   assert.match(workflow, /--notes "\$container_notes"/u);
 });
 
