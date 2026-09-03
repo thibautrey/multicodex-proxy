@@ -107,7 +107,12 @@ export function ApiKeysTab({
             <p className="muted">Environment-managed keys are read-only and must be changed in deployment configuration.</p>
           </div>
         </div>
-        <div className="table-wrap">
+        {!apiKeys.length ? (
+          <div className="compact-empty-state">
+            <strong>No application keys yet</strong>
+            <span>Proxy access is unrestricted until you create the first key.</span>
+          </div>
+        ) : <div className="table-wrap">
           <table className="data-table">
             <thead>
               <tr>
@@ -160,21 +165,17 @@ export function ApiKeysTab({
                   </td>
                 </tr>
               ))}
-              {!apiKeys.length && (
-                <tr><td colSpan={6} className="muted empty-row">No API keys yet. Proxy access is currently unrestricted.</td></tr>
-              )}
             </tbody>
           </table>
-        </div>
+        </div>}
       </section>
 
-      <section className="panel">
-        <div className="section-split-header">
-          <div>
-            <h2>Signed result webhooks</h2>
-            <p className="muted">Register destinations before applications may reference them with X-MultiVibe-Webhook.</p>
-          </div>
-        </div>
+      <details className="panel advanced-disclosure">
+        <summary>
+          <span><strong>Advanced: signed result webhooks</strong><small>Register destinations for deferred results.</small></span>
+          <span className="advanced-disclosure-toggle">Show</span>
+        </summary>
+        <div className="advanced-disclosure-content">
         <form
           className="api-key-create"
           onSubmit={(event) => {
@@ -195,18 +196,18 @@ export function ApiKeysTab({
           <label className="control-field"><span className="control-label">HTTPS endpoint</span><input type="url" value={webhookUrl} onChange={(event) => setWebhookUrl(event.target.value)} placeholder="https://worker.example.com/multivibe" /></label>
           <button className="btn" type="submit" disabled={!webhookApplication || !webhookUrl}>Register webhook</button>
         </form>
-        <div className="table-wrap">
+        {policies.some((policy) => policy.webhooks.length) && <div className="table-wrap">
           <table className="data-table">
             <thead><tr><th>Application</th><th>ID</th><th>URL</th><th>Status</th><th /></tr></thead>
             <tbody>
               {policies.flatMap((policy) => policy.webhooks.map((webhook) => (
                 <tr key={webhook.id}><td>{policy.application}</td><td className="mono">{webhook.id}</td><td className="mono">{webhook.url}</td><td><span className="badge badge-live">{webhook.enabled ? "Enabled" : "Disabled"}</span></td><td><button className="btn danger" onClick={() => void deleteWebhook(policy.application, webhook.id)}>Delete</button></td></tr>
               )))}
-              {!policies.some((policy) => policy.webhooks.length) && <tr><td colSpan={5} className="muted empty-row">No registered webhooks.</td></tr>}
             </tbody>
           </table>
+        </div>}
         </div>
-      </section>
+      </details>
 
       {createdKey && (
         <div className="modal-backdrop" role="presentation">
