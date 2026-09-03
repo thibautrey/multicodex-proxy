@@ -164,7 +164,7 @@ func cloudAPIURL(raw string) (*url.URL, error) {
 	if err != nil || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
 		return nil, errors.New("provider Cloud API URL is invalid")
 	}
-	production := parsed.Scheme == "https" && parsed.Host == "api.multivibe.cloud"
+	production := parsed.Scheme == "https" && parsed.Host == "auth.multivibe.cloud"
 	loopback := parsed.Scheme == "http" && parsed.Port() != "" && (parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "::1")
 	if !production && !loopback {
 		return nil, errors.New("provider Cloud API URL must be production HTTPS or literal loopback HTTP")

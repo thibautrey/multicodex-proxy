@@ -188,7 +188,7 @@ const providerAgent = startEmbeddedProviderAgent({
 const hostUpdateController = MULTIVIBE_HOST_APPLICATION
   ? new HostUpdateController(MULTIVIBE_HOST_UPDATER_BINARY, providerAgent)
   : undefined;
-const providerWorkerEstimateClient = createProviderWorkerEstimateClient(PROVIDER_AGENT_CLOUD_API_URL);
+const providerWorkerEstimateClient = createProviderWorkerEstimateClient(ANONYMOUS_USAGE_API_BASE_URL);
 await traceManager.seedStatsHistoryIfMissing();
 const anonymousUsageSharing = createAnonymousUsageSharingWorker({
   settingsStore: store,

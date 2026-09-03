@@ -558,7 +558,7 @@ export function isValidProviderCapacityPolicy(value: unknown): value is Provider
 function providerCloudApiUrl(value: string): string {
   let parsed: URL;
   try { parsed = new URL(value); } catch { throw new Error("provider Cloud API URL is invalid"); }
-  const production = parsed.protocol === "https:" && parsed.host === "api.multivibe.cloud";
+  const production = parsed.protocol === "https:" && parsed.host === "auth.multivibe.cloud";
   const loopback = parsed.protocol === "http:" && Boolean(parsed.port) && ["127.0.0.1", "[::1]"].includes(parsed.hostname);
   if ((!production && !loopback) || parsed.username || parsed.password || parsed.search || parsed.hash
     || (parsed.pathname !== "/" && parsed.pathname !== "")) throw new Error("provider Cloud API URL is invalid");
@@ -665,7 +665,7 @@ export function startEmbeddedProviderAgent(options: {
       throw new Error("managed provider runtime paths must be clean absolute paths");
     }
   }
-  const cloudApiUrl = providerCloudApiUrl(options.cloudApiUrl ?? "https://api.multivibe.cloud");
+  const cloudApiUrl = providerCloudApiUrl(options.cloudApiUrl ?? "https://auth.multivibe.cloud");
   const sourceEnvironment = options.environment ?? process.env;
   const configuredListenAddress = sourceEnvironment.MULTIVIBE_PROVIDER_AGENT_LISTEN ?? "127.0.0.1:1460";
   if (configuredListenAddress !== "127.0.0.1:1460" && configuredListenAddress !== "[::1]:1460") {

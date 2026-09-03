@@ -706,7 +706,7 @@ socket to a relay, enable routing, or create compensation eligibility.
 `PROVIDER_AGENT_ENROLLMENT_STATE_PATH` selects the separate submitted-node
 state. The authenticated Cloud-shadow enrollment route sends only the exact
 selected-model consent manifest to `PROVIDER_AGENT_CLOUD_API_URL`, which is
-restricted to `https://api.multivibe.cloud` (or literal loopback HTTP in
+restricted to `https://auth.multivibe.cloud` (or literal loopback HTTP in
 tests), signs the returned challenge, persists no grant or proof, freezes the
 submitted selection, and keeps routing and compensation false.
 
@@ -891,7 +891,7 @@ file before they reach the container.
 | `PROVIDER_AGENT_RUNTIME_STATE_PATH` | beside `STORE_PATH` | Manual loopback endpoints and optional runtime bearers |
 | `PROVIDER_AGENT_DEVICE_KEY_PATH` | beside `STORE_PATH` | Ed25519 device identity and relay-shadow sequence |
 | `PROVIDER_AGENT_ENROLLMENT_STATE_PATH` | beside `STORE_PATH` | Submitted Cloud shadow node view without the grant |
-| `PROVIDER_AGENT_CLOUD_API_URL` | `https://api.multivibe.cloud` | Fixed Cloud enrollment API origin |
+| `PROVIDER_AGENT_CLOUD_API_URL` | `https://auth.multivibe.cloud` | Fixed Cloud enrollment API origin |
 | `OAUTH_STATE_PATH` | `/data/oauth-state.json` | OAuth state |
 | `TRACE_FILE_PATH` | `/data/requests-trace.jsonl` | Recent traces |
 | `TRACE_STATS_HISTORY_PATH` | `/data/requests-stats-history.jsonl` | Long-term lightweight usage |

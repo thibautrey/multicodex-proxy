@@ -39,7 +39,7 @@ export const PROVIDER_AGENT_ENROLLMENT_STATE_PATH =
 export const PROVIDER_AGENT_CAPACITY_POLICY_PATH =
   process.env.PROVIDER_AGENT_CAPACITY_POLICY_PATH ?? path.resolve(path.dirname(STORE_PATH), "provider-agent-capacity-policy.json");
 export const PROVIDER_AGENT_CLOUD_API_URL =
-  process.env.PROVIDER_AGENT_CLOUD_API_URL ?? "https://api.multivibe.cloud";
+  process.env.PROVIDER_AGENT_CLOUD_API_URL ?? "https://auth.multivibe.cloud";
 export const PROVIDER_AGENT_DEMAND_PLAN_PATH =
   process.env.PROVIDER_AGENT_DEMAND_PLAN_PATH ?? path.resolve(path.dirname(STORE_PATH), "provider-agent-demand-plan.json");
 export const PROVIDER_AGENT_MODEL_CATALOG_PATH =

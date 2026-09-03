@@ -224,9 +224,12 @@ func TestCloudEnrollmentSubmitsExactConsentPersistsNoGrantAndStaysNonCommercial(
 }
 
 func TestCloudEnrollmentRejectsUnselectedModelsAndUntrustedOriginsBeforeNetwork(t *testing.T) {
+	if _, err := cloudAPIURL("https://auth.multivibe.cloud"); err != nil {
+		t.Fatalf("trusted Cloud enrollment origin rejected: %v", err)
+	}
 	for _, raw := range []string{
-		"http://api.multivibe.cloud", "https://evil.example", "http://localhost:8080", "http://192.168.1.10:8080",
-		"https://user:secret@api.multivibe.cloud", "https://api.multivibe.cloud/path",
+		"https://api.multivibe.cloud", "http://auth.multivibe.cloud", "https://evil.example", "http://localhost:8080", "http://192.168.1.10:8080",
+		"https://user:secret@auth.multivibe.cloud", "https://auth.multivibe.cloud/path",
 	} {
 		if _, err := cloudAPIURL(raw); err == nil {
 			t.Fatalf("untrusted Cloud origin accepted: %s", raw)

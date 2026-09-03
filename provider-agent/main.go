@@ -665,7 +665,7 @@ func main() {
 			os.Exit(2)
 		}
 	}
-	cloudURL, err := cloudAPIURL(envDefault("MULTIVIBE_CLOUD_API_URL", "https://api.multivibe.cloud"))
+	cloudURL, err := cloudAPIURL(envDefault("MULTIVIBE_CLOUD_API_URL", "https://auth.multivibe.cloud"))
 	if err != nil {
 		logger.Error("provider_agent_configuration_invalid", "error", err.Error())
 		os.Exit(2)
