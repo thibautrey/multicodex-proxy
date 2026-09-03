@@ -36,6 +36,7 @@ private struct DesktopSession: Decodable {
 final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private var refreshTimer: Timer?
+    private var signalSources: [DispatchSourceSignal] = []
     private var ownedService: Process?
     private var operational = false
     private var statusText = "Starting…"
@@ -51,6 +52,7 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureStatusItem()
+        configureTerminationSignals()
         rebuildMenu()
         ensureServiceIsRunning()
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
@@ -76,6 +78,16 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate {
             button.image = NSImage(systemSymbolName: "waveform.path", accessibilityDescription: "MultiVibe")
         }
         button.toolTip = "MultiVibe Host"
+    }
+
+    private func configureTerminationSignals() {
+        for signalNumber in [SIGINT, SIGTERM] {
+            signal(signalNumber, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: .main)
+            source.setEventHandler { NSApplication.shared.terminate(nil) }
+            source.resume()
+            signalSources.append(source)
+        }
     }
 
     private func rebuildMenu() {
