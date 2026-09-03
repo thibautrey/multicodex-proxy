@@ -1143,7 +1143,8 @@ async function validateTree(root, options, archiveRoot) {
     `${macPrefix}/Resources/ollama-runtime/.multivibe-bundle.json`, `${macPrefix}/Helpers/multivibe-provider-agent`,
     `${macPrefix}/Helpers/multivibe-runtime-benchmark`,
     `${macPrefix}/MacOS/multivibe-host`, `${macPrefix}/MacOS/MultiVibe Host`,
-    `${macPrefix}/Resources/MultiVibeMenuBarIcon.png`, `${macPrefix}/Resources/app/dist/server.js`,
+    `${macPrefix}/Resources/MultiVibeMenuBarIcon.png`, `${macPrefix}/Resources/MultiVibe.icns`,
+    `${macPrefix}/Resources/app/dist/server.js`,
     `${macPrefix}/Resources/app/dist/instrument.js`, `${macPrefix}/Resources/provider/provider-model-catalog.json`,
     `${macPrefix}/Resources/app/modules/security/multivibe.module.json`,
     `${macPrefix}/Resources/app/modules/security/dist/index.js`,
@@ -1171,6 +1172,12 @@ async function validateTree(root, options, archiveRoot) {
     "resources/provider/examples/runtime-benchmark-spec.json",
     "resources/provider/provider-host-dependencies.json", "verify-provider-host.mjs");
   if (required.some((file) => !seen.has(file))) throw new Error("provider-host archive is missing a required file");
+  if (manifest.platform === "darwin") {
+    const icon = await readBinaryHeader(path.join(root, macPrefix, "Resources", "MultiVibe.icns"), 8);
+    if (icon.length < 8 || icon.subarray(0, 4).toString("ascii") !== "icns" || icon.readUInt32BE(4) < 1024) {
+      throw new Error("provider-host macOS application icon is invalid");
+    }
+  }
   if (manifest.platform === "darwin" && manifest.macOSSignature !== "unsigned-development" &&
     !seen.has(`${macPrefix}/_CodeSignature/CodeResources`)) {
     throw new Error("provider-host signed application metadata is missing");
@@ -1286,10 +1293,12 @@ async function validateMacDiskImage(diskImage, work, options) {
       path.join(application, "Contents", "Info.plist")], { capture: true, captureLimit: 4096 });
     const bundleExecutable = await command("plutil", ["-extract", "CFBundleExecutable", "raw", "-o", "-",
       path.join(application, "Contents", "Info.plist")], { capture: true, captureLimit: 4096 });
+    const bundleIcon = await command("plutil", ["-extract", "CFBundleIconFile", "raw", "-o", "-",
+      path.join(application, "Contents", "Info.plist")], { capture: true, captureLimit: 4096 });
     const menuBarOnly = await command("plutil", ["-extract", "LSUIElement", "raw", "-o", "-",
       path.join(application, "Contents", "Info.plist")], { capture: true, captureLimit: 4096 });
     if (plistVersion !== metadata.version || bundleIdentifier !== "cloud.multivibe.host" ||
-      bundleExecutable !== "MultiVibe Host" || menuBarOnly !== "true") {
+      bundleExecutable !== "MultiVibe Host" || bundleIcon !== "MultiVibe.icns" || menuBarOnly !== "true") {
       throw new Error("provider-host disk image application identity is invalid");
     }
     if (metadata.macOSSignature !== "unsigned-development") {

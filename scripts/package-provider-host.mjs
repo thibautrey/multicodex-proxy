@@ -400,6 +400,27 @@ async function signMacApplication(application, identity) {
   await command("codesign", ["--verify", "--deep", "--strict", "--verbose=2", application]);
 }
 
+async function createMacApplicationIcon(work, destination) {
+  const source = path.join(repositoryRoot, "web", "public", "assets", "brand", "favicon-1024.png");
+  const sourceInfo = await lstat(source);
+  if (!sourceInfo.isFile() || sourceInfo.isSymbolicLink() || sourceInfo.size < 1024) {
+    throw new Error("the official MultiVibe application icon is unavailable");
+  }
+  const iconset = path.join(work, "MultiVibe.iconset");
+  await mkdir(iconset, { mode: 0o700 });
+  for (const [name, pixels] of [
+    ["icon_16x16.png", 16], ["icon_16x16@2x.png", 32],
+    ["icon_32x32.png", 32], ["icon_32x32@2x.png", 64],
+    ["icon_128x128.png", 128], ["icon_128x128@2x.png", 256],
+    ["icon_256x256.png", 256], ["icon_256x256@2x.png", 512],
+    ["icon_512x512.png", 512], ["icon_512x512@2x.png", 1024],
+  ]) {
+    await command("sips", ["--resampleHeightWidth", String(pixels), String(pixels), source, "--out", path.join(iconset, name)]);
+  }
+  await command("iconutil", ["--convert", "icns", "--output", destination, iconset]);
+  await chmod(destination, 0o444);
+}
+
 async function notarizeMacApplication(application, profile, work) {
   const submission = path.join(work, "notary-submission.zip");
   await command("ditto", ["-c", "-k", "--keepParent", application, submission]);
@@ -484,6 +505,7 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
       path.join(repositoryRoot, "web", "public", "assets", "brand", "favicon-32x32.png"),
       path.join(contents, "Resources", "MultiVibeMenuBarIcon.png"),
     );
+    await createMacApplicationIcon(work, path.join(contents, "Resources", "MultiVibe.icns"));
   } else {
     applicationDirectory = path.join(root, "app");
     nodeDestination = path.join(root, "bin", "node");

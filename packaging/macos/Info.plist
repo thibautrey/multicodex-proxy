@@ -10,6 +10,8 @@
   <string>MultiVibe Host</string>
   <key>CFBundleIdentifier</key>
   <string>cloud.multivibe.host</string>
+  <key>CFBundleIconFile</key>
+  <string>MultiVibe.icns</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
