@@ -123,7 +123,18 @@ jobs:
 
   build-macos:
     needs: validate-tag
-    runs-on: macos-15
+    name: build-macos-${{ matrix.architecture }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: arm64
+            machine: arm64
+            runner: macos-15
+          - architecture: amd64
+            machine: x86_64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 150
     permissions:
       contents: read
@@ -134,12 +145,12 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Require macOS Apple Silicon
+      - name: Require the selected macOS architecture
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || {
-            echo "::error::The macOS provider archive requires an Apple Silicon runner."
+          [[ "$(uname -s)" == Darwin && "$(uname -m)" == "${{ matrix.machine }}" ]] || {
+            echo "::error::The macOS provider archive runner architecture is wrong."
             exit 1
           }
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -204,7 +215,7 @@ jobs:
         run: >-
           npm run package:provider-host --
           --version "${{ needs.validate-tag.outputs.version }}"
-          --output release-macos
+          --output "release-macos-${{ matrix.architecture }}"
           --sign-identity "$SIGN_IDENTITY"
           --notary-profile multivibe-release
       - name: Remove ephemeral Apple credentials
@@ -217,14 +228,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          archive="release-macos/multivibe-host_${{ needs.validate-tag.outputs.version }}_darwin_arm64.dmg"
+          archive="release-macos-${{ matrix.architecture }}/multivibe-host_${{ needs.validate-tag.outputs.version }}_darwin_${{ matrix.architecture }}.dmg"
           npm run verify:provider-host -- "$archive"
       - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
       - name: Generate the macOS CycloneDX SBOM
         shell: bash
         run: |
           set -euo pipefail
-          archive="release-macos/multivibe-host_${{ needs.validate-tag.outputs.version }}_darwin_arm64.dmg"
+          archive="release-macos-${{ matrix.architecture }}/multivibe-host_${{ needs.validate-tag.outputs.version }}_darwin_${{ matrix.architecture }}.dmg"
           scan_root="$RUNNER_TEMP/provider-host-macos-sbom"
           mkdir -p "$scan_root"
           mount_root="$RUNNER_TEMP/provider-host-macos-volume"
@@ -232,18 +243,18 @@ jobs:
           hdiutil attach -quiet -readonly -nobrowse -mountpoint "$mount_root" "$archive"
           trap 'hdiutil detach -quiet "$mount_root"' EXIT
           ditto "$mount_root/MultiVibe Host.app" "$scan_root/MultiVibe Host.app"
-          syft scan "dir:$scan_root" -o "cyclonedx-json=release-macos/multivibe-host_${{ needs.validate-tag.outputs.version }}_darwin_arm64.cdx.json"
+          syft scan "dir:$scan_root" -o "cyclonedx-json=release-macos-${{ matrix.architecture }}/multivibe-host_${{ needs.validate-tag.outputs.version }}_darwin_${{ matrix.architecture }}.cdx.json"
       - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
-          subject-path: release-macos/multivibe-host_${{ needs.validate-tag.outputs.version }}_darwin_arm64.dmg
+          subject-path: release-macos-${{ matrix.architecture }}/multivibe-host_${{ needs.validate-tag.outputs.version }}_darwin_${{ matrix.architecture }}.dmg
       - uses: actions/attest-sbom@bd218ad0dbcb3e146bd073d1d9c6d78e08aa8a0b # v2.4.0
         with:
-          subject-path: release-macos/multivibe-host_${{ needs.validate-tag.outputs.version }}_darwin_arm64.dmg
-          sbom-path: release-macos/multivibe-host_${{ needs.validate-tag.outputs.version }}_darwin_arm64.cdx.json
+          subject-path: release-macos-${{ matrix.architecture }}/multivibe-host_${{ needs.validate-tag.outputs.version }}_darwin_${{ matrix.architecture }}.dmg
+          sbom-path: release-macos-${{ matrix.architecture }}/multivibe-host_${{ needs.validate-tag.outputs.version }}_darwin_${{ matrix.architecture }}.cdx.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: provider-host-macos
-          path: release-macos/*
+          name: provider-host-macos-${{ matrix.architecture }}
+          path: release-macos-${{ matrix.architecture }}/*
           if-no-files-found: error
           compression-level: 0
 

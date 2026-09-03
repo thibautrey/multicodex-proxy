@@ -203,7 +203,7 @@ func validateBenchmarkDependency(dependency benchmarkDependency) error {
 		return runtimebenchmark.ErrInvalid
 	}
 	for platform, artifact := range dependency.Artifacts {
-		if (platform != "darwin-arm64" && platform != "linux-amd64") || !benchmarkRawDigestPattern.MatchString(artifact.SHA256) ||
+		if (platform != "darwin-arm64" && platform != "darwin-amd64" && platform != "linux-amd64") || !benchmarkRawDigestPattern.MatchString(artifact.SHA256) ||
 			(artifact.Archive != "tar-gzip" && artifact.Archive != "tar-zstd") || !safeBenchmarkHTTPSURL(artifact.URL) {
 			return runtimebenchmark.ErrInvalid
 		}

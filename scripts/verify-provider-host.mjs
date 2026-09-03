@@ -625,7 +625,7 @@ async function inspectArchive(archive) {
 
 function validateDependency(name, dependency, expectedArchives) {
   if (!exactKeys(dependency, ["version", "artifacts"]) || !/^\d+\.\d+\.\d+$/u.test(dependency.version) ||
-    !exactKeys(dependency.artifacts, ["darwin-arm64", "linux-amd64"])) {
+    !exactKeys(dependency.artifacts, ["darwin-amd64", "darwin-arm64", "linux-amd64"])) {
     throw new Error(`${name} dependency metadata is invalid`);
   }
   for (const [target, artifact] of Object.entries(dependency.artifacts)) {
@@ -665,10 +665,10 @@ function isELFAmd64(header) {
     header[4] === 2 && header[5] === 1 && header.readUInt16LE(18) === 0x3e;
 }
 
-function isMachOArm64(header) {
+function isMachOArchitecture(header, cpuType) {
   if (header.length < 8) return false;
-  if (header.readUInt32LE(0) === 0xfeedfacf) return header.readUInt32LE(4) === 0x0100000c;
-  if (header.readUInt32BE(0) === 0xfeedfacf) return header.readUInt32BE(4) === 0x0100000c;
+  if (header.readUInt32LE(0) === 0xfeedfacf) return header.readUInt32LE(4) === cpuType;
+  if (header.readUInt32BE(0) === 0xfeedfacf) return header.readUInt32BE(4) === cpuType;
   const magic = header.readUInt32BE(0);
   const fat64 = magic === 0xcafebabf;
   if (magic !== 0xcafebabe && !fat64) return false;
@@ -676,7 +676,7 @@ function isMachOArm64(header) {
   const entryBytes = fat64 ? 32 : 20;
   if (count < 1 || count > 32 || header.length < 8 + count * entryBytes) return false;
   for (let index = 0; index < count; index += 1) {
-    if (header.readUInt32BE(8 + index * entryBytes) === 0x0100000c) return true;
+    if (header.readUInt32BE(8 + index * entryBytes) === cpuType) return true;
   }
   return false;
 }
@@ -702,7 +702,9 @@ async function validateNativeFiles(root, manifest) {
     (entry.path.startsWith(runtimePrefix) && (entry.mode & 0o111) !== 0));
   for (const entry of native) {
     const header = await readBinaryHeader(path.join(root, entry.path));
-    const valid = mac ? (isMachO(header) && (entry.path.startsWith(runtimePrefix) && !explicit.includes(entry.path) || isMachOArm64(header))) :
+    const macCPUType = manifest.architecture === "arm64" ? 0x0100000c : manifest.architecture === "amd64" ? 0x01000007 : null;
+    const valid = mac ? (macCPUType !== null && isMachO(header) &&
+      (entry.path.startsWith(runtimePrefix) && !explicit.includes(entry.path) || isMachOArchitecture(header, macCPUType))) :
       isELFAmd64(header);
     if (!valid) {
       throw new Error(`provider-host native file has the wrong architecture: ${entry.path}`);
@@ -1081,7 +1083,7 @@ async function validateTree(root, options, archiveRoot) {
   const manifest = JSON.parse(manifestRaw);
   const manifestKeys = ["schemaVersion", "product", "version", "sourceCommit", "platform", "architecture",
     "sourceTreeDirty", "releaseReady", "macOSSignature", "node", "managedRuntime", "files"];
-  const targetIsValid = (manifest.platform === "darwin" && manifest.architecture === "arm64") ||
+  const targetIsValid = (manifest.platform === "darwin" && ["arm64", "amd64"].includes(manifest.architecture)) ||
     (manifest.platform === "linux" && manifest.architecture === "amd64");
   if (!exactKeys(manifest, manifestKeys) || manifest.schemaVersion !== 1 || manifest.product !== "multivibe-host" ||
     typeof manifest.version !== "string" || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(manifest.version) ||
@@ -1096,8 +1098,8 @@ async function validateTree(root, options, archiveRoot) {
       (manifest.platform !== "darwin" || manifest.macOSSignature === "developer-id-notarized"))) {
     throw new Error("provider-host release-readiness metadata is inconsistent");
   }
-  validateDependency("Node", manifest.node, { "darwin-arm64": "tar-gzip", "linux-amd64": "tar-gzip" });
-  validateDependency("Ollama", manifest.managedRuntime, { "darwin-arm64": "tar-gzip", "linux-amd64": "tar-zstd" });
+  validateDependency("Node", manifest.node, { "darwin-amd64": "tar-gzip", "darwin-arm64": "tar-gzip", "linux-amd64": "tar-gzip" });
+  validateDependency("Ollama", manifest.managedRuntime, { "darwin-amd64": "tar-gzip", "darwin-arm64": "tar-gzip", "linux-amd64": "tar-zstd" });
 
   if (archiveRoot) {
     const expectedRoot = `multivibe-host_${manifest.version}_${manifest.platform}_${manifest.architecture}`;
@@ -1221,7 +1223,8 @@ async function validateTree(root, options, archiveRoot) {
     if (manifest.releaseReady !== true) {
       throw new Error("provider-host runtime verification requires a release-ready archive");
     }
-    const nativeTarget = (manifest.platform === "darwin" && manifest.architecture === "arm64" && process.platform === "darwin" && process.arch === "arm64") ||
+    const nativeTarget = (manifest.platform === "darwin" && process.platform === "darwin" &&
+      ((manifest.architecture === "arm64" && process.arch === "arm64") || (manifest.architecture === "amd64" && process.arch === "x64"))) ||
       (manifest.platform === "linux" && manifest.architecture === "amd64" && process.platform === "linux" && process.arch === "x64");
     if (!nativeTarget) throw new Error("provider-host runtime verification requires the matching target host");
     const hostVersion = await command(host, ["version"], { capture: true, captureLimit: 4096 });
@@ -1242,8 +1245,8 @@ async function validateTree(root, options, archiveRoot) {
 }
 
 async function validateMacDiskImage(diskImage, work, options) {
-  if (process.platform !== "darwin" || process.arch !== "arm64") {
-    throw new Error("provider-host macOS disk image verification requires Apple Silicon macOS");
+  if (process.platform !== "darwin" || !["arm64", "x64"].includes(process.arch)) {
+    throw new Error("provider-host macOS disk image verification requires macOS");
   }
   const mount = path.join(work, "mounted");
   await mkdir(mount, { mode: 0o700 });
@@ -1266,7 +1269,7 @@ async function validateMacDiskImage(diskImage, work, options) {
       metadata.product !== "multivibe-host" || typeof metadata.version !== "string" ||
       !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(metadata.version) ||
       typeof metadata.sourceCommit !== "string" || !/^[a-f0-9]{40}$/u.test(metadata.sourceCommit) ||
-      metadata.platform !== "darwin" || metadata.architecture !== "arm64" ||
+      metadata.platform !== "darwin" || !["arm64", "amd64"].includes(metadata.architecture) ||
       typeof metadata.sourceTreeDirty !== "boolean" || typeof metadata.releaseReady !== "boolean" ||
       !["unsigned-development", "developer-id", "developer-id-notarized"].includes(metadata.macOSSignature) ||
       metadata.releaseReady !== (!metadata.sourceTreeDirty && metadata.macOSSignature === "developer-id-notarized")) {

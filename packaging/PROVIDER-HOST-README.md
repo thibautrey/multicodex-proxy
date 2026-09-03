@@ -2,10 +2,10 @@
 
 This archive contains the auditable MultiVibe Core, the provider host launcher,
 the local provider agent, pinned Node.js and Ollama runtimes, the approved local
-model catalog and the bundled Security module. It supports only Apple Silicon
-on macOS and Linux amd64 hosts with a working NVIDIA GPU of compute capability
-7.0 or newer. No system Node.js, Ollama, package manager or administrator access
-is required after downloading the matching archive.
+model catalog and the bundled Security module. It supports Apple Silicon and
+Intel Macs, plus Linux amd64 hosts with a working NVIDIA GPU of compute
+capability 7.0 or newer. No system Node.js, Ollama, package manager or
+administrator access is required after downloading the matching archive.
 
 The archive also includes the optional `multivibe-runtime-benchmark` CLI, the
 reviewed runtime-profile catalog, closed JSON schemas and disabled examples.
@@ -62,9 +62,10 @@ Use `--require-runtime` on a matching supported host to additionally execute
 the version checks and `doctor`. The installers always require that runtime
 check.
 
-## macOS Apple Silicon
+## macOS Apple Silicon and Intel
 
-Open the `.dmg`, then drag **MultiVibe Host** onto the **Applications** shortcut, just like a standard macOS app.
+Download the `.dmg` matching the Mac architecture, open it, then drag
+**MultiVibe Host** onto the **Applications** shortcut, just like a standard macOS app.
 The disk image and application are both signed with Developer ID and notarized by Apple.
 
 The installer requires no administrator privileges. It verifies the app's code

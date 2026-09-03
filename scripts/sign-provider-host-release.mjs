@@ -94,9 +94,9 @@ async function main() {
     .filter((entry) => entry.isFile() && /^multivibe-host_[0-9A-Za-z._-]+\.(?:dmg|tar\.gz)$/u.test(entry.name))
     .map((entry) => entry.name)
     .sort();
-  if (entries.length !== 2 || !entries.some((name) => name.includes("darwin_arm64")) ||
-    !entries.some((name) => name.includes("linux_amd64"))) {
-    throw new Error("release directory must contain exactly one macOS and one Linux provider-host archive");
+  if (entries.length !== 3 || !entries.some((name) => name.includes("darwin_arm64")) ||
+    !entries.some((name) => name.includes("darwin_amd64")) || !entries.some((name) => name.includes("linux_amd64"))) {
+    throw new Error("release directory must contain exactly one Apple Silicon, one Intel macOS, and one Linux provider-host archive");
   }
   const reports = [];
   for (const name of entries) {

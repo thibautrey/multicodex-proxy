@@ -37,6 +37,10 @@ test("production packaging retains only the reviewed target native prebuild", as
     await pruneProductionNativeDependencies(root, "darwin-arm64");
     assert.deepEqual(await readdir(prebuilds), ["darwin-arm64.node"]);
   });
+  await withFixture(async (root, prebuilds) => {
+    await pruneProductionNativeDependencies(root, "darwin-amd64");
+    assert.deepEqual(await readdir(prebuilds), ["darwin-x64.node"]);
+  });
 });
 
 test("production native prebuild pruning rejects changed or unsafe inventories", async () => {

@@ -391,10 +391,13 @@ func managedOllamaPlatform(goos, goarch string) (string, error) {
 	if goos == "darwin" && goarch == "arm64" {
 		return "darwin-arm64", nil
 	}
+	if goos == "darwin" && goarch == "amd64" {
+		return "darwin-amd64", nil
+	}
 	if goos == "linux" && goarch == "amd64" {
 		return "linux-amd64", nil
 	}
-	return "", errors.New("managed Ollama supports only darwin/arm64 and linux/amd64")
+	return "", errors.New("managed Ollama supports only darwin/arm64, darwin/amd64 and linux/amd64")
 }
 
 func resolveManagedOllamaTar(goos, configured string) (string, error) {
@@ -446,11 +449,11 @@ func openManagedOllamaDependencyManifest(path string) (managedOllamaDependencyMa
 }
 
 func validateManagedOllamaDependencyManifest(document managedOllamaDependencyManifest) error {
-	if document.SchemaVersion != 1 || len(document.Node) == 0 || document.Ollama.Version != managedOllamaVersion || len(document.Ollama.Artifacts) != 2 {
+	if document.SchemaVersion != 1 || len(document.Node) == 0 || document.Ollama.Version != managedOllamaVersion || len(document.Ollama.Artifacts) != 3 {
 		return errors.New("managed Ollama dependency manifest is invalid")
 	}
-	expectedArchive := map[string]string{"darwin-arm64": "tar-gzip", "linux-amd64": "tar-zstd"}
-	expectedFilename := map[string]string{"darwin-arm64": "ollama-darwin.tgz", "linux-amd64": "ollama-linux-amd64.tar.zst"}
+	expectedArchive := map[string]string{"darwin-arm64": "tar-gzip", "darwin-amd64": "tar-gzip", "linux-amd64": "tar-zstd"}
+	expectedFilename := map[string]string{"darwin-arm64": "ollama-darwin.tgz", "darwin-amd64": "ollama-darwin.tgz", "linux-amd64": "ollama-linux-amd64.tar.zst"}
 	for platform, archive := range expectedArchive {
 		artifact, exists := document.Ollama.Artifacts[platform]
 		if !exists || artifact.Archive != archive || !validManagedOllamaSHA256(artifact.SHA256) {
@@ -946,7 +949,7 @@ func (manager *managedOllama) commitStagedRuntime(staging, archiveSHA256 string)
 
 func managedOllamaTarArguments(platform, archivePath, staging string) ([]string, []string, error) {
 	switch platform {
-	case "darwin-arm64":
+	case "darwin-arm64", "darwin-amd64":
 		return []string{"-tzf", archivePath}, []string{"-xzf", archivePath, "-C", staging, "--no-same-owner"}, nil
 	case "linux-amd64":
 		return []string{"--zstd", "-tf", archivePath}, []string{"--zstd", "-xf", archivePath, "-C", staging, "--no-same-owner"}, nil

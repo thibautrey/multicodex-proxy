@@ -196,10 +196,10 @@ inventory stay below the private root. The packaged Ollama tree is verified and
 adopted atomically; the credential-free HTTPS download is only a bounded,
 SHA-256-pinned fallback.
 
-On Apple Silicon, the host reads total unified memory only through the fixed
+On macOS arm64 and amd64, the host reads total physical memory only through the fixed
 `/usr/sbin/sysctl -n hw.memsize` probe with a short timeout and strict numeric
-bounds. Because Metal and the CPU share that memory, the planner exposes at most
-50% of the physical total as accelerator capacity; the operator's configured
+bounds. The planner exposes at most 50% of the physical total as compute
+capacity, leaving the other half to macOS and CPU pressure; the operator's configured
 `gpu_vram_percent` limit is applied after this conservative cap. A missing,
 malformed, zero or implausibly large probe result disables managed compute
 capacity instead of guessing.

@@ -68,10 +68,13 @@ function target() {
   if (process.platform === "darwin" && process.arch === "arm64") {
     return { key: "darwin-arm64", goos: "darwin", goarch: "arm64", archive: "dmg" };
   }
+  if (process.platform === "darwin" && process.arch === "x64") {
+    return { key: "darwin-amd64", goos: "darwin", goarch: "amd64", archive: "dmg" };
+  }
   if (process.platform === "linux" && process.arch === "x64") {
     return { key: "linux-amd64", goos: "linux", goarch: "amd64", archive: "tar.gz" };
   }
-  throw new Error("provider-host packages can be built only on Apple Silicon or Linux amd64");
+  throw new Error("provider-host packages can be built only on macOS arm64, macOS amd64, or Linux amd64");
 }
 
 async function command(program, args, options = {}) {
@@ -580,12 +583,12 @@ async function main() {
     !/^\d+\.\d+\.\d+$/u.test(dependencies.ollama?.version ?? "")) {
     throw new Error("provider-host dependency manifest is invalid");
   }
-  for (const key of ["darwin-arm64", "linux-amd64"]) {
+  for (const key of ["darwin-arm64", "darwin-amd64", "linux-amd64"]) {
     validateDependency(`Node ${key}`, dependencies.node?.artifacts?.[key], "tar-gzip");
     validateDependency(
       `Ollama ${key}`,
       dependencies.ollama?.artifacts?.[key],
-      key === "darwin-arm64" ? "tar-gzip" : "tar-zstd",
+      key.startsWith("darwin-") ? "tar-gzip" : "tar-zstd",
     );
   }
   const initialStatus = await command("git", ["status", "--porcelain"], { capture: true });

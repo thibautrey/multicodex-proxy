@@ -173,6 +173,9 @@ func writeManagedOllamaTestDependencies(t *testing.T, directory, darwinSHA strin
 				"darwin-arm64": map[string]any{
 					"url": "https://github.com/ollama/ollama/releases/download/v0.33.2/ollama-darwin.tgz", "sha256": darwinSHA, "archive": "tar-gzip",
 				},
+				"darwin-amd64": map[string]any{
+					"url": "https://github.com/ollama/ollama/releases/download/v0.33.2/ollama-darwin.tgz", "sha256": darwinSHA, "archive": "tar-gzip",
+				},
 				"linux-amd64": map[string]any{
 					"url": "https://github.com/ollama/ollama/releases/download/v0.33.2/ollama-linux-amd64.tar.zst", "sha256": strings.Repeat("1", 64), "archive": "tar-zstd",
 				},
@@ -211,6 +214,21 @@ func newManagedOllamaTestManager(t *testing.T, config managedOllamaConfig) *mana
 		t.Fatal(err)
 	}
 	return manager
+}
+
+func TestManagedOllamaSupportsBothMacArchitectures(t *testing.T) {
+	for _, testCase := range []struct{ arch, platform string }{
+		{arch: "arm64", platform: "darwin-arm64"},
+		{arch: "amd64", platform: "darwin-amd64"},
+	} {
+		platform, err := managedOllamaPlatform("darwin", testCase.arch)
+		if err != nil || platform != testCase.platform {
+			t.Fatalf("unexpected macOS platform for %s: %q %v", testCase.arch, platform, err)
+		}
+		if _, _, err := managedOllamaTarArguments(platform, "/tmp/archive", "/tmp/staging"); err != nil {
+			t.Fatalf("macOS archive arguments rejected for %s: %v", platform, err)
+		}
+	}
 }
 
 func installManagedOllamaTestRuntime(t *testing.T, manager *managedOllama, archiveSHA string) {
@@ -292,6 +310,7 @@ func TestManagedOllamaPackagedDependencyManifestPinsExpectedRelease(t *testing.T
 	}
 	expected := map[string]string{
 		"darwin-arm64": "5751e296a2cd545939bdd51b700de0c20d319f0e723c9d7f48bebb5ab0b731d4",
+		"darwin-amd64": "5751e296a2cd545939bdd51b700de0c20d319f0e723c9d7f48bebb5ab0b731d4",
 		"linux-amd64":  "9785247dea264d9072f09f6c9c0eb4b8e666892826a3d8388eba3e8fb9ed1db9",
 	}
 	for platform, digest := range expected {

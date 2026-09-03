@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestDetectHostCapabilityAcceptsOnlyAppleSiliconOnMacOS(t *testing.T) {
+func TestDetectHostCapabilityAcceptsAppleSiliconAndIntelMacOS(t *testing.T) {
 	var observedName string
 	var observedArguments []string
 	runner := func(ctx context.Context, name string, arguments ...string) ([]byte, error) {
@@ -26,9 +26,9 @@ func TestDetectHostCapabilityAcceptsOnlyAppleSiliconOnMacOS(t *testing.T) {
 	if observedName != "sysctl" || !reflect.DeepEqual(observedArguments, []string{"-n", "hw.memsize"}) {
 		t.Fatalf("unexpected Apple memory probe: %q %#v", observedName, observedArguments)
 	}
-	unsupported := detectHostCapability(context.Background(), "darwin", "amd64", runner)
-	if unsupported.Supported || unsupported.Reason != "macOS hosts require Apple Silicon" {
-		t.Fatalf("unexpected Intel Mac capability: %#v", unsupported)
+	intel := detectHostCapability(context.Background(), "darwin", "amd64", runner)
+	if !intel.Supported || intel.Profile != "intel-mac" || intel.Accelerator != "metal" || intel.AcceleratorMemoryBytes != 8*1024*1024*1024 {
+		t.Fatalf("unexpected Intel Mac capability: %#v", intel)
 	}
 }
 
@@ -67,8 +67,8 @@ func TestDetectHostCapabilityFailsClosed(t *testing.T) {
 		{name: "missing driver", goos: "linux", goarch: "amd64", err: errors.New("missing"), reason: "working NVIDIA driver"},
 		{name: "old GPU", goos: "linux", goarch: "amd64", output: "Tesla P100, 16280, 6.0\n", reason: "compute capability 7.0"},
 		{name: "malformed", goos: "linux", goarch: "amd64", output: "NVIDIA GPU, unknown, 8.6\n", reason: "response is invalid"},
-		{name: "missing Apple memory", goos: "darwin", goarch: "arm64", err: errors.New("missing"), reason: "memory capacity is unavailable"},
-		{name: "invalid Apple memory", goos: "darwin", goarch: "arm64", output: "0\n", reason: "memory response is invalid"},
+		{name: "missing macOS memory", goos: "darwin", goarch: "arm64", err: errors.New("missing"), reason: "memory capacity is unavailable"},
+		{name: "invalid macOS memory", goos: "darwin", goarch: "amd64", output: "0\n", reason: "memory response is invalid"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			capability := detectHostCapability(context.Background(), testCase.goos, testCase.goarch, func(context.Context, string, ...string) ([]byte, error) {
@@ -163,5 +163,10 @@ func TestProviderAgentOnlyRequiresComputeCapabilityForManagedFeatures(t *testing
 	}
 	if err := requireProviderComputeCapability(valid, true); err != nil {
 		t.Fatalf("supported managed compute was rejected: %v", err)
+	}
+	valid.Profile = "intel-mac"
+	valid.Architecture = "amd64"
+	if err := requireProviderComputeCapability(valid, true); err != nil {
+		t.Fatalf("supported Intel Mac managed compute was rejected: %v", err)
 	}
 }

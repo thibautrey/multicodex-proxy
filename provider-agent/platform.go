@@ -78,34 +78,37 @@ func detectHostCapability(ctx context.Context, goos, goarch string, command plat
 		Architecture:  goarch,
 	}
 	if goos == "darwin" {
-		if goarch != "arm64" {
-			result.Reason = "macOS hosts require Apple Silicon"
+		if goarch != "arm64" && goarch != "amd64" {
+			result.Reason = "macOS hosts require arm64 or amd64"
 			return result
 		}
 		probeContext, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
 		output, err := command(probeContext, "sysctl", "-n", "hw.memsize")
 		if err != nil {
-			result.Reason = "Apple unified memory capacity is unavailable"
+			result.Reason = "macOS memory capacity is unavailable"
 			return result
 		}
 		unifiedMemoryBytes, err := parseDarwinUnifiedMemory(output)
 		if err != nil {
-			result.Reason = "the Apple unified memory response is invalid"
+			result.Reason = "the macOS memory response is invalid"
 			return result
 		}
 		result.Supported = true
-		result.Profile = "apple-silicon"
+		if goarch == "arm64" {
+			result.Profile = "apple-silicon"
+		} else {
+			result.Profile = "intel-mac"
+		}
 		result.Accelerator = "metal"
-		// Metal and the CPU share physical memory. Until the runtime backend can
-		// attest recommendedMaxWorkingSetSize, reserve half for macOS, the CPU
-		// workload and memory pressure. The operator policy is applied to this
-		// already-conservative capacity later by the planner.
+		// Keep half of host memory reserved for macOS, the CPU workload and
+		// memory pressure. This is also the conservative planning ceiling on
+		// Intel Macs, irrespective of whether Ollama selects CPU or Metal.
 		result.AcceleratorMemoryBytes = unifiedMemoryBytes / 2
 		return result
 	}
 	if goos != "linux" || goarch != "amd64" {
-		result.Reason = "supported hosts are Apple Silicon or Linux amd64 with NVIDIA GPUs"
+		result.Reason = "supported hosts are macOS arm64/amd64 or Linux amd64 with NVIDIA GPUs"
 		return result
 	}
 	probeContext, cancel := context.WithTimeout(ctx, 3*time.Second)

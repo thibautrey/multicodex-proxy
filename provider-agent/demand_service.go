@@ -288,7 +288,9 @@ func providerAcceleratorMemoryCapacity(capability hostCapability) (uint64, error
 	}
 	switch capability.Accelerator {
 	case "metal":
-		if capability.OS != "darwin" || capability.Architecture != "arm64" || capability.Profile != "apple-silicon" ||
+		validDarwinProfile := (capability.Architecture == "arm64" && capability.Profile == "apple-silicon") ||
+			(capability.Architecture == "amd64" && capability.Profile == "intel-mac")
+		if capability.OS != "darwin" || !validDarwinProfile ||
 			len(capability.GPUs) != 0 || capability.CUDADevice != 0 ||
 			capability.AcceleratorMemoryBytes < minimumDarwinUnifiedMemoryBytes/2 ||
 			capability.AcceleratorMemoryBytes > maximumDarwinUnifiedMemoryBytes/2 || capability.AcceleratorMemoryBytes%2048 != 0 {

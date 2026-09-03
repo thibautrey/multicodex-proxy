@@ -377,7 +377,7 @@ func validateRuntimeBackendDescriptor(descriptor runtimeBackendDescriptor) error
 		return errRuntimeBackendInvalid
 	}
 	for platform, path := range launch.ExecutableRelativePaths {
-		if (platform != "darwin-arm64" && platform != "linux-amd64") || !runtimeBackendExecutablePattern.MatchString(path) || filepath.IsAbs(path) || filepath.Clean(path) != path ||
+		if (platform != "darwin-arm64" && platform != "darwin-amd64" && platform != "linux-amd64") || !runtimeBackendExecutablePattern.MatchString(path) || filepath.IsAbs(path) || filepath.Clean(path) != path ||
 			strings.Contains(path, "\\") || path == ".." || strings.HasPrefix(path, ".."+string(filepath.Separator)) {
 			return errRuntimeBackendInvalid
 		}
@@ -474,7 +474,7 @@ func validateRuntimeProvenancePin(pin runtimeProvenancePin) error {
 		return errRuntimeBackendInvalid
 	}
 	for platform, digest := range pin.ArtifactSHA256 {
-		if (platform != "darwin-arm64" && platform != "linux-amd64") || !validManagedOllamaSHA256(digest) {
+		if (platform != "darwin-arm64" && platform != "darwin-amd64" && platform != "linux-amd64") || !validManagedOllamaSHA256(digest) {
 			return errRuntimeBackendInvalid
 		}
 	}
@@ -729,10 +729,11 @@ func newOllamaRuntimeBackend(runtime managedControllerRuntime, catalogPath, depe
 		},
 		Accelerators: []runtimeBackendAcceleratorConstraint{
 			{Profile: "apple-silicon", OS: "darwin", Architecture: "arm64", Kind: "metal"},
+			{Profile: "intel-mac", OS: "darwin", Architecture: "amd64", Kind: "metal"},
 			{Profile: "linux-nvidia", OS: "linux", Architecture: "amd64", Kind: "cuda"},
 		},
 		Launch: runtimeBackendLaunchAllowlist{
-			ExecutableRelativePaths: map[string]string{"darwin-arm64": "ollama", "linux-amd64": filepath.Join("bin", "ollama")},
+			ExecutableRelativePaths: map[string]string{"darwin-arm64": "ollama", "darwin-amd64": "ollama", "linux-amd64": filepath.Join("bin", "ollama")},
 			ContainerImages:         []string{},
 			ArgumentTemplates:       [][]string{{"serve"}, {"pull", "{catalog_model}"}, {"stop", "{catalog_model}"}},
 			Resources: runtimeBackendResourceBounds{

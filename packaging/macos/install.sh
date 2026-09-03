@@ -70,7 +70,10 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ "$(uname -s)" = "Darwin" ] || fail "this installer supports macOS only"
-[ "$(uname -m)" = "arm64" ] || fail "this installer supports Apple Silicon only"
+case "$(uname -m)" in
+  arm64|x86_64) ;;
+  *) fail "this installer supports Apple Silicon and Intel Macs only" ;;
+esac
 [ -n "${HOME:-}" ] || fail "HOME is unavailable"
 validate_home
 
@@ -88,7 +91,7 @@ done
 [ "$(plist_value "$SOURCE_APPLICATION/Contents/Info.plist" CFBundleIdentifier)" = "$BUNDLE_IDENTIFIER" ] || fail "the application bundle identifier is invalid"
 
 verify_signed_application "$SOURCE_APPLICATION" "the application"
-printf 'Checking the signed release bundle and Apple Silicon host...\n'
+printf 'Checking the signed release bundle and this Mac...\n'
 "$SOURCE_NODE" "$SOURCE_VERIFIER" --directory "$SOURCE_ROOT" --require-runtime || fail "the signed release verifier rejected the bundle or this host"
 
 APPLICATIONS_DIRECTORY="$HOME/Applications"
