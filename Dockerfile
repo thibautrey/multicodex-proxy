@@ -19,6 +19,7 @@ FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS provider-agent-build
 WORKDIR /src/provider-agent
 ARG TARGETOS
 ARG TARGETARCH
+COPY docs/runtime-community-gpu-benchmark-e690aa1.result.json /src/docs/runtime-community-gpu-benchmark-e690aa1.result.json
 COPY provider-agent/ ./
 COPY packaging/ /src/packaging/
 RUN go test ./...

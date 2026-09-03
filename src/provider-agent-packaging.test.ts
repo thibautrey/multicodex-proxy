@@ -16,6 +16,10 @@ test("the Core image builds and embeds the provider agent for its target archite
   assert.match(dockerfile, /ARG TARGETOS\nARG TARGETARCH/);
   assert.match(
     dockerfile,
+    /COPY docs\/runtime-community-gpu-benchmark-e690aa1\.result\.json \/src\/docs\/runtime-community-gpu-benchmark-e690aa1\.result\.json/,
+  );
+  assert.match(
+    dockerfile,
     /COPY provider-agent\/ \.\/\nCOPY packaging\/ \/src\/packaging\/\nRUN go test \.\/\.\.\./,
   );
   assert.match(
