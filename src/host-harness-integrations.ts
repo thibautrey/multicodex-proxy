@@ -424,6 +424,9 @@ export class HostHarnessIntegrationManager {
   private operation = Promise.resolve();
 
   constructor(options: HostHarnessManagerOptions) {
+    if (!path.isAbsolute(options.homeDirectory)) {
+      throw new Error("Host harness home directory must be absolute");
+    }
     this.homeDirectory = path.resolve(options.homeDirectory);
     this.statePath = path.resolve(options.statePath);
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");

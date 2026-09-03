@@ -1,5 +1,4 @@
 import express from "express";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as Sentry from "@sentry/node";
@@ -64,6 +63,7 @@ import {
   PROVIDER_AGENT_ENABLED,
   MULTIVIBE_HOST_APPLICATION,
   HOST_HARNESS_INTEGRATIONS_STATE_PATH,
+  HOST_HARNESS_HOME_DIRECTORY,
   PROVIDER_AGENT_RUNTIME_STATE_PATH,
   PROVIDER_AGENT_STATE_PATH,
   PROXY_API_KEY,
@@ -127,7 +127,7 @@ await cleanupOrphanedTmpFiles(dataDir);
 const store = new AccountStore(STORE_PATH);
 const hostHarnessIntegrations = MULTIVIBE_HOST_APPLICATION
   ? new HostHarnessIntegrationManager({
-      homeDirectory: os.homedir(),
+      homeDirectory: HOST_HARNESS_HOME_DIRECTORY,
       statePath: HOST_HARNESS_INTEGRATIONS_STATE_PATH,
       baseUrl: `http://127.0.0.1:${PORT}`,
     })

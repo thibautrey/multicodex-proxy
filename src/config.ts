@@ -21,6 +21,8 @@ export const MULTIVIBE_HOST_APPLICATION =
 export const PROVIDER_AGENT_BINARY =
   process.env.PROVIDER_AGENT_BINARY ?? "/opt/multivibe/bin/multivibe-provider-agent";
 export const STORE_PATH = process.env.STORE_PATH ?? "/data/accounts.json";
+export const HOST_HARNESS_HOME_DIRECTORY =
+  process.env.HOST_HARNESS_HOME_DIRECTORY?.trim() || os.homedir();
 export const HOST_HARNESS_INTEGRATIONS_STATE_PATH =
   process.env.HOST_HARNESS_INTEGRATIONS_STATE_PATH ??
   path.resolve(path.dirname(STORE_PATH), "host-harness-integrations.json");
