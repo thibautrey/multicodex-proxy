@@ -370,7 +370,7 @@ jobs:
             --tag "$image:$version" \
             "$context"
           test "$(docker run --rm "$image:$version" version)" = "$version"
-          test "$(docker image inspect --format '{{ index .Config.Labels \"org.opencontainers.image.revision\" }}' "$image:$version")" = "$source_commit"
+          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image:$version")" = "$source_commit"
           docker tag "$image:$version" "$image:latest"
           printf 'image=%s\nversion=%s\n' "$image" "$version" >> "$GITHUB_OUTPUT"
       - name: Publish the immutable version and rolling latest tags

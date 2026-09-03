@@ -91,6 +91,8 @@ test("the release workflow publishes a tested image from the verified Linux arch
   assert.match(workflow, /npm run verify:provider-host -- "\$archive"/u);
   assert.match(workflow, /packaging\/container\/Dockerfile/u);
   assert.match(workflow, /docker run --rm "\$image:\$version" version/u);
+  assert.match(workflow, /docker image inspect --format '\{\{ index \.Config\.Labels "org\.opencontainers\.image\.revision" \}\}'/u);
+  assert.doesNotMatch(workflow, /\\"org\.opencontainers\.image\.revision\\"/u);
   assert.match(workflow, /docker manifest inspect "\$image:\$version"/u);
   assert.match(workflow, /already exists; refusing to overwrite it/u);
   assert.match(workflow, /Could not prove that \$image:\$version is unused; refusing to publish/u);
