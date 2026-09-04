@@ -1,6 +1,9 @@
 use serde_json::{Map, Value, json};
 
-use napi::{Error, Status, bindgen_prelude::Buffer};
+use napi::{
+    Env, Error, Status,
+    bindgen_prelude::{Buffer, BufferSlice},
+};
 use napi_derive::napi;
 
 const FAST_SSE_EVENT_PREFIXES: &[&str] = &["response.reasoning", "response.refusal"];
@@ -910,6 +913,7 @@ pub fn try_convert_chat_completion_to_response_json(
 /// Node, while only small routing/trace metadata crosses as fields.
 #[napi(js_name = "tryConvertChatCompletionToResponseBytes")]
 pub fn try_convert_chat_completion_to_response_bytes(
+    env: Env,
     payload: Buffer,
     fallback_model: String,
     response_id: String,
@@ -932,10 +936,14 @@ pub fn try_convert_chat_completion_to_response_bytes(
             format!("Serialization failed: {error}"),
         )
     })?;
+    let body = BufferSlice::copy_from(&env, &body)
+        .map_err(|error| Error::new(Status::GenericFailure, error.to_string()))?
+        .into_buffer(&env)
+        .map_err(|error| Error::new(Status::GenericFailure, error.to_string()))?;
 
     Ok(NativeRawProtocolConversion {
         supported: true,
-        body: Buffer::from(body),
+        body,
         has_assistant_output,
         usage: response_usage_metadata(value.get("usage")),
     })
