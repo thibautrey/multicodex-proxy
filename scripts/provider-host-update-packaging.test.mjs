@@ -13,6 +13,8 @@ test("native packages include the updater and platform schedulers", async () => 
     read("packaging/macos/install.sh"), read("scripts/verify-provider-host.mjs"), read("packaging/linux/uninstall.sh"),
   ]);
   assert.match(packager, /buildGo\(path\.join\(repositoryRoot, "host-updater"\)/u);
+  assert.match(packager, /buildRustEdge\(edgeDestination\)/u);
+  assert.match(packager, /path\.join\(contents, "Helpers", "multivibe-v1-edge"\)/u);
   assert.match(packager, /buildGo\(\s*path\.join\(repositoryRoot, "host-menu"\)/u);
   assert.match(packager, /CGO_ENABLED: "1"/u);
   assert.match(packager, /favicon-32x32\.png/u);
@@ -44,6 +46,7 @@ test("native packages include the updater and platform schedulers", async () => 
   assert.match(macos, /UPDATE_SERVICE_KEPT_LOADED/u);
   assert.match(macos, /body\.version!==process\.argv\[1\]/u);
   assert.match(verifier, /multivibe-host-updater/u);
+  assert.match(verifier, /multivibe-v1-edge/u);
   assert.match(verifier, /multivibe-host-menu/u);
   assert.match(uninstall, /multivibe-host-menu\.desktop/u);
 });
