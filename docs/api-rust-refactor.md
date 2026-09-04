@@ -158,11 +158,15 @@ end-to-end.
 ### Phase 1 — core Rust in-process (réalisée)
 
 L'inspection de payload et la classification conservatrice des frames SSE sont
-portées. La prochaine fonction candidate est la conversion de protocole qui
-peut être exprimée par des types stricts, en commençant par une seule paire de
-fixtures JSON/SSE. Comparer les sorties et mesurer allocations, CPU, p50 et p95.
-Une liaison native ou WASM ne sera conservée que si son coût de marshalling
-reste inférieur au travail économisé.
+portées. Une première projection de protocole `chat.completion` → `response` a
+été caractérisée avec des fixtures JSON partagées et une liaison N-API. Le
+résultat est fonctionnel, mais le chemin objet appelé après `JSON.parse` est
+plus lent que TypeScript (sur 57 491 octets : médiane 0,286 ms contre 0,157 ms,
+p95 0,379 ms contre 0,260 ms). Il reste donc expérimental et désactivé par
+défaut via `MULTIVIBE_PROXY_CORE_PROTOCOL_CONVERSION=on` ; la prochaine
+itération doit déplacer la frontière avant le parse JSON pour supprimer le
+double marshalling. Les détails sont dans
+[`protocol-conversion-benchmark.json`](protocol-conversion-benchmark.json).
 
 ### Phase 2 — edge Rust
 

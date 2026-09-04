@@ -12,6 +12,22 @@ import { convertChatCompletionToResponseObjectFromNative } from "./payload-inspe
 
 import { randomUUID } from "node:crypto";
 
+const NATIVE_PROTOCOL_CONVERSION_ENABLED_VALUES = new Set([
+  "1",
+  "true",
+  "on",
+  "yes",
+]);
+
+function nativeProtocolConversionEnabled(): boolean {
+  const configured = process.env.MULTIVIBE_PROXY_CORE_PROTOCOL_CONVERSION
+    ?.trim()
+    .toLowerCase();
+  return Boolean(
+    configured && NATIVE_PROTOCOL_CONVERSION_ENABLED_VALUES.has(configured),
+  );
+}
+
 export type ChatStreamAccumulator = {
   id: string;
   responseId: string;
@@ -200,13 +216,19 @@ export function chatCompletionObjectToResponseObject(
   const responseId = `resp_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
   const createdAt = normalized?.created ?? Math.floor(Date.now() / 1000);
 
-  const native = convertChatCompletionToResponseObjectFromNative(
-    normalized,
-    fallbackModel,
-    responseId,
-    createdAt,
-  );
-  if (native) return native;
+  // This object-level bridge is intentionally opt-in: after Express has
+  // already parsed the JSON, N-API would otherwise add a second JSON
+  // serialization round-trip. Enable it only while evaluating a future
+  // raw-byte integration where that cost can be removed.
+  if (nativeProtocolConversionEnabled()) {
+    const native = convertChatCompletionToResponseObjectFromNative(
+      normalized,
+      fallbackModel,
+      responseId,
+      createdAt,
+    );
+    if (native) return native;
+  }
 
   return {
     id: responseId,

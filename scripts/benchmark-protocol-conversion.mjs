@@ -15,6 +15,8 @@ const segments = Math.max(
 
 if (mode === "typescript") {
   process.env.MULTIVIBE_PROXY_CORE_NATIVE = "off";
+} else {
+  process.env.MULTIVIBE_PROXY_CORE_PROTOCOL_CONVERSION = "on";
 }
 
 const { chatCompletionObjectToResponseObject } = await import(

@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-04",
+  "benchmark": "synthetic_chat_completion_to_response_projection",
+  "samples": 500,
+  "payloadBytes": 57491,
+  "baseline": {
+    "implementation": "typescript",
+    "medianMs": 0.1570000000000107,
+    "p95Ms": 0.26041600000002063
+  },
+  "candidate": {
+    "implementation": "rust_napi_after_json_parse",
+    "medianMs": 0.2857920000000149,
+    "p95Ms": 0.37870800000001736
+  },
+  "decision": "not_enabled_by_default",
+  "reason": "The object-level N-API bridge adds a JSON serialization and parsing round-trip after Express has already parsed the response.",
+  "limitations": [
+    "Synthetic response with text segments and function calls; no network, provider, or model latency.",
+    "The candidate is measured after JavaScript JSON.parse and therefore does not represent the planned raw-byte edge integration.",
+    "Absolute timings depend on host load; the result is a rollout guard, not an end-to-end performance claim."
+  ]
+}
