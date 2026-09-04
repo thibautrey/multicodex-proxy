@@ -345,23 +345,38 @@ private final class HostPopoverController: NSViewController {
         header.spacing = 8
 
         let unsupported = account.usageStatus == "unsupported"
-        let windows = NSStackView(views: [
-            compactQuota(title: "5H", window: account.fiveHour, unsupported: unsupported),
-            compactQuota(title: "WEEK", window: account.weekly, unsupported: unsupported),
-            compactQuota(title: "MONTH", window: account.monthly, unsupported: unsupported),
-        ])
-        windows.orientation = .horizontal
-        windows.distribution = .fillEqually
-        windows.spacing = 12
+        let quotaWindows: [(title: String, window: QuotaWindow?)] = [
+            ("5H", account.fiveHour),
+            ("WEEK", account.weekly),
+            ("MONTH", account.monthly),
+        ]
+        let visibleQuotaWindows: [NSView] = unsupported
+            ? []
+            : quotaWindows.compactMap { item in
+                guard let window = item.window, hasResetTime(window.resetAt) else { return nil }
+                return compactQuota(title: item.title, window: window)
+        }
 
         let updated = label(usageDetail(account), size: 10, color: .tertiaryLabelColor)
-        let stack = NSStackView(views: [header, windows, updated])
+        var contentViews: [NSView] = [header]
+        var windowsView: NSStackView?
+        if !visibleQuotaWindows.isEmpty {
+            let windows = NSStackView(views: visibleQuotaWindows)
+            windows.orientation = .horizontal
+            windows.distribution = .fillEqually
+            windows.spacing = 12
+            windowsView = windows
+            contentViews.append(windows)
+        }
+        contentViews.append(updated)
+
+        let stack = NSStackView(views: contentViews)
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 11
         stack.translatesAutoresizingMaskIntoConstraints = false
         header.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        windows.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        windowsView?.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         container.addSubview(stack)
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 13),
@@ -372,14 +387,14 @@ private final class HostPopoverController: NSViewController {
         return container
     }
 
-    private func compactQuota(title: String, window: QuotaWindow?, unsupported: Bool) -> NSView {
+    private func compactQuota(title: String, window: QuotaWindow) -> NSView {
         let titleLabel = label(title, size: 10, weight: .semibold, color: .secondaryLabelColor)
-        let value = label(unsupported ? "N/A" : percent(window?.remainingPercent), size: 17, weight: .semibold)
+        let value = label(percent(window.remainingPercent), size: 17, weight: .semibold)
         value.font = .monospacedDigitSystemFont(ofSize: 17, weight: .semibold)
-        let reset = label(unsupported ? "Not exposed" : resetText(window?.resetAt), size: 10, color: .tertiaryLabelColor)
+        let reset = label(resetText(window.resetAt), size: 10, color: .tertiaryLabelColor)
         reset.lineBreakMode = .byTruncatingTail
         let bar = QuotaBarView()
-        bar.remainingPercent = unsupported ? nil : window?.remainingPercent
+        bar.remainingPercent = window.remainingPercent
         bar.translatesAutoresizingMaskIntoConstraints = false
         let stack = NSStackView(views: [titleLabel, value, bar, reset])
         stack.orientation = .vertical
@@ -526,6 +541,11 @@ private final class HostPopoverController: NSViewController {
 
     private func accountCount(_ count: Int) -> String {
         count == 1 ? "1 account" : "\(count) accounts"
+    }
+
+    private func hasResetTime(_ timestamp: Double?) -> Bool {
+        guard let timestamp else { return false }
+        return timestamp.isFinite
     }
 
     private func resetText(_ timestamp: Double?) -> String {
