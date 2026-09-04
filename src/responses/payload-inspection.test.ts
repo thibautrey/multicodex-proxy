@@ -1,0 +1,117 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import { fileURLToPath } from "node:url";
+import test from "node:test";
+import {
+  inspectPayloadContext,
+  payloadHasImage,
+} from "./payload-inspection.js";
+
+type InspectionFixture = {
+  name: string;
+  payload: unknown;
+  expected: {
+    hasImage: boolean;
+    compactionItemCount: number;
+    latestCompactionIndex: number;
+  };
+};
+
+const fixturePath = fileURLToPath(
+  new URL("../../rust/proxy-core/testdata/payload-inspection-cases.json", import.meta.url),
+);
+const inspectionFixtures = JSON.parse(
+  fs.readFileSync(fixturePath, "utf8"),
+) as InspectionFixture[];
+
+test("matches every shared Rust migration fixture", () => {
+  for (const fixture of inspectionFixtures) {
+    assert.deepEqual(
+      inspectPayloadContext(fixture.payload),
+      fixture.expected,
+      fixture.name,
+    );
+  }
+});
+
+test("keeps the Responses image and compaction contract stable", () => {
+  const payload = {
+    input: [
+      { role: "user", content: [{ type: "input_text", text: "before" }] },
+      { type: "compaction", encrypted_content: "opaque-one" },
+      {
+        role: "user",
+        content: [{ type: "input_image", image_url: "data:image/png;base64,AA" }],
+      },
+      { type: "compaction", encrypted_content: "opaque-two" },
+    ],
+  };
+
+  assert.deepEqual(inspectPayloadContext(payload), {
+    hasImage: true,
+    compactionItemCount: 2,
+    latestCompactionIndex: 3,
+  });
+  assert.equal(payloadHasImage(payload), true);
+});
+
+test("recognizes images on both item and nested content types", () => {
+  assert.equal(
+    payloadHasImage({
+      input: [
+        { type: "computer_screenshot_image", data: "opaque" },
+        { content: [{ type: "custom_image_part" }] },
+      ],
+    }),
+    true,
+  );
+});
+
+test("recognizes Chat Completions images without compaction data", () => {
+  assert.deepEqual(
+    inspectPayloadContext({
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "look" },
+            { type: "image_url", image_url: { url: "https://example/image" } },
+          ],
+        },
+      ],
+    }),
+    {
+      hasImage: true,
+      compactionItemCount: 0,
+      latestCompactionIndex: -1,
+    },
+  );
+});
+
+test("ignores malformed or scalar payload branches like the current router", () => {
+  for (const payload of [null, undefined, "text", 42, [], { input: {}, messages: {} }]) {
+    assert.deepEqual(inspectPayloadContext(payload), {
+      hasImage: false,
+      compactionItemCount: 0,
+      latestCompactionIndex: -1,
+    });
+  }
+});
+
+test("counts every compaction item and reports the last array index", () => {
+  assert.deepEqual(
+    inspectPayloadContext({
+      input: [
+        { type: "compaction" },
+        { type: "input_text", content: [{ type: "text" }] },
+        { type: "compaction" },
+        { type: "compaction" },
+      ],
+    }),
+    {
+      hasImage: false,
+      compactionItemCount: 3,
+      latestCompactionIndex: 3,
+    },
+  );
+});

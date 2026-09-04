@@ -1,0 +1,74 @@
+[
+  {
+    "name": "responses image and compaction",
+    "payload": {
+      "input": [
+        {"role": "user", "content": [{"type": "input_text", "text": "before"}]},
+        {"type": "compaction", "encrypted_content": "opaque-one"},
+        {"role": "user", "content": [{"type": "input_image", "image_url": "data:image/png;base64,AA"}]},
+        {"type": "compaction", "encrypted_content": "opaque-two"}
+      ]
+    },
+    "expected": {
+      "hasImage": true,
+      "compactionItemCount": 2,
+      "latestCompactionIndex": 3
+    }
+  },
+  {
+    "name": "item and nested content images",
+    "payload": {
+      "input": [
+        {"type": "computer_screenshot_image", "data": "opaque"},
+        {"content": [{"type": "custom_image_part"}]}
+      ]
+    },
+    "expected": {
+      "hasImage": true,
+      "compactionItemCount": 0,
+      "latestCompactionIndex": -1
+    }
+  },
+  {
+    "name": "chat completions image",
+    "payload": {
+      "messages": [{
+        "role": "user",
+        "content": [
+          {"type": "text", "text": "look"},
+          {"type": "image_url", "image_url": {"url": "https://example/image"}}
+        ]
+      }]
+    },
+    "expected": {
+      "hasImage": true,
+      "compactionItemCount": 0,
+      "latestCompactionIndex": -1
+    }
+  },
+  {
+    "name": "malformed branches",
+    "payload": {"input": {}, "messages": {}},
+    "expected": {
+      "hasImage": false,
+      "compactionItemCount": 0,
+      "latestCompactionIndex": -1
+    }
+  },
+  {
+    "name": "multiple compactions",
+    "payload": {
+      "input": [
+        {"type": "compaction"},
+        {"type": "input_text", "content": [{"type": "text"}]},
+        {"type": "compaction"},
+        {"type": "compaction"}
+      ]
+    },
+    "expected": {
+      "hasImage": false,
+      "compactionItemCount": 3,
+      "latestCompactionIndex": 3
+    }
+  }
+]

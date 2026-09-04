@@ -127,6 +127,10 @@ import {
 } from "../../responses/stream-diagnostics.js";
 import { createSSEStreamTap } from "../../responses/sse-stream-tap.js";
 import { createUpstreamPayloadSerializer } from "../../responses/upstream-payload-serializer.js";
+import {
+  inspectPayloadContext,
+  payloadHasImage,
+} from "../../responses/payload-inspection.js";
 import { buildXaiUpstreamHeaders } from "../../xai.js";
 import {
   extractCodexProjectHost,
@@ -163,6 +167,12 @@ import {
   preferSessionAffinityAccount,
   SessionAffinityCache,
 } from "../../session-affinity.js";
+
+export {
+  inspectPayloadContext,
+  payloadHasImage,
+} from "../../responses/payload-inspection.js";
+export type { PayloadContextInspection } from "../../responses/payload-inspection.js";
 
 type ProxyRoutesOptions = {
   store: AccountStore;
@@ -416,52 +426,6 @@ function inspectContentPartForImages(part: any, path: string): ImageTracePart | 
   }
 
   return null;
-}
-
-export type PayloadContextInspection = {
-  hasImage: boolean;
-  compactionItemCount: number;
-  latestCompactionIndex: number;
-};
-
-export function inspectPayloadContext(payload: any): PayloadContextInspection {
-  let hasImage = false;
-  let compactionItemCount = 0;
-  let latestCompactionIndex = -1;
-  const messages = Array.isArray(payload?.messages) ? payload.messages : [];
-  for (const message of messages) {
-    const content = Array.isArray(message?.content) ? message.content : [];
-    for (const part of content) {
-      const type = typeof part?.type === "string" ? part.type : "";
-      if (type.includes("image")) hasImage = true;
-    }
-  }
-
-  const input = Array.isArray(payload?.input) ? payload.input : [];
-  for (let index = 0; index < input.length; index += 1) {
-    const item = input[index];
-    const itemType = typeof item?.type === "string" ? item.type : "";
-    if (itemType.includes("image")) hasImage = true;
-    if (itemType === "compaction") {
-      compactionItemCount += 1;
-      latestCompactionIndex = index;
-    }
-    const content = Array.isArray(item?.content) ? item.content : [];
-    for (const part of content) {
-      const type = typeof part?.type === "string" ? part.type : "";
-      if (type.includes("image")) hasImage = true;
-    }
-  }
-
-  return {
-    hasImage,
-    compactionItemCount,
-    latestCompactionIndex,
-  };
-}
-
-export function payloadHasImage(payload: any): boolean {
-  return inspectPayloadContext(payload).hasImage;
 }
 
 function summarizeImagePayload(payload: any): ImageTraceSummary {
