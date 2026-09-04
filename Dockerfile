@@ -1,12 +1,14 @@
-FROM node:22-alpine AS deps
+FROM node:22-bookworm-slim AS deps
 WORKDIR /app
-RUN apk add --no-cache python3 make g++
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends python3 make g++ \
+  && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json* ./
 RUN npm install
 COPY web/package.json web/package-lock.json* ./web/
 RUN npm --prefix web install
 
-FROM node:22-alpine AS build
+FROM node:22-bookworm-slim AS build
 WORKDIR /app
 ARG GIT_SHA=unknown
 ARG BUILD_ID=unknown
@@ -15,7 +17,7 @@ COPY --from=deps /app/web/node_modules ./web/node_modules
 COPY . .
 RUN npm run build
 
-FROM rust:1.88-alpine AS rust-build
+FROM rust:1.88-bookworm AS rust-build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY rust/ ./rust/
@@ -34,9 +36,11 @@ RUN CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
   go build -trimpath -buildvcs=false -ldflags="-s -w" \
   -o /out/multivibe-provider-agent .
 
-FROM node:22-alpine
+FROM node:22-bookworm-slim
 WORKDIR /app
-RUN apk add --no-cache git libstdc++
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends git libstdc++6 \
+  && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 ENV MULTIVIBE_CONTROL_PLANE=true
 ENV CONTROL_PLANE_PORT=1456

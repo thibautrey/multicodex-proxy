@@ -9,6 +9,12 @@ test("the Core image builds and embeds the provider agent for its target archite
   const dockerfile = await readFile(`${repositoryRoot}/Dockerfile`, "utf8");
   const config = await readFile(`${repositoryRoot}/src/config.ts`, "utf8");
 
+  assert.match(dockerfile, /^FROM node:22-bookworm-slim AS deps$/m);
+  assert.match(dockerfile, /^FROM node:22-bookworm-slim AS build$/m);
+  assert.match(dockerfile, /^FROM rust:1\.88-bookworm AS rust-build$/m);
+  assert.match(dockerfile, /^FROM node:22-bookworm-slim$/m);
+  assert.doesNotMatch(dockerfile, /^FROM node:22-alpine/m);
+  assert.doesNotMatch(dockerfile, /^FROM rust:1\.88-alpine/m);
   assert.match(
     dockerfile,
     /FROM --platform=\$BUILDPLATFORM golang:1\.24-alpine AS provider-agent-build/,
