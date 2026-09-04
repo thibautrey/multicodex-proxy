@@ -291,3 +291,56 @@ test("discovers models from an explicitly classified tokenless local runtime", a
   );
   assert.equal(requests, 1);
 });
+
+test("uses the classified Exo catalog path for a discovered local runtime", async (t) => {
+  const dataDir = await fs.mkdtemp(
+    path.join(os.tmpdir(), "multivibe-exo-models-"),
+  );
+  t.after(async () => {
+    await fs.rm(dataDir, { recursive: true, force: true });
+  });
+
+  const store = new AccountStore(path.join(dataDir, "accounts.json"));
+  await store.init();
+  await store.addOrUpdate({
+    id: "local-runtime-exo",
+    provider: "openai-compatible",
+    upstreamMode: "chat/completions",
+    accessToken: "",
+    baseUrl: "http://127.0.0.1:52415",
+    enabled: true,
+    location: "local",
+    localRuntime: {
+      source: "multivibe-local-discovery",
+      adapter: "exo",
+      endpoint: "http://127.0.0.1:52415",
+      confirmedModelIds: ["exo/model"],
+      authentication: "none",
+    },
+  });
+
+  const originalFetch = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = async (input, init) => {
+    requests += 1;
+    assert.equal(String(input), "http://127.0.0.1:52415/models");
+    assert.equal(new Headers(init?.headers).get("authorization"), null);
+    assert.equal(init?.redirect, "manual");
+    return Response.json({
+      object: "list",
+      data: [{ id: "exo/model", object: "model", owned_by: "exo" }],
+    });
+  };
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const models = await discoverModels(
+    store,
+    "https://chatgpt.com/backend-api",
+    "https://api.mistral.ai",
+    "https://api.z.ai",
+  );
+  assert.equal(models.some((model) => model.id === "exo/model"), true);
+  assert.equal(requests, 1);
+});

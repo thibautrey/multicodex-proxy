@@ -2966,10 +2966,20 @@ details summary {
 }
 
 .provider-runtime-editor legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   padding: 0 5px;
   color: var(--muted-strong);
   font-size: 11px;
   font-weight: 700;
+}
+
+.runtime-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  object-fit: contain;
 }
 
 .provider-runtime-editor > label {
@@ -3012,6 +3022,9 @@ details summary {
 }
 
 .provider-runtime-group legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   padding: 0 5px;
   color: var(--muted-strong);
   font-size: 11px;

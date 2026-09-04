@@ -118,6 +118,7 @@ import type { RequestTraceContext } from "../../request-tracing.js";
 import {
   authorizationForAccountRequest,
   isDiscoveredLocalRuntimeAccount,
+  localRuntimeCatalogPath,
 } from "../../local-runtime-discovery.js";
 import {
   createResponseStreamDiagnostics,
@@ -985,7 +986,12 @@ async function refreshModels(
             // account base URL below.
             url = `${trimTrailingSlash(OPENCODE_BASE_URL)}/v1/models`;
           } else {
-            url = `${baseUrl}${provider === "zai" ? ZAI_MODELS_PATH : "/v1/models"}`;
+            const catalogPath = isDiscoveredLocalRuntimeAccount(account)
+              ? localRuntimeCatalogPath(account.localRuntime!.adapter)
+              : provider === "zai"
+                ? ZAI_MODELS_PATH
+                : "/v1/models";
+            url = `${baseUrl}${catalogPath}`;
           }
         }
 

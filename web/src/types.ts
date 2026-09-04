@@ -1,6 +1,29 @@
+export type ProviderId =
+  | "openai"
+  | "openai-compatible"
+  | "opencode"
+  | "mistral"
+  | "zai"
+  | "xai";
+
+export type LocalRuntimeAdapterId =
+  | "ollama" | "lm-studio" | "llama-cpp" | "vllm" | "sglang" | "localai"
+  | "huggingface-tgi" | "transformers-serve" | "xinference" | "mlx-lm" | "omlx"
+  | "mlc-llm" | "exo" | "jan" | "gpt4all" | "koboldcpp" | "text-generation-webui"
+  | "aphrodite" | "tabbyapi" | "llama-box" | "mistral-rs" | "nvidia-nim"
+  | "tensorrt-llm" | "triton" | "openllm" | "bentoml" | "mtplx" | "manual-openai-compatible";
+
+export type LocalRuntimeMetadata = {
+  source: "multivibe-local-discovery";
+  adapter: LocalRuntimeAdapterId;
+  endpoint: string;
+  confirmedModelIds: string[];
+  authentication: "none";
+};
+
 export type Account = {
   id: string;
-  provider?: "openai" | "openai-compatible" | "opencode" | "mistral" | "zai" | "xai";
+  provider?: ProviderId;
   upstreamMode?: "responses" | "chat/completions";
   compatibilityMode?: "auto" | "responses" | "chat-completions-bridge";
   email?: string;
@@ -19,6 +42,7 @@ export type Account = {
   baseUrl?: string;
   priority?: number;
   location?: "local" | "cloud";
+  localRuntime?: LocalRuntimeMetadata;
   capacityProfile?: {
     maxConcurrent?: number;
     prefillTokensPerSecond?: number;

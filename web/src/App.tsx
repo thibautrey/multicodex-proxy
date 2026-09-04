@@ -143,6 +143,9 @@ export default function App() {
   const [traceExportInProgress, setTraceExportInProgress] = useState(false);
   const tracePageRef = useRef(tracePagination.page);
   const traceRangeRef = useRef(traceRange);
+  const localRuntimeDiscoveryInFlightRef = useRef<Promise<void> | null>(null);
+  const localRuntimeDiscoveryAbortRef = useRef<AbortController | null>(null);
+  const localRuntimeDiscoveryGenerationRef = useRef(0);
   const mobileNavigationRef = useRef<HTMLDialogElement>(null);
   const mobileNavigationTriggerRef = useRef<HTMLButtonElement>(null);
   const activeTabItem = TAB_ITEMS.find((item) => item.id === tab) ?? TAB_ITEMS[0];
@@ -212,8 +215,16 @@ export default function App() {
     localStorage.setItem("themeMode", themeMode);
   }, [themeMode]);
 
+  const invalidateLocalRuntimeDiscovery = () => {
+    localRuntimeDiscoveryGenerationRef.current += 1;
+    localRuntimeDiscoveryAbortRef.current?.abort();
+    localRuntimeDiscoveryAbortRef.current = null;
+    localRuntimeDiscoveryInFlightRef.current = null;
+  };
+
   const handleError = (e: any) => {
     if (e instanceof ApiError && e.status === 401) {
+      invalidateLocalRuntimeDiscovery();
       setAuthenticated(false);
       setError("");
       return;
@@ -340,6 +351,61 @@ export default function App() {
     setBaseLoaded(true);
   };
 
+  const mergeDiscoveredAccounts = (discovered: Account[]) => {
+    if (!discovered.length) return;
+    setAccounts((current) => {
+      const next = [...current];
+      const indexes = new Map(next.map((account, index) => [account.id, index]));
+      for (const account of discovered) {
+        const index = indexes.get(account.id);
+        if (index === undefined) {
+          indexes.set(account.id, next.length);
+          next.push(account);
+        } else {
+          next[index] = account;
+        }
+      }
+      return next;
+    });
+  };
+
+  const discoverLocalRuntimesInBackground = () => {
+    if (localRuntimeDiscoveryInFlightRef.current) return;
+    const generation = localRuntimeDiscoveryGenerationRef.current;
+    const controller = new AbortController();
+    localRuntimeDiscoveryAbortRef.current = controller;
+    const cancellableRequest = api("/admin/local-runtimes/discover", {
+      method: "POST",
+      signal: controller.signal,
+    })
+      .then(async (result) => {
+        if (generation !== localRuntimeDiscoveryGenerationRef.current) return;
+        const discovered = Array.isArray(result.accounts)
+          ? (result.accounts as Account[])
+          : [];
+        mergeDiscoveredAccounts(discovered);
+        if (discovered.length) {
+          await refreshModels({
+            signal: controller.signal,
+            isCurrent: () => generation === localRuntimeDiscoveryGenerationRef.current,
+          });
+        }
+      })
+      .catch(() => {
+        // Local runtimes are optional; an unavailable probe must not interrupt
+        // the authenticated dashboard or make the provider list unusable.
+      })
+      .finally(() => {
+        if (localRuntimeDiscoveryInFlightRef.current === cancellableRequest) {
+          localRuntimeDiscoveryInFlightRef.current = null;
+        }
+        if (localRuntimeDiscoveryAbortRef.current === controller) {
+          localRuntimeDiscoveryAbortRef.current = null;
+        }
+      });
+    localRuntimeDiscoveryInFlightRef.current = cancellableRequest;
+  };
+
   const finishHostOnboarding = () => {
     completeHostOnboarding(localStorage);
     setHostOnboardingComplete(true);
@@ -352,8 +418,12 @@ export default function App() {
     setProviderSetupRequest((current) => current + 1);
   };
 
-  const refreshModels = async () => {
-    const mdl = await fetch("/v1/models").then((r) => r.json());
+  const refreshModels = async (options: {
+    signal?: AbortSignal;
+    isCurrent?: () => boolean;
+  } = {}) => {
+    const mdl = await fetch("/v1/models", { signal: options.signal }).then((r) => r.json());
+    if (options.isCurrent && !options.isCurrent()) return;
     setModels((mdl.data ?? []) as ExposedModel[]);
   };
 
@@ -422,6 +492,7 @@ export default function App() {
       setError("");
       await loadBase();
       setAuthenticated(true);
+      discoverLocalRuntimesInBackground();
       if (tab === "tracing") {
         await loadTracing(tracePageRef.current, traceRangeRef.current);
       } else {
@@ -444,6 +515,7 @@ export default function App() {
       setLoginToken("");
       setAuthenticated(true);
       await Promise.all([loadBase(), loadTraceStats(traceRangeRef.current)]);
+      discoverLocalRuntimesInBackground();
     } catch (err: any) {
       setError(err instanceof ApiError && err.status === 401 ? "Invalid admin token." : err?.message ?? String(err));
       setAuthenticated(false);
@@ -453,6 +525,7 @@ export default function App() {
   };
 
   const logout = async () => {
+    invalidateLocalRuntimeDiscovery();
     try {
       await api("/admin/session", { method: "DELETE" });
     } catch {
@@ -509,6 +582,7 @@ export default function App() {
         setLocationSearch(u.search);
         sessionStorage.removeItem("multivibe-oauth-pending");
         await Promise.all([loadBase(), loadTraceStats(traceRangeRef.current)]);
+        discoverLocalRuntimesInBackground();
         setAuthenticated(true);
         setTab("accounts");
       } catch (e: any) {
@@ -533,6 +607,7 @@ export default function App() {
         }
         setAuthenticated(true);
         await Promise.all([loadBase(), loadTraceStats(traceRangeRef.current)]);
+        discoverLocalRuntimesInBackground();
       } catch (e: any) {
         handleError(e);
       }

@@ -107,27 +107,87 @@ func TestProbeRuntimeCatalogRejectsOversizedAndInvalidPayloads(t *testing.T) {
 	}
 }
 
+func TestProbeRuntimeCatalogRequiresTheOfficialRuntimeSignature(t *testing.T) {
+	for _, testCase := range []struct {
+		adapterID string
+		owner     string
+	}{
+		{adapterID: "omlx", owner: "omlx"},
+		{adapterID: "mtplx", owner: "mtplx"},
+		{adapterID: "exo", owner: "exo"},
+	} {
+		t.Run(testCase.adapterID, func(t *testing.T) {
+			var adapter runtimeAdapter
+			for _, candidate := range runtimeAdapterRegistry().Adapters {
+				if candidate.ID == testCase.adapterID {
+					adapter = candidate
+					break
+				}
+			}
+			if adapter.ID == "" {
+				t.Fatal("adapter not found")
+			}
+
+			for _, owner := range []string{testCase.owner, "other-runtime"} {
+				t.Run(owner, func(t *testing.T) {
+					client := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+						return catalogResponse(http.StatusOK, `{"data":[{"id":"publisher/model","owned_by":"`+owner+`"}]}`), nil
+					})}
+					models, err := probeRuntimeCatalog(context.Background(), adapter, adapter.Candidates[0], client)
+					if owner == testCase.owner {
+						if err != nil || !reflect.DeepEqual(models, []string{"publisher/model"}) {
+							t.Fatalf("expected signature to pass: models=%#v err=%v", models, err)
+						}
+					} else if err == nil {
+						t.Fatal("a different runtime signature must fail closed")
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestDetectedModelsDistinguishesRuntimesSharingPort8000(t *testing.T) {
+	registry := runtimeAdapterRegistry()
+	selected := make([]runtimeAdapter, 0, 2)
+	for _, adapter := range registry.Adapters {
+		if adapter.ID == "omlx" || adapter.ID == "mtplx" {
+			selected = append(selected, adapter)
+		}
+	}
+	registry.Adapters = selected
+	calls := 0
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		calls++
+		if request.URL.String() == "http://127.0.0.1:8000/v1/models" {
+			return catalogResponse(http.StatusOK, `{"data":[{"id":"qwen","owned_by":"mtplx"}]}`), nil
+		}
+		return nil, errors.New("IPv6 unavailable")
+	})}
+
+	detected := detectedModels(context.Background(), registry, nil, client)
+	if calls != 3 {
+		t.Fatalf("expected one failed OMLX probe and one successful MTPLX probe plus its IPv6 fallback, got %d calls", calls)
+	}
+	if !reflect.DeepEqual(detected.Runtimes, []detectedRuntime{{AdapterID: "mtplx", Models: []string{"qwen"}}}) {
+		t.Fatalf("unexpected runtime selection: %#v", detected.Runtimes)
+	}
+}
+
 func TestDetectedModelsEndpointReturnsOnlySuccessfulLoopbackInventory(t *testing.T) {
 	calls := 0
 	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		calls++
-		if calls <= 2 {
-			expected := []string{"http://127.0.0.1:11434/v1/models", "http://[::1]:11434/v1/models"}[calls-1]
-			if request.URL.String() != expected {
-				t.Fatalf("unexpected Ollama probe: %s", request.URL)
-			}
+		switch request.URL.String() {
+		case "http://127.0.0.1:11434/v1/models", "http://[::1]:11434/v1/models":
 			return nil, errors.New("Ollama unavailable")
-		}
-		if calls == 3 {
-			if request.URL.String() != "http://127.0.0.1:1234/v1/models" {
-				t.Fatalf("unexpected LM Studio probe: %s", request.URL)
-			}
+		case "http://127.0.0.1:1234/v1/models":
 			return nil, errors.New("IPv4 LM Studio unavailable")
+		case "http://[::1]:1234/v1/models":
+			return catalogResponse(http.StatusOK, `{"data":[{"id":"publisher/model"}]}`), nil
+		default:
+			return nil, errors.New("runtime unavailable")
 		}
-		if request.URL.String() != "http://[::1]:1234/v1/models" {
-			t.Fatalf("unexpected fallback probe: %s", request.URL)
-		}
-		return catalogResponse(http.StatusOK, `{"data":[{"id":"publisher/model"}]}`), nil
 	})}
 	core, err := url.Parse("http://127.0.0.1:1455")
 	if err != nil {
@@ -145,7 +205,7 @@ func TestDetectedModelsEndpointReturnsOnlySuccessfulLoopbackInventory(t *testing
 	if response.Body.String() != `{"schema_version":"provider-detected-models-v1","runtimes":[{"adapter_id":"lm-studio","models":["publisher/model"]}]}`+"\n" {
 		t.Fatalf("unexpected bounded inventory: %s", response.Body.String())
 	}
-	if calls != 4 {
-		t.Fatalf("expected exactly four reviewed loopback attempts, got %d", calls)
+	if calls != 10 {
+		t.Fatalf("expected exactly ten reviewed loopback attempts, got %d", calls)
 	}
 }

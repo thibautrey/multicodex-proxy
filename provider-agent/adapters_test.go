@@ -26,21 +26,33 @@ func TestRuntimeAdapterRegistryIsCompleteAndBounded(t *testing.T) {
 	for _, adapter := range registry.Adapters {
 		actual = append(actual, adapter.ID)
 		automaticCandidates += len(adapter.Candidates)
-		if adapter.ID != "ollama" && adapter.ID != "lm-studio" && len(adapter.Candidates) != 0 {
+		if adapter.ID != "ollama" && adapter.ID != "lm-studio" && adapter.ID != "omlx" && adapter.ID != "exo" && adapter.ID != "mtplx" && len(adapter.Candidates) != 0 {
 			t.Fatalf("%s must remain manual until an official probe is reviewed", adapter.ID)
 		}
 	}
 	if !reflect.DeepEqual(actual, expected) {
 		t.Fatalf("unexpected adapter registry: %#v", actual)
 	}
-	if automaticCandidates != 4 {
-		t.Fatalf("expected only the four literal Ollama and LM Studio loopback candidates, got %d", automaticCandidates)
+	if automaticCandidates != 10 {
+		t.Fatalf("expected only the ten reviewed loopback candidates, got %d", automaticCandidates)
 	}
 	ollama := registry.Adapters[0]
 	if ollama.Authentication != "none" || len(ollama.Candidates) != 2 ||
 		ollama.Candidates[0].Endpoint != "http://127.0.0.1:11434" ||
 		ollama.Candidates[1].Endpoint != "http://[::1]:11434" {
 		t.Fatalf("unexpected reviewed Ollama contract: %#v", ollama)
+	}
+	for _, id := range []string{"omlx", "mtplx", "exo"} {
+		var adapter runtimeAdapter
+		for _, candidate := range registry.Adapters {
+			if candidate.ID == id {
+				adapter = candidate
+				break
+			}
+		}
+		if len(adapter.Candidates) != 2 || adapter.Authentication != "none" {
+			t.Fatalf("unexpected reviewed %s contract: %#v", id, adapter)
+		}
 	}
 }
 

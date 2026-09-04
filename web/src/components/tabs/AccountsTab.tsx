@@ -1,4 +1,4 @@
-import type { Account, StoreSettings, TraceStats } from "../../types";
+import type { Account, ProviderId, StoreSettings, TraceStats } from "../../types";
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { fmt, maskEmail, maskId } from "../../lib/ui";
 import { ApiError, api } from "../../lib/api";
@@ -9,6 +9,10 @@ import {
   type FloatingMenuPlacement,
   type FloatingMenuViewport,
 } from "../../lib/floatingMenu";
+import {
+  runtimeIdentityForAccount,
+  runtimeIdentityForAdapter,
+} from "../../lib/runtimeCatalog";
 
 import { Metric } from "../Metric";
 import { createPortal } from "react-dom";
@@ -73,13 +77,7 @@ export type LocalWorkerProvider = {
   connect_url: string;
 };
 
-type AccountProvider =
-  | "openai"
-  | "openai-compatible"
-  | "opencode"
-  | "mistral"
-  | "zai"
-  | "xai";
+type AccountProvider = ProviderId;
 type OAuthMethod = "browser" | "device";
 
 type OpenAccountMenu = {
@@ -353,23 +351,6 @@ function isOAuthProvider(provider: AccountProvider) {
 
 function isManualTokenProvider(provider: AccountProvider) {
   return provider === "mistral" || provider === "openai-compatible" || provider === "opencode" || provider === "zai";
-}
-
-function providerFavicon(provider?: string) {
-  if (provider === "mistral") return "https://mistral.ai/favicon.ico";
-  if (provider === "opencode") return "https://opencode.ai/favicon-v3.svg";
-  if (provider === "zai") return "https://z.ai/favicon.png";
-  if (provider === "xai") return "https://grok.com/favicon.ico";
-  return "https://openai.com/favicon.ico";
-}
-
-function providerLabel(provider?: string) {
-  if (provider === "mistral") return "Mistral";
-  if (provider === "opencode") return "OpenCode";
-  if (provider === "openai-compatible") return "OpenAI-compatible";
-  if (provider === "zai") return "z.ai";
-  if (provider === "xai") return "Grok Build";
-  return "OpenAI";
 }
 
 function oauthProviderLabel(provider: "openai" | "opencode" | "xai") {
@@ -1420,8 +1401,18 @@ export function AccountsTab(props: Props) {
     (account) => (account.provider ?? "openai") === "openai",
   ).length;
   const openAiCompatibleCount = accounts.filter(
-    (account) => account.provider === "openai-compatible",
+    (account) => account.provider === "openai-compatible" && !account.localRuntime,
   ).length;
+  const detectedRuntimeCounts = Array.from(
+    accounts.reduce((counts, account) => {
+      if (!account.localRuntime?.adapter) return counts;
+      counts.set(
+        account.localRuntime.adapter,
+        (counts.get(account.localRuntime.adapter) ?? 0) + 1,
+      );
+      return counts;
+    }, new Map<string, number>()),
+  );
   const openCodeCount = accounts.filter(
     (account) => account.provider === "opencode",
   ).length;
@@ -1559,6 +1550,11 @@ export function AccountsTab(props: Props) {
                 {openAiCompatibleCount} OpenAI-compatible
               </span>
             )}
+            {detectedRuntimeCounts.map(([adapter, count]) => (
+              <span className="badge" key={adapter}>
+                {count} {runtimeIdentityForAdapter(adapter).label}
+              </span>
+            ))}
             {openCodeCount > 0 && (
               <span className="badge">{openCodeCount} OpenCode</span>
             )}
@@ -1624,6 +1620,7 @@ export function AccountsTab(props: Props) {
         <div className="provider-list">
           {accounts.map((a) => {
             const modelBlocks = activeModelBlocks(a);
+            const runtimeIdentity = runtimeIdentityForAccount(a);
             const needsReauthentication =
               a.state?.needsTokenRefresh === true &&
               ["openai", "opencode", "xai"].includes(a.provider ?? "openai");
@@ -1654,11 +1651,11 @@ export function AccountsTab(props: Props) {
                     <span className="provider-badge">
                       <img
                         className="provider-icon"
-                        src={providerFavicon(a.provider)}
-                        alt={`${providerLabel(a.provider)} icon`}
+                        src={runtimeIdentity.iconUrl}
+                        alt={`${runtimeIdentity.label} icon`}
                         loading="lazy"
                       />
-                      {providerLabel(a.provider)}
+                      {runtimeIdentity.label}
                     </span>
                     <div className="provider-card-account">
                       <strong>
@@ -1977,7 +1974,7 @@ export function AccountsTab(props: Props) {
             <div className="modal-title-row make-money-preview-header">
               <div>
                 <span className="badge badge-warn">
-                  {providerLabel(makeMoneyPreviewAccount.provider)} local · Preview
+                  {runtimeIdentityForAccount(makeMoneyPreviewAccount).label} local · Preview
                 </span>
                 <h2 id="make-money-preview-title">Share your GPU</h2>
                 <p id="make-money-preview-summary" className="muted">
@@ -2319,9 +2316,21 @@ export function AccountsTab(props: Props) {
                       const adapter = manuallyConfigurableProviderAdapters.find(
                         (candidate) => candidate.id === draft.adapterId,
                       );
+                      const runtimeIdentity = runtimeIdentityForAdapter(
+                        draft.adapterId,
+                        adapter?.display_name,
+                      );
                       return (
                         <fieldset className="provider-runtime-editor" key={draft.adapterId}>
-                          <legend>{adapter?.display_name ?? draft.adapterId}</legend>
+                          <legend>
+                            <img
+                              className="runtime-icon"
+                              src={runtimeIdentity.iconUrl}
+                              alt=""
+                              loading="lazy"
+                            />
+                            {runtimeIdentity.label}
+                          </legend>
                           <label>
                             Loopback endpoint
                             <input
@@ -2481,22 +2490,33 @@ export function AccountsTab(props: Props) {
 
               {(providerPreviewStatus === "ready" || providerPreviewStatus === "saving") && providerDetectedModels && (
                 <div className="provider-runtime-list">
-                  {providerDetectedModels.runtimes.map((runtime) => (
-                    <fieldset className="provider-runtime-group" key={runtime.adapter_id}>
-                      <legend>{runtime.adapter_id}</legend>
-                      {runtime.models.map((model) => (
-                        <label className="provider-model-choice" key={`${runtime.adapter_id}:${model}`}>
-                          <input
-                            type="checkbox"
-                            checked={providerSelectionDraft.includes(model)}
-                            disabled={providerPreviewStatus === "saving"}
-                            onChange={() => toggleProviderSelection(model)}
+                  {providerDetectedModels.runtimes.map((runtime) => {
+                    const runtimeIdentity = runtimeIdentityForAdapter(runtime.adapter_id);
+                    return (
+                      <fieldset className="provider-runtime-group" key={runtime.adapter_id}>
+                        <legend>
+                          <img
+                            className="runtime-icon"
+                            src={runtimeIdentity.iconUrl}
+                            alt=""
+                            loading="lazy"
                           />
-                          <span className="mono">{model}</span>
-                        </label>
-                      ))}
-                    </fieldset>
-                  ))}
+                          {runtimeIdentity.label}
+                        </legend>
+                        {runtime.models.map((model) => (
+                          <label className="provider-model-choice" key={`${runtime.adapter_id}:${model}`}>
+                            <input
+                              type="checkbox"
+                              checked={providerSelectionDraft.includes(model)}
+                              disabled={providerPreviewStatus === "saving"}
+                              onChange={() => toggleProviderSelection(model)}
+                            />
+                            <span className="mono">{model}</span>
+                          </label>
+                        ))}
+                      </fieldset>
+                    );
+                  })}
 
                   {selectedButNotDetected.length > 0 && (
                     <fieldset className="provider-runtime-group provider-runtime-offline">
