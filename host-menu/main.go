@@ -31,6 +31,24 @@ import (
 
 var menuApplicationVersion = "dev"
 
+func startAtLoginPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "multivibe", "start-at-login")
+}
+func startAtLoginEnabled() bool {
+	data, err := os.ReadFile(startAtLoginPath())
+	return err != nil || strings.TrimSpace(string(data)) != "0"
+}
+func setStartAtLogin(enabled bool) {
+	path := startAtLoginPath()
+	_ = os.MkdirAll(filepath.Dir(path), 0700)
+	value := "0\n"
+	if enabled {
+		value = "1\n"
+	}
+	_ = os.WriteFile(path, []byte(value), 0600)
+}
+
 const actionHostExited = 100
 
 type menuClient struct {
@@ -303,6 +321,14 @@ func (app *menuApplication) eventLoop() {
 				app.updateAction("/admin/host-update/apply")
 			case int(C.MULTIVIBE_MENU_ACTION_QUIT):
 				C.multivibe_menu_stop()
+			case int(C.MULTIVIBE_MENU_ACTION_START_AT_LOGIN_ON):
+				setStartAtLogin(true)
+				app.ensureOwnedHost()
+				app.publish()
+			case int(C.MULTIVIBE_MENU_ACTION_START_AT_LOGIN_OFF):
+				setStartAtLogin(false)
+				app.stopOwnedHost()
+				app.publish()
 			case actionHostExited:
 				app.ownedHost = nil
 				app.startAttempt = false
@@ -362,6 +388,9 @@ func (app *menuApplication) refresh() {
 }
 
 func (app *menuApplication) ensureOwnedHost() {
+	if !startAtLoginEnabled() {
+		return
+	}
 	if app.startAttempt || app.ownedHost != nil {
 		return
 	}

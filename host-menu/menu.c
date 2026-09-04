@@ -16,6 +16,7 @@ static GtkWidget *content_box;
 static GtkWidget *primary_button;
 static GtkWidget *refresh_button;
 static GtkStatusIcon *status_icon;
+static GtkWidget *start_at_login;
 
 static const char *menu_css =
     "window { background-color: #f2f3f4; }"
@@ -333,7 +334,8 @@ static void apply_model(const char *model) {
         line_at(lines, line_count, 7), line_at(lines, line_count, 8), line_at(lines, line_count, 9)), FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(content_box), section_label("ACCOUNTS"), FALSE, FALSE, 0);
 
-    for (gsize index = 20; index < line_count; index++) {
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(start_at_login), field_bool(lines, line_count, 20));
+    for (gsize index = 21; index < line_count; index++) {
         if (lines[index][0] != 'A' || lines[index][1] != '\t') continue;
         gchar **fields = g_strsplit(lines[index], "\t", -1);
         if (g_strv_length(fields) >= 14) {
@@ -472,6 +474,7 @@ static void on_quit_clicked(GtkButton *button, gpointer data) {
     (void)data;
     goMenuAction(MULTIVIBE_MENU_ACTION_QUIT);
 }
+static void on_start_at_login_toggled(GtkToggleButton *button, gpointer data) { (void)data; goMenuAction(gtk_toggle_button_get_active(button) ? MULTIVIBE_MENU_ACTION_START_AT_LOGIN_ON : MULTIVIBE_MENU_ACTION_START_AT_LOGIN_OFF); }
 
 int multivibe_menu_init(const char *icon_path) {
     int argc = 1;
@@ -548,6 +551,9 @@ int multivibe_menu_init(const char *icon_path) {
     gtk_box_pack_start(GTK_BOX(actions), refresh_button, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(actions), quit_button, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(footer), actions, FALSE, FALSE, 0);
+    start_at_login = gtk_check_button_new_with_label("Start MultiVibe Host when I log in");
+    g_signal_connect(start_at_login, "toggled", G_CALLBACK(on_start_at_login_toggled), NULL);
+    gtk_box_pack_start(GTK_BOX(footer), start_at_login, FALSE, FALSE, 8);
     gtk_box_pack_start(GTK_BOX(root), footer, FALSE, FALSE, 0);
 
     status_icon = gtk_status_icon_new();
