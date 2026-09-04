@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -108,8 +109,16 @@ func TestCoreEnvironmentIsAllowlistedAndPinsAllState(t *testing.T) {
 		},
 	)
 	joined := strings.Join(environment, "\n")
-	for _, expected := range []string{
-		"HOST=127.0.0.1", "PORT=1456", "CONTROL_PLANE_PORT=1456", "MULTIVIBE_CONTROL_PLANE=true", "PUBLIC_BASE_URL=https://multivibe.home.example.com",
+	expectedHost, expectedPort := "0.0.0.0", "1455"
+	if runtime.GOOS == "darwin" {
+		expectedHost, expectedPort = "127.0.0.1", "1456"
+	}
+	expectedNetwork := []string{"HOST=" + expectedHost, "PORT=" + expectedPort}
+	if runtime.GOOS == "darwin" {
+		expectedNetwork = append(expectedNetwork, "CONTROL_PLANE_PORT=1456", "MULTIVIBE_CONTROL_PLANE=true")
+	}
+	expectedNetwork = append(expectedNetwork, "PUBLIC_BASE_URL=https://multivibe.home.example.com")
+	for _, expected := range append(expectedNetwork,
 		"OAUTH_REDIRECT_URI=https://multivibe.home.example.com/auth/callback",
 		"STORE_PATH=/var/lib/multivibe/accounts.json",
 		"PROVIDER_AGENT_ENABLED=true", "PROVIDER_AGENT_BINARY=/opt/multivibe/bin/agent",
@@ -126,7 +135,7 @@ func TestCoreEnvironmentIsAllowlistedAndPinsAllState(t *testing.T) {
 		"PROVIDER_AGENT_OLLAMA_LISTEN=127.0.0.1:18081",
 		"PROVIDER_AGENT_CUDA_VISIBLE_DEVICES=0",
 		"TRACE_INCLUDE_BODY=false", "BUNDLED_SECURITY_MODULE_PATH=/opt/multivibe/app/modules/security",
-	} {
+	) {
 		if !strings.Contains(joined, expected) {
 			t.Fatalf("missing environment contract %q in %s", expected, joined)
 		}
