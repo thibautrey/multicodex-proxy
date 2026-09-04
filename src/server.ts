@@ -14,6 +14,7 @@ import { installResponsesWebsocketProxy } from "./websocket-responses.js";
 import { oauthConfig } from "./oauth-config.js";
 import {
   ADMIN_TOKEN,
+  CONTROL_PLANE_PORT,
   CODEX_PROJECT_REGISTRATION_TOKEN,
   CODEX_PROJECTS_PATH,
   INFERENCE_IDEMPOTENCY_IN_FLIGHT_TIMEOUT_MS,
@@ -25,6 +26,7 @@ import {
   JOB_WORKER_CONCURRENCY,
   HOST,
   MODULES_PATH,
+  MULTIVIBE_CONTROL_PLANE,
   BUNDLED_SECURITY_MODULE_PATH,
   CHATGPT_BASE_URL,
   MISTRAL_BASE_URL,
@@ -46,6 +48,8 @@ import {
   UPSTREAM_PATH,
   OAUTH_STATE_PATH,
   PORT,
+  V1_EDGE_BASE_URL,
+  V1_EDGE_INTERNAL_JOB_TOKEN,
   PROVIDER_AGENT_BINARY,
   PROVIDER_AGENT_DEVICE_KEY_PATH,
   PROVIDER_AGENT_ENROLLMENT_STATE_PATH,
@@ -100,6 +104,13 @@ import { HostUpdateController } from "./host-update-controller.js";
 
 const app = express();
 app.use(createBodyParserMiddleware());
+const nodePort = MULTIVIBE_CONTROL_PLANE ? CONTROL_PLANE_PORT : PORT;
+const nodeHost = MULTIVIBE_CONTROL_PLANE ? "127.0.0.1" : HOST;
+if (MULTIVIBE_CONTROL_PLANE && !V1_EDGE_INTERNAL_JOB_TOKEN) {
+  throw new Error(
+    "V1_EDGE_INTERNAL_JOB_TOKEN is required when MULTIVIBE_CONTROL_PLANE=true",
+  );
+}
 
 
 app.use(
@@ -132,7 +143,9 @@ const hostHarnessIntegrations = MULTIVIBE_HOST_APPLICATION
   ? new HostHarnessIntegrationManager({
       homeDirectory: HOST_HARNESS_HOME_DIRECTORY,
       statePath: HOST_HARNESS_INTEGRATIONS_STATE_PATH,
-      baseUrl: `http://127.0.0.1:${PORT}`,
+      baseUrl: MULTIVIBE_CONTROL_PLANE
+        ? V1_EDGE_BASE_URL
+        : `http://127.0.0.1:${nodePort}`,
     })
   : undefined;
 const capacityTracker = new CapacityTracker();
@@ -270,7 +283,8 @@ const ADMIN_SESSION_COOKIE = "multivibe_admin_session";
 const ADMIN_SESSION_MAX_AGE_MS = 400 * 24 * 60 * 60 * 1000;
 const DESKTOP_SESSION_MAX_AGE_MS = 60 * 1000;
 const desktopSessionCodes = new Map<string, number>();
-const INTERNAL_JOB_TOKEN = crypto.randomBytes(32).toString("base64url");
+const INTERNAL_JOB_TOKEN =
+  V1_EDGE_INTERNAL_JOB_TOKEN || crypto.randomBytes(32).toString("base64url");
 
 function safeEqual(a: string, b: string): boolean {
   const left = Buffer.from(a);
@@ -561,16 +575,18 @@ const inferenceIdempotencyMiddleware = createInferenceIdempotencyMiddleware({
 });
 const admissionMiddleware = createAdmissionMiddleware(smartRouting);
 const smartRoutingRouter = createSmartRoutingRouter(smartRouting);
-app.use(
-  "/v1",
-  proxyGuard,
-  hostUpdateController?.inferenceMiddleware ?? ((_req, _res, next) => next()),
-  inferenceIdempotencyMiddleware,
-  admissionMiddleware,
-  smartRoutingRouter,
-);
-app.use("/v1", realtimeRouter);
-app.use("/v1", proxyRouter);
+if (!MULTIVIBE_CONTROL_PLANE) {
+  app.use(
+    "/v1",
+    proxyGuard,
+    hostUpdateController?.inferenceMiddleware ?? ((_req, _res, next) => next()),
+    inferenceIdempotencyMiddleware,
+    admissionMiddleware,
+    smartRoutingRouter,
+  );
+  app.use("/v1", realtimeRouter);
+  app.use("/v1", proxyRouter);
+}
 app.use(
   "/",
   rootProxyGuard,
@@ -614,12 +630,15 @@ const jobRunner = new JobRunner(
         job.deadlineAt ? job.deadlineAt - Date.now() : Number.POSITIVE_INFINITY,
       ),
     );
-    const response = await fetch(`http://127.0.0.1:${PORT}${job.route}`, {
+    const response = await fetch(
+      `${MULTIVIBE_CONTROL_PLANE ? V1_EDGE_BASE_URL : `http://127.0.0.1:${nodePort}`}${job.route}`,
+      {
       method: job.method,
       headers: {
         ...job.requestHeaders,
         "content-type": "application/json",
-        "x-multivibe-internal-token": INTERNAL_JOB_TOKEN,
+        "x-multivibe-internal-token":
+          V1_EDGE_INTERNAL_JOB_TOKEN || INTERNAL_JOB_TOKEN,
         "x-multivibe-internal-application": job.application,
         "x-multivibe-internal-job": "1",
         "x-multivibe-priority": job.priority,
@@ -627,7 +646,8 @@ const jobRunner = new JobRunner(
       },
       body: JSON.stringify(job.requestBody),
       signal: AbortSignal.timeout(executionTimeoutMs),
-    });
+      },
+    );
     const raw = await response.text();
     let body: unknown = raw;
     try {
@@ -657,19 +677,23 @@ const jobRunner = new JobRunner(
 );
 hostUpdateController?.attachJobRunner(jobRunner);
 
-installResponsesWebsocketProxy({
-  server,
-  port: PORT,
-  authorize: (req) => hasProxyApiKey(req.headers),
-  admit: hostUpdateController?.admitWebsocket,
-  onTurnStarted: hostUpdateController?.websocketTurnStarted,
-  onTurnFinished: hostUpdateController?.websocketTurnFinished,
-});
+if (!MULTIVIBE_CONTROL_PLANE) {
+  installResponsesWebsocketProxy({
+    server,
+    port: nodePort,
+    authorize: (req) => hasProxyApiKey(req.headers),
+    admit: hostUpdateController?.admitWebsocket,
+    onTurnStarted: hostUpdateController?.websocketTurnStarted,
+    onTurnFinished: hostUpdateController?.websocketTurnFinished,
+  });
+}
 
-server.listen(HOST ? { port: PORT, host: HOST } : { port: PORT }, () => {
+server.listen(nodeHost ? { port: nodePort, host: nodeHost } : { port: nodePort }, () => {
   jobRunner.start();
   smartRouting.startHealthMonitoring();
-  console.log(`multivibe listening on ${HOST ?? "all interfaces"}:${PORT}`);
+  console.log(
+    `multivibe control plane listening on ${nodeHost ?? "all interfaces"}:${nodePort}`,
+  );
   console.log(
     `store=${STORE_PATH} oauth=${OAUTH_STATE_PATH} trace=${TRACE_FILE_PATH} traceStats=${TRACE_STATS_HISTORY_PATH} codexProjects=${CODEX_PROJECTS_PATH} redirect=${oauthConfig.redirectUri} openaiUpstream=${CHATGPT_BASE_URL}${UPSTREAM_PATH} mistralUpstream=${MISTRAL_BASE_URL}${MISTRAL_UPSTREAM_PATH} zaiUpstream=${ZAI_BASE_URL}${ZAI_UPSTREAM_PATH} xaiUpstream=${XAI_BASE_URL}${XAI_RESPONSES_PATH}`,
   );
