@@ -3,6 +3,78 @@ use serde_json::Value;
 use napi::{Error, Status, bindgen_prelude::Buffer};
 use napi_derive::napi;
 
+const FAST_SSE_EVENT_PREFIXES: &[&str] = &["response.reasoning", "response.refusal"];
+
+fn is_fast_sse_event_type(event_type: &str) -> bool {
+    matches!(
+        event_type,
+        "response.output_text.delta" | "response.output_text.done"
+    ) || FAST_SSE_EVENT_PREFIXES
+        .iter()
+        .any(|prefix| event_type.starts_with(prefix))
+}
+
+/// Extract the first JSON `type`-like property using the same deliberately
+/// conservative syntax accepted by the TypeScript fast path. This is not a
+/// JSON parser: frames that do not match the exact SSE shape return `None` and
+/// remain on the reference parser.
+fn json_type_property(payload: &str) -> Option<&str> {
+    let marker = "\"type\"";
+    let mut search_from = 0;
+
+    while search_from < payload.len() {
+        let relative = payload[search_from..].find(marker)?;
+        let marker_start = search_from + relative;
+        let mut remainder = &payload[marker_start + marker.len()..];
+        remainder = remainder.trim_start();
+        if let Some(after_colon) = remainder.strip_prefix(':') {
+            let after_colon = after_colon.trim_start();
+            if let Some(after_quote) = after_colon.strip_prefix('"') {
+                let end = after_quote.find('"')?;
+                if end > 0 {
+                    return Some(&after_quote[..end]);
+                }
+            }
+        }
+        search_from = marker_start + marker.len();
+    }
+
+    None
+}
+
+/// Classify only the high-frequency SSE frames whose event type can be used
+/// without materializing the JSON event. The return value is empty when the
+/// caller must use the full parser.
+pub fn classify_sse_frame_type(frame: &str) -> Option<&str> {
+    let mut event_type: Option<&str> = None;
+    let mut data_payload: Option<&str> = None;
+
+    for raw_line in frame.split('\n') {
+        let line = raw_line.trim();
+        if let Some(value) = line.strip_prefix("event:") {
+            event_type = Some(value.trim());
+        } else if let Some(value) = line.strip_prefix("data:") {
+            if data_payload.is_some() {
+                return None;
+            }
+            data_payload = Some(value.trim());
+        }
+    }
+
+    let event_type = event_type?;
+    let data_payload = data_payload?;
+    if !data_payload.starts_with('{') || !data_payload.ends_with('}') {
+        return None;
+    }
+
+    let payload_type = json_type_property(data_payload)?;
+    if payload_type != event_type || !is_fast_sse_event_type(event_type) {
+        return None;
+    }
+
+    Some(event_type)
+}
+
 /// Stable, serialization-friendly result of the request inspection phase.
 ///
 /// The fields intentionally mirror the existing TypeScript contract. Routing
@@ -109,9 +181,22 @@ pub fn inspect_payload_context_json(
     Ok(inspect_payload_context(&value).into())
 }
 
+/// Classify a high-frequency SSE frame without parsing its JSON payload.
+///
+/// An empty string means that the frame is not eligible for the fast path and
+/// must be inspected by the caller's full JSON parser. The function is kept
+/// synchronous and allocation-light because it is called from the stream
+/// relay's hot loop only for frames above the native rollout threshold.
+#[napi(js_name = "classifySseFrame")]
+pub fn classify_sse_frame(frame: String) -> napi::Result<String> {
+    Ok(classify_sse_frame_type(&frame)
+        .unwrap_or_default()
+        .to_owned())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{PayloadContextInspection, inspect_payload_context};
+    use super::{PayloadContextInspection, classify_sse_frame_type, inspect_payload_context};
     use serde_json::{Value, json};
 
     #[test]
@@ -138,6 +223,24 @@ mod tests {
                 actual.latest_compaction_index,
                 expected["latestCompactionIndex"].as_i64().expect("index"),
                 "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn classifies_only_the_safe_sse_fast_path() {
+        let fixtures: Vec<Value> =
+            serde_json::from_str(include_str!("../testdata/sse-fast-path-cases.json"))
+                .expect("shared SSE fixtures must be valid JSON");
+
+        for fixture in fixtures {
+            let frame = fixture["frame"].as_str().expect("fixture frame");
+            let expected = fixture["expected"].as_str();
+            assert_eq!(
+                classify_sse_frame_type(frame),
+                expected,
+                "{}",
+                fixture["name"]
             );
         }
     }

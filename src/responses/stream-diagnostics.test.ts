@@ -1,12 +1,24 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
+  classifySseFrameType,
   createResponseStreamDiagnostics,
   extractSSEFrameUsage,
   inspectResponseStreamEvent,
   inspectResponseStreamFrame,
   responseStreamFrameHasMeaningfulOutput,
 } from "./stream-diagnostics.js";
+
+const sseFixturePath = fileURLToPath(
+  new URL("../../rust/proxy-core/testdata/sse-fast-path-cases.json", import.meta.url),
+);
+const sseFixtures = JSON.parse(fs.readFileSync(sseFixturePath, "utf8")) as Array<{
+  name: string;
+  frame: string;
+  expected: string | null;
+}>;
 
 function frame(event: any): string {
   return `event: ${event.type}\ndata: ${JSON.stringify(event)}`;
@@ -28,6 +40,16 @@ function inspectFrameBaseline(frameText: string, diagnostics: any): any {
   }
   return usage;
 }
+
+test("matches the shared Rust and TypeScript SSE fast-path fixtures", () => {
+  for (const fixture of sseFixtures) {
+    assert.equal(
+      classifySseFrameType(fixture.frame),
+      fixture.expected ?? undefined,
+      fixture.name,
+    );
+  }
+});
 
 test("fast frame inspection preserves complete stream diagnostics", () => {
   const frames = [

@@ -1,0 +1,47 @@
+[
+  {
+    "name": "text delta",
+    "frame": "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}",
+    "expected": "response.output_text.delta"
+  },
+  {
+    "name": "text done with CRLF",
+    "frame": "event: response.output_text.done\r\ndata: {\"type\": \"response.output_text.done\", \"text\": \"hello\"}",
+    "expected": "response.output_text.done"
+  },
+  {
+    "name": "reasoning delta",
+    "frame": "event: response.reasoning_summary_text.delta\ndata: {\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"thinking\"}",
+    "expected": "response.reasoning_summary_text.delta"
+  },
+  {
+    "name": "refusal delta",
+    "frame": "event: response.refusal.delta\ndata: {\"type\":\"response.refusal.delta\",\"delta\":\"no\"}",
+    "expected": "response.refusal.delta"
+  },
+  {
+    "name": "non-fast output item",
+    "frame": "event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\"}",
+    "expected": null
+  },
+  {
+    "name": "mismatched event and payload types",
+    "frame": "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.done\"}",
+    "expected": null
+  },
+  {
+    "name": "invalid JSON",
+    "frame": "event: response.output_text.delta\ndata: {not-json}",
+    "expected": null
+  },
+  {
+    "name": "multiple data lines",
+    "frame": "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\"}\ndata: {\"type\":\"response.output_text.delta\"}",
+    "expected": null
+  },
+  {
+    "name": "terminal response",
+    "frame": "event: response.completed\ndata: {\"type\":\"response.completed\"}",
+    "expected": null
+  }
+]

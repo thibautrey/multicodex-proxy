@@ -1,6 +1,7 @@
 import type {
   ResponseStreamDiagnostics,
 } from "../traces.js";
+import { classifySseFrameTypeFromNative } from "./payload-inspection.js";
 
 export function createResponseStreamDiagnostics(): ResponseStreamDiagnostics {
   return {
@@ -135,7 +136,7 @@ export function inspectResponseStreamEvent(
   }
 }
 
-function fastInspectableEventType(frame: string): string | undefined {
+function fastInspectableEventTypeReference(frame: string): string | undefined {
   let eventType: string | undefined;
   let dataPayload: string | undefined;
 
@@ -166,11 +167,18 @@ function fastInspectableEventType(frame: string): string | undefined {
   return undefined;
 }
 
+export function classifySseFrameType(frame: string): string | undefined {
+  return (
+    classifySseFrameTypeFromNative(frame) ??
+    fastInspectableEventTypeReference(frame)
+  );
+}
+
 export function inspectResponseStreamFrame(
   frame: string,
   diagnostics: ResponseStreamDiagnostics,
 ): any {
-  const fastType = fastInspectableEventType(frame);
+  const fastType = classifySseFrameType(frame);
   if (fastType) {
     inspectResponseStreamEventType(fastType, diagnostics);
     return undefined;

@@ -17,6 +17,7 @@ export type PayloadContextInspection = {
 
 type NativePayloadInspectionModule = {
   inspectPayloadContextJson(payload: Buffer): unknown;
+  classifySseFrame?: (frame: string) => unknown;
 };
 
 function isNativePayloadInspectionModule(
@@ -78,6 +79,19 @@ function loadNativePayloadInspection(): NativePayloadInspectionModule | undefine
 const nativePayloadInspection = loadNativePayloadInspection();
 
 export const nativePayloadInspectionAvailable = Boolean(nativePayloadInspection);
+
+export function classifySseFrameTypeFromNative(
+  frame: string,
+): string | undefined {
+  const classifier = nativePayloadInspection?.classifySseFrame;
+  if (typeof classifier !== "function") return undefined;
+  try {
+    const value = classifier(frame);
+    return typeof value === "string" && value ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 function normalizeNativeInspection(value: unknown): PayloadContextInspection | undefined {
   if (!value || typeof value !== "object") return undefined;

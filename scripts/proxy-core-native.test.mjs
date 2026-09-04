@@ -17,9 +17,19 @@ const fixtures = JSON.parse(
     "utf8",
   ),
 );
+const sseFixtures = JSON.parse(
+  fs.readFileSync(
+    path.join(repositoryRoot, "rust", "proxy-core", "testdata", "sse-fast-path-cases.json"),
+    "utf8",
+  ),
+);
 
 test("exports the raw-JSON payload inspection function", () => {
   assert.equal(typeof native.inspectPayloadContextJson, "function");
+});
+
+test("exports the conservative SSE fast-path classifier", () => {
+  assert.equal(typeof native.classifySseFrame, "function");
 });
 
 test("matches every shared TypeScript and Rust migration fixture", () => {
@@ -37,4 +47,14 @@ test("rejects invalid JSON as an argument error", () => {
     () => native.inspectPayloadContextJson(Buffer.from("{")),
     /Invalid JSON payload/u,
   );
+});
+
+test("matches every shared SSE fast-path fixture", () => {
+  for (const fixture of sseFixtures) {
+    assert.equal(
+      native.classifySseFrame(fixture.frame),
+      fixture.expected ?? "",
+      fixture.name,
+    );
+  }
 });
