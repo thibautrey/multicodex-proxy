@@ -167,6 +167,58 @@ test("OpenCode installation synchronizes every safe model from MultiVibe", async
   assert.equal(requests, 1);
 });
 
+test("all model-aware harnesses synchronize the live MultiVibe catalog", async (t) => {
+  const modelIds = ["gpt-5.6-luna", "gpt-5.5", "local/model"];
+  const catalogHarnesses = new Set(["openclaw", "pi", "crush", "continue"]);
+  const harnessIds = [
+    "openclaw", "pi", "crush", "continue", "hermes-agent", "goose", "openhands",
+    "aider", "open-interpreter", "agent-zero", "autogpt",
+  ];
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  for (const id of harnessIds) {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), `multivibe-${id}-models-`));
+    t.after(() => fs.rm(root, { recursive: true, force: true }));
+    const home = path.join(root, "home");
+    const bin = path.join(home, "bin");
+    const definition = HOST_HARNESS_DEFINITIONS.find((entry) => entry.id === id)!;
+    await fs.mkdir(bin, { recursive: true });
+    await fs.writeFile(path.join(bin, definition.executables[0]), "binary", { mode: 0o755 });
+
+    let requests = 0;
+    globalThis.fetch = async (input, init) => {
+      requests += 1;
+      assert.equal(String(input), "http://127.0.0.1:1455/v1/models");
+      assert.equal(new Headers(init?.headers).get("authorization"), "Bearer mv_all_harnesses");
+      return Response.json({ object: "list", data: modelIds.map((model) => ({ id: model })) });
+    };
+
+    const manager = new HostHarnessIntegrationManager({
+      homeDirectory: home,
+      statePath: path.join(home, ".multivibe", "harnesses.json"),
+      baseUrl: "http://127.0.0.1:1455",
+      definitions: [definition],
+      executableDirectories: [bin],
+    });
+    await manager.install(id, {
+      apiKeyId: `key-${id}`,
+      apiKey: "mv_all_harnesses",
+      application: `harness-${id}`,
+    });
+
+    const configPath = path.join(home, definition.configuration!.relativePath);
+    const configured = await fs.readFile(configPath, "utf8");
+    assert.equal(requests, 1, `${id} should discover the catalog once`);
+    assert.match(configured, /gpt-5\.5|gpt-5\.6-luna/);
+    if (catalogHarnesses.has(id)) {
+      for (const model of modelIds) assert.match(configured, new RegExp(model.replace("/", "\\/")));
+    }
+  }
+});
+
 test("marks old OpenCode installations for repair and refreshes their model catalog", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-opencode-repair-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));

@@ -10,6 +10,7 @@ const CODEX_ROOT_BLOCK_START = "# >>> MultiVibe Host Codex root >>>";
 const CODEX_ROOT_BLOCK_END = "# <<< MultiVibe Host Codex root <<<";
 const CODEX_PROVIDER_BLOCK_START = "# >>> MultiVibe Host Codex provider >>>";
 const CODEX_PROVIDER_BLOCK_END = "# <<< MultiVibe Host Codex provider <<<";
+const MODEL_CATALOG_CONFIGURATION_REVISION = 1;
 
 export type HostHarnessCategory = "cli" | "editor" | "agent" | "framework" | "service";
 
@@ -142,9 +143,9 @@ function jsonConfiguration(
   };
 }
 
-const OPENCODE_DEFAULT_MODEL = "gpt-5.5";
+const DEFAULT_MODEL_ID = "gpt-5.5";
 
-function safeOpenCodeModelIds(value: unknown): string[] {
+function safeModelIds(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   const ids: string[] = [];
   const seen = new Set<string>();
@@ -157,7 +158,7 @@ function safeOpenCodeModelIds(value: unknown): string[] {
   return ids;
 }
 
-async function discoverOpenCodeModelIds(context: HarnessContext): Promise<string[]> {
+async function discoverMultiVibeModelIds(context: HarnessContext): Promise<string[]> {
   let response: Response;
   try {
     response = await fetch(`${context.baseUrl}/v1/models`, {
@@ -187,7 +188,7 @@ async function discoverOpenCodeModelIds(context: HarnessContext): Promise<string
   } catch {
     throw new HostHarnessIntegrationError("MultiVibe model catalog is invalid", 409);
   }
-  const modelIds = safeOpenCodeModelIds(
+  const modelIds = safeModelIds(
     payload && typeof payload === "object" && !Array.isArray(payload)
       ? (payload as { data?: unknown[] }).data?.map((entry) =>
         entry && typeof entry === "object" && !Array.isArray(entry)
@@ -202,6 +203,31 @@ async function discoverOpenCodeModelIds(context: HarnessContext): Promise<string
   return modelIds;
 }
 
+function requireModelIds(context: HarnessContext): string[] {
+  const modelIds = safeModelIds(context.modelIds);
+  if (!modelIds.length) {
+    throw new HostHarnessIntegrationError("MultiVibe model catalog is empty", 409);
+  }
+  return modelIds;
+}
+
+function selectDefaultModelId(context: HarnessContext): string {
+  const modelIds = requireModelIds(context);
+  return modelIds.includes(DEFAULT_MODEL_ID) ? DEFAULT_MODEL_ID : modelIds[0];
+}
+
+async function prepareModelCatalog(context: HarnessContext): Promise<Partial<HarnessContext>> {
+  return { modelIds: await discoverMultiVibeModelIds(context) };
+}
+
+function modelAwareConfiguration(configuration: HarnessConfiguration): HarnessConfiguration {
+  return {
+    ...configuration,
+    revision: configuration.revision ?? MODEL_CATALOG_CONFIGURATION_REVISION,
+    prepare: prepareModelCatalog,
+  };
+}
+
 function openCodeModelMap(modelIds: readonly string[]): Record<string, { name: string }> {
   return Object.fromEntries(modelIds.map((id) => [id, { name: id }]));
 }
@@ -211,17 +237,14 @@ function openCodeConfigurationDocument(
   context: HarnessContext,
 ): string {
   const document = parseJsonObject(current, ".config/opencode/opencode.json");
-  const modelIds = safeOpenCodeModelIds(context.modelIds);
-  if (!modelIds.length) {
-    throw new HostHarnessIntegrationError("MultiVibe model catalog is empty", 409);
-  }
+  const modelIds = requireModelIds(context);
   const currentModel = typeof document.model === "string" && document.model.startsWith("multivibe/")
     ? document.model.slice("multivibe/".length)
     : "";
   const selectedModel = modelIds.includes(currentModel)
     ? currentModel
-    : modelIds.includes(OPENCODE_DEFAULT_MODEL)
-      ? OPENCODE_DEFAULT_MODEL
+    : modelIds.includes(DEFAULT_MODEL_ID)
+      ? DEFAULT_MODEL_ID
       : modelIds[0];
   setJsonPath(document, ["model"], `multivibe/${selectedModel}`);
   setJsonPath(document, ["provider", "multivibe"], {
@@ -236,7 +259,7 @@ function openCodeConfigurationDocument(
 const openCodeConfiguration: HarnessConfiguration = {
   relativePath: ".config/opencode/opencode.json",
   revision: 2,
-  prepare: async (context) => ({ modelIds: await discoverOpenCodeModelIds(context) }),
+  prepare: prepareModelCatalog,
   render: openCodeConfigurationDocument,
   isConfigured: (current, baseUrl) => current.includes(baseUrl),
 };
@@ -412,95 +435,97 @@ const claudeConfiguration = jsonConfiguration(".claude/settings.json", ({ baseUr
   [["env", "ANTHROPIC_AUTH_TOKEN"], apiKey],
 ]);
 
-const openClawConfiguration = jsonConfiguration(".openclaw/openclaw.json", ({ baseUrl, apiKey }) => [
-  [["agents", "defaults", "model", "primary"], "multivibe/gpt-5.5"],
+const openClawConfiguration = modelAwareConfiguration(jsonConfiguration(".openclaw/openclaw.json", ({ baseUrl, apiKey, modelIds }) => [
+  [["agents", "defaults", "model", "primary"], `multivibe/${selectDefaultModelId({ baseUrl, apiKey, modelIds })}`],
   [["models", "providers", "multivibe"], {
     baseUrl: `${baseUrl}/v1`,
     apiKey,
     api: "openai-responses",
-    models: [{ id: "gpt-5.5", name: "gpt-5.5" }],
+    models: requireModelIds({ baseUrl, apiKey, modelIds }).map((id) => ({ id, name: id })),
   }],
-]);
+]));
 
-const piConfiguration = jsonConfiguration(".pi/agent/models.json", ({ baseUrl, apiKey }) => [
+const piConfiguration = modelAwareConfiguration(jsonConfiguration(".pi/agent/models.json", ({ baseUrl, apiKey, modelIds }) => [
   [["providers", "multivibe"], {
     baseUrl: `${baseUrl}/v1`,
     apiKey,
     api: "openai-responses",
-    models: [{ id: "gpt-5.5", name: "gpt-5.5" }],
+    models: requireModelIds({ baseUrl, apiKey, modelIds }).map((id) => ({ id, name: id })),
   }],
-]);
+]));
 
 const qwenConfiguration = jsonConfiguration(".qwen/settings.json", ({ baseUrl, apiKey }) => [
   [["env", "OPENAI_BASE_URL"], `${baseUrl}/v1`],
   [["env", "OPENAI_API_KEY"], apiKey],
 ]);
 
-const crushConfiguration = jsonConfiguration(".config/crush/crush.json", ({ baseUrl, apiKey }) => [
+const crushConfiguration = modelAwareConfiguration(jsonConfiguration(".config/crush/crush.json", ({ baseUrl, apiKey, modelIds }) => [
   [["providers", "multivibe"], {
     type: "openai",
     base_url: `${baseUrl}/v1`,
     api_key: apiKey,
-    models: [{ id: "gpt-5.5", name: "gpt-5.5" }],
+    models: requireModelIds({ baseUrl, apiKey, modelIds }).map((id) => ({ id, name: id })),
   }],
-]);
+]));
 
-const hermesConfiguration = managedBlockConfiguration(".hermes/.env", ({ baseUrl, apiKey }) => [
+const hermesConfiguration = modelAwareConfiguration(managedBlockConfiguration(".hermes/.env", ({ baseUrl, apiKey, modelIds }) => [
   "LLM_PROVIDER=openai",
-  "LLM_MODEL=gpt-5.5",
+  `LLM_MODEL=${selectDefaultModelId({ baseUrl, apiKey, modelIds })}`,
   `OPENAI_BASE_URL=${baseUrl}/v1`,
   `OPENAI_API_KEY=${apiKey}`,
-].join("\n"));
+].join("\n")));
 
-const gooseConfiguration = managedBlockConfiguration(".config/goose/config.yaml", ({ baseUrl, apiKey }) => [
+const gooseConfiguration = modelAwareConfiguration(managedBlockConfiguration(".config/goose/config.yaml", ({ baseUrl, apiKey, modelIds }) => [
   "GOOSE_PROVIDER: openai",
-  "GOOSE_MODEL: gpt-5.5",
+  `GOOSE_MODEL: ${jsonString(selectDefaultModelId({ baseUrl, apiKey, modelIds }))}`,
   `OPENAI_HOST: ${jsonString(`${baseUrl}/v1`)}`,
   `OPENAI_API_KEY: ${jsonString(apiKey)}`,
-].join("\n"));
+].join("\n")));
 
-const openHandsConfiguration = managedBlockConfiguration(".openhands/config.toml", ({ baseUrl, apiKey }) => [
+const openHandsConfiguration = modelAwareConfiguration(managedBlockConfiguration(".openhands/config.toml", ({ baseUrl, apiKey, modelIds }) => [
   "[llm]",
-  'model = "openai/gpt-5.5"',
+  `model = ${jsonString(`openai/${selectDefaultModelId({ baseUrl, apiKey, modelIds })}`)}`,
   `base_url = ${jsonString(`${baseUrl}/v1`)}`,
   `api_key = ${jsonString(apiKey)}`,
-].join("\n"));
+].join("\n")));
 
-const aiderConfiguration = managedBlockConfiguration(".aider.conf.yml", ({ baseUrl, apiKey }) => [
-  "model: openai/gpt-5.5",
+const aiderConfiguration = modelAwareConfiguration(managedBlockConfiguration(".aider.conf.yml", ({ baseUrl, apiKey, modelIds }) => [
+  `model: ${jsonString(`openai/${selectDefaultModelId({ baseUrl, apiKey, modelIds })}`)}`,
   `openai-api-base: ${jsonString(`${baseUrl}/v1`)}`,
   `openai-api-key: ${jsonString(apiKey)}`,
-].join("\n"));
+].join("\n")));
 
-const continueConfiguration = managedBlockConfiguration(".continue/config.yaml", ({ baseUrl, apiKey }) => [
+const continueConfiguration = modelAwareConfiguration(managedBlockConfiguration(".continue/config.yaml", ({ baseUrl, apiKey, modelIds }) => [
   "models:",
-  "  - name: MultiVibe Host",
-  "    provider: openai",
-  "    model: gpt-5.5",
-  `    apiBase: ${jsonString(`${baseUrl}/v1`)}`,
-  `    apiKey: ${jsonString(apiKey)}`,
-].join("\n"));
+  ...requireModelIds({ baseUrl, apiKey, modelIds }).map((id) => [
+    `  - name: ${jsonString(`MultiVibe Host / ${id}`)}`,
+    "    provider: openai",
+    `    model: ${jsonString(id)}`,
+    `    apiBase: ${jsonString(`${baseUrl}/v1`)}`,
+    `    apiKey: ${jsonString(apiKey)}`,
+  ].join("\n")),
+].join("\n")));
 
-const interpreterConfiguration = managedBlockConfiguration(".config/open-interpreter/config.yaml", ({ baseUrl, apiKey }) => [
+const interpreterConfiguration = modelAwareConfiguration(managedBlockConfiguration(".config/open-interpreter/config.yaml", ({ baseUrl, apiKey, modelIds }) => [
   "llm:",
-  "  model: openai/gpt-5.5",
+  `  model: ${jsonString(`openai/${selectDefaultModelId({ baseUrl, apiKey, modelIds })}`)}`,
   `  api_base: ${jsonString(`${baseUrl}/v1`)}`,
   `  api_key: ${jsonString(apiKey)}`,
-].join("\n"));
+].join("\n")));
 
-const agentZeroConfiguration = managedBlockConfiguration(".agent-zero/.env", ({ baseUrl, apiKey }) => [
+const agentZeroConfiguration = modelAwareConfiguration(managedBlockConfiguration(".agent-zero/.env", ({ baseUrl, apiKey, modelIds }) => [
   "API_PROVIDER=openai",
-  "CHAT_MODEL=gpt-5.5",
+  `CHAT_MODEL=${selectDefaultModelId({ baseUrl, apiKey, modelIds })}`,
   `OPENAI_BASE_URL=${baseUrl}/v1`,
   `OPENAI_API_KEY=${apiKey}`,
-].join("\n"));
+].join("\n")));
 
-const autoGptConfiguration = managedBlockConfiguration(".autogpt/.env", ({ baseUrl, apiKey }) => [
+const autoGptConfiguration = modelAwareConfiguration(managedBlockConfiguration(".autogpt/.env", ({ baseUrl, apiKey, modelIds }) => [
   `OPENAI_API_BASE_URL=${baseUrl}/v1`,
   `OPENAI_API_KEY=${apiKey}`,
-  "SMART_LLM=gpt-5.5",
-  "FAST_LLM=gpt-5.5",
-].join("\n"));
+  `SMART_LLM=${selectDefaultModelId({ baseUrl, apiKey, modelIds })}`,
+  `FAST_LLM=${selectDefaultModelId({ baseUrl, apiKey, modelIds })}`,
+].join("\n")));
 
 const manualReason = "This harness does not expose a stable, safe per-user OpenAI-compatible configuration file that MultiVibe Host can edit automatically.";
 const projectReason = "This framework is configured per project. MultiVibe Host detected it but will not rewrite arbitrary project files.";
