@@ -15,11 +15,12 @@ COPY --from=deps /app/web/node_modules ./web/node_modules
 COPY . .
 RUN npm run build
 
-FROM rust:1.88-alpine AS proxy-core-build
+FROM rust:1.88-alpine AS rust-build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY rust/ ./rust/
 RUN cargo build --release -p multivibe-proxy-core
+RUN cargo build --release -p multivibe-v1-edge
 
 FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS provider-agent-build
 WORKDIR /src/provider-agent
@@ -37,13 +38,18 @@ FROM node:22-alpine
 WORKDIR /app
 RUN apk add --no-cache git libstdc++
 ENV NODE_ENV=production
+ENV MULTIVIBE_CONTROL_PLANE=true
+ENV CONTROL_PLANE_PORT=1456
+ENV V1_EDGE_PORT=1455
 ARG GIT_SHA=unknown
 ARG BUILD_ID=unknown
 ENV APP_GIT_SHA=$GIT_SHA
 ENV APP_BUILD_ID=$BUILD_ID
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/web-dist ./web-dist
-COPY --from=proxy-core-build /src/target/release/libmultivibe_proxy_core.so ./native/multivibe-proxy-core.node
+COPY --from=rust-build /src/target/release/libmultivibe_proxy_core.so ./native/multivibe-proxy-core.node
+COPY --from=rust-build /src/target/release/multivibe-v1-edge /opt/multivibe/bin/multivibe-v1-edge
+COPY --chmod=0555 scripts/start-multivibe.sh /usr/local/bin/start-multivibe.sh
 COPY modules/security ./modules/security
 COPY --from=build \
   /app/scripts/codex-project-hook.mjs \
@@ -55,5 +61,5 @@ COPY --from=provider-agent-build --chmod=0555 \
   /opt/multivibe/bin/multivibe-provider-agent
 COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
-EXPOSE 1455
-CMD ["node", "--import", "./dist/instrument.js", "dist/server.js"]
+EXPOSE 1455 1456
+CMD ["/usr/local/bin/start-multivibe.sh"]

@@ -1,3 +1,3 @@
 [workspace]
-members = ["rust/proxy-core"]
+members = ["rust/proxy-core", "rust/v1-edge"]
 resolver = "2"
