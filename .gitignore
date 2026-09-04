@@ -3,6 +3,7 @@ web/node_modules
 dist
 web-dist
 target
+native/*.node
 .env
 web/*.tsbuildinfo
 data/*

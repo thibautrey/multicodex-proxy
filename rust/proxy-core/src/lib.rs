@@ -1,5 +1,8 @@
 use serde_json::Value;
 
+use napi::{Error, Status, bindgen_prelude::Buffer};
+use napi_derive::napi;
+
 /// Stable, serialization-friendly result of the request inspection phase.
 ///
 /// The fields intentionally mirror the existing TypeScript contract. Routing
@@ -9,6 +12,18 @@ use serde_json::Value;
 pub struct PayloadContextInspection {
     pub has_image: bool,
     pub compaction_item_count: usize,
+    pub latest_compaction_index: i64,
+}
+
+/// JavaScript-facing representation of [`PayloadContextInspection`].
+///
+/// The N-API object deliberately contains only the three scalar values needed
+/// by the router. It does not expose the parsed request or retain any payload
+/// bytes after the synchronous call returns.
+#[napi(object)]
+pub struct NativePayloadContextInspection {
+    pub has_image: bool,
+    pub compaction_item_count: i64,
     pub latest_compaction_index: i64,
 }
 
@@ -64,6 +79,34 @@ pub fn inspect_payload_context(payload: &Value) -> PayloadContextInspection {
     }
 
     inspection
+}
+
+impl From<PayloadContextInspection> for NativePayloadContextInspection {
+    fn from(value: PayloadContextInspection) -> Self {
+        Self {
+            has_image: value.has_image,
+            compaction_item_count: value.compaction_item_count as i64,
+            latest_compaction_index: value.latest_compaction_index,
+        }
+    }
+}
+
+/// Inspect UTF-8 JSON bytes received from Node without serializing the object
+/// across the language boundary.
+///
+/// The function is synchronous because the operation is CPU-bound and small;
+/// callers invoke it from the body-parser's existing synchronous verification
+/// hook. Invalid JSON is reported as an `InvalidArg` N-API exception so the
+/// TypeScript caller can keep its existing implementation as a safe fallback.
+#[napi(js_name = "inspectPayloadContextJson")]
+pub fn inspect_payload_context_json(
+    payload: Buffer,
+) -> napi::Result<NativePayloadContextInspection> {
+    let value: Value = serde_json::from_slice(payload.as_ref()).map_err(|error| {
+        Error::new(Status::InvalidArg, format!("Invalid JSON payload: {error}"))
+    })?;
+
+    Ok(inspect_payload_context(&value).into())
 }
 
 #[cfg(test)]

@@ -1027,8 +1027,10 @@ Available scripts:
 | `npm run dev` | Watch the TypeScript API server |
 | `npm run build:web` | Type-check and build the React dashboard |
 | `npm run build:api` | Compile the API |
+| `npm run build:proxy-core-native` | Build the optional Rust/N-API payload inspector |
 | `npm run build` | Build dashboard and API |
 | `npm test` | Run the Node test suite |
+| `npm run test:proxy-core-native` | Build and test the Rust/N-API addon against shared fixtures |
 | `npm start` | Run the compiled server with instrumentation |
 
 ---

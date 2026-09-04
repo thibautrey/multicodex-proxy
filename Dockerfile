@@ -15,6 +15,12 @@ COPY --from=deps /app/web/node_modules ./web/node_modules
 COPY . .
 RUN npm run build
 
+FROM rust:1.88-alpine AS proxy-core-build
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY rust/ ./rust/
+RUN cargo build --release -p multivibe-proxy-core
+
 FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS provider-agent-build
 WORKDIR /src/provider-agent
 ARG TARGETOS
@@ -37,6 +43,7 @@ ENV APP_GIT_SHA=$GIT_SHA
 ENV APP_BUILD_ID=$BUILD_ID
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/web-dist ./web-dist
+COPY --from=proxy-core-build /src/target/release/libmultivibe_proxy_core.so ./native/multivibe-proxy-core.node
 COPY modules/security ./modules/security
 COPY --from=build \
   /app/scripts/codex-project-hook.mjs \

@@ -4,9 +4,11 @@ Date : 4 septembre 2026
 
 ## Conclusion
 
-L'API est aujourd'hui un serveur Node.js/Express monolithique, avec un agent
-de runtime séparé en Go. Il n'y a pas encore de crate Rust ni de frontière
-stable entre le transport HTTP, le routage et les transformations de payload.
+L'API reste un serveur Node.js/Express monolithique, avec un agent de runtime
+séparé en Go. Une première frontière Rust est maintenant stable : l'inspection
+déterministe du payload peut être exécutée in-process via N-API, sans
+subprocess ni aller-retour HTTP local. Le transport, le routage et les
+transformations restent volontairement en TypeScript.
 
 Le serveur est fonctionnel et bien couvert : la baseline locale sur `main`
 était de 373 tests Node passants et le build TypeScript de l'API passait. La
@@ -107,28 +109,37 @@ utilisée avant le routage :
 - aucune mutation, I/O, dépendance Express ou conservation du contenu.
 
 Le crate `rust/proxy-core` porte le même contrat sur `serde_json::Value` et
-possède ses propres tests unitaires. Le routeur Node continue volontairement
-d'utiliser l'implémentation TypeScript à cette étape : le crate est une cible
-de migration vérifiable, pas encore un chemin de production. Cela évite de
-présenter comme un gain une intégration qui ajouterait aujourd'hui une
-sérialisation JSON, un subprocess ou un aller-retour réseau local.
+expose `inspectPayloadContextJson(Buffer)` via N-API. Le body parser appelle
+cette fonction sur les octets JSON reçus et le routeur réutilise les trois
+scalaires retournés. L'addon reste optionnel : une image ou une installation
+qui ne l'embarque pas retombe sur TypeScript ; un hook qui remplace le payload
+force également cette implémentation de référence afin de conserver le
+comportement existant.
+
+Le chemin natif est construit par `npm run build:proxy-core-native` et embarqué
+par le `Dockerfile`. `npm run test:proxy-core-native` vérifie directement le
+chargement N-API et toutes les fixtures communes. Cette intégration prouve le
+chemin d'exécution, mais pas encore un gain de performance : le parse JSON
+reste effectué par Express pour construire `req.body` et devra être déplacé ou
+fusionné dans une tranche ultérieure si les mesures le justifient.
 
 ## Trajectoire recommandée
 
-### Phase 0 — caractérisation (cette itération)
+### Phase 0 — caractérisation (réalisée)
 
 1. Conserver la baseline Node et le build API.
 2. Extraire les fonctions déterministes sans changer le contrat HTTP.
 3. Maintenir des tests TypeScript et Rust sur les mêmes cas limites.
 4. Ajouter des golden fixtures lorsque le contrat devient plus riche.
 
-### Phase 1 — core Rust in-process
+### Phase 1 — core Rust in-process (première tranche réalisée)
 
-Porter ensuite, dans cet ordre, l'inspection de payload, la classification des
-frames SSE et les conversions qui peuvent être exprimées par des types stricts.
-Comparer les sorties JSON et SSE sur des fixtures, puis mesurer allocations,
-CPU, p50 et p95. Une liaison native ou WASM ne sera retenue que si son coût de
-marshalling reste inférieur au travail économisé.
+L'inspection de payload est portée. Les prochaines fonctions candidates sont,
+dans cet ordre, la classification des frames SSE puis les conversions qui
+peuvent être exprimées par des types stricts. Comparer les sorties JSON et SSE
+sur des fixtures, puis mesurer allocations, CPU, p50 et p95. Une liaison native
+ou WASM ne sera conservée que si son coût de marshalling reste inférieur au
+travail économisé.
 
 ### Phase 2 — edge Rust
 

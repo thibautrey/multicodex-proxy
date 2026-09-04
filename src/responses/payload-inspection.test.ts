@@ -3,7 +3,9 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
+  inspectPayloadContextFromJsonBytes,
   inspectPayloadContext,
+  nativePayloadInspectionAvailable,
   payloadHasImage,
 } from "./payload-inspection.js";
 
@@ -32,6 +34,29 @@ test("matches every shared Rust migration fixture", () => {
       fixture.name,
     );
   }
+});
+
+test("uses the optional Rust implementation on raw JSON bytes without changing the contract", () => {
+  const payload = {
+    input: [
+      { type: "compaction" },
+      { content: [{ type: "input_image", image_url: "data:image/png;base64,AA" }] },
+    ],
+  };
+  const inspected = inspectPayloadContextFromJsonBytes(
+    Buffer.from(JSON.stringify(payload)),
+  );
+
+  if (!nativePayloadInspectionAvailable) {
+    assert.equal(inspected, undefined);
+    return;
+  }
+
+  assert.deepEqual(inspected, {
+    hasImage: true,
+    compactionItemCount: 1,
+    latestCompactionIndex: 0,
+  });
 });
 
 test("keeps the Responses image and compaction contract stable", () => {

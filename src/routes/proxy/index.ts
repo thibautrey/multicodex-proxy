@@ -2090,6 +2090,8 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
       typeof res.locals.proxyApplication === "string"
         ? res.locals.proxyApplication
         : undefined;
+    const requestBodyBeforeReceivedHook = req.body;
+    const parsedRequestInspection = req.payloadContextInspection;
     if (moduleManager) {
       try {
         const hooked = await moduleManager.runHook("request.received", req.body, {
@@ -2427,7 +2429,10 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
     );
     const modelAliases = store.getCachedModelAliases();
     const imageRequestModelOverride = store.getCachedSettings().imageRequestModelOverride;
-    const incomingContextInspection = inspectPayloadContext(req.body);
+    const incomingContextInspection =
+      req.body === requestBodyBeforeReceivedHook && parsedRequestInspection
+        ? parsedRequestInspection
+        : inspectPayloadContext(req.body);
     const requestHasImage = incomingContextInspection.hasImage;
     const serializeUpstreamPayload = createUpstreamPayloadSerializer();
     const routingCandidates = buildImageAwareRoutingCandidates(

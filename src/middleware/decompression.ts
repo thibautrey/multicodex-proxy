@@ -1,11 +1,16 @@
 import { decompress } from "@foxglove/wasm-zstd";
 import express from "express";
 import { REQUEST_BODY_LIMIT } from "../config.js";
+import {
+  inspectPayloadContextFromJsonBytes,
+  type PayloadContextInspection,
+} from "../responses/payload-inspection.js";
 
 declare global {
   namespace Express {
     interface Request {
       rawBody?: Buffer;
+      payloadContextInspection?: PayloadContextInspection;
       originalHeadersForPassthrough?: Record<string, string | string[] | undefined>;
     }
   }
@@ -43,7 +48,11 @@ export function createBodyParserMiddleware() {
   const jsonParser = express.json({
     limit: REQUEST_BODY_LIMIT,
     verify: (req, _res, buf) => {
-      (req as express.Request).rawBody = Buffer.from(buf);
+      const request = req as express.Request;
+      const jsonBodyBytes = Buffer.from(buf);
+      request.rawBody = jsonBodyBytes;
+      const inspection = inspectPayloadContextFromJsonBytes(jsonBodyBytes);
+      if (inspection) request.payloadContextInspection = inspection;
     },
   });
   const requestBodyLimitBytes = parseByteLimit(REQUEST_BODY_LIMIT);
@@ -118,6 +127,9 @@ export function createBodyParserMiddleware() {
           sendPayloadTooLarge(res);
           return;
         }
+
+        const inspection = inspectPayloadContextFromJsonBytes(bodyBuffer);
+        if (inspection) req.payloadContextInspection = inspection;
 
         try {
           req.body = parseJsonBody(new Uint8Array(bodyBuffer));
