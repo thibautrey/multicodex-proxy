@@ -219,6 +219,13 @@ async function productionApplication(destination, selectedTarget) {
   await rm(path.join(destination, "node_modules", ".bin"), { recursive: true, force: true });
   await copySource(path.join(repositoryRoot, "dist"), path.join(destination, "dist"));
   await copySource(path.join(repositoryRoot, "web-dist"), path.join(destination, "web-dist"));
+  const nativeSource = path.join(repositoryRoot, "native", "multivibe-proxy-core.node");
+  const nativeInfo = await lstat(nativeSource).catch(() => null);
+  if (!nativeInfo?.isFile() || nativeInfo.isSymbolicLink()) {
+    throw new Error("Rust proxy-core native addon was not built");
+  }
+  await mkdir(path.join(destination, "native"), { recursive: true, mode: 0o755 });
+  await cp(nativeSource, path.join(destination, "native", "multivibe-proxy-core.node"));
   await mkdir(path.join(destination, "modules"), { recursive: true, mode: 0o755 });
   await copySource(path.join(repositoryRoot, "modules", "security"), path.join(destination, "modules", "security"));
   for (const relative of ["multivibe.module.json", path.join("dist", "index.js")]) {
@@ -688,6 +695,7 @@ async function main() {
   const sourceCommit = await command("git", ["rev-parse", "HEAD"], { capture: true });
   const buildNumber = await command("git", ["rev-list", "--count", "HEAD"], { capture: true });
   await command("npm", ["run", "build"]);
+  await command("npm", ["run", "build:proxy-core-native"]);
   const finalStatus = await command("git", ["status", "--porcelain"], { capture: true });
   if (finalStatus && !options.allowDirty) throw new Error("the application build changed the release worktree");
   const work = await mkdtemp(path.join(tmpdir(), "multivibe-host-package-"));
