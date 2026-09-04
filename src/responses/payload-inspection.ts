@@ -8,6 +8,7 @@ import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 
 export type PayloadContextInspection = {
   hasImage: boolean;
@@ -18,6 +19,12 @@ export type PayloadContextInspection = {
 type NativePayloadInspectionModule = {
   inspectPayloadContextJson(payload: Buffer): unknown;
   classifySseFrame?: (frame: string) => unknown;
+  convertChatCompletionToResponseJson?: (
+    payload: Buffer,
+    fallbackModel: string,
+    responseId: string,
+    createdAt: number,
+  ) => unknown;
 };
 
 function isNativePayloadInspectionModule(
@@ -140,6 +147,71 @@ export function inspectPayloadContextFromJsonBytes(
     return normalizeNativeInspection(
       nativePayloadInspection.inspectPayloadContextJson(buffer),
     );
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Use the optional Rust protocol projection on a normalized Chat Completion.
+ * The caller owns sanitization, empty-output handling, and dynamic IDs so a
+ * native failure can always return to the reference TypeScript conversion.
+ */
+export function convertChatCompletionToResponseObjectFromNative(
+  chat: unknown,
+  fallbackModel: string,
+  responseId: string,
+  createdAt: number,
+): Record<string, unknown> | undefined {
+  const converter = nativePayloadInspection?.convertChatCompletionToResponseJson;
+  if (typeof converter !== "function") return undefined;
+
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(chat);
+  } catch {
+    return undefined;
+  }
+  if (typeof serialized !== "string") return undefined;
+
+  try {
+    const value = converter(
+      Buffer.from(serialized),
+      fallbackModel,
+      responseId,
+      createdAt,
+    );
+    if (typeof value !== "string" || !value.trim()) return undefined;
+    const parsed: unknown = JSON.parse(value);
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed) ||
+      (parsed as { object?: unknown }).object !== "response"
+    ) {
+      return undefined;
+    }
+
+    const response = parsed as Record<string, unknown>;
+    if (!Object.prototype.hasOwnProperty.call(response, "usage")) {
+      response.usage = undefined;
+    }
+    if (Array.isArray(response.output)) {
+      for (const item of response.output) {
+        if (!item || typeof item !== "object") continue;
+        const outputItem = item as Record<string, unknown>;
+        if (outputItem.type !== "function_call") continue;
+        const existingId = outputItem.id ?? outputItem.call_id;
+        if (existingId === null || typeof existingId === "undefined") {
+          const generatedId = `call_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
+          outputItem.id = generatedId;
+          outputItem.call_id = generatedId;
+        } else if (typeof outputItem.call_id === "undefined") {
+          outputItem.call_id = existingId;
+        }
+      }
+    }
+    return response;
   } catch {
     return undefined;
   }

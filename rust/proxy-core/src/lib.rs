@@ -1,4 +1,4 @@
-use serde_json::Value;
+use serde_json::{Map, Value, json};
 
 use napi::{Error, Status, bindgen_prelude::Buffer};
 use napi_derive::napi;
@@ -153,6 +153,241 @@ pub fn inspect_payload_context(payload: &Value) -> PayloadContextInspection {
     inspection
 }
 
+fn as_non_empty_string(value: Option<&Value>) -> Option<&str> {
+    let value = value?.as_str()?;
+    (!value.trim().is_empty()).then_some(value.trim())
+}
+
+fn should_expose_function_call_name(value: Option<&Value>) -> bool {
+    let Some(name) = value.and_then(Value::as_str) else {
+        return true;
+    };
+    !name.trim().to_ascii_lowercase().starts_with("functions.")
+}
+
+fn normalized_tool_arguments(value: Option<&Value>) -> Option<String> {
+    let value = value?;
+    if value.is_null() {
+        return None;
+    }
+    if let Some(text) = value.as_str() {
+        return (!text.trim().is_empty()).then(|| text.to_owned());
+    }
+
+    let serialized = serde_json::to_string(value).ok()?;
+    (!serialized.trim().is_empty()).then_some(serialized)
+}
+
+fn is_valid_chat_tool_call(value: &Value) -> bool {
+    let Some(tool_call) = value.as_object() else {
+        return false;
+    };
+    let Some(function) = tool_call
+        .get("function")
+        .filter(|value| !value.is_null())
+        .and_then(Value::as_object)
+    else {
+        return false;
+    };
+
+    as_non_empty_string(function.get("name")).is_some()
+        && should_expose_function_call_name(function.get("name"))
+        && normalized_tool_arguments(function.get("arguments")).is_some()
+}
+
+fn content_text(value: Option<&Value>) -> String {
+    match value {
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Array(parts)) => parts
+            .iter()
+            .filter_map(|part| match part {
+                Value::String(text) => Some(text.as_str()),
+                Value::Object(object) => object.get("text").and_then(Value::as_str),
+                _ => None,
+            })
+            .collect(),
+        _ => String::new(),
+    }
+}
+
+/// Remove paired, case-insensitive `<think>...</think>` sections while
+/// preserving unmatched markers. This mirrors the stream bridge's existing
+/// JavaScript behavior without bringing a regex engine into the native core.
+fn strip_think_blocks(text: &str) -> String {
+    let lower = text.to_ascii_lowercase();
+    let mut cursor = 0;
+    let mut output = String::new();
+
+    while let Some(relative_start) = lower[cursor..].find("<think>") {
+        let start = cursor + relative_start;
+        output.push_str(&text[cursor..start]);
+        let content_start = start + "<think>".len();
+        let Some(relative_end) = lower[content_start..].find("</think>") else {
+            output.push_str(&text[start..]);
+            return output;
+        };
+        cursor = content_start + relative_end + "</think>".len();
+    }
+
+    output.push_str(&text[cursor..]);
+    output
+}
+
+fn response_usage_from_chat_usage(value: Option<&Value>) -> Option<Value> {
+    let usage = value?;
+    // JavaScript's typeof [] is "object" as well. Arrays cannot expose the
+    // named fields below, so they naturally fall back to zeroes.
+    if !(usage.is_object() || usage.is_array()) {
+        return None;
+    }
+
+    let input = usage
+        .get("prompt_tokens")
+        .filter(|value| !value.is_null())
+        .or_else(|| usage.get("input_tokens").filter(|value| !value.is_null()))
+        .cloned()
+        .unwrap_or_else(|| json!(0));
+    let output = usage
+        .get("completion_tokens")
+        .filter(|value| !value.is_null())
+        .or_else(|| usage.get("output_tokens").filter(|value| !value.is_null()))
+        .cloned()
+        .unwrap_or_else(|| json!(0));
+    let total = usage
+        .get("total_tokens")
+        .filter(|value| !value.is_null())
+        .cloned()
+        .unwrap_or_else(|| match (&input, &output) {
+            (Value::Number(input), Value::Number(output)) => {
+                if let (Some(input), Some(output)) = (input.as_u64(), output.as_u64()) {
+                    json!(input.saturating_add(output))
+                } else if let (Some(input), Some(output)) = (input.as_i64(), output.as_i64()) {
+                    json!(input.saturating_add(output))
+                } else {
+                    let total = input.as_f64().unwrap_or(0.0) + output.as_f64().unwrap_or(0.0);
+                    json!(total)
+                }
+            }
+            _ => json!(0),
+        });
+
+    Some(json!({
+        "input_tokens": input,
+        "output_tokens": output,
+        "total_tokens": total,
+    }))
+}
+
+fn response_output_from_chat_message(message: &Value) -> Vec<Value> {
+    let raw_content = message.get("content");
+    let text = strip_think_blocks(&content_text(raw_content))
+        .trim_start()
+        .to_owned();
+    let mut output = Vec::new();
+
+    if !text.is_empty() {
+        output.push(json!({
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": text}],
+        }));
+    }
+
+    if let Some(tool_calls) = message.get("tool_calls").and_then(Value::as_array) {
+        for tool_call in tool_calls {
+            if !is_valid_chat_tool_call(tool_call) {
+                continue;
+            }
+            let Some(tool_call_object) = tool_call.as_object() else {
+                continue;
+            };
+            let Some(function) = tool_call_object.get("function").and_then(Value::as_object) else {
+                continue;
+            };
+            let Some(name) = function.get("name").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(arguments) = normalized_tool_arguments(function.get("arguments")) else {
+                continue;
+            };
+
+            let mut function_call = Map::new();
+            if let Some(id) = tool_call_object.get("id").filter(|value| !value.is_null()) {
+                function_call.insert("id".to_owned(), id.clone());
+                function_call.insert("call_id".to_owned(), id.clone());
+            }
+            function_call.insert("type".to_owned(), json!("function_call"));
+            function_call.insert("name".to_owned(), json!(name));
+            function_call.insert("arguments".to_owned(), json!(arguments));
+            output.push(Value::Object(function_call));
+        }
+    }
+
+    if output.is_empty() {
+        output.push(json!({
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": ""}],
+        }));
+    }
+
+    output
+}
+
+/// Convert a normalized Chat Completions object to the Responses object used
+/// by the proxy's compatibility layer.
+///
+/// The JavaScript sanitizer and empty-output guard remain the authority for
+/// the full client-facing contract. This core owns only the deterministic
+/// protocol projection; response and missing tool-call identifiers are passed
+/// in by the caller so the native path cannot silently change identifier
+/// semantics.
+pub fn chat_completion_to_response(
+    chat: &Value,
+    fallback_model: &str,
+    response_id: &str,
+    created_at: i64,
+) -> Value {
+    let empty = Value::Null;
+    let choice = chat
+        .get("choices")
+        .and_then(Value::as_array)
+        .and_then(|choices| choices.first())
+        .unwrap_or(&empty);
+    let message = choice
+        .get("message")
+        .filter(|value| value.is_object())
+        .unwrap_or(&empty);
+
+    let model = chat
+        .get("model")
+        .filter(|value| !value.is_null())
+        .cloned()
+        .unwrap_or_else(|| json!(fallback_model));
+    let created = chat
+        .get("created")
+        .filter(|value| !value.is_null())
+        .cloned()
+        .unwrap_or_else(|| json!(created_at));
+    let usage = response_usage_from_chat_usage(chat.get("usage"));
+
+    let mut response = Map::new();
+    response.insert("id".to_owned(), json!(response_id));
+    response.insert("object".to_owned(), json!("response"));
+    response.insert("created_at".to_owned(), created);
+    response.insert("model".to_owned(), model);
+    response.insert("status".to_owned(), json!("completed"));
+    response.insert(
+        "output".to_owned(),
+        Value::Array(response_output_from_chat_message(message)),
+    );
+    if let Some(usage) = usage {
+        response.insert("usage".to_owned(), usage);
+    }
+
+    Value::Object(response)
+}
+
 impl From<PayloadContextInspection> for NativePayloadContextInspection {
     fn from(value: PayloadContextInspection) -> Self {
         Self {
@@ -181,6 +416,34 @@ pub fn inspect_payload_context_json(
     Ok(inspect_payload_context(&value).into())
 }
 
+/// Convert normalized Chat Completions JSON without crossing the N-API
+/// boundary once per output item. Invalid JSON remains an argument error so
+/// the TypeScript caller can use its reference implementation.
+#[napi(js_name = "convertChatCompletionToResponseJson")]
+pub fn convert_chat_completion_to_response_json(
+    payload: Buffer,
+    fallback_model: String,
+    response_id: String,
+    created_at: i64,
+) -> napi::Result<String> {
+    let value: Value = serde_json::from_slice(payload.as_ref()).map_err(|error| {
+        Error::new(Status::InvalidArg, format!("Invalid JSON payload: {error}"))
+    })?;
+
+    serde_json::to_string(&chat_completion_to_response(
+        &value,
+        &fallback_model,
+        &response_id,
+        created_at,
+    ))
+    .map_err(|error| {
+        Error::new(
+            Status::GenericFailure,
+            format!("Serialization failed: {error}"),
+        )
+    })
+}
+
 /// Classify a high-frequency SSE frame without parsing its JSON payload.
 ///
 /// An empty string means that the frame is not eligible for the fast path and
@@ -196,7 +459,10 @@ pub fn classify_sse_frame(frame: String) -> napi::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{PayloadContextInspection, classify_sse_frame_type, inspect_payload_context};
+    use super::{
+        PayloadContextInspection, chat_completion_to_response, classify_sse_frame_type,
+        inspect_payload_context,
+    };
     use serde_json::{Value, json};
 
     #[test]
@@ -335,5 +601,22 @@ mod tests {
                 latest_compaction_index: 3,
             }
         );
+    }
+
+    #[test]
+    fn matches_every_shared_protocol_conversion_fixture() {
+        let fixtures: Vec<Value> =
+            serde_json::from_str(include_str!("../testdata/protocol-conversion-cases.json"))
+                .expect("shared protocol conversion fixtures must be valid JSON");
+
+        for fixture in fixtures {
+            let actual = chat_completion_to_response(
+                &fixture["chat"],
+                fixture["fallbackModel"].as_str().expect("fallback model"),
+                fixture["responseId"].as_str().expect("response id"),
+                fixture["createdAt"].as_i64().expect("created at"),
+            );
+            assert_eq!(actual, fixture["expected"], "{}", fixture["name"]);
+        }
     }
 }

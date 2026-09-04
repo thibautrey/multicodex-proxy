@@ -8,6 +8,7 @@
     "dev": "tsx watch --import ./src/instrument.ts src/server.ts",
     "build:api": "tsc -p tsconfig.json",
     "build:proxy-core-native": "node scripts/build-proxy-core-native.mjs",
+    "benchmark:protocol-conversion": "node --import tsx scripts/benchmark-protocol-conversion.mjs",
     "build:web": "npm --prefix web run build",
     "build": "npm run build:web && npm run build:api",
     "test:rust-core": "cargo test -p multivibe-proxy-core",

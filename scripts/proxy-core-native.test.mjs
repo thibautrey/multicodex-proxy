@@ -23,6 +23,12 @@ const sseFixtures = JSON.parse(
     "utf8",
   ),
 );
+const protocolFixtures = JSON.parse(
+  fs.readFileSync(
+    path.join(repositoryRoot, "rust", "proxy-core", "testdata", "protocol-conversion-cases.json"),
+    "utf8",
+  ),
+);
 
 test("exports the raw-JSON payload inspection function", () => {
   assert.equal(typeof native.inspectPayloadContextJson, "function");
@@ -30,6 +36,10 @@ test("exports the raw-JSON payload inspection function", () => {
 
 test("exports the conservative SSE fast-path classifier", () => {
   assert.equal(typeof native.classifySseFrame, "function");
+});
+
+test("exports the Chat Completions to Responses protocol projection", () => {
+  assert.equal(typeof native.convertChatCompletionToResponseJson, "function");
 });
 
 test("matches every shared TypeScript and Rust migration fixture", () => {
@@ -56,5 +66,19 @@ test("matches every shared SSE fast-path fixture", () => {
       fixture.expected ?? "",
       fixture.name,
     );
+  }
+});
+
+test("matches every shared protocol conversion fixture", () => {
+  for (const fixture of protocolFixtures) {
+    const converted = JSON.parse(
+      native.convertChatCompletionToResponseJson(
+        Buffer.from(JSON.stringify(fixture.chat)),
+        fixture.fallbackModel,
+        fixture.responseId,
+        fixture.createdAt,
+      ),
+    );
+    assert.deepEqual(converted, fixture.expected, fixture.name);
   }
 });

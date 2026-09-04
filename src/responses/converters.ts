@@ -8,6 +8,7 @@ import {
   withFallbackAssistantContent,
 } from "./sanitizers.js";
 import { sanitizeOutputText, shouldExposeFunctionCallName } from "./helpers.js";
+import { convertChatCompletionToResponseObjectFromNative } from "./payload-inspection.js";
 
 import { randomUUID } from "node:crypto";
 
@@ -197,10 +198,20 @@ export function chatCompletionObjectToResponseObject(
   const normalized = ensureNonEmptyChatCompletion(sanitized).chat;
   const choice = normalized?.choices?.[0] ?? {};
   const responseId = `resp_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
+  const createdAt = normalized?.created ?? Math.floor(Date.now() / 1000);
+
+  const native = convertChatCompletionToResponseObjectFromNative(
+    normalized,
+    fallbackModel,
+    responseId,
+    createdAt,
+  );
+  if (native) return native;
+
   return {
     id: responseId,
     object: "response",
-    created_at: normalized?.created ?? Math.floor(Date.now() / 1000),
+    created_at: createdAt,
     model: normalized?.model ?? fallbackModel,
     status: "completed",
     output: responseOutputFromChatMessage(choice?.message ?? {}),

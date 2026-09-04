@@ -3,6 +3,7 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
+  convertChatCompletionToResponseObjectFromNative,
   inspectPayloadContextFromJsonBytes,
   inspectPayloadContext,
   nativePayloadInspectionAvailable,
@@ -139,4 +140,75 @@ test("counts every compaction item and reports the last array index", () => {
       latestCompactionIndex: 3,
     },
   );
+});
+
+test("uses the optional Rust protocol projection without changing the JSON contract", () => {
+  const fixture = {
+    chat: {
+      object: "chat.completion",
+      created: 1710000001,
+      choices: [
+        {
+          message: {
+            role: "assistant",
+            content: [
+              { type: "text", text: "<think>private</think> Visible " },
+              { type: "text", text: "text" },
+            ],
+            tool_calls: [
+              {
+                id: "call-weather",
+                type: "function",
+                function: {
+                  name: "weather",
+                  arguments: { city: "Paris" },
+                },
+              },
+              {
+                id: "call-hidden",
+                type: "function",
+                function: { name: "functions.shell", arguments: "{}" },
+              },
+            ],
+          },
+        },
+      ],
+    },
+    fallbackModel: "fallback-model",
+    responseId: "resp_fixed_tools",
+    createdAt: 1710000099,
+  };
+
+  const converted = convertChatCompletionToResponseObjectFromNative(
+    fixture.chat,
+    fixture.fallbackModel,
+    fixture.responseId,
+    fixture.createdAt,
+  );
+  if (!nativePayloadInspectionAvailable) {
+    assert.equal(converted, undefined);
+    return;
+  }
+
+  assert.deepEqual(JSON.parse(JSON.stringify(converted)), {
+    id: "resp_fixed_tools",
+    object: "response",
+    created_at: 1710000001,
+    model: "fallback-model",
+    status: "completed",
+    output: [
+      {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "Visible text" }],
+      },
+      {
+        id: "call-weather",
+        call_id: "call-weather",
+        type: "function_call",
+        name: "weather",
+        arguments: "{\"city\":\"Paris\"}",
+      },
+    ],
+  });
 });

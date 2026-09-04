@@ -1,0 +1,121 @@
+[
+  {
+    "name": "text response preserves model, timestamp, and usage",
+    "chat": {
+      "object": "chat.completion",
+      "id": "chat-source",
+      "created": 1710000000,
+      "model": "gpt-test",
+      "choices": [
+        {
+          "index": 0,
+          "message": {"role": "assistant", "content": "Hello"},
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15}
+    },
+    "fallbackModel": "fallback-model",
+    "responseId": "resp_fixed_text",
+    "createdAt": 1710000099,
+    "expected": {
+      "id": "resp_fixed_text",
+      "object": "response",
+      "created_at": 1710000000,
+      "model": "gpt-test",
+      "status": "completed",
+      "output": [
+        {
+          "type": "message",
+          "role": "assistant",
+          "content": [{"type": "output_text", "text": "Hello"}]
+        }
+      ],
+      "usage": {"input_tokens": 12, "output_tokens": 3, "total_tokens": 15}
+    }
+  },
+  {
+    "name": "think blocks and hidden or invalid tools are excluded",
+    "chat": {
+      "object": "chat.completion",
+      "created": 1710000001,
+      "choices": [
+        {
+          "message": {
+            "role": "assistant",
+            "content": [
+              {"type": "text", "text": "<think>private</think> Visible "},
+              {"type": "text", "text": "text"}
+            ],
+            "tool_calls": [
+              {
+                "id": "call-weather",
+                "index": 2,
+                "type": "function",
+                "function": {"name": "weather", "arguments": {"city": "Paris"}}
+              },
+              {
+                "id": "call-hidden",
+                "type": "function",
+                "function": {"name": "functions.shell", "arguments": "{}"}
+              },
+              {
+                "id": "call-invalid",
+                "type": "function",
+                "function": {"name": "empty", "arguments": "  "}
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "fallbackModel": "fallback-model",
+    "responseId": "resp_fixed_tools",
+    "createdAt": 1710000099,
+    "expected": {
+      "id": "resp_fixed_tools",
+      "object": "response",
+      "created_at": 1710000001,
+      "model": "fallback-model",
+      "status": "completed",
+      "output": [
+        {
+          "type": "message",
+          "role": "assistant",
+          "content": [{"type": "output_text", "text": "Visible text"}]
+        },
+        {
+          "id": "call-weather",
+          "call_id": "call-weather",
+          "type": "function_call",
+          "name": "weather",
+          "arguments": "{\"city\":\"Paris\"}"
+        }
+      ]
+    }
+  },
+  {
+    "name": "fallback model and timestamp are used when omitted",
+    "chat": {
+      "object": "chat.completion",
+      "choices": [{"message": {"role": "assistant", "content": "Fallback"}}]
+    },
+    "fallbackModel": "fallback-model",
+    "responseId": "resp_fixed_fallback",
+    "createdAt": 1710000100,
+    "expected": {
+      "id": "resp_fixed_fallback",
+      "object": "response",
+      "created_at": 1710000100,
+      "model": "fallback-model",
+      "status": "completed",
+      "output": [
+        {
+          "type": "message",
+          "role": "assistant",
+          "content": [{"type": "output_text", "text": "Fallback"}]
+        }
+      ]
+    }
+  }
+]
