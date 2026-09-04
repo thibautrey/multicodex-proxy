@@ -361,6 +361,10 @@ function adminGuard(
   res: express.Response,
   next: express.NextFunction,
 ) {
+  // OAuth returns via a cross-site top-level navigation. The Strict admin
+  // cookie is intentionally unavailable on that request; the callback route
+  // still requires the flow's unpredictable state and PKCE-bound code.
+  if (req.path === "/cloud/oauth/callback") return next();
   if (!ADMIN_TOKEN) return next();
   if (hasAdminSession(req)) return next();
   const token =
