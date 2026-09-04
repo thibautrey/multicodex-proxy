@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -102,6 +103,139 @@ test("detects without executing, installs privately, and restores the exact prev
   assert.equal(removed.apiKeyId, "key-1");
   assert.equal(await fs.readFile(configPath, "utf8"), original);
   assert.equal((await fs.stat(configPath)).mode & 0o777, 0o644);
+});
+
+test("OpenCode installation synchronizes every safe model from MultiVibe", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-opencode-models-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const home = path.join(root, "home");
+  const bin = path.join(home, "bin");
+  const configPath = path.join(home, ".config", "opencode", "opencode.json");
+  await fs.mkdir(path.dirname(configPath), { recursive: true });
+  await fs.mkdir(bin, { recursive: true });
+  await fs.writeFile(path.join(bin, "opencode"), "binary", { mode: 0o755 });
+  await fs.writeFile(configPath, `${JSON.stringify({
+    model: "litellm/existing-model",
+    provider: { litellm: { name: "Keep me" } },
+  })}\n`);
+
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  let requests = 0;
+  globalThis.fetch = async (input, init) => {
+    requests += 1;
+    assert.equal(String(input), "http://127.0.0.1:1455/v1/models");
+    assert.equal(new Headers(init?.headers).get("authorization"), "Bearer mv_opencode");
+    assert.equal(init?.redirect, "error");
+    return Response.json({
+      object: "list",
+      data: [
+        { id: "gpt-5.6-luna" },
+        { id: "gpt-5.5" },
+        { id: "local/model" },
+        { id: "gpt-5.5" },
+        { id: "\u0000invalid" },
+      ],
+    });
+  };
+
+  const manager = new HostHarnessIntegrationManager({
+    homeDirectory: home,
+    statePath: path.join(home, ".multivibe", "harnesses.json"),
+    baseUrl: "http://127.0.0.1:1455",
+    definitions: HOST_HARNESS_DEFINITIONS.filter((entry) => entry.id === "opencode"),
+    executableDirectories: [bin],
+  });
+
+  await manager.install("opencode", {
+    apiKeyId: "key-opencode",
+    apiKey: "mv_opencode",
+    application: "harness-opencode",
+  });
+
+  const configured = JSON.parse(await fs.readFile(configPath, "utf8"));
+  assert.equal(configured.model, "multivibe/gpt-5.5");
+  assert.deepEqual(Object.keys(configured.provider.multivibe.models), [
+    "gpt-5.6-luna",
+    "gpt-5.5",
+    "local/model",
+  ]);
+  assert.equal(configured.provider.multivibe.options.baseURL, "http://127.0.0.1:1455/v1");
+  assert.deepEqual(configured.provider.litellm, { name: "Keep me" });
+  assert.equal(requests, 1);
+});
+
+test("marks old OpenCode installations for repair and refreshes their model catalog", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-opencode-repair-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const home = path.join(root, "home");
+  const bin = path.join(home, "bin");
+  const configPath = path.join(home, ".config", "opencode", "opencode.json");
+  await fs.mkdir(path.dirname(configPath), { recursive: true });
+  await fs.mkdir(path.join(home, ".multivibe"), { recursive: true });
+  await fs.mkdir(bin, { recursive: true });
+  await fs.writeFile(path.join(bin, "opencode"), "binary", { mode: 0o755 });
+  const oldConfig = `${JSON.stringify({
+    model: "multivibe/gpt-5.5",
+    provider: {
+      multivibe: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "MultiVibe Host",
+        options: { baseURL: "http://127.0.0.1:1455/v1", apiKey: "mv_opencode" },
+        models: { "gpt-5.5": { name: "gpt-5.5" } },
+      },
+    },
+  })}\n`;
+  await fs.writeFile(configPath, oldConfig);
+  await fs.writeFile(
+    path.join(home, ".multivibe", "harnesses.json"),
+    `${JSON.stringify({
+      schemaVersion: "multivibe-host-harness-integrations-v1",
+      installations: {
+        opencode: {
+          configPath,
+          originalContentBase64: null,
+          originalMode: null,
+          installedSha256: createHash("sha256").update(oldConfig).digest("hex"),
+          apiKeyId: "key-opencode",
+          application: "harness-opencode",
+          installedAt: 1,
+        },
+      },
+    })}\n`,
+  );
+
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  globalThis.fetch = async (input) => {
+    assert.equal(String(input), "http://127.0.0.1:1455/v1/models");
+    return Response.json({ object: "list", data: [{ id: "gpt-5.6-luna" }, { id: "gpt-5.5" }] });
+  };
+
+  const manager = new HostHarnessIntegrationManager({
+    homeDirectory: home,
+    statePath: path.join(home, ".multivibe", "harnesses.json"),
+    baseUrl: "http://127.0.0.1:1455",
+    definitions: HOST_HARNESS_DEFINITIONS.filter((entry) => entry.id === "opencode"),
+    executableDirectories: [bin],
+  });
+  const before = await manager.get("opencode");
+  assert.equal(before.managed, true);
+  assert.equal(before.drifted, true);
+  assert.equal(before.repairable, true);
+
+  await manager.repair("opencode", {
+    apiKeyId: "key-opencode",
+    apiKey: "mv_opencode",
+    application: "harness-opencode",
+  });
+  const repaired = JSON.parse(await fs.readFile(configPath, "utf8"));
+  assert.deepEqual(Object.keys(repaired.provider.multivibe.models), ["gpt-5.6-luna", "gpt-5.5"]);
+  assert.equal((await manager.get("opencode")).drifted, false);
 });
 
 test("uninstall refuses to overwrite user changes made after installation", async (t) => {

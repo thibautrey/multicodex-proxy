@@ -32,7 +32,11 @@ export type HostHarnessView = {
   effectiveBaseUrl?: string;
 };
 
-export type HarnessContext = { baseUrl: string; apiKey: string };
+export type HarnessContext = {
+  baseUrl: string;
+  apiKey: string;
+  modelIds?: readonly string[];
+};
 
 type HarnessInspection = {
   configured: boolean;
@@ -44,7 +48,9 @@ type HarnessInspection = {
 
 export type HarnessConfiguration = {
   relativePath: string;
+  revision?: number;
   render: (current: string | null, context: HarnessContext) => string;
+  prepare?: (context: HarnessContext) => Promise<Partial<HarnessContext>>;
   isConfigured: (current: string, baseUrl: string) => boolean;
   inspect?: (current: string, baseUrl: string) => HarnessInspection;
 };
@@ -67,6 +73,7 @@ type InstallationState = {
   apiKeyId: string;
   application: string;
   installedAt: number;
+  configurationRevision?: number;
 };
 
 type HarnessState = {
@@ -134,6 +141,105 @@ function jsonConfiguration(
     },
   };
 }
+
+const OPENCODE_DEFAULT_MODEL = "gpt-5.5";
+
+function safeOpenCodeModelIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    const id = typeof entry === "string" ? entry.trim() : "";
+    if (!id || id.length > 256 || /[\u0000-\u001f\u007f]/u.test(id) || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+async function discoverOpenCodeModelIds(context: HarnessContext): Promise<string[]> {
+  let response: Response;
+  try {
+    response = await fetch(`${context.baseUrl}/v1/models`, {
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${context.apiKey}`,
+      },
+      redirect: "error",
+    });
+  } catch {
+    throw new HostHarnessIntegrationError("MultiVibe model catalog is unavailable", 409);
+  }
+  if (!response.ok) {
+    throw new HostHarnessIntegrationError(`MultiVibe model catalog unavailable (${response.status})`, 409);
+  }
+  const declaredSize = Number(response.headers.get("content-length") ?? 0);
+  if (Number.isFinite(declaredSize) && declaredSize > MAX_CONFIG_BYTES) {
+    throw new HostHarnessIntegrationError("MultiVibe model catalog is too large to configure safely", 409);
+  }
+  const raw = await response.text();
+  if (Buffer.byteLength(raw, "utf8") > MAX_CONFIG_BYTES) {
+    throw new HostHarnessIntegrationError("MultiVibe model catalog is too large to configure safely", 409);
+  }
+  let payload: unknown;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    throw new HostHarnessIntegrationError("MultiVibe model catalog is invalid", 409);
+  }
+  const modelIds = safeOpenCodeModelIds(
+    payload && typeof payload === "object" && !Array.isArray(payload)
+      ? (payload as { data?: unknown[] }).data?.map((entry) =>
+        entry && typeof entry === "object" && !Array.isArray(entry)
+          ? (entry as { id?: unknown }).id
+          : undefined,
+      )
+      : undefined,
+  );
+  if (!modelIds.length) {
+    throw new HostHarnessIntegrationError("MultiVibe model catalog is empty", 409);
+  }
+  return modelIds;
+}
+
+function openCodeModelMap(modelIds: readonly string[]): Record<string, { name: string }> {
+  return Object.fromEntries(modelIds.map((id) => [id, { name: id }]));
+}
+
+function openCodeConfigurationDocument(
+  current: string | null,
+  context: HarnessContext,
+): string {
+  const document = parseJsonObject(current, ".config/opencode/opencode.json");
+  const modelIds = safeOpenCodeModelIds(context.modelIds);
+  if (!modelIds.length) {
+    throw new HostHarnessIntegrationError("MultiVibe model catalog is empty", 409);
+  }
+  const currentModel = typeof document.model === "string" && document.model.startsWith("multivibe/")
+    ? document.model.slice("multivibe/".length)
+    : "";
+  const selectedModel = modelIds.includes(currentModel)
+    ? currentModel
+    : modelIds.includes(OPENCODE_DEFAULT_MODEL)
+      ? OPENCODE_DEFAULT_MODEL
+      : modelIds[0];
+  setJsonPath(document, ["model"], `multivibe/${selectedModel}`);
+  setJsonPath(document, ["provider", "multivibe"], {
+    npm: "@ai-sdk/openai-compatible",
+    name: "MultiVibe Host",
+    options: { baseURL: `${context.baseUrl}/v1`, apiKey: context.apiKey },
+    models: openCodeModelMap(modelIds),
+  });
+  return `${JSON.stringify(document, null, 2)}\n`;
+}
+
+const openCodeConfiguration: HarnessConfiguration = {
+  relativePath: ".config/opencode/opencode.json",
+  revision: 2,
+  prepare: async (context) => ({ modelIds: await discoverOpenCodeModelIds(context) }),
+  render: openCodeConfigurationDocument,
+  isConfigured: (current, baseUrl) => current.includes(baseUrl),
+};
 
 function managedBlockConfiguration(
   relativePath: string,
@@ -304,16 +410,6 @@ const codexConfiguration: HarnessConfiguration = {
 const claudeConfiguration = jsonConfiguration(".claude/settings.json", ({ baseUrl, apiKey }) => [
   [["env", "ANTHROPIC_BASE_URL"], baseUrl],
   [["env", "ANTHROPIC_AUTH_TOKEN"], apiKey],
-]);
-
-const openCodeConfiguration = jsonConfiguration(".config/opencode/opencode.json", ({ baseUrl, apiKey }) => [
-  [["model"], "multivibe/gpt-5.5"],
-  [["provider", "multivibe"], {
-    npm: "@ai-sdk/openai-compatible",
-    name: "MultiVibe Host",
-    options: { baseURL: `${baseUrl}/v1`, apiKey },
-    models: { "gpt-5.5": { name: "gpt-5.5" } },
-  }],
 ]);
 
 const openClawConfiguration = jsonConfiguration(".openclaw/openclaw.json", ({ baseUrl, apiKey }) => [
@@ -592,10 +688,14 @@ export class HostHarnessIntegrationManager {
 
       const configPath = await this.safeConfigPath(definition.configuration.relativePath);
       const original = await readBounded(configPath);
-      const installed = definition.configuration.render(original?.content ?? null, {
+      const context: HarnessContext = {
         baseUrl: this.baseUrl,
         apiKey: credential.apiKey,
-      });
+      };
+      const preparedContext = definition.configuration.prepare
+        ? { ...context, ...(await definition.configuration.prepare(context)) }
+        : context;
+      const installed = definition.configuration.render(original?.content ?? null, preparedContext);
       await writeAtomic(configPath, installed, 0o600);
       state.installations[id] = {
         configPath,
@@ -605,6 +705,9 @@ export class HostHarnessIntegrationManager {
         apiKeyId: credential.apiKeyId,
         application: credential.application,
         installedAt: Date.now(),
+        ...(definition.configuration.revision
+          ? { configurationRevision: definition.configuration.revision }
+          : {}),
       };
       try {
         await this.writeState(state);
@@ -635,10 +738,14 @@ export class HostHarnessIntegrationManager {
       if (!inspection.repairable) {
         throw new HostHarnessIntegrationError(inspection.configurationIssue ?? `~/${definition.configuration.relativePath} cannot be repaired safely`, 409);
       }
-      const repaired = definition.configuration.render(current.content, {
+      const context: HarnessContext = {
         baseUrl: this.baseUrl,
         apiKey: credential.apiKey,
-      });
+      };
+      const preparedContext = definition.configuration.prepare
+        ? { ...context, ...(await definition.configuration.prepare(context)) }
+        : context;
+      const repaired = definition.configuration.render(current.content, preparedContext);
       await writeAtomic(configPath, repaired, current.mode);
       try {
         state.installations[id] = {
@@ -647,6 +754,9 @@ export class HostHarnessIntegrationManager {
           apiKeyId: credential.apiKeyId,
           application: credential.application,
           installedAt: Date.now(),
+          ...(definition.configuration.revision
+            ? { configurationRevision: definition.configuration.revision }
+            : {}),
         };
         await this.writeState(state);
       } catch (error) {
@@ -731,7 +841,13 @@ export class HostHarnessIntegrationManager {
           effectiveProvider = inspection.effectiveProvider;
           effectiveBaseUrl = inspection.effectiveBaseUrl;
         }
-        drifted = Boolean(installation && (!current || sha256(current.content) !== installation.installedSha256));
+        drifted = Boolean(
+          installation &&
+            (!current ||
+              sha256(current.content) !== installation.installedSha256 ||
+              (definition.configuration.revision !== undefined &&
+                installation.configurationRevision !== definition.configuration.revision)),
+        );
       } catch (error: any) {
         configurationError = error?.message ?? "The harness configuration cannot be edited safely.";
         drifted = Boolean(installation);
