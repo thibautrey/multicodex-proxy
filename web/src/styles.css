@@ -2638,7 +2638,7 @@ details summary {
 .host-harness-onboarding .host-harness-card {
   flex-basis: 250px;
   aspect-ratio: auto;
-  min-height: 265px;
+  min-height: 0;
 }
 
 @media (max-width: 620px) {
@@ -3368,19 +3368,18 @@ details summary {
   display: flex;
   flex: 0 0 292px;
   flex-direction: column;
-  justify-content: space-between;
-  gap: 16px;
-  aspect-ratio: 1;
-  padding: 18px;
+  gap: 14px;
+  min-height: 0;
+  padding: 16px;
   border: 1px solid var(--line-strong);
   border-radius: 14px;
   background: color-mix(in srgb, var(--surface-muted) 82%, transparent);
   scroll-snap-align: start;
 }
 
-.host-harness-card-copy {
+.host-harness-card-main {
   display: grid;
-  gap: 11px;
+  gap: 12px;
   min-width: 0;
 }
 
@@ -3424,8 +3423,42 @@ details summary {
   object-fit: contain;
 }
 
-.host-harness-badges {
+.host-harness-card-status {
+  min-height: 25px;
+}
+
+.host-harness-details {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 0.24s ease, opacity 0.18s ease;
+}
+
+.host-harness-details.is-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.host-harness-details-inner {
+  display: grid;
+  min-height: 0;
+  gap: 10px;
+  overflow: hidden;
+  transform: translateY(-4px);
+  transition: transform 0.24s ease;
+}
+
+.host-harness-details.is-open .host-harness-details-inner {
+  transform: translateY(0);
+}
+
+.host-harness-detail-meta {
+  display: grid;
   gap: 7px;
+}
+
+.host-harness-detail-meta p {
+  margin: 0;
 }
 
 .host-harness-path {
@@ -3450,8 +3483,41 @@ details summary {
   text-align: left;
 }
 
-.host-harness-actions .btn {
+.host-harness-primary-action {
   width: 100%;
+}
+
+.host-harness-details-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted-strong);
+  text-align: left;
+  box-shadow: none;
+}
+
+.host-harness-details-toggle::after {
+  content: "+";
+  color: var(--primary);
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.host-harness-details-toggle:hover {
+  transform: none;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text);
+  box-shadow: none;
+}
+
+.host-harness-card.is-expanded .host-harness-details-toggle::after {
+  content: "−";
 }
 
 .host-harness-feedback {
@@ -3477,6 +3543,13 @@ details summary {
 
   .host-harness-actions {
     min-width: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .host-harness-details,
+  .host-harness-details-inner {
+    transition-duration: 0.01ms;
   }
 }
 
