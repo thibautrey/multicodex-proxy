@@ -19,6 +19,28 @@ type NativePayloadInspectionModule = {
   inspectPayloadContextJson(payload: Buffer): unknown;
 };
 
+function isNativePayloadInspectionModule(
+  value: unknown,
+): value is NativePayloadInspectionModule {
+  return (
+    Boolean(value) &&
+    typeof value === "object" &&
+    typeof (value as { inspectPayloadContextJson?: unknown })
+      .inspectPayloadContextJson === "function"
+  );
+}
+
+function unwrapNativePayloadInspectionModule(
+  value: unknown,
+): NativePayloadInspectionModule | undefined {
+  if (isNativePayloadInspectionModule(value)) return value;
+  if (!value || typeof value !== "object") return undefined;
+  const defaultExport = (value as { default?: unknown }).default;
+  return isNativePayloadInspectionModule(defaultExport)
+    ? defaultExport
+    : undefined;
+}
+
 const NATIVE_DISABLED_VALUES = new Set(["0", "false", "off", "no"]);
 
 function nativeInspectionEnabled(): boolean {
@@ -43,13 +65,8 @@ function loadNativePayloadInspection(): NativePayloadInspectionModule | undefine
     const resolved = path.resolve(candidate);
     if (!existsSync(resolved)) continue;
     try {
-      const loaded = require(resolved) as
-        | NativePayloadInspectionModule
-        | { default?: NativePayloadInspectionModule };
-      if (!loaded || typeof loaded !== "object") continue;
-      const module =
-        "default" in loaded && loaded.default ? loaded.default : loaded;
-      if (typeof module.inspectPayloadContextJson === "function") return module;
+      const module = unwrapNativePayloadInspectionModule(require(resolved));
+      if (module) return module;
     } catch {
       // A platform-specific or incompatible addon must never prevent the
       // TypeScript API from starting. The caller will use the reference path.
