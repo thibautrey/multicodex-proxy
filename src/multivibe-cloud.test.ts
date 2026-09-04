@@ -94,12 +94,13 @@ test("Cloud connection uses PKCE and provisions a local API-key account", async 
     throw new Error(`unexpected Cloud call: ${url}`);
   });
 
-  const started = await cloud.startConnection();
+  const started = await cloud.startConnection("http://192.168.1.149:1455");
   const authorizeUrl = new URL(started.authorizeUrl);
   const flow = stores.states.get(started.flowId)!;
   assert.equal(authorizeUrl.pathname, "/oauth/authorize");
   assert.equal(authorizeUrl.searchParams.get("client_id"), "multivibe-core");
-  assert.equal(authorizeUrl.searchParams.get("redirect_uri"), "http://127.0.0.1:1455/admin/cloud/oauth/callback");
+  assert.equal(authorizeUrl.searchParams.get("redirect_uri"), "http://192.168.1.149:1455/admin/cloud/oauth/callback");
+  assert.equal(flow.redirectUri, "http://192.168.1.149:1455/admin/cloud/oauth/callback");
   assert.equal(authorizeUrl.searchParams.get("code_challenge_method"), "S256");
   assert.equal(
     authorizeUrl.searchParams.get("code_challenge"),
@@ -107,6 +108,11 @@ test("Cloud connection uses PKCE and provisions a local API-key account", async 
   );
 
   await cloud.completeConnection(started.flowId, "authorization-code");
+  const tokenCall = calls.find((call) => call.url.endsWith("/oauth/token"));
+  assert.equal(
+    new URLSearchParams(String(tokenCall?.init?.body ?? "")).get("redirect_uri"),
+    "http://192.168.1.149:1455/admin/cloud/oauth/callback",
+  );
   assert.equal(stores.states.get(started.flowId)?.status, "success");
   assert.deepEqual(stores.accounts.map((account) => ({
     id: account.id,
@@ -125,6 +131,19 @@ test("Cloud connection uses PKCE and provisions a local API-key account", async 
   }]);
   assert.equal(stores.settings.multivibeCloud?.projectId, projectId);
   assert.equal(calls.filter((call) => call.init?.method === "POST").length, 3);
+});
+
+test("Cloud connection rejects non-local-host callback origins", async () => {
+  const stores = fakeStores();
+  const cloud = service(stores, async () => response({}));
+  await assert.rejects(
+    () => cloud.startConnection("https://core.example.test"),
+    /must use an IP address or localhost/,
+  );
+  await assert.rejects(
+    () => cloud.startConnection("http://192.168.1.149:1455/admin"),
+    /must be an HTTP\(S\) origin/,
+  );
 });
 
 test("Cloud status reports balance and subscription without exposing the API key", async () => {

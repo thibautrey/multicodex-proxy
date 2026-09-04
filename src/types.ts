@@ -265,6 +265,8 @@ export type OAuthFlowState = {
   id: string;
   email: string;
   codeVerifier: string;
+  /** Exact callback used by a user-hosted MultiVibe Cloud authorization flow. */
+  redirectUri?: string;
   createdAt: number;
   method?: "browser" | "device";
   provider?: "openai" | "opencode" | "xai";

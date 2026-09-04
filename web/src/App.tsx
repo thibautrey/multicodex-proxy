@@ -786,7 +786,7 @@ export default function App() {
   const connectMultivibeCloud = async () => {
     const result = await api("/admin/cloud/connect", {
       method: "POST",
-      body: JSON.stringify({}),
+      body: JSON.stringify({ callbackOrigin: window.location.origin }),
     });
     const authorizeUrl = String(result?.authorizeUrl ?? "");
     if (!authorizeUrl) throw new Error("MultiVibe Cloud authorization is unavailable.");

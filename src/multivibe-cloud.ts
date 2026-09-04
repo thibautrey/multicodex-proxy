@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { isIP } from "node:net";
 import type { AccountStore, OAuthStateStore } from "./store.js";
 import type { Account, OAuthFlowState, StoreSettings } from "./types.js";
 
@@ -15,6 +16,7 @@ const FLOW_LIFETIME_MS = 10 * 60_000;
 const API_KEY_LIFETIME_MS = 365 * 24 * 60 * 60_000;
 const API_KEY_RENEWAL_MARGIN_MS = 24 * 60 * 60_000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const CORE_CALLBACK_PATH = "/admin/cloud/oauth/callback";
 
 type CloudConnection = NonNullable<StoreSettings["multivibeCloud"]>;
 
@@ -159,6 +161,17 @@ export class MultivibeCloudService {
     return parsed.toString();
   }
 
+  private validCoreCallbackOrigin(value: string): string {
+    const origin = normalizedOrigin(value, "MultiVibe Core callback origin");
+    const parsed = new URL(origin);
+    const hostname = parsed.hostname.startsWith("[") && parsed.hostname.endsWith("]")
+      ? parsed.hostname.slice(1, -1) : parsed.hostname;
+    if (hostname !== "localhost" && isIP(hostname) === 0) {
+      throw new Error("MultiVibe Core callback origin must use an IP address or localhost");
+    }
+    return new URL(CORE_CALLBACK_PATH, `${origin}/`).toString();
+  }
+
   private validHttpUrl(value: string, label: string): string {
     let parsed: URL;
     try { parsed = new URL(value); }
@@ -169,11 +182,14 @@ export class MultivibeCloudService {
     return parsed.toString();
   }
 
-  async startConnection(): Promise<{ flowId: string; authorizeUrl: string }> {
+  async startConnection(callbackOrigin?: string): Promise<{ flowId: string; authorizeUrl: string }> {
+    const redirectUri = callbackOrigin === undefined
+      ? this.redirectUri : this.validCoreCallbackOrigin(callbackOrigin);
     const flow: OAuthFlowState = {
       id: randomUUID(),
       email: "",
       codeVerifier: randomBytes(32).toString("base64url"),
+      redirectUri,
       createdAt: Date.now(),
       method: "browser",
       status: "pending",
@@ -182,7 +198,7 @@ export class MultivibeCloudService {
     const authorizeUrl = new URL(`${this.authBaseUrl}/oauth/authorize`);
     authorizeUrl.searchParams.set("response_type", "code");
     authorizeUrl.searchParams.set("client_id", CLIENT_ID);
-    authorizeUrl.searchParams.set("redirect_uri", this.redirectUri);
+    authorizeUrl.searchParams.set("redirect_uri", redirectUri);
     authorizeUrl.searchParams.set("scope", SCOPES);
     authorizeUrl.searchParams.set("state", flow.id);
     authorizeUrl.searchParams.set("code_challenge", codeChallenge(flow.codeVerifier));
@@ -204,6 +220,7 @@ export class MultivibeCloudService {
     if (!flow || flow.status !== "pending") throw new Error("Cloud connection flow is invalid or expired");
     if (flow.createdAt + FLOW_LIFETIME_MS <= Date.now()) throw new Error("Cloud connection flow is expired");
     if (!/^[A-Za-z0-9_-]{8,512}$/.test(code)) throw new Error("Cloud authorization code is invalid");
+    const redirectUri = flow.redirectUri ?? this.redirectUri;
 
     const response = await this.fetchImpl(`${this.authBaseUrl}/oauth/token`, {
       method: "POST",
@@ -212,7 +229,7 @@ export class MultivibeCloudService {
         grant_type: "authorization_code",
         client_id: CLIENT_ID,
         code,
-        redirect_uri: this.redirectUri,
+        redirect_uri: redirectUri,
         code_verifier: flow.codeVerifier,
       }),
     });

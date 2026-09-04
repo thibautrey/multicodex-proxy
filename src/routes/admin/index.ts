@@ -1382,11 +1382,13 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     return res.json(await options.multivibeCloud.getStatus());
   });
 
-  router.post("/cloud/connect", async (_req, res) => {
+  router.post("/cloud/connect", async (req, res) => {
     res.setHeader("cache-control", "no-store");
     if (!options.multivibeCloud) return res.status(503).json({ error: "MultiVibe Cloud is unavailable" });
     try {
-      return res.json(await options.multivibeCloud.startConnection());
+      const callbackOrigin = typeof req.body?.callbackOrigin === "string"
+        && req.body.callbackOrigin.trim() ? req.body.callbackOrigin : undefined;
+      return res.json(await options.multivibeCloud.startConnection(callbackOrigin));
     } catch (error: any) {
       return res.status(503).json({ error: error?.message ?? "MultiVibe Cloud connection failed" });
     }
