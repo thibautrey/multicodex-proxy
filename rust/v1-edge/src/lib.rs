@@ -2223,7 +2223,40 @@ fn response_from_sse(text: &str, model: &str) -> Value {
             ));
         }
     }
-    if let Some(value) = completed {
+    if let Some(mut value) = completed {
+        let has_text = value
+            .get("output")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items.iter().any(|item| {
+                    item.get("type").and_then(Value::as_str) == Some("message")
+                        && item
+                            .get("content")
+                            .and_then(Value::as_array)
+                            .map(|parts| {
+                                parts.iter().any(|part| {
+                                    part.get("type").and_then(Value::as_str) == Some("output_text")
+                                        && value_string(part.get("text"))
+                                            .is_some_and(|text| !text.is_empty())
+                                })
+                            })
+                            .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false);
+        if !output_text.is_empty() && !has_text {
+            if let Some(object) = value.as_object_mut() {
+                object
+                    .entry("output")
+                    .or_insert_with(|| Value::Array(Vec::new()))
+                    .as_array_mut()
+                    .expect("response output is an array")
+                    .push(json!({"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": output_text}]}));
+            }
+        }
+        if let Some(output) = value.get_mut("output").and_then(Value::as_array_mut) {
+            output.extend(function_calls.into_values());
+        }
         return sanitize_response(&value);
     }
     let mut output = Vec::new();
@@ -2925,14 +2958,19 @@ fn transform_for(
     client_stream: bool,
     content_type: &str,
 ) -> StreamTransform {
-    if !client_stream
-        || !content_type
-            .to_ascii_lowercase()
-            .contains("text/event-stream")
-    {
+    let client_chat = path.contains("chat/completions");
+    let upstream_sse = content_type
+        .to_ascii_lowercase()
+        .contains("text/event-stream");
+    // ChatGPT's Responses endpoint has returned a real SSE stream without a
+    // Content-Type header. The chat-compatible route still needs conversion;
+    // only the native Responses route can safely pass those bytes through.
+    let headerless_openai_chat_stream = client_chat
+        && normalize_provider(account) == "openai"
+        && content_type.trim().is_empty();
+    if !client_stream || (!upstream_sse && !headerless_openai_chat_stream) {
         return StreamTransform::None;
     }
-    let client_chat = path.contains("chat/completions");
     let messages = path.ends_with("/messages");
     let sends_chat =
         resolve_upstream_mode(account, client_chat, path.ends_with("/responses/compact"));
@@ -6003,6 +6041,28 @@ mod tests {
         let chat = chat_from_sse(chat_sse, "gpt-5.3-codex");
         assert_eq!(chat["id"], "chat-1");
         assert_eq!(chat["choices"][0]["message"]["content"], "hello");
+
+        let empty_completed_sse = concat!(
+            "event: response.output_text.delta\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"recovered\"}\n\n",
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-empty\",\"object\":\"response\",\"status\":\"completed\",\"output\":[]}}\n\n"
+        );
+        let recovered = response_from_sse(empty_completed_sse, "gpt-5.3-codex");
+        assert_eq!(recovered["output"][0]["content"][0]["text"], "recovered");
+    }
+
+    #[test]
+    fn headerless_openai_chat_stream_is_converted() {
+        let openai = account("openai-1");
+        assert_eq!(
+            transform_for("/v1/chat/completions", &openai, true, ""),
+            StreamTransform::ResponseToChat
+        );
+        assert_eq!(
+            transform_for("/v1/responses", &openai, true, ""),
+            StreamTransform::None
+        );
     }
 
     #[tokio::test]
