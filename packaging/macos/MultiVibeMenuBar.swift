@@ -108,6 +108,7 @@ private final class HostPopoverController: NSViewController {
     var refresh: (() -> Void)?
     var checkForUpdates: (() -> Void)?
     var installUpdate: (() -> Void)?
+    var setStartAtLogin: ((Bool) -> Void)?
     var quit: (() -> Void)?
 
     private let headerTitle = NSTextField(labelWithString: "MultiVibe Host")
@@ -115,6 +116,7 @@ private final class HostPopoverController: NSViewController {
     private let contentStack = NSStackView()
     private let primaryButton = NSButton(title: "Open Dashboard", target: nil, action: nil)
     private let refreshButton = NSButton(title: "Refresh", target: nil, action: nil)
+    private let startAtLoginButton = NSButton(checkboxWithTitle: "Start MultiVibe Host when I log in", target: nil, action: nil)
 
     override func loadView() {
         let background = NSVisualEffectView()
@@ -252,7 +254,8 @@ private final class HostPopoverController: NSViewController {
         operational: Bool,
         refreshing: Bool,
         updateStatus: HostUpdateStatus?,
-        updateBusy: Bool
+        updateBusy: Bool,
+        startAtLogin: Bool
     ) {
         loadViewIfNeeded()
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
@@ -280,6 +283,10 @@ private final class HostPopoverController: NSViewController {
         contentStack.addArrangedSubview(earningsCard(summary?.earnings))
         contentStack.addArrangedSubview(sectionLabel("HOST UPDATES"))
         contentStack.addArrangedSubview(updateCard(updateStatus, busy: updateBusy))
+        startAtLoginButton.state = startAtLogin ? .on : .off
+        startAtLoginButton.target = self
+        startAtLoginButton.action = #selector(didChangeStartAtLogin)
+        contentStack.addArrangedSubview(startAtLoginButton)
     }
 
     private func sectionLabel(_ text: String) -> NSTextField {
@@ -579,6 +586,7 @@ private final class HostPopoverController: NSViewController {
     @objc private func didRefresh() { refresh?() }
     @objc private func didCheckForUpdates() { checkForUpdates?() }
     @objc private func didInstallUpdate() { installUpdate?() }
+    @objc private func didChangeStartAtLogin() { setStartAtLogin?(startAtLoginButton.state == .on) }
     @objc private func didQuit() { quit?() }
 }
 
@@ -777,6 +785,7 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDeleg
         popoverController.refresh = { [weak self] in self?.refreshNow() }
         popoverController.checkForUpdates = { [weak self] in self?.runUpdateAction(path: "/admin/host-update/check") }
         popoverController.installUpdate = { [weak self] in self?.runUpdateAction(path: "/admin/host-update/apply") }
+        popoverController.setStartAtLogin = { [weak self] enabled in self?.setStartAtLogin(enabled) }
         popoverController.quit = { [weak self] in self?.quitApplication() }
     }
 
@@ -808,7 +817,8 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDeleg
             operational: operational,
             refreshing: refreshing,
             updateStatus: updateStatus,
-            updateBusy: updateBusy
+            updateBusy: updateBusy,
+            startAtLogin: UserDefaults.standard.object(forKey: "startAtLogin") as? Bool ?? true
         )
     }
 
@@ -919,7 +929,20 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDeleg
         render()
     }
 
+    private func setStartAtLogin(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: "startAtLogin")
+        if !enabled, let service = ownedService, service.isRunning {
+            service.terminate()
+            ownedService = nil
+            updateState(operational: false, status: "Stopped")
+        } else if enabled {
+            ensureServiceIsRunning()
+        }
+        render()
+    }
+
     private func ensureServiceIsRunning() {
+        guard UserDefaults.standard.object(forKey: "startAtLogin") as? Bool ?? true else { return }
         if ownedService?.isRunning == true {
             refreshing = false
             refresh()

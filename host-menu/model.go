@@ -31,6 +31,7 @@ const (
 	modelUpdateDownloaded
 	modelUpdateInstallRequested
 	modelUpdateBusy
+	modelStartAtLogin
 	modelFirstAccount
 )
 
@@ -112,6 +113,7 @@ func serializeMenuModel(state menuState) string {
 	lines[modelUpdateDownloaded] = "0"
 	lines[modelUpdateInstallRequested] = "0"
 	lines[modelUpdateBusy] = boolString(state.updateBusy)
+	lines[modelStartAtLogin] = boolString(startAtLoginEnabled())
 
 	if state.summary != nil {
 		quota := state.summary.Quota
