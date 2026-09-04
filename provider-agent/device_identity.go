@@ -77,7 +77,7 @@ func openDeviceIdentity(path string) (*deviceIdentity, error) {
 	if err != nil {
 		return nil, errors.New("provider device identity cannot be inspected")
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || info.Size() > 16*1024 {
+	if !providerPrivateFile(path, info) || info.Size() > 16*1024 {
 		return nil, errors.New("provider device identity must be a bounded mode-0600 regular file")
 	}
 	file, err := os.Open(path)
@@ -116,14 +116,6 @@ func (identity *deviceIdentity) publicIdentity() (string, string) {
 }
 
 func (identity *deviceIdentity) persistLocked() error {
-	directory := filepath.Dir(identity.path)
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		return errors.New("provider device identity directory cannot be created")
-	}
-	directoryInfo, err := os.Lstat(directory)
-	if err != nil || !directoryInfo.IsDir() || directoryInfo.Mode()&os.ModeSymlink != 0 {
-		return errors.New("provider device identity directory is invalid")
-	}
 	pkcs8, err := x509.MarshalPKCS8PrivateKey(identity.privateKey)
 	if err != nil {
 		return errors.New("provider device identity cannot be encoded")
@@ -135,36 +127,12 @@ func (identity *deviceIdentity) persistLocked() error {
 		DeviceKeyID:     identity.deviceKeyID,
 		Sequence:        identity.sequence,
 	}
-	temporary, err := os.CreateTemp(directory, "."+filepath.Base(identity.path)+".*.tmp")
-	if err != nil {
-		return errors.New("provider device identity temporary file cannot be created")
+	encoded, err := json.Marshal(document)
+	if err != nil || len(encoded) > 16*1024 {
+		return errors.New("provider device identity cannot be encoded")
 	}
-	temporaryPath := temporary.Name()
-	removeTemporary := true
-	defer func() {
-		_ = temporary.Close()
-		if removeTemporary {
-			_ = os.Remove(temporaryPath)
-		}
-	}()
-	if err := temporary.Chmod(0o600); err != nil {
-		return errors.New("provider device identity temporary file cannot be secured")
-	}
-	encoder := json.NewEncoder(temporary)
-	encoder.SetEscapeHTML(true)
-	if err := encoder.Encode(document); err != nil || temporary.Sync() != nil || temporary.Close() != nil {
+	if err := atomicWrite0600(identity.path, append(encoded, '\n')); err != nil {
 		return errors.New("provider device identity cannot be committed")
 	}
-	if destination, err := os.Lstat(identity.path); err == nil {
-		if !destination.Mode().IsRegular() || destination.Mode().Perm() != 0o600 {
-			return errors.New("provider device identity destination is unsafe")
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return errors.New("provider device identity destination cannot be inspected")
-	}
-	if err := os.Rename(temporaryPath, identity.path); err != nil {
-		return errors.New("provider device identity cannot be committed")
-	}
-	removeTemporary = false
 	return nil
 }

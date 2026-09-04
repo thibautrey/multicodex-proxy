@@ -245,7 +245,7 @@ func sameArchiveTarget(left, right updateTarget) bool {
 
 func downloadLooksPresent(path string, expectedSize int64) bool {
 	info, err := os.Lstat(path)
-	return err == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 && info.Size() == expectedSize
+	return err == nil && updaterPrivateFile(path, info) && info.Size() == expectedSize
 }
 
 func restoreCachedStatus(state *updaterState) {
@@ -280,6 +280,8 @@ func (update *updater) download(ctx context.Context, state *updaterState) error 
 	extension := ".tar.gz"
 	if strings.HasPrefix(runtimeTargetName(), "darwin-") {
 		extension = ".dmg"
+	} else if runtimeTargetName() == "windows-amd64" {
+		extension = ".zip"
 	}
 	destination := filepath.Join(update.store.cache, "multivibe-host_"+state.AvailableVersion+extension)
 	temporary, err := os.CreateTemp(update.store.cache, ".download-*")
@@ -294,7 +296,7 @@ func (update *updater) download(ctx context.Context, state *updaterState) error 
 			_ = os.Remove(temporaryPath)
 		}
 	}()
-	if err := temporary.Chmod(0o600); err != nil {
+	if err := secureUpdaterPrivateFile(temporaryPath); err != nil {
 		return setFailure(update.store, state, "download_stage_failed", err)
 	}
 	parts := state.Target.Parts
@@ -320,7 +322,7 @@ func (update *updater) download(ctx context.Context, state *updaterState) error 
 	if temporary.Sync() != nil || temporary.Close() != nil {
 		return setFailure(update.store, state, "artifact_persist_failed", errors.New("the downloaded update archive could not be persisted"))
 	}
-	if err := os.Rename(temporaryPath, destination); err != nil {
+	if err := replaceUpdaterFile(temporaryPath, destination); err != nil {
 		return setFailure(update.store, state, "artifact_commit_failed", err)
 	}
 	committed = true

@@ -27,7 +27,7 @@ func packagedRuntimeCatalog(t *testing.T) (runtimeprofile.Catalog, runtimeprofil
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(catalog.Profiles) != 1 {
+	if len(catalog.Profiles) != 2 {
 		t.Fatalf("unexpected packaged profile count: %d", len(catalog.Profiles))
 	}
 	return catalog, catalog.Profiles[0], path

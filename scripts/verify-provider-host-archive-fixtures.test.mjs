@@ -40,6 +40,17 @@ async function runVerifier(archive) {
   });
 }
 
+function crc32(value) {
+  let result = 0xffffffff;
+  for (const byte of value) {
+    result ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      result = (result >>> 1) ^ ((result & 1) === 1 ? 0xedb88320 : 0);
+    }
+  }
+  return (~result) >>> 0;
+}
+
 test("verifier child progress cannot contaminate its JSON stdout", async () => {
   const moduleUrl = pathToFileURL(verifier).href;
   const noisyChild = "process.stdout.write('Processing child output\\n')";
@@ -77,13 +88,14 @@ function zipArchive(entries) {
     const payload = entry.payload ?? (method === 8 ? deflateRawSync(source) : source);
     const compressedSize = entry.compressedSize ?? payload.length;
     const uncompressedSize = entry.uncompressedSize ?? source.length;
+    const checksum = entry.crc32 ?? crc32(source);
     const mode = entry.mode ?? (entry.name.endsWith("/") ? 0o040755 : 0o100644);
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
     local.writeUInt16LE(20, 4);
     local.writeUInt16LE(0, 6);
     local.writeUInt16LE(method, 8);
-    local.writeUInt32LE(0, 14);
+    local.writeUInt32LE(checksum, 14);
     local.writeUInt32LE(compressedSize, 18);
     local.writeUInt32LE(uncompressedSize, 22);
     local.writeUInt16LE(name.length, 26);
@@ -93,7 +105,7 @@ function zipArchive(entries) {
     central.writeUInt16LE(20, 6);
     central.writeUInt16LE(0, 8);
     central.writeUInt16LE(method, 10);
-    central.writeUInt32LE(0, 16);
+    central.writeUInt32LE(checksum, 16);
     central.writeUInt32LE(compressedSize, 20);
     central.writeUInt32LE(uncompressedSize, 24);
     central.writeUInt16LE(name.length, 28);
@@ -312,6 +324,112 @@ function completeLinuxBundleTar(mutateFiles = () => {}) {
   }
   entries.push({ name: `${root}/manifest.json`, data: manifest, mode: 0o644 });
   return tarGzip(entries);
+}
+
+function completeWindowsBundleZip(mutateFiles = () => {}) {
+  const root = "multivibe-host_0.0.1_windows_amd64";
+  const dependencyData = readFileSync(path.join(repositoryRoot, "packaging", "provider-host-dependencies.json"));
+  const dependencyMetadata = JSON.parse(dependencyData);
+  const catalogData = readFileSync(path.join(repositoryRoot, "packaging", "provider-model-catalog.json"));
+  const catalog = JSON.parse(catalogData);
+  const assessmentRelative = catalog.models[0].license.assessment_path;
+  const assessment = readFileSync(path.join(repositoryRoot, "docs", assessmentRelative));
+  const packaged = (...parts) => readFileSync(path.join(repositoryRoot, "packaging", ...parts));
+  const pe = Buffer.alloc(128);
+  pe.write("MZ", 0, "ascii");
+  pe.writeUInt32LE(64, 0x3c);
+  pe.write("PE\0\0", 64, "ascii");
+  pe.writeUInt16LE(0x8664, 68);
+  pe.writeUInt16LE(0x20b, 88);
+  const json = (value) => Buffer.from(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+  const files = new Map([
+    ["LICENSE", { data: Buffer.from("Apache License 2.0\n"), mode: 0o644 }],
+    ["NOTICE", { data: Buffer.from("MultiVibe Copyright 2026 Pleiades Solutions\n"), mode: 0o644 }],
+    ["README.md", { data: Buffer.from("# MultiVibe Host\n"), mode: 0o644 }],
+    ["install.ps1", { data: Buffer.from("Write-Output ready\n"), mode: 0o644 }],
+    ["uninstall.ps1", { data: Buffer.from("Write-Output ready\n"), mode: 0o644 }],
+    ["THIRD_PARTY/node-LICENSE", { data: Buffer.from("Node.js license\n"), mode: 0o644 }],
+    ["THIRD_PARTY/ollama-LICENSE", { data: Buffer.from("Ollama MIT license\n"), mode: 0o644 }],
+    ["THIRD_PARTY/provider-host-dependencies.json", { data: dependencyData, mode: 0o644 }],
+    [`THIRD_PARTY/${assessmentRelative}`, { data: assessment, mode: 0o644 }],
+    ["app/package.json", { data: Buffer.from("{}\n"), mode: 0o644 }],
+    ["app/package-lock.json", { data: Buffer.from("{}\n"), mode: 0o644 }],
+    ["app/dist/anthropic/compat.test.js", { data: Buffer.from("export {};\n"), mode: 0o644 }],
+    ["app/dist/anthropic-compat.js", { data: Buffer.from("export {};\n"), mode: 0o644 }],
+    ["app/dist/instrument.js", { data: Buffer.from("export {};\n"), mode: 0o644 }],
+    ["app/dist/server.js", { data: Buffer.from("export {};\n"), mode: 0o644 }],
+    ["app/modules/security/multivibe.module.json", { data: Buffer.from("{}\n"), mode: 0o644 }],
+    ["app/modules/security/dist/index.js", { data: Buffer.from("export {};\n"), mode: 0o644 }],
+    ["bin/multivibe-host.exe", { data: pe, mode: 0o644 }],
+    ["bin/multivibe-host-menu.exe", { data: pe, mode: 0o644 }],
+    ["bin/multivibe-host-updater.exe", { data: pe, mode: 0o644 }],
+    ["bin/multivibe-provider-agent.exe", { data: pe, mode: 0o644 }],
+    ["bin/multivibe-runtime-benchmark.exe", { data: pe, mode: 0o644 }],
+    ["bin/node.exe", { data: pe, mode: 0o644 }],
+    ["resources/provider/provider-host-dependencies.json", { data: dependencyData, mode: 0o644 }],
+    ["resources/provider/multivibe-host.ico", {
+      data: readFileSync(path.join(repositoryRoot, "web", "public", "assets", "brand", "favicon.ico")),
+      mode: 0o644,
+    }],
+    ["resources/provider/provider-model-catalog.json", { data: catalogData, mode: 0o644 }],
+    ["resources/provider/provider-runtime-profiles.json", { data: packaged("provider-runtime-profiles.json"), mode: 0o644 }],
+    ["resources/provider/schemas/provider-runtime-profiles.schema.json", { data: packaged("schemas", "provider-runtime-profiles.schema.json"), mode: 0o644 }],
+    ["resources/provider/schemas/provider-runtime-profile-overrides.schema.json", { data: packaged("schemas", "provider-runtime-profile-overrides.schema.json"), mode: 0o644 }],
+    ["resources/provider/schemas/provider-runtime-benchmark-spec.schema.json", { data: packaged("schemas", "provider-runtime-benchmark-spec.schema.json"), mode: 0o644 }],
+    ["resources/provider/schemas/provider-runtime-benchmark-result.schema.json", { data: packaged("schemas", "provider-runtime-benchmark-result.schema.json"), mode: 0o644 }],
+    ["resources/provider/schemas/provider-runtime-benchmark-store.schema.json", { data: packaged("schemas", "provider-runtime-benchmark-store.schema.json"), mode: 0o644 }],
+    ["resources/provider/examples/runtime-profile-overrides.json", { data: packaged("examples", "runtime-profile-overrides.json"), mode: 0o644 }],
+    ["resources/provider/examples/runtime-benchmark-spec.json", { data: packaged("examples", "runtime-benchmark-spec.json"), mode: 0o644 }],
+    ["runtime/ollama/.multivibe-bundle.json", { data: json({
+      schema_version: "managed-ollama-bundle-v1",
+      version: "0.33.2",
+      platform: "windows-amd64",
+      archive_sha256: dependencyMetadata.ollama.artifacts["windows-amd64"].sha256,
+    }), mode: 0o644 }],
+    ["runtime/ollama/lib/ollama/llama-quantize.exe", { data: pe, mode: 0o644 }],
+    ["runtime/ollama/lib/ollama/llama-server.exe", { data: pe, mode: 0o644 }],
+    ["runtime/ollama/ollama.exe", { data: pe, mode: 0o644 }],
+    ["verify-provider-host.mjs", { data: Buffer.from("// verifier fixture\n"), mode: 0o644 }],
+  ]);
+  mutateFiles(files);
+  const manifestFiles = [...files].map(([filePath, file]) => ({
+    path: filePath,
+    size: file.data.length,
+    mode: file.mode,
+    sha256: sha256Buffer(file.data),
+  })).sort((left, right) => left.path.localeCompare(right.path));
+  const manifest = json({
+    schemaVersion: 1,
+    product: "multivibe-host",
+    version: "0.0.1",
+    sourceCommit: "6".repeat(40),
+    platform: "windows",
+    architecture: "amd64",
+    sourceTreeDirty: false,
+    releaseReady: true,
+    macOSSignature: null,
+    node: dependencyMetadata.node,
+    managedRuntime: dependencyMetadata.ollama,
+    files: manifestFiles,
+  });
+  const directories = new Set();
+  for (const filePath of files.keys()) {
+    let directory = path.posix.dirname(filePath);
+    while (directory !== ".") {
+      directories.add(directory);
+      directory = path.posix.dirname(directory);
+    }
+  }
+  const entries = [{ name: `${root}/` }];
+  for (const directory of [...directories].sort((left, right) =>
+    left.split("/").length - right.split("/").length || left.localeCompare(right))) {
+    entries.push({ name: `${root}/${directory}/` });
+  }
+  for (const [filePath, file] of [...files].sort(([left], [right]) => left.localeCompare(right))) {
+    entries.push({ name: `${root}/${filePath}`, data: file.data, mode: file.mode });
+  }
+  entries.push({ name: `${root}/manifest.json`, data: manifest, mode: 0o644 });
+  return zipArchive(entries);
 }
 
 async function expectArchiveFailure(extension, content, expected) {
@@ -609,6 +727,22 @@ test("complete Linux release fixture passes archive and signed-manifest verifica
     assert.equal(output.verified, true);
     assert.equal(output.releaseReady, true);
     assert.equal(output.platform, "linux");
+    assert.equal(output.runtimeChecked, false);
+  });
+});
+
+test("complete Windows amd64 release fixture passes archive and PE verification", async () => {
+  await inTemporaryDirectory(async (directory) => {
+    const archive = path.join(directory, "multivibe-host_0.0.1_windows_amd64.zip");
+    await writeFile(archive, completeWindowsBundleZip(), { mode: 0o600 });
+    const result = await runVerifier(archive);
+    assert.equal(result.signal, null);
+    assert.equal(result.code, 0, result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.verified, true);
+    assert.equal(output.releaseReady, true);
+    assert.equal(output.platform, "windows");
+    assert.equal(output.architecture, "amd64");
     assert.equal(output.runtimeChecked, false);
   });
 });

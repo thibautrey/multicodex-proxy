@@ -53,7 +53,7 @@ async function command(program, args, options = {}) {
     const captureStderr = options.capture && options.captureStderr === true;
     const child = spawn(program, args, {
       cwd: options.cwd,
-      env: process.env,
+      env: options.env ?? process.env,
       // Keep stdout reserved for this verifier's single JSON result. macOS
       // validation tools such as `stapler` print progress on their stdout.
       stdio: options.capture ? ["ignore", "pipe", captureStderr ? "pipe" : "inherit"] : ["inherit", process.stderr, "inherit"],
@@ -80,6 +80,28 @@ async function command(program, args, options = {}) {
 }
 
 export { command as runVerificationCommand };
+
+function windowsPowerShellPath() {
+  const systemRoot = process.env.SystemRoot?.trim();
+  if (!systemRoot || !path.isAbsolute(systemRoot)) throw new Error("Windows PowerShell is unavailable");
+  return path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+}
+
+async function extractZipArchive(archive, destination) {
+  if (process.platform !== "win32") {
+    await command("unzip", ["-q", archive, "-d", destination]);
+    return;
+  }
+  const environment = {
+    ...process.env,
+    MULTIVIBE_VERIFY_ZIP_SOURCE: archive,
+    MULTIVIBE_VERIFY_ZIP_DESTINATION: destination,
+  };
+  await command(windowsPowerShellPath(), [
+    "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command",
+    "$ErrorActionPreference = 'Stop'; Expand-Archive -LiteralPath $env:MULTIVIBE_VERIFY_ZIP_SOURCE -DestinationPath $env:MULTIVIBE_VERIFY_ZIP_DESTINATION -Force",
+  ], { env: environment });
+}
 
 async function sha256(file) {
   const digest = createHash("sha256");
@@ -625,7 +647,7 @@ async function inspectArchive(archive) {
 
 function validateDependency(name, dependency, expectedArchives) {
   if (!exactKeys(dependency, ["version", "artifacts"]) || !/^\d+\.\d+\.\d+$/u.test(dependency.version) ||
-    !exactKeys(dependency.artifacts, ["darwin-amd64", "darwin-arm64", "linux-amd64"])) {
+    !exactKeys(dependency.artifacts, ["darwin-amd64", "darwin-arm64", "linux-amd64", "windows-amd64"])) {
     throw new Error(`${name} dependency metadata is invalid`);
   }
   for (const [target, artifact] of Object.entries(dependency.artifacts)) {
@@ -665,6 +687,14 @@ function isELFAmd64(header) {
     header[4] === 2 && header[5] === 1 && header.readUInt16LE(18) === 0x3e;
 }
 
+function isPEAmd64(header) {
+  if (header.length < 64 || header.subarray(0, 2).toString("ascii") !== "MZ") return false;
+  const peOffset = header.readUInt32LE(0x3c);
+  return peOffset >= 64 && peOffset + 26 <= header.length &&
+    header.subarray(peOffset, peOffset + 4).toString("ascii") === "PE\0\0" &&
+    header.readUInt16LE(peOffset + 4) === 0x8664 && header.readUInt16LE(peOffset + 24) === 0x20b;
+}
+
 function isMachOArchitecture(header, cpuType) {
   if (header.length < 8) return false;
   if (header.readUInt32LE(0) === 0xfeedfacf) return header.readUInt32LE(4) === cpuType;
@@ -689,6 +719,7 @@ function isMachO(header) {
 
 async function validateNativeFiles(root, manifest) {
   const mac = manifest.platform === "darwin";
+  const windows = manifest.platform === "windows";
   const prefix = mac ? "MultiVibe Host.app/Contents/" : "";
   const explicit = mac ? [
     `${prefix}Frameworks/node`, `${prefix}Resources/ollama-runtime/ollama`, `${prefix}Resources/ollama-runtime/llama-server`,
@@ -696,17 +727,20 @@ async function validateNativeFiles(root, manifest) {
     `${prefix}Helpers/multivibe-runtime-benchmark`, `${prefix}Helpers/multivibe-v1-edge`,
     `${prefix}MacOS/multivibe-host`,
     `${prefix}MacOS/MultiVibe Host`,
+  ] : windows ? [
+    "bin/node.exe", "runtime/ollama/ollama.exe", "bin/multivibe-provider-agent.exe", "bin/multivibe-runtime-benchmark.exe",
+    "bin/multivibe-host-updater.exe", "bin/multivibe-host.exe", "bin/multivibe-host-menu.exe",
   ] : ["bin/node", "runtime/ollama/bin/ollama", "bin/multivibe-provider-agent", "bin/multivibe-runtime-benchmark", "bin/multivibe-host", "bin/multivibe-host-menu"];
   const runtimePrefix = mac ? `${prefix}Resources/ollama-runtime/` : "runtime/ollama/";
   const native = manifest.files.filter((entry) => explicit.includes(entry.path) ||
-    (mac ? /\.(?:dylib|node|so)$/u.test(entry.path) : /(?:\.node|\.so(?:\.|$))/u.test(entry.path)) ||
+    (mac ? /\.(?:dylib|node|so)$/u.test(entry.path) : windows ? /\.(?:dll|exe|node)$/iu.test(entry.path) : /(?:\.node|\.so(?:\.|$))/u.test(entry.path)) ||
     (entry.path.startsWith(runtimePrefix) && (entry.mode & 0o111) !== 0));
   for (const entry of native) {
-    const header = await readBinaryHeader(path.join(root, entry.path));
+    const header = await readBinaryHeader(path.join(root, entry.path), windows ? 64 * 1024 : 4096);
     const macCPUType = manifest.architecture === "arm64" ? 0x0100000c : manifest.architecture === "amd64" ? 0x01000007 : null;
     const valid = mac ? (macCPUType !== null && isMachO(header) &&
       (entry.path.startsWith(runtimePrefix) && !explicit.includes(entry.path) || isMachOArchitecture(header, macCPUType))) :
-      isELFAmd64(header);
+      windows ? isPEAmd64(header) : isELFAmd64(header);
     if (!valid) {
       throw new Error(`provider-host native file has the wrong architecture: ${entry.path}`);
     }
@@ -1085,7 +1119,7 @@ async function validateTree(root, options, archiveRoot) {
   const manifestKeys = ["schemaVersion", "product", "version", "sourceCommit", "platform", "architecture",
     "sourceTreeDirty", "releaseReady", "macOSSignature", "node", "managedRuntime", "files"];
   const targetIsValid = (manifest.platform === "darwin" && ["arm64", "amd64"].includes(manifest.architecture)) ||
-    (manifest.platform === "linux" && manifest.architecture === "amd64");
+    ((manifest.platform === "linux" || manifest.platform === "windows") && manifest.architecture === "amd64");
   if (!exactKeys(manifest, manifestKeys) || manifest.schemaVersion !== 1 || manifest.product !== "multivibe-host" ||
     typeof manifest.version !== "string" || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(manifest.version) ||
     typeof manifest.sourceCommit !== "string" || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(manifest.sourceCommit) ||
@@ -1099,8 +1133,12 @@ async function validateTree(root, options, archiveRoot) {
       (manifest.platform !== "darwin" || manifest.macOSSignature === "developer-id-notarized"))) {
     throw new Error("provider-host release-readiness metadata is inconsistent");
   }
-  validateDependency("Node", manifest.node, { "darwin-amd64": "tar-gzip", "darwin-arm64": "tar-gzip", "linux-amd64": "tar-gzip" });
-  validateDependency("Ollama", manifest.managedRuntime, { "darwin-amd64": "tar-gzip", "darwin-arm64": "tar-gzip", "linux-amd64": "tar-zstd" });
+  validateDependency("Node", manifest.node, {
+    "darwin-amd64": "tar-gzip", "darwin-arm64": "tar-gzip", "linux-amd64": "tar-gzip", "windows-amd64": "zip",
+  });
+  validateDependency("Ollama", manifest.managedRuntime, {
+    "darwin-amd64": "tar-gzip", "darwin-arm64": "tar-gzip", "linux-amd64": "tar-zstd", "windows-amd64": "zip",
+  });
 
   if (archiveRoot) {
     const expectedRoot = `multivibe-host_${manifest.version}_${manifest.platform}_${manifest.architecture}`;
@@ -1120,7 +1158,8 @@ async function validateTree(root, options, archiveRoot) {
     seen.add(entry.path);
     const file = path.join(root, entry.path);
     const info = await lstat(file);
-    if (!info.isFile() || info.isSymbolicLink() || info.size !== entry.size || (info.mode & 0o777) !== entry.mode ||
+    if (!info.isFile() || info.isSymbolicLink() || info.size !== entry.size ||
+      (manifest.platform !== "windows" && (info.mode & 0o777) !== entry.mode) ||
       await sha256(file) !== entry.sha256) {
       throw new Error(`provider-host file verification failed: ${entry.path}`);
     }
@@ -1135,9 +1174,10 @@ async function validateTree(root, options, archiveRoot) {
   await validateProviderRuntimeResources(root, manifest.platform);
 
   const macPrefix = "MultiVibe Host.app/Contents";
-  const required = ["LICENSE", "NOTICE", "README.md", "install.sh", "uninstall.sh", "THIRD_PARTY/node-LICENSE",
-    "THIRD_PARTY/ollama-LICENSE", "THIRD_PARTY/provider-host-dependencies.json"];
+  const required = ["LICENSE", "NOTICE", "README.md", "THIRD_PARTY/node-LICENSE", "THIRD_PARTY/ollama-LICENSE",
+    "THIRD_PARTY/provider-host-dependencies.json"];
   if (manifest.platform === "darwin") required.push(
+    "install.sh", "uninstall.sh",
     `${macPrefix}/Frameworks/node`, `${macPrefix}/Resources/ollama-runtime/ollama`, `${macPrefix}/Resources/ollama-runtime/llama-server`,
     `${macPrefix}/Resources/ollama-runtime/llama-quantize`,
     `${macPrefix}/Resources/ollama-runtime/.multivibe-bundle.json`, `${macPrefix}/Helpers/multivibe-provider-agent`,
@@ -1159,7 +1199,22 @@ async function validateTree(root, options, archiveRoot) {
     `${macPrefix}/Resources/provider/provider-host-dependencies.json`, `${macPrefix}/Resources/verify-provider-host.mjs`,
     `${macPrefix}/Info.plist`,
   );
-  else required.push("bin/node", "runtime/ollama/bin/ollama", "runtime/ollama/.multivibe-bundle.json",
+  else if (manifest.platform === "windows") required.push(
+    "install.ps1", "uninstall.ps1", "bin/node.exe", "runtime/ollama/ollama.exe", "runtime/ollama/.multivibe-bundle.json",
+    "bin/multivibe-provider-agent.exe", "bin/multivibe-runtime-benchmark.exe", "bin/multivibe-host-updater.exe",
+    "bin/multivibe-host.exe", "bin/multivibe-host-menu.exe",
+    "app/dist/server.js", "app/dist/instrument.js", "app/modules/security/multivibe.module.json", "app/modules/security/dist/index.js",
+    "resources/provider/provider-model-catalog.json", "resources/provider/provider-runtime-profiles.json",
+    "resources/provider/schemas/provider-runtime-profiles.schema.json",
+    "resources/provider/schemas/provider-runtime-profile-overrides.schema.json",
+    "resources/provider/schemas/provider-runtime-benchmark-spec.schema.json",
+    "resources/provider/schemas/provider-runtime-benchmark-result.schema.json",
+    "resources/provider/schemas/provider-runtime-benchmark-store.schema.json",
+    "resources/provider/examples/runtime-profile-overrides.json",
+    "resources/provider/examples/runtime-benchmark-spec.json",
+    "resources/provider/provider-host-dependencies.json", "resources/provider/multivibe-host.ico", "verify-provider-host.mjs",
+  );
+  else required.push("install.sh", "uninstall.sh", "bin/node", "runtime/ollama/bin/ollama", "runtime/ollama/.multivibe-bundle.json",
     "bin/multivibe-provider-agent", "bin/multivibe-runtime-benchmark", "bin/multivibe-host", "app/dist/server.js", "app/dist/instrument.js",
     "app/modules/security/multivibe.module.json", "app/modules/security/dist/index.js",
     "resources/provider/provider-model-catalog.json", "resources/provider/provider-runtime-profiles.json",
@@ -1226,13 +1281,14 @@ async function validateTree(root, options, archiveRoot) {
     }
   }
 
-  const host = manifest.platform === "darwin" ? path.join(application, "Contents", "MacOS", "multivibe-host") : path.join(root, "bin", "multivibe-host");
-  const agent = manifest.platform === "darwin" ? path.join(application, "Contents", "Helpers", "multivibe-provider-agent") : path.join(root, "bin", "multivibe-provider-agent");
-  const benchmark = manifest.platform === "darwin" ? path.join(application, "Contents", "Helpers", "multivibe-runtime-benchmark") : path.join(root, "bin", "multivibe-runtime-benchmark");
-  const updater = manifest.platform === "darwin" ? path.join(application, "Contents", "Helpers", "multivibe-host-updater") : path.join(root, "bin", "multivibe-host-updater");
-  const menu = manifest.platform === "darwin" ? null : path.join(root, "bin", "multivibe-host-menu");
+  const executableSuffix = manifest.platform === "windows" ? ".exe" : "";
+  const host = manifest.platform === "darwin" ? path.join(application, "Contents", "MacOS", "multivibe-host") : path.join(root, "bin", `multivibe-host${executableSuffix}`);
+  const agent = manifest.platform === "darwin" ? path.join(application, "Contents", "Helpers", "multivibe-provider-agent") : path.join(root, "bin", `multivibe-provider-agent${executableSuffix}`);
+  const benchmark = manifest.platform === "darwin" ? path.join(application, "Contents", "Helpers", "multivibe-runtime-benchmark") : path.join(root, "bin", `multivibe-runtime-benchmark${executableSuffix}`);
+  const updater = manifest.platform === "darwin" ? path.join(application, "Contents", "Helpers", "multivibe-host-updater") : path.join(root, "bin", `multivibe-host-updater${executableSuffix}`);
+  const menu = manifest.platform === "darwin" ? null : path.join(root, "bin", `multivibe-host-menu${executableSuffix}`);
   const applicationDirectory = manifest.platform === "darwin" ? path.join(application, "Contents", "Resources", "app") : path.join(root, "app");
-  const node = manifest.platform === "darwin" ? path.join(application, "Contents", "Frameworks", "node") : path.join(root, "bin", "node");
+  const node = manifest.platform === "darwin" ? path.join(application, "Contents", "Frameworks", "node") : path.join(root, "bin", `node${executableSuffix}`);
   let profile = null;
   if (options.requireRuntime) {
     if (manifest.releaseReady !== true) {
@@ -1240,7 +1296,8 @@ async function validateTree(root, options, archiveRoot) {
     }
     const nativeTarget = (manifest.platform === "darwin" && process.platform === "darwin" &&
       ((manifest.architecture === "arm64" && process.arch === "arm64") || (manifest.architecture === "amd64" && process.arch === "x64"))) ||
-      (manifest.platform === "linux" && manifest.architecture === "amd64" && process.platform === "linux" && process.arch === "x64");
+      (manifest.platform === "linux" && manifest.architecture === "amd64" && process.platform === "linux" && process.arch === "x64") ||
+      (manifest.platform === "windows" && manifest.architecture === "amd64" && process.platform === "win32" && process.arch === "x64");
     if (!nativeTarget) throw new Error("provider-host runtime verification requires the matching target host");
     const hostVersion = await command(host, ["version"], { capture: true, captureLimit: 4096 });
     const agentVersion = await command(agent, ["version"], { capture: true, captureLimit: 4096 });
@@ -1392,7 +1449,7 @@ async function main() {
       archiveRoot = await inspectArchive(archiveCopy);
       const extraction = path.join(work, "extracted");
       await mkdir(extraction, { mode: 0o700 });
-      if (extension === ".zip") await command("unzip", ["-q", archiveCopy, "-d", extraction]);
+      if (extension === ".zip") await extractZipArchive(archiveCopy, extraction);
       else await command("tar", ["-xzf", archiveCopy, "-C", extraction]);
       const entries = await readdir(extraction, { withFileTypes: true });
       if (entries.length !== 1 || !entries[0].isDirectory() || entries[0].isSymbolicLink()) {

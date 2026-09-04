@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -61,7 +60,7 @@ func openProviderDemandPlanStore(path string) (*providerDemandPlanStore, error) 
 	if errors.Is(err, os.ErrNotExist) {
 		return store, nil
 	}
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 || info.Size() < 1 || info.Size() > providerDemandPersistedStateMaximumBytes {
+	if err != nil || !providerPrivateFile(path, info) || info.Size() < 1 || info.Size() > providerDemandPersistedStateMaximumBytes {
 		return nil, errors.New("provider demand plan state must be a bounded mode-0600 regular file")
 	}
 	file, err := os.Open(path)
@@ -264,12 +263,8 @@ func defaultProviderCapacitySnapshot(policy capacityPolicy, capability hostCapab
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return hostCapacitySnapshot{}, errors.New("provider model storage path is unavailable")
 	}
-	var filesystem syscall.Statfs_t
-	if err := syscall.Statfs(policy.modelStoragePath, &filesystem); err != nil || filesystem.Bsize <= 0 {
-		return hostCapacitySnapshot{}, errors.New("provider model storage capacity is unavailable")
-	}
-	freeBytes, ok := checkedMultiply(uint64(filesystem.Bavail), uint64(filesystem.Bsize))
-	if !ok {
+	freeBytes, err := providerFreeDiskBytes(policy.modelStoragePath)
+	if err != nil {
 		return hostCapacitySnapshot{}, errors.New("provider model storage capacity is invalid")
 	}
 	acceleratorMemoryBytes, err := providerAcceleratorMemoryCapacity(capability)
@@ -298,7 +293,9 @@ func providerAcceleratorMemoryCapacity(capability hostCapability) (uint64, error
 		}
 		return capability.AcceleratorMemoryBytes, nil
 	case "cuda":
-		if len(capability.GPUs) == 0 || uint64(capability.CUDADevice) >= uint64(len(capability.GPUs)) {
+		validNVIDIAProfile := (capability.OS == "linux" && capability.Profile == "linux-nvidia") ||
+			(capability.OS == "windows" && capability.Profile == "windows-nvidia")
+		if capability.Architecture != "amd64" || !validNVIDIAProfile || len(capability.GPUs) == 0 || uint64(capability.CUDADevice) >= uint64(len(capability.GPUs)) {
 			return 0, errors.New("provider accelerator capacity is unavailable")
 		}
 		// Managed Ollama is pinned to one CUDA device and does not declare model

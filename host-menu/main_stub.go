@@ -1,4 +1,4 @@
-//go:build !linux || !cgo
+//go:build (!linux && !windows) || (linux && !cgo)
 
 package main
 

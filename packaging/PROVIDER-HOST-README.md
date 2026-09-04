@@ -3,8 +3,8 @@
 This archive contains the auditable MultiVibe Core, the provider host launcher,
 the local provider agent, pinned Node.js and Ollama runtimes, the approved local
 model catalog and the bundled Security module. It supports Apple Silicon and
-Intel Macs, plus Linux amd64 hosts with a working NVIDIA GPU of compute
-capability 7.0 or newer. No system Node.js, Ollama, package manager or
+Intel Macs, plus Linux and Windows amd64 hosts with a working NVIDIA GPU of
+compute capability 7.0 or newer. No system Node.js, Ollama, package manager or
 administrator access is required after downloading the matching archive.
 
 The archive also includes the optional `multivibe-runtime-benchmark` CLI, the
@@ -136,6 +136,45 @@ stops MultiVibe, and the installer retains the previous directory and unit
 files until the new process reports the exact release version through
 `/health`. Foreground installations do not enable an automatic timer because
 MultiVibe cannot safely control an unknown external supervisor.
+
+## Windows amd64 with NVIDIA
+
+The Windows native package is a verified ZIP for 64-bit Windows. It requires
+PowerShell 5.1 or newer and a working NVIDIA driver with compute capability
+7.0 or newer. No administrator privileges are required.
+
+Extract the ZIP to a temporary directory, open PowerShell as the installing
+user, and run:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+The installer verifies the complete bundle and the matching Windows runtime
+before it changes the machine. It installs the application under
+`%LOCALAPPDATA%\Programs\MultiVibe Host`, keeps private state and logs under
+`%LOCALAPPDATA%\MultiVibe`, and registers a per-user Start Menu shortcut,
+login entry, `multivibe://` protocol handler, and scheduled update task. The
+native Win32 tray menu starts and stops the Host, opens the local dashboard,
+shows account and quota status, and exposes the Host update actions.
+
+The scheduled updater checks the signed release feed at a randomized interval,
+downloads only a matching Windows ZIP, and extracts it with path, size,
+checksum, and reparse-point checks. It stops only MultiVibe processes whose
+executable paths belong to the managed installation. The previous version is
+retained until the replacement passes its post-start health check and is
+restored if installation or health validation fails.
+
+To remove the native installation while preserving state, run from the
+matching extracted archive or installed version:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1
+```
+
+Pass `-Purge` only when the default `%LOCALAPPDATA%\MultiVibe` state directory
+should also be deleted. A custom `MULTIVIBE_HOST_DATA_DIR` is never discovered
+or removed automatically.
 
 ## Linux container, Docker Compose and Unraid
 

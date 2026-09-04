@@ -8,15 +8,16 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (name) => readFile(path.join(root, name), "utf8");
 
 test("native packages include the updater and platform schedulers", async () => {
-  const [packager, linux, macos, verifier, uninstall] = await Promise.all([
+  const [packager, linux, macos, windows, verifier, uninstall] = await Promise.all([
     read("scripts/package-provider-host.mjs"), read("packaging/linux/install.sh"),
-    read("packaging/macos/install.sh"), read("scripts/verify-provider-host.mjs"), read("packaging/linux/uninstall.sh"),
+    read("packaging/macos/install.sh"), read("packaging/windows/install.ps1"),
+    read("scripts/verify-provider-host.mjs"), read("packaging/linux/uninstall.sh"),
   ]);
   assert.match(packager, /buildGo\(path\.join\(repositoryRoot, "host-updater"\)/u);
   assert.match(packager, /buildRustEdge\(edgeDestination\)/u);
   assert.match(packager, /path\.join\(contents, "Helpers", "multivibe-v1-edge"\)/u);
   assert.match(packager, /buildGo\(\s*path\.join\(repositoryRoot, "host-menu"\)/u);
-  assert.match(packager, /CGO_ENABLED: "1"/u);
+  assert.match(packager, /CGO_ENABLED: selectedTarget\.goos === "linux" \? "1" : "0"/u);
   assert.match(packager, /favicon-32x32\.png/u);
   assert.match(packager, /path\.join\(contents, "Resources", "update", "install\.sh"\)/u);
   assert.match(packager, /install-docker-updater\.sh/u);
@@ -49,6 +50,20 @@ test("native packages include the updater and platform schedulers", async () => 
   assert.match(verifier, /multivibe-v1-edge/u);
   assert.match(verifier, /multivibe-host-menu/u);
   assert.match(uninstall, /multivibe-host-menu\.desktop/u);
+  assert.match(packager, /windows-amd64.*zip/su);
+  assert.match(packager, /install\.ps1/u);
+  assert.match(packager, /uninstall\.ps1/u);
+  assert.match(packager, /multivibe-host\.ico/u);
+  assert.match(windows, /Register-ScheduledTask/u);
+  assert.match(windows, /Restore-ManagedTaskSnapshot/u);
+  assert.match(windows, /Stop-ScheduledTask/u);
+  assert.match(windows, /Get-Process -Name \$name/u);
+  assert.match(windows, /Test-PathWithin \$processPath \$VersionsRoot/u);
+  assert.match(windows, /"node", "ollama", "llama-server"/u);
+  assert.match(packager, /Expand-Archive|Compress-Archive/u);
+  const windowsUninstall = await read("packaging/windows/uninstall.ps1");
+  assert.match(windowsUninstall, /"node", "ollama", "llama-server"/u);
+  assert.match(windowsUninstall, /Test-PathWithin \$processPath \$VersionsRoot/u);
 });
 
 test("Docker updates stay outside the container and roll back through Compose", async () => {

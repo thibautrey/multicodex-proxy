@@ -38,7 +38,7 @@ func validDocument(now time.Time) updateDocument {
 		PublishedAt: now.Add(-time.Hour).Format(time.RFC3339Nano), ExpiresAt: now.Add(24 * time.Hour).Format(time.RFC3339Nano),
 		MinimumVersion: "0.2.0", RolloutPercent: 100,
 		Targets: map[string]updateTarget{
-			"darwin-arm64": archive, "darwin-amd64": archive, "linux-amd64": archive,
+			"darwin-arm64": archive, "darwin-amd64": archive, "linux-amd64": archive, "windows-amd64": archive,
 			"docker-linux-amd64": {Kind: "container", Image: "ghcr.io/thibautrey/multivibe-host", Digest: digest, ImmutableReference: "ghcr.io/thibautrey/multivibe-host@" + digest},
 		},
 	}

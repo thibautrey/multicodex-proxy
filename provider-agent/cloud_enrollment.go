@@ -186,7 +186,7 @@ func openCloudEnrollmentStore(path string) (*cloudEnrollmentStore, error) {
 	if errors.Is(err, os.ErrNotExist) {
 		return store, nil
 	}
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || info.Size() > 16*1024 {
+	if err != nil || !providerPrivateFile(path, info) || info.Size() > 16*1024 {
 		return nil, errors.New("provider Cloud enrollment state must be a bounded mode-0600 regular file")
 	}
 	file, err := os.Open(path)
@@ -484,55 +484,4 @@ func (service *cloudEnrollmentService) enroll(ctx context.Context, input cloudEn
 		return cloudEnrollmentView{}, err
 	}
 	return view, nil
-}
-
-func atomicWrite0600(path string, content []byte) error {
-	directory := filepath.Dir(path)
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		return err
-	}
-	info, err := os.Lstat(directory)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("state directory is invalid")
-	}
-	temporary, err := os.CreateTemp(directory, ".multivibe-provider-enrollment-*")
-	if err != nil {
-		return err
-	}
-	temporaryPath := temporary.Name()
-	remove := true
-	defer func() {
-		_ = temporary.Close()
-		if remove {
-			_ = os.Remove(temporaryPath)
-		}
-	}()
-	if err := temporary.Chmod(0o600); err != nil {
-		return err
-	}
-	if _, err := temporary.Write(content); err != nil {
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(temporaryPath, path); err != nil {
-		return err
-	}
-	directoryHandle, err := os.Open(directory)
-	if err != nil {
-		return err
-	}
-	if err := directoryHandle.Sync(); err != nil {
-		_ = directoryHandle.Close()
-		return err
-	}
-	if err := directoryHandle.Close(); err != nil {
-		return err
-	}
-	remove = false
-	return nil
 }

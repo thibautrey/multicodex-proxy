@@ -81,6 +81,16 @@ func defaultDataDirectory() (string, error) {
 		}
 		return filepath.Join(home, ".local", "share", "multivibe"), nil
 	}
+	if runtime.GOOS == "windows" {
+		localAppData := strings.TrimSpace(os.Getenv("LOCALAPPDATA"))
+		if localAppData == "" {
+			localAppData = filepath.Join(home, "AppData", "Local")
+		}
+		if !filepath.IsAbs(localAppData) || filepath.Clean(localAppData) != localAppData {
+			return "", errors.New("LOCALAPPDATA must be a clean absolute path")
+		}
+		return filepath.Join(localAppData, "MultiVibe"), nil
+	}
 	return "", errors.New("this operating system is unsupported")
 }
 
@@ -108,7 +118,7 @@ func (store stateStore) lock() (func(), error) {
 			return nil, errors.New("the update lock cannot be created")
 		}
 		info, statErr := os.Lstat(path)
-		if statErr != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		if statErr != nil || !updaterPrivateFile(path, info) {
 			return nil, errors.New("the update lock is invalid")
 		}
 		if time.Since(info.ModTime()) <= time.Hour {
@@ -126,11 +136,11 @@ func openStateStore() (stateStore, error) {
 	if err != nil {
 		return stateStore{}, err
 	}
-	if err := os.MkdirAll(directory, 0o700); err != nil || os.Chmod(directory, 0o700) != nil {
+	if err := os.MkdirAll(directory, 0o700); err != nil || secureUpdaterPrivateDirectory(directory) != nil {
 		return stateStore{}, errors.New("the MultiVibe data directory cannot be protected")
 	}
 	cache := filepath.Join(directory, "updates")
-	if err := os.MkdirAll(cache, 0o700); err != nil || os.Chmod(cache, 0o700) != nil {
+	if err := os.MkdirAll(cache, 0o700); err != nil || secureUpdaterPrivateDirectory(cache) != nil {
 		return stateStore{}, errors.New("the update cache cannot be protected")
 	}
 	return stateStore{
@@ -146,7 +156,7 @@ func (store stateStore) load(currentVersion string) (updaterState, error) {
 	if errors.Is(err, os.ErrNotExist) {
 		return defaultState(currentVersion)
 	}
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 || info.Size() < 2 || info.Size() > 256*1024 {
+	if err != nil || !updaterPrivateFile(store.path, info) || info.Size() < 2 || info.Size() > 256*1024 {
 		return updaterState{}, errors.New("the update state file is invalid")
 	}
 	data, err := os.ReadFile(store.path)
@@ -203,13 +213,13 @@ func (store stateStore) save(state updaterState) error {
 			_ = os.Remove(temporaryPath)
 		}
 	}()
-	if err := temporary.Chmod(0o600); err != nil {
+	if err := secureUpdaterPrivateFile(temporaryPath); err != nil {
 		return errors.New("the staged update state cannot be protected")
 	}
 	if _, err := temporary.Write(append(encoded, '\n')); err != nil || temporary.Sync() != nil || temporary.Close() != nil {
 		return errors.New("the update state cannot be persisted")
 	}
-	if err := os.Rename(temporaryPath, store.path); err != nil {
+	if err := replaceUpdaterFile(temporaryPath, store.path); err != nil {
 		return errors.New("the update state cannot be committed")
 	}
 	committed = true

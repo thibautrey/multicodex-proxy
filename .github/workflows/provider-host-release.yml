@@ -271,8 +271,89 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
+  build-windows:
+    needs: validate-tag
+    runs-on: windows-2025
+    timeout-minutes: 150
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          submodules: true
+      - name: Require Windows amd64
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:OS -ne 'Windows_NT' -or [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'X64') {
+            throw 'The Windows provider archive requires an amd64 runner.'
+          }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: Install the pinned zstd fixture dependency
+        shell: pwsh
+        run: choco install zstandard --no-progress --yes
+      - name: Install locked build dependencies
+        shell: pwsh
+        run: |
+          npm ci --no-audit --no-fund
+          npm --prefix web ci --no-audit --no-fund
+      - name: Run Windows provider tests
+        shell: pwsh
+        run: |
+          go -C provider-agent test ./...
+          go -C host-application test ./...
+          go -C host-updater test ./...
+          go -C host-menu test ./...
+      - name: Test provider archive and container hardening
+        shell: pwsh
+        run: node --test scripts/package-provider-host.test.mjs scripts/provider-host-container.test.mjs scripts/provider-host-native-dependencies.test.mjs scripts/provider-host-update-feed.test.mjs scripts/provider-host-update-packaging.test.mjs scripts/runtime-benchmark-evidence.test.mjs scripts/verify-provider-host-archive-fixtures.test.mjs
+      - name: Build the Windows amd64 archive
+        shell: pwsh
+        run: |
+          npm run package:provider-host -- --version '${{ needs.validate-tag.outputs.version }}' --output release-windows
+      - name: Verify the Windows archive without executing hardware checks
+        shell: pwsh
+        run: |
+          $archive = "release-windows/multivibe-host_${{ needs.validate-tag.outputs.version }}_windows_amd64.zip"
+          npm run verify:provider-host -- $archive
+      - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+      - name: Generate the Windows CycloneDX SBOM
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = '${{ needs.validate-tag.outputs.version }}'
+          $archive = "release-windows/multivibe-host_${version}_windows_amd64.zip"
+          $scanRoot = Join-Path $env:RUNNER_TEMP 'provider-host-windows-sbom'
+          New-Item -ItemType Directory -Path $scanRoot -Force | Out-Null
+          Expand-Archive -LiteralPath $archive -DestinationPath $scanRoot -Force
+          syft "dir:$scanRoot" -o "cyclonedx-json=release-windows/multivibe-host_${version}_windows_amd64.cdx.json"
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: release-windows/multivibe-host_${{ needs.validate-tag.outputs.version }}_windows_amd64.zip
+      - uses: actions/attest-sbom@bd218ad0dbcb3e146bd073d1d9c6d78e08aa8a0b # v2.4.0
+        with:
+          subject-path: release-windows/multivibe-host_${{ needs.validate-tag.outputs.version }}_windows_amd64.zip
+          sbom-path: release-windows/multivibe-host_${{ needs.validate-tag.outputs.version }}_windows_amd64.cdx.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: provider-host-windows
+          path: release-windows/*
+          if-no-files-found: error
+          compression-level: 0
+
   sign-release:
-    needs: [validate-tag, build-linux, build-macos]
+    needs: [validate-tag, build-linux, build-macos, build-windows]
     runs-on: macos-14
     timeout-minutes: 45
     permissions:
@@ -435,7 +516,7 @@ jobs:
           compression-level: 0
 
   publish-release:
-    needs: [validate-tag, sign-release, publish-container]
+    needs: [validate-tag, sign-release, publish-container, build-windows]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

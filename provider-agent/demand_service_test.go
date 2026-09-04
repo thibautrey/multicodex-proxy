@@ -168,6 +168,7 @@ func TestProviderCapacityUsesOnlyPinnedGPUVRAMWithoutSharding(t *testing.T) {
 	policy.modelStoragePath = t.TempDir()
 	capability := hostCapability{
 		Supported:    true,
+		Profile:      "linux-nvidia",
 		OS:           "linux",
 		Architecture: "amd64",
 		Accelerator:  "cuda",
@@ -214,6 +215,7 @@ func TestProviderCapacityUsesConfiguredGPUWithoutAggregation(t *testing.T) {
 	policy.modelStoragePath = t.TempDir()
 	capability, err := selectNVIDIACUDADevice(hostCapability{
 		Supported:    true,
+		Profile:      "linux-nvidia",
 		OS:           "linux",
 		Architecture: "amd64",
 		Accelerator:  "cuda",

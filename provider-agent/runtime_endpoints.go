@@ -127,7 +127,7 @@ func openRuntimeEndpointStore(path string, registry adapterRegistryDocument) (*r
 	if err != nil {
 		return nil, errors.New("provider runtime state cannot be inspected")
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || info.Size() > 64*1024 {
+	if !providerPrivateFile(path, info) || info.Size() > 64*1024 {
 		return nil, errors.New("provider runtime state must be a bounded mode-0600 regular file")
 	}
 	file, err := os.Open(path)
@@ -251,51 +251,17 @@ func (store *runtimeEndpointStore) replaceInputs(expectedRevision uint64, inputs
 }
 
 func (store *runtimeEndpointStore) persistLocked() error {
-	directory := filepath.Dir(store.path)
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		return errors.New("provider runtime state directory cannot be created")
-	}
-	directoryInfo, err := os.Lstat(directory)
-	if err != nil || !directoryInfo.IsDir() || directoryInfo.Mode()&os.ModeSymlink != 0 {
-		return errors.New("provider runtime state directory is invalid")
-	}
-	temporary, err := os.CreateTemp(directory, "."+filepath.Base(store.path)+".*.tmp")
-	if err != nil {
-		return errors.New("provider runtime state temporary file cannot be created")
-	}
-	if err := temporary.Chmod(0o600); err != nil {
-		_ = temporary.Close()
-		_ = os.Remove(temporary.Name())
-		return errors.New("provider runtime state temporary file cannot be secured")
-	}
-	temporaryPath := temporary.Name()
-	removeTemporary := true
-	defer func() {
-		_ = temporary.Close()
-		if removeTemporary {
-			_ = os.Remove(temporaryPath)
-		}
-	}()
 	document := runtimeEndpointsStateDocument{
 		SchemaVersion: runtimeEndpointsSchemaVersion,
 		Revision:      store.revision,
 		Endpoints:     append([]runtimeEndpoint{}, store.endpoints...),
 	}
-	encoder := json.NewEncoder(temporary)
-	encoder.SetEscapeHTML(true)
-	if err := encoder.Encode(document); err != nil || temporary.Sync() != nil || temporary.Close() != nil {
+	encoded, err := json.Marshal(document)
+	if err != nil || len(encoded) > 64*1024 {
 		return errors.New("provider runtime state cannot be committed")
 	}
-	if destination, err := os.Lstat(store.path); err == nil {
-		if !destination.Mode().IsRegular() || destination.Mode().Perm() != 0o600 {
-			return errors.New("provider runtime state destination is unsafe")
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return errors.New("provider runtime state destination cannot be inspected")
-	}
-	if err := os.Rename(temporaryPath, store.path); err != nil {
+	if err := atomicWrite0600(store.path, append(encoded, '\n')); err != nil {
 		return errors.New("provider runtime state cannot be committed")
 	}
-	removeTemporary = false
 	return nil
 }

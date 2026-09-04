@@ -61,7 +61,7 @@ func openManagedPlannerStateStore(path string) (*managedPlannerStateStore, error
 	if errors.Is(err, os.ErrNotExist) {
 		return store, nil
 	}
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 || info.Size() < 1 || info.Size() > managedPlannerStateMaximumBytes {
+	if err != nil || !providerPrivateFile(path, info) || info.Size() < 1 || info.Size() > managedPlannerStateMaximumBytes {
 		return nil, errors.New("managed planner state must be a bounded mode-0600 regular file")
 	}
 	file, err := os.Open(path)

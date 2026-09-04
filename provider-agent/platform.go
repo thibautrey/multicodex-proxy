@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -56,7 +57,20 @@ func fixedPlatformCommand(ctx context.Context, name string, arguments ...string)
 	var candidates []string
 	switch name {
 	case "nvidia-smi":
-		candidates = []string{"/usr/bin/nvidia-smi", "/usr/local/bin/nvidia-smi", "/bin/nvidia-smi"}
+		if runtime.GOOS == "windows" {
+			candidates = []string{
+				`C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe`,
+				`C:\Windows\System32\nvidia-smi.exe`,
+			}
+			if programFiles := strings.TrimSpace(os.Getenv("ProgramFiles")); filepath.IsAbs(programFiles) {
+				candidates = append([]string{filepath.Join(programFiles, "NVIDIA Corporation", "NVSMI", "nvidia-smi.exe")}, candidates...)
+			}
+			if systemRoot := strings.TrimSpace(os.Getenv("SystemRoot")); filepath.IsAbs(systemRoot) {
+				candidates = append([]string{filepath.Join(systemRoot, "System32", "nvidia-smi.exe")}, candidates...)
+			}
+		} else {
+			candidates = []string{"/usr/bin/nvidia-smi", "/usr/local/bin/nvidia-smi", "/bin/nvidia-smi"}
+		}
 	case "sysctl":
 		candidates = []string{"/usr/sbin/sysctl"}
 	default:
@@ -114,8 +128,8 @@ func detectHostCapability(ctx context.Context, goos, goarch string, command plat
 		result.AcceleratorMemoryBytes = unifiedMemoryBytes / 2
 		return result
 	}
-	if goos != "linux" || goarch != "amd64" {
-		result.Reason = "supported hosts are macOS arm64/amd64 or Linux amd64 with NVIDIA GPUs"
+	if (goos != "linux" && goos != "windows") || goarch != "amd64" {
+		result.Reason = "supported hosts are macOS arm64/amd64 or Linux or Windows amd64 with NVIDIA GPUs"
 		return result
 	}
 	probeContext, cancel := context.WithTimeout(ctx, 3*time.Second)
@@ -147,7 +161,11 @@ func detectHostCapability(ctx context.Context, goos, goarch string, command plat
 		}
 	}
 	result.Supported = true
-	result.Profile = "linux-nvidia"
+	if goos == "windows" {
+		result.Profile = "windows-nvidia"
+	} else {
+		result.Profile = "linux-nvidia"
+	}
 	result.Accelerator = "cuda"
 	return result
 }

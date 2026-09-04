@@ -101,6 +101,24 @@ func executableLayout(executable, goos string) (bundleLayout, error) {
 			DependencyManifest: filepath.Join(contents, "Resources", "provider", "provider-host-dependencies.json"),
 		}, nil
 	}
+	if goos == "windows" {
+		bin := filepath.Dir(executable)
+		root := filepath.Dir(bin)
+		if filepath.Base(bin) != "bin" || strings.ToLower(filepath.Ext(executable)) != ".exe" {
+			return bundleLayout{}, errors.New("the Windows application layout is invalid")
+		}
+		return bundleLayout{
+			Root:               root,
+			Node:               filepath.Join(bin, "node.exe"),
+			Agent:              filepath.Join(bin, "multivibe-provider-agent.exe"),
+			Updater:            filepath.Join(bin, "multivibe-host-updater.exe"),
+			App:                filepath.Join(root, "app"),
+			Security:           filepath.Join(root, "app", "modules", "security"),
+			BundledOllama:      filepath.Join(root, "runtime", "ollama"),
+			ModelCatalog:       filepath.Join(root, "resources", "provider", "provider-model-catalog.json"),
+			DependencyManifest: filepath.Join(root, "resources", "provider", "provider-host-dependencies.json"),
+		}, nil
+	}
 	if goos != "linux" {
 		return bundleLayout{}, errors.New("the operating system is unsupported")
 	}
@@ -135,7 +153,7 @@ func requireRegular(path string, executable bool) error {
 	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("required bundle file is unavailable: %s", filepath.Base(path))
 	}
-	if executable && info.Mode().Perm()&0o111 == 0 {
+	if executable && !hostExecutableFile(path, info) {
 		return fmt.Errorf("required bundle file is not executable: %s", filepath.Base(path))
 	}
 	return nil
@@ -208,6 +226,15 @@ func defaultDataDirectory(goos string, home string, xdg string) (string, error) 
 	if goos == "darwin" {
 		return filepath.Join(home, "Library", "Application Support", "MultiVibe"), nil
 	}
+	if goos == "windows" {
+		if xdg != "" {
+			if !filepath.IsAbs(xdg) || filepath.Clean(xdg) != xdg {
+				return "", errors.New("LOCALAPPDATA must be a clean absolute path")
+			}
+			return filepath.Join(xdg, "MultiVibe"), nil
+		}
+		return filepath.Join(home, "AppData", "Local", "MultiVibe"), nil
+	}
 	if goos != "linux" {
 		return "", errors.New("the operating system is unsupported")
 	}
@@ -231,7 +258,11 @@ func dataDirectory() (string, error) {
 	if err != nil {
 		return "", errors.New("the user home directory is unavailable")
 	}
-	return defaultDataDirectory(runtime.GOOS, home, os.Getenv("XDG_DATA_HOME"))
+	dataHome := os.Getenv("XDG_DATA_HOME")
+	if runtime.GOOS == "windows" {
+		dataHome = os.Getenv("LOCALAPPDATA")
+	}
+	return defaultDataDirectory(runtime.GOOS, home, dataHome)
 }
 
 func randomCredential() (string, error) {
@@ -257,13 +288,13 @@ func loadOrCreateCredentials(dataDirectory string) (localCredentials, error) {
 	if err := os.MkdirAll(dataDirectory, 0o700); err != nil {
 		return localCredentials{}, errors.New("the application data directory cannot be created")
 	}
-	if err := os.Chmod(dataDirectory, 0o700); err != nil {
+	if err := secureHostPrivateDirectory(dataDirectory); err != nil {
 		return localCredentials{}, errors.New("the application data directory cannot be protected")
 	}
 	path := credentialPath(dataDirectory)
 	info, err := os.Lstat(path)
 	if err == nil {
-		if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || info.Size() > 16*1024 {
+		if !hostPrivateFile(path, info) || info.Size() > 16*1024 {
 			return localCredentials{}, errors.New("the local credential file permissions are invalid")
 		}
 		file, err := os.Open(path)
@@ -313,7 +344,7 @@ func loadOrCreateCredentials(dataDirectory string) (localCredentials, error) {
 			_ = os.Remove(path + ".new")
 		}
 	}()
-	if _, err := temporary.Write(append(encoded, '\n')); err != nil || temporary.Sync() != nil || temporary.Close() != nil {
+	if _, err := temporary.Write(append(encoded, '\n')); err != nil || secureHostPrivateFile(path+".new") != nil || temporary.Sync() != nil || temporary.Close() != nil {
 		_ = temporary.Close()
 		return localCredentials{}, errors.New("the local credential file cannot be committed")
 	}
@@ -427,6 +458,14 @@ func coreEnvironment(layout bundleLayout, dataDirectory, managedDirectory string
 	if runtime.GOOS == "darwin" {
 		nodeHost, nodePort = "127.0.0.1", "1456"
 	}
+	pathValue := "/usr/bin:/bin:/usr/sbin:/sbin"
+	if runtime.GOOS == "windows" {
+		pathParts := []string{filepath.Dir(layout.Node), filepath.Dir(layout.Updater)}
+		if systemRoot := strings.TrimSpace(os.Getenv("SystemRoot")); filepath.IsAbs(systemRoot) {
+			pathParts = append(pathParts, filepath.Join(systemRoot, "System32"), systemRoot)
+		}
+		pathValue = strings.Join(pathParts, string(os.PathListSeparator))
+	}
 	environment := []string{
 		"NODE_ENV=production",
 		"APP_VERSION=" + hostApplicationVersion,
@@ -461,7 +500,29 @@ func coreEnvironment(layout bundleLayout, dataDirectory, managedDirectory string
 		"PROVIDER_AGENT_CLOUD_API_URL=https://auth.multivibe.cloud",
 		"TRACE_INCLUDE_BODY=false",
 		"TRACE_INCLUDE_HEADERS=false",
-		"PATH=/usr/bin:/bin:/usr/sbin:/sbin",
+		"MULTIVIBE_HOST_DATA_DIR=" + dataDirectory,
+		"PATH=" + pathValue,
+	}
+	if runtime.GOOS == "windows" {
+		home, _ := os.UserHomeDir()
+		localAppData := strings.TrimSpace(os.Getenv("LOCALAPPDATA"))
+		if localAppData == "" {
+			localAppData = filepath.Join(home, "AppData", "Local")
+		}
+		appData := strings.TrimSpace(os.Getenv("APPDATA"))
+		if appData == "" {
+			appData = filepath.Join(home, "AppData", "Roaming")
+		}
+		environment = append(environment,
+			"APPDATA="+appData,
+			"LOCALAPPDATA="+localAppData,
+			"TEMP="+filepath.Join(dataDirectory, "tmp"),
+			"TMP="+filepath.Join(dataDirectory, "tmp"),
+			"USERPROFILE="+home,
+		)
+		if systemRoot := strings.TrimSpace(os.Getenv("SystemRoot")); filepath.IsAbs(systemRoot) {
+			environment = append(environment, "SystemRoot="+systemRoot)
+		}
 	}
 	if runtime.GOOS == "darwin" {
 		environment = append(environment, "CONTROL_PLANE_PORT=1456", "MULTIVIBE_CONTROL_PLANE=true")
@@ -553,8 +614,15 @@ func run() error {
 		return err
 	}
 	baseEnvironment := coreEnvironment(layout, data, managed, credentials, network)
-	if runtime.GOOS != "darwin" {
+	if runtime.GOOS == "linux" {
 		return syscall.Exec(layout.Node, arguments, baseEnvironment)
+	}
+	if runtime.GOOS == "windows" {
+		node := exec.Command(layout.Node, arguments[1:]...)
+		node.Dir = layout.App
+		node.Env = baseEnvironment
+		node.Stdout, node.Stderr = os.Stdout, os.Stderr
+		return node.Run()
 	}
 	baseEnvironment = append(baseEnvironment, "V1_EDGE_INTERNAL_JOB_TOKEN="+internalToken)
 	node := exec.Command(layout.Node, arguments[1:]...)

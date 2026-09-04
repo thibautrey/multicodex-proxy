@@ -98,7 +98,7 @@ func (store *Store) readLocked() (StoreDocument, error) {
 	if err != nil {
 		return StoreDocument{}, err
 	}
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 || info.Size() < 1 || info.Size() > maximumStoreBytes {
+	if !runtimeBenchmarkPrivateFile(store.path, info) || info.Size() < 1 || info.Size() > maximumStoreBytes {
 		return StoreDocument{}, ErrInvalid
 	}
 	file, err := os.Open(store.path)
@@ -107,7 +107,7 @@ func (store *Store) readLocked() (StoreDocument, error) {
 	}
 	defer file.Close()
 	openedInfo, err := file.Stat()
-	if err != nil || !os.SameFile(info, openedInfo) || !openedInfo.Mode().IsRegular() || openedInfo.Mode().Perm() != 0o600 {
+	if err != nil || !os.SameFile(info, openedInfo) || !runtimeBenchmarkPrivateFile(store.path, openedInfo) {
 		return StoreDocument{}, ErrInvalid
 	}
 	raw, err := io.ReadAll(io.LimitReader(file, maximumStoreBytes+1))
@@ -157,40 +157,10 @@ func marshalStore(document StoreDocument) ([]byte, error) {
 }
 
 func (store *Store) writeLocked(raw []byte) error {
-	directory := filepath.Dir(store.path)
-	info, err := os.Lstat(directory)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return ErrInvalid
-	}
-	temporary, err := os.CreateTemp(directory, ".multivibe-benchmark-*")
-	if err != nil {
+	if err := atomicWriteRuntimeBenchmarkStore(store.path, raw); err != nil {
 		return err
 	}
-	temporaryPath := temporary.Name()
-	closed := false
-	defer func() {
-		if !closed {
-			_ = temporary.Close()
-		}
-		_ = os.Remove(temporaryPath)
-	}()
-	if err := temporary.Chmod(0o600); err != nil {
-		return err
-	}
-	if _, err := temporary.Write(raw); err != nil {
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	closed = true
-	if err := os.Rename(temporaryPath, store.path); err != nil {
-		return err
-	}
-	return os.Chmod(store.path, 0o600)
+	return nil
 }
 
 func validateUniqueKeys(raw []byte) error {

@@ -45,7 +45,7 @@ func openCapacityPolicyStore(path string) (*capacityPolicyStore, error) {
 	if errors.Is(err, os.ErrNotExist) {
 		return store, nil
 	}
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || info.Size() > 32*1024 {
+	if err != nil || !providerPrivateFile(path, info) || info.Size() > 32*1024 {
 		return nil, errors.New("provider capacity policy state must be a bounded mode-0600 regular file")
 	}
 	file, err := os.Open(path)
