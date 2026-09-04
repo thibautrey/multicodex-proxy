@@ -41,10 +41,12 @@ const OPENAI_COMPATIBLE_REQUEST_PATHS = [
   "/v1/completions",
   "/v1/embeddings",
 ] as const;
-const LOOPBACK_OPENAI_REQUEST_PATHS = new Set(
+const LOOPBACK_OPENAI_REQUEST_PATHS: ReadonlySet<string> = new Set(
   OPENAI_COMPATIBLE_REQUEST_PATHS.filter((path) => path !== "/models"),
 );
-const EXO_REQUEST_PATHS = new Set(OPENAI_COMPATIBLE_REQUEST_PATHS);
+const EXO_REQUEST_PATHS: ReadonlySet<string> = new Set(
+  OPENAI_COMPATIBLE_REQUEST_PATHS,
+);
 
 type AutomaticLocalRuntimeAdapterId =
   | "ollama"
@@ -493,12 +495,13 @@ export async function probeLocalRuntimeCandidate(
   candidate: LocalRuntimeCandidate,
   options: LocalRuntimeDiscoveryOptions = {},
 ): Promise<LocalRuntimeProbeSuccess> {
-  if (!isAutomaticLocalRuntimeAdapterId(adapter.id)) {
-    throw new Error(`automatic discovery is not configured for ${adapter.id}`);
+  const adapterId = adapter.id;
+  if (!isAutomaticLocalRuntimeAdapterId(adapterId)) {
+    throw new Error(`automatic discovery is not configured for ${adapterId}`);
   }
-  const boundary = automaticRuntimeBoundary(adapter.id);
-  const endpoint = parseAutomaticRuntimeEndpoint(adapter.id, candidate.endpoint);
-  const modelsUrl = parseAutomaticRuntimeRequestUrl(adapter.id, candidate.modelsUrl);
+  const boundary = automaticRuntimeBoundary(adapterId);
+  const endpoint = parseAutomaticRuntimeEndpoint(adapterId, candidate.endpoint);
+  const modelsUrl = parseAutomaticRuntimeRequestUrl(adapterId, candidate.modelsUrl);
   if (
     endpoint.origin !== modelsUrl.origin ||
     modelsUrl.pathname !== boundary.catalogPath
@@ -535,11 +538,11 @@ export async function probeLocalRuntimeCandidate(
         }
         const confirmedModelIds = parseModelsPayload(
           await readBoundedJson(response, maxResponseBytes),
-          automaticRuntimeSignature(adapter.id),
+          automaticRuntimeSignature(adapterId),
         );
         return {
           status: "discovered" as const,
-          adapter: adapter.id,
+          adapter: adapterId,
           displayName: adapter.displayName,
           endpoint: endpoint.origin,
           confirmedModelIds,
