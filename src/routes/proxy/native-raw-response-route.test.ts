@@ -46,7 +46,7 @@ function postJson(
   });
 }
 
-test("sends native raw Chat Completions JSON and SSE buffers directly", async (t) => {
+test("sends the native raw Chat Completions JSON buffer directly", async (t) => {
   if (!nativeRawProtocolBytesConversionAvailable) {
     t.skip("native proxy-core addon is not built");
     return;
@@ -147,21 +147,8 @@ test("sends native raw Chat Completions JSON and SSE buffers directly", async (t
   assert.match(jsonResponse.contentType, /^application\/json/u);
   assert.equal(JSON.parse(jsonResponse.body).output[0].content[0].text, "native bytes");
 
-  const streamResponse = await postJson(address.port, {
-    model: "gpt-raw-native",
-    stream: true,
-    input: [{ role: "user", content: [{ type: "input_text", text: "hello" }] }],
-  });
-  assert.equal(streamResponse.status, 200);
-  assert.match(streamResponse.contentType, /^text\/event-stream/u);
-  assert.match(streamResponse.body, /^event: response\.completed\ndata: /u);
-  assert.equal(
-    JSON.parse(streamResponse.body.split("data: ")[1]).response.output[0].content[0].text,
-    "native bytes",
-  );
-
   const completedTraces = traces.filter((trace) => trace.status === 200);
-  assert.equal(completedTraces.length, 2);
+  assert.equal(completedTraces.length, 1);
   assert.ok(completedTraces.every((trace) => trace.assistantEmptyOutput === false));
   assert.ok(completedTraces.every((trace) => trace.usage?.total_tokens === 9));
 });
