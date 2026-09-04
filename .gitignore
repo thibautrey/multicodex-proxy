@@ -14,3 +14,4 @@ data/*
 .mcp.json
 # Claude Code local settings
 .claude/
+assets/brand/.DS_Store
