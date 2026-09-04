@@ -1738,6 +1738,23 @@ fn is_claude_code_request(headers: &HeaderMap) -> bool {
         && header_value(headers, "x-app").is_some_and(|value| value.eq_ignore_ascii_case("cli"))
 }
 
+fn claude_code_model(requested_model: &str) -> String {
+    let requested = requested_model.to_ascii_lowercase();
+    if requested.contains("haiku") || requested.contains("fast") {
+        std::env::var("CLAUDE_CODE_FAST_MODEL").unwrap_or_else(|_| "gpt-5.4-mini".to_owned())
+    } else {
+        std::env::var("CLAUDE_CODE_MODEL").unwrap_or_else(|_| "gpt-5.6-luna".to_owned())
+    }
+}
+
+fn claude_code_routing_model(requested_model: &str, detected: bool) -> String {
+    if detected && requested_model.to_ascii_lowercase().contains("claude") {
+        claude_code_model(requested_model)
+    } else {
+        requested_model.to_owned()
+    }
+}
+
 fn anthropic_text(value: Option<&Value>) -> Option<String> {
     match value {
         Some(Value::String(text)) => Some(text.clone()),
@@ -1825,13 +1842,7 @@ fn anthropic_to_responses(body: &Value, claude_code: bool, config: &EdgeConfig) 
     }
     let requested_model = value_string(object.get("model")).unwrap_or_default();
     let mapped_model = if claude_code && requested_model.to_ascii_lowercase().contains("claude") {
-        if requested_model.to_ascii_lowercase().contains("haiku")
-            || requested_model.to_ascii_lowercase().contains("fast")
-        {
-            std::env::var("CLAUDE_CODE_FAST_MODEL").unwrap_or_else(|_| "gpt-5.4-mini".to_owned())
-        } else {
-            std::env::var("CLAUDE_CODE_MODEL").unwrap_or_else(|_| "gpt-5.6-luna".to_owned())
-        }
+        claude_code_model(&requested_model)
     } else {
         requested_model
     };
@@ -1853,9 +1864,9 @@ fn anthropic_to_responses(body: &Value, claude_code: bool, config: &EdgeConfig) 
     if let Some(max_tokens) = object.get("max_tokens") {
         payload.insert("max_output_tokens".to_owned(), max_tokens.clone());
     }
-    if let Some(metadata) = object.get("metadata") {
-        payload.insert("metadata".to_owned(), metadata.clone());
-    }
+    // Anthropic metadata is client-side attribution for Claude Code. The
+    // ChatGPT Responses endpoint rejects this field as an unsupported
+    // parameter, so it must not cross the protocol boundary.
     if let Some(tools) = object.get("tools").and_then(Value::as_array) {
         payload.insert(
             "tools".to_owned(),
@@ -2998,6 +3009,8 @@ async fn proxy_inference(
         error_response(StatusCode::SERVICE_UNAVAILABLE, error, "store_unavailable")
     })?;
     let requested_model = value_string(body.get("model")).unwrap_or_default();
+    let claude_code = is_claude_code_request(headers);
+    let routing_model = claude_code_routing_model(&requested_model, claude_code);
     let default_model = state
         .config
         .proxy_models
@@ -3005,7 +3018,7 @@ async fn proxy_inference(
         .map(String::as_str)
         .unwrap_or("unknown");
     let catalog = exposed_models(state, &store).await;
-    let routes = routes_for_model(&store, &requested_model, default_model, &catalog);
+    let routes = routes_for_model(&store, &routing_model, default_model, &catalog);
     let client_stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
     let session_id = request_session_id(headers);
     let codex_session_id = request_codex_session_id(headers);
@@ -3095,7 +3108,7 @@ async fn proxy_inference(
                 &route,
                 prompt_cache_session_id.as_deref(),
                 client_stream,
-                is_claude_code_request(headers),
+                claude_code,
                 &state.config,
             );
             if provider == "openai" && account.chatgpt_account_id.is_some() {
@@ -6019,6 +6032,37 @@ mod tests {
         );
         assert!(!anthropic["model"].as_str().unwrap().contains("claude"));
         assert_eq!(anthropic["instructions"], "You are helpful");
+    }
+
+    #[test]
+    fn claude_code_requests_route_to_luna_and_drop_unsupported_metadata() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::USER_AGENT,
+            HeaderValue::from_static("claude-cli/2.1.241 (external, sdk-cli)"),
+        );
+        headers.insert("x-app", HeaderValue::from_static("cli"));
+        assert!(is_claude_code_request(&headers));
+        assert_eq!(
+            claude_code_routing_model("claude-sonnet-4-5", true),
+            "gpt-5.6-luna"
+        );
+        assert_eq!(
+            claude_code_routing_model("claude-sonnet-4-5", false),
+            "claude-sonnet-4-5"
+        );
+
+        let converted = anthropic_to_responses(
+            &json!({
+                "model": "claude-sonnet-4-5",
+                "metadata": {"user_id": "client-only"},
+                "messages": [{"role": "user", "content": "Hello"}]
+            }),
+            true,
+            &EdgeConfig::default(),
+        );
+        assert_eq!(converted["model"], "gpt-5.6-luna");
+        assert!(converted.get("metadata").is_none());
     }
 
     #[test]
