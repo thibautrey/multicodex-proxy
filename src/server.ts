@@ -99,7 +99,10 @@ import {
 import { startEmbeddedProviderAgent } from "./provider-agent-supervisor.js";
 import { createInferenceIdempotencyMiddleware } from "./inference-idempotency.js";
 import { createRequestTracingMiddleware } from "./request-tracing.js";
-import { buildHostMenuBarAccountsSummary } from "./host-menu-bar.js";
+import {
+  buildHostMenuBarAccountsSummary,
+  buildHostMenuBarGitHubStarPrompt,
+} from "./host-menu-bar.js";
 import { HostUpdateController } from "./host-update-controller.js";
 
 const app = express();
@@ -495,9 +498,11 @@ app.get("/admin/session", (req, res) => {
 app.get("/admin/host/menu-bar", adminGuard, async (_req, res) => {
   res.setHeader("cache-control", "no-store");
   const accountSummary = buildHostMenuBarAccountsSummary(await store.listAccounts());
+  const traceStats = await traceManager.getTraceStats();
   res.json({
     operational: true,
     ...accountSummary,
+    githubStarPrompt: buildHostMenuBarGitHubStarPrompt(traceStats.stats.totals.tokensOutput),
     earnings: {
       available: false,
       currency: null,

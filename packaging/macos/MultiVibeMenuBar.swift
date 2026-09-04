@@ -39,6 +39,12 @@ private struct MenuBarQuota: Decodable {
     let weeklyAccountCount: Int
 }
 
+private struct MenuBarGitHubStarPrompt: Decodable {
+    let generatedOutputTokens: Double
+    let threshold: Double
+    let eligible: Bool
+}
+
 private struct MenuBarSummary: Decodable {
     struct Earnings: Decodable {
         let available: Bool
@@ -51,6 +57,7 @@ private struct MenuBarSummary: Decodable {
     let operational: Bool
     let accounts: [MenuBarAccount]
     let quota: MenuBarQuota
+    let githubStarPrompt: MenuBarGitHubStarPrompt?
     let earnings: Earnings
 }
 
@@ -590,11 +597,72 @@ private final class HostPopoverController: NSViewController {
     @objc private func didQuit() { quit?() }
 }
 
+private final class GitHubStarPromptController: NSViewController {
+    var openGitHub: (() -> Void)?
+
+    private let messageLabel = NSTextField(wrappingLabelWithString: "Nice work — you’ve generated 5 million output tokens with MultiVibe. If it’s useful, please star the project on GitHub.")
+    private let starButton = NSButton(title: "⭐ Star MultiVibe on GitHub", target: nil, action: nil)
+
+    override func loadView() {
+        let background = NSVisualEffectView()
+        background.material = .popover
+        background.blendingMode = .behindWindow
+        background.state = .active
+
+        messageLabel.font = .systemFont(ofSize: 13)
+        messageLabel.textColor = .labelColor
+        messageLabel.maximumNumberOfLines = 0
+        messageLabel.lineBreakMode = .byWordWrapping
+
+        starButton.bezelStyle = .rounded
+        starButton.controlSize = .large
+        starButton.target = self
+        starButton.action = #selector(didOpenGitHub)
+
+        let stack = NSStackView(views: [messageLabel, starButton])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 14
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        background.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            background.widthAnchor.constraint(equalToConstant: 340),
+            stack.topAnchor.constraint(equalTo: background.topAnchor, constant: 18),
+            stack.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: 18),
+            stack.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -18),
+            stack.bottomAnchor.constraint(equalTo: background.bottomAnchor, constant: -18),
+            messageLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
+        ])
+        view = background
+    }
+
+    func resetPrompt() {
+        loadViewIfNeeded()
+        messageLabel.stringValue = "Nice work — you’ve generated 5 million output tokens with MultiVibe. If it’s useful, please star the project on GitHub."
+        starButton.title = "⭐ Star MultiVibe on GitHub"
+        starButton.isEnabled = true
+    }
+
+    func showThankYou() {
+        loadViewIfNeeded()
+        messageLabel.stringValue = "Thank you for supporting MultiVibe! ❤️"
+        starButton.title = "Thank you! ❤️"
+        starButton.isEnabled = false
+    }
+
+    @objc private func didOpenGitHub() { openGitHub?() }
+}
+
 @main
 final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDelegate {
+    private static let githubStarsURL = URL(string: "https://github.com/thibautrey/multivibe")!
+    private static let githubStarPromptAcknowledgedKey = "githubStarPromptAcknowledged"
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let popover = NSPopover()
     private let popoverController = HostPopoverController()
+    private let githubStarPromptPopover = NSPopover()
+    private let githubStarPromptController = GitHubStarPromptController()
     private var refreshTimer: Timer?
     private var signalSources: [DispatchSourceSignal] = []
     private var ownedService: Process?
@@ -610,6 +678,9 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDeleg
     private var didFinishLaunching = false
     private var pendingEnrollmentToken: String?
     private var enrollmentInProgress = false
+    private var githubStarPromptPresented = false
+    private var githubStarPromptCloseWorkItem: DispatchWorkItem?
+    private var githubStarPromptAcknowledged = UserDefaults.standard.bool(forKey: githubStarPromptAcknowledgedKey)
 #if DEBUG
     private var previewWindow: NSWindow?
 #endif
@@ -752,6 +823,7 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDeleg
 
     func applicationWillTerminate(_ notification: Notification) {
         refreshTimer?.invalidate()
+        githubStarPromptCloseWorkItem?.cancel()
         if let process = ownedService, process.isRunning { process.terminate() }
     }
 
@@ -787,6 +859,12 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDeleg
         popoverController.installUpdate = { [weak self] in self?.runUpdateAction(path: "/admin/host-update/apply") }
         popoverController.setStartAtLogin = { [weak self] enabled in self?.setStartAtLogin(enabled) }
         popoverController.quit = { [weak self] in self?.quitApplication() }
+
+        githubStarPromptPopover.behavior = .transient
+        githubStarPromptPopover.animates = true
+        githubStarPromptPopover.contentSize = NSSize(width: 340, height: 150)
+        githubStarPromptPopover.contentViewController = githubStarPromptController
+        githubStarPromptController.openGitHub = { [weak self] in self?.openGitHubStarPage() }
     }
 
     private func configureTerminationSignals() {
@@ -820,6 +898,7 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDeleg
             updateBusy: updateBusy,
             startAtLogin: UserDefaults.standard.object(forKey: "startAtLogin") as? Bool ?? true
         )
+        presentGitHubStarPromptIfNeeded()
     }
 
     @objc private func togglePopover() {
@@ -927,6 +1006,38 @@ final class MultiVibeMenuBarApp: NSObject, NSApplicationDelegate, NSPopoverDeleg
         self.operational = operational
         self.statusText = status
         render()
+    }
+
+    private func presentGitHubStarPromptIfNeeded() {
+        guard operational,
+              summary?.githubStarPrompt?.eligible == true,
+              !githubStarPromptAcknowledged,
+              !githubStarPromptPresented,
+              !popover.isShown,
+              !githubStarPromptPopover.isShown,
+              let button = statusItem.button else { return }
+        githubStarPromptPresented = true
+        githubStarPromptController.resetPrompt()
+        githubStarPromptPopover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        NSApplication.shared.activate(ignoringOtherApps: true)
+    }
+
+    private func openGitHubStarPage() {
+        githubStarPromptAcknowledged = true
+        UserDefaults.standard.set(true, forKey: Self.githubStarPromptAcknowledgedKey)
+        githubStarPromptController.showThankYou()
+        NSWorkspace.shared.open(Self.githubStarsURL)
+
+        githubStarPromptCloseWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.githubStarPromptPopover.performClose(nil)
+        }
+        githubStarPromptCloseWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: workItem)
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        presentGitHubStarPromptIfNeeded()
     }
 
     private func setStartAtLogin(_ enabled: Bool) {

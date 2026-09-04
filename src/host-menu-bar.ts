@@ -1,5 +1,7 @@
 import type { Account, UsageWindow } from "./types.js";
 
+export const GITHUB_STAR_OUTPUT_TOKEN_THRESHOLD = 5_000_000;
+
 export type HostMenuBarQuotaWindow = {
   remainingPercent: number;
   resetAt?: number;
@@ -28,8 +30,37 @@ export type HostMenuBarAccountsSummary = {
   quota: HostMenuBarQuotaAggregate;
 };
 
+export type HostMenuBarGitHubStarPrompt = {
+  generatedOutputTokens: number;
+  threshold: number;
+  eligible: boolean;
+};
+
+export function buildHostMenuBarGitHubStarPrompt(
+  generatedOutputTokens: unknown,
+  threshold = GITHUB_STAR_OUTPUT_TOKEN_THRESHOLD,
+): HostMenuBarGitHubStarPrompt {
+  const normalizedOutputTokens = finiteNonNegativeInteger(generatedOutputTokens) ?? 0;
+  const normalizedThreshold = finiteNonNegativeInteger(threshold) ??
+    GITHUB_STAR_OUTPUT_TOKEN_THRESHOLD;
+  return {
+    generatedOutputTokens: normalizedOutputTokens,
+    threshold: normalizedThreshold,
+    eligible: normalizedOutputTokens >= normalizedThreshold,
+  };
+}
+
 function finiteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function finiteNonNegativeInteger(value: unknown): number | undefined {
+  const numeric = typeof value === "number"
+    ? value
+    : typeof value === "string" && value.trim()
+      ? Number(value)
+      : Number.NaN;
+  return Number.isFinite(numeric) ? Math.max(0, Math.floor(numeric)) : undefined;
 }
 
 function quotaWindow(window?: UsageWindow): HostMenuBarQuotaWindow | undefined {

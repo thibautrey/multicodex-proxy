@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildHostMenuBarAccountsSummary } from "./host-menu-bar.js";
+import {
+  buildHostMenuBarAccountsSummary,
+  buildHostMenuBarGitHubStarPrompt,
+} from "./host-menu-bar.js";
 import type { Account } from "./types.js";
 
 test("buildHostMenuBarAccountsSummary preserves SwiftBar quota aggregation", () => {
@@ -105,4 +108,18 @@ test("buildHostMenuBarAccountsSummary reports unavailable and attention states s
   assert.equal(summary.accounts[1].status, "attention");
   assert.equal(summary.accounts[1].usageStatus, "pending");
   assert.equal(summary.accounts[1].fetchedAt, undefined);
+});
+
+test("buildHostMenuBarGitHubStarPrompt becomes eligible at five million output tokens", () => {
+  assert.deepEqual(
+    buildHostMenuBarGitHubStarPrompt(4_999_999),
+    {
+      generatedOutputTokens: 4_999_999,
+      threshold: 5_000_000,
+      eligible: false,
+    },
+  );
+  assert.equal(buildHostMenuBarGitHubStarPrompt(5_000_000).eligible, true);
+  assert.equal(buildHostMenuBarGitHubStarPrompt("5,000,000").generatedOutputTokens, 0);
+  assert.equal(buildHostMenuBarGitHubStarPrompt(Number.POSITIVE_INFINITY).generatedOutputTokens, 0);
 });
