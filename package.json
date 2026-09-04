@@ -10,6 +10,7 @@
     "build:proxy-core-native": "node scripts/build-proxy-core-native.mjs",
     "benchmark:protocol-conversion": "node --import tsx scripts/benchmark-protocol-conversion.mjs",
     "benchmark:raw-protocol-conversion": "node --import tsx scripts/benchmark-raw-protocol-conversion.mjs",
+    "benchmark:raw-protocol-memory": "node --expose-gc --import tsx scripts/benchmark-raw-protocol-memory.mjs",
     "build:web": "npm --prefix web run build",
     "build": "npm run build:web && npm run build:api",
     "test:rust-core": "cargo test -p multivibe-proxy-core",

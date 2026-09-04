@@ -47,6 +47,7 @@ test("exports the conservative SSE fast-path classifier", () => {
 test("exports the Chat Completions to Responses protocol projection", () => {
   assert.equal(typeof native.convertChatCompletionToResponseJson, "function");
   assert.equal(typeof native.tryConvertChatCompletionToResponseJson, "function");
+  assert.equal(typeof native.tryConvertChatCompletionToResponseBytes, "function");
 });
 
 test("matches every shared TypeScript and Rust migration fixture", () => {
@@ -130,4 +131,68 @@ test("returns an empty raw-JSON projection for non-Chat bodies", () => {
     ),
     "",
   );
+});
+
+test("returns final JSON and SSE bodies as native Buffers", () => {
+  const fixture = rawProtocolFixtures[0];
+  const jsonResult = native.tryConvertChatCompletionToResponseBytes(
+    Buffer.from(JSON.stringify(fixture.chat)),
+    fixture.fallbackModel,
+    fixture.responseId,
+    fixture.createdAt,
+    false,
+  );
+  assert.equal(jsonResult.supported, true);
+  assert.equal(Buffer.isBuffer(jsonResult.body), true);
+  assert.deepEqual(JSON.parse(jsonResult.body.toString("utf8")), fixture.expected);
+  assert.deepEqual(jsonResult.usage, {
+    inputTokens: 10,
+    outputTokens: 4,
+    totalTokens: 14,
+  });
+
+  const sseResult = native.tryConvertChatCompletionToResponseBytes(
+    Buffer.from(JSON.stringify(fixture.chat)),
+    fixture.fallbackModel,
+    fixture.responseId,
+    fixture.createdAt,
+    true,
+  );
+  assert.equal(sseResult.supported, true);
+  assert.equal(Buffer.isBuffer(sseResult.body), true);
+  assert.match(
+    sseResult.body.toString("utf8"),
+    /^event: response\.completed\ndata: /u,
+  );
+  const ssePayload = JSON.parse(
+    sseResult.body.toString("utf8").split("data: ")[1].trim(),
+  );
+  assert.deepEqual(ssePayload, {
+    type: "response.completed",
+    response: fixture.expected,
+  });
+});
+
+test("rejects native byte conversion when JavaScript would generate a tool id", () => {
+  const result = native.tryConvertChatCompletionToResponseBytes(
+    Buffer.from(JSON.stringify({
+      object: "chat.completion",
+      choices: [{
+        message: {
+          role: "assistant",
+          content: "calling a tool",
+          tool_calls: [{
+            type: "function",
+            function: { name: "weather", arguments: "{}" },
+          }],
+        },
+      }],
+    })),
+    "fallback-model",
+    "resp_missing_tool_id",
+    1710000100,
+    false,
+  );
+  assert.equal(result.supported, false);
+  assert.equal(result.body.length, 0);
 });

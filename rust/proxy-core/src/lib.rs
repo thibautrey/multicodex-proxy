@@ -100,6 +100,41 @@ pub struct NativePayloadContextInspection {
     pub latest_compaction_index: i64,
 }
 
+/// Small metadata returned alongside a native response body. The complete
+/// response stays in the Buffer so JavaScript does not have to materialize it
+/// just to update traces and usage counters.
+#[napi(object)]
+pub struct NativeResponseUsage {
+    pub input_tokens: f64,
+    pub output_tokens: f64,
+    pub total_tokens: f64,
+}
+
+/// Result of the raw-byte Chat Completions projection.
+///
+/// `body` is the final HTTP representation: JSON for a buffered response or
+/// one `response.completed` SSE frame when `stream` was requested. An
+/// unsupported shape returns `supported: false` and an empty body so the
+/// TypeScript reference path can take over without parsing twice.
+#[napi(object)]
+pub struct NativeRawProtocolConversion {
+    pub supported: bool,
+    pub body: Buffer,
+    pub has_assistant_output: bool,
+    pub usage: Option<NativeResponseUsage>,
+}
+
+impl NativeRawProtocolConversion {
+    fn unsupported() -> Self {
+        Self {
+            supported: false,
+            body: Buffer::default(),
+            has_assistant_output: false,
+            usage: None,
+        }
+    }
+}
+
 impl Default for PayloadContextInspection {
     fn default() -> Self {
         Self {
@@ -432,13 +467,18 @@ fn raw_projection_is_safe(value: &Value) -> bool {
                 if !is_valid_chat_tool_call(tool_call) {
                     continue;
                 }
+                // The JavaScript reference generates a random id when the
+                // upstream tool call omits one. Keep that case on the
+                // reference path because a raw native projection cannot
+                // reproduce the same id semantics without materializing the
+                // object in JavaScript.
+                if tool_call.get("id").is_none_or(Value::is_null) {
+                    return false;
+                }
                 let arguments = tool_call
                     .get("function")
                     .and_then(|function| function.get("arguments"));
                 if !arguments.is_some_and(Value::is_string) {
-                    return false;
-                }
-                if tool_call.get("id").is_none() && tool_call.get("call_id").is_some() {
                     return false;
                 }
             }
@@ -580,6 +620,39 @@ fn response_usage_from_chat_usage(value: Option<&Value>) -> Option<Value> {
         "output_tokens": output,
         "total_tokens": total,
     }))
+}
+
+fn usage_number(value: Option<&Value>) -> Option<f64> {
+    match value? {
+        Value::Number(number) => number.as_f64(),
+        Value::String(value) => value.trim().parse::<f64>().ok(),
+        _ => None,
+    }
+}
+
+fn first_usage_number(usage: &Value, keys: &[&str]) -> Option<f64> {
+    keys.iter()
+        .find_map(|key| usage.get(*key).filter(|value| !value.is_null()))
+        .and_then(|value| usage_number(Some(value)))
+}
+
+fn response_usage_metadata(value: Option<&Value>) -> Option<NativeResponseUsage> {
+    let usage = value?;
+    if !(usage.is_object() || usage.is_array()) {
+        return None;
+    }
+
+    let input_tokens = first_usage_number(usage, &["prompt_tokens", "input_tokens"]).unwrap_or(0.0);
+    let output_tokens =
+        first_usage_number(usage, &["completion_tokens", "output_tokens"]).unwrap_or(0.0);
+    let total_tokens =
+        first_usage_number(usage, &["total_tokens"]).unwrap_or(input_tokens + output_tokens);
+
+    Some(NativeResponseUsage {
+        input_tokens,
+        output_tokens,
+        total_tokens,
+    })
 }
 
 fn response_output_from_chat_message(message: &Value) -> Vec<Value> {
@@ -753,12 +826,12 @@ pub fn convert_chat_completion_to_response_json(
 /// response shape. The envelope keeps the assistant-output decision next to
 /// the converted response so the TypeScript router can preserve its retry
 /// behavior without parsing the input a second time.
-fn try_chat_completion_to_response(
+fn try_chat_completion_response(
     value: &Value,
     fallback_model: &str,
     response_id: &str,
     created_at: i64,
-) -> Option<Value> {
+) -> Option<(bool, Value)> {
     if value.get("object").and_then(Value::as_str) != Some("chat.completion") {
         return None;
     }
@@ -767,13 +840,41 @@ fn try_chat_completion_to_response(
     }
 
     let has_assistant_output = chat_completion_has_assistant_output(value);
-    let normalized = ensure_non_empty_chat_completion(value.clone());
-    let response =
-        chat_completion_to_response(&normalized, fallback_model, response_id, created_at);
+    let response = if has_assistant_output {
+        chat_completion_to_response(value, fallback_model, response_id, created_at)
+    } else {
+        let normalized = ensure_non_empty_chat_completion(value.clone());
+        chat_completion_to_response(&normalized, fallback_model, response_id, created_at)
+    };
+    Some((has_assistant_output, response))
+}
+
+fn try_chat_completion_to_response(
+    value: &Value,
+    fallback_model: &str,
+    response_id: &str,
+    created_at: i64,
+) -> Option<Value> {
+    let (has_assistant_output, response) =
+        try_chat_completion_response(value, fallback_model, response_id, created_at)?;
     Some(json!({
         "hasAssistantOutput": has_assistant_output,
         "response": response,
     }))
+}
+
+fn serialize_response_body(response: &Value, stream: bool) -> serde_json::Result<Vec<u8>> {
+    let mut body = Vec::new();
+    if stream {
+        body.extend_from_slice(
+            b"event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":",
+        );
+        serde_json::to_writer(&mut body, response)?;
+        body.extend_from_slice(b"}\n\n");
+    } else {
+        serde_json::to_writer(&mut body, response)?;
+    }
+    Ok(body)
 }
 
 #[napi(js_name = "tryConvertChatCompletionToResponseJson")]
@@ -801,6 +902,45 @@ pub fn try_convert_chat_completion_to_response_json(
     })
 }
 
+/// Convert a raw upstream Chat Completions body into the final HTTP bytes.
+///
+/// Unlike the JSON-returning bridge above, this function never serializes a
+/// Rust response into a JavaScript string and never asks JavaScript to parse
+/// the converted response. N-API transfers ownership of the final Buffer to
+/// Node, while only small routing/trace metadata crosses as fields.
+#[napi(js_name = "tryConvertChatCompletionToResponseBytes")]
+pub fn try_convert_chat_completion_to_response_bytes(
+    payload: Buffer,
+    fallback_model: String,
+    response_id: String,
+    created_at: i64,
+    stream: bool,
+) -> napi::Result<NativeRawProtocolConversion> {
+    let value: Value = serde_json::from_slice(payload.as_ref()).map_err(|error| {
+        Error::new(Status::InvalidArg, format!("Invalid JSON payload: {error}"))
+    })?;
+
+    let Some((has_assistant_output, response)) =
+        try_chat_completion_response(&value, &fallback_model, &response_id, created_at)
+    else {
+        return Ok(NativeRawProtocolConversion::unsupported());
+    };
+
+    let body = serialize_response_body(&response, stream).map_err(|error| {
+        Error::new(
+            Status::GenericFailure,
+            format!("Serialization failed: {error}"),
+        )
+    })?;
+
+    Ok(NativeRawProtocolConversion {
+        supported: true,
+        body: Buffer::from(body),
+        has_assistant_output,
+        usage: response_usage_metadata(value.get("usage")),
+    })
+}
+
 /// Classify a high-frequency SSE frame without parsing its JSON payload.
 ///
 /// An empty string means that the frame is not eligible for the fast path and
@@ -818,7 +958,8 @@ pub fn classify_sse_frame(frame: String) -> napi::Result<String> {
 mod tests {
     use super::{
         EMPTY_ASSISTANT_FALLBACK_TEXT, PayloadContextInspection, chat_completion_to_response,
-        classify_sse_frame_type, inspect_payload_context, try_chat_completion_to_response,
+        classify_sse_frame_type, inspect_payload_context, serialize_response_body,
+        try_chat_completion_response, try_chat_completion_to_response,
     };
     use serde_json::{Value, json};
 
@@ -1045,5 +1186,39 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn serializes_the_final_json_and_sse_bodies_without_an_envelope() {
+        let fixtures: Vec<Value> = serde_json::from_str(include_str!(
+            "../testdata/raw-protocol-conversion-cases.json"
+        ))
+        .expect("shared raw protocol fixtures must be valid JSON");
+        let fixture = &fixtures[0];
+        let (has_assistant_output, response) = try_chat_completion_response(
+            &fixture["chat"],
+            fixture["fallbackModel"].as_str().expect("fallback model"),
+            fixture["responseId"].as_str().expect("response id"),
+            fixture["createdAt"].as_i64().expect("created at"),
+        )
+        .expect("fixture must be recognized as Chat Completions");
+
+        assert!(has_assistant_output);
+        let json_body = serialize_response_body(&response, false).expect("JSON body");
+        assert_eq!(
+            serde_json::from_slice::<Value>(&json_body).unwrap(),
+            fixture["expected"]
+        );
+
+        let sse_body = serialize_response_body(&response, true).expect("SSE body");
+        let sse_body = std::str::from_utf8(&sse_body).expect("SSE body must be UTF-8");
+        assert!(sse_body.starts_with("event: response.completed\ndata: "));
+        let payload = sse_body
+            .strip_prefix("event: response.completed\ndata: ")
+            .and_then(|body| body.strip_suffix("\n\n"))
+            .expect("SSE framing");
+        let payload: Value = serde_json::from_str(payload).expect("SSE JSON payload");
+        assert_eq!(payload["type"], "response.completed");
+        assert_eq!(payload["response"], fixture["expected"]);
     }
 }

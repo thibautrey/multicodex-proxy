@@ -11,7 +11,9 @@ import { sanitizeOutputText, shouldExposeFunctionCallName } from "./helpers.js";
 import {
   convertChatCompletionToResponseObjectFromJsonBytes,
   convertChatCompletionToResponseObjectFromNative,
+  convertChatCompletionToResponseBytesFromJsonBytes,
   type RawChatCompletionResponseConversion,
+  type RawChatCompletionResponseBytesConversion,
 } from "./payload-inspection.js";
 
 import { randomUUID } from "node:crypto";
@@ -260,6 +262,21 @@ export function chatCompletionJsonBytesToResponseObject(
     fallbackModel,
     `resp_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
     Math.floor(Date.now() / 1000),
+  );
+}
+
+export function chatCompletionJsonBytesToResponseBytes(
+  jsonBytes: Uint8Array,
+  fallbackModel = "unknown",
+  stream = false,
+): RawChatCompletionResponseBytesConversion | undefined {
+  if (!nativeProtocolConversionEnabled()) return undefined;
+  return convertChatCompletionToResponseBytesFromJsonBytes(
+    jsonBytes,
+    fallbackModel,
+    `resp_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
+    Math.floor(Date.now() / 1000),
+    stream,
   );
 }
 

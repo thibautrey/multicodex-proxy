@@ -64,7 +64,7 @@ import {
   stripReasoningFromResponseObject,
 } from "../../responses/sanitizers.js";
 import {
-  chatCompletionJsonBytesToResponseObject,
+  chatCompletionJsonBytesToResponseBytes,
   chatCompletionObjectToResponseObject,
   chatCompletionObjectToSSE,
   convertChatCompletionSSEToResponseSSE,
@@ -4021,16 +4021,21 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
           }
 
           let rawResponseBytes: Buffer | undefined;
-          let text: string;
-          if (bufferedText !== undefined) {
-            text = bufferedText;
-          } else {
+          let text = bufferedText ?? "";
+          let textMaterialized = bufferedText !== undefined;
+          if (!textMaterialized) {
             rawResponseBytes = Buffer.from(await upstream.arrayBuffer());
-            text = rawResponseBytes.toString("utf8");
           }
+          const materializeUpstreamText = (): string => {
+            if (!textMaterialized) {
+              text = rawResponseBytes?.toString("utf8") ?? "";
+              textMaterialized = true;
+            }
+            return text;
+          };
           if (moduleManager) {
-            const textBeforeHook = text;
-            const hooked = await moduleManager.runHook("response.received", text, {
+            const textBeforeHook = materializeUpstreamText();
+            const hooked = await moduleManager.runHook("response.received", textBeforeHook, {
               requestId: clientRequestId,
               sessionId: promptCacheSessionId,
               application,
@@ -4043,28 +4048,34 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
             text = hooked.value;
             if (text !== textBeforeHook) rawResponseBytes = Buffer.from(text);
           }
-          const upstreamEmptyBody = !text;
-          if (!text)
+          const upstreamEmptyBody = textMaterialized
+            ? !text
+            : rawResponseBytes?.length === 0;
+          if (upstreamEmptyBody) {
+            materializeUpstreamText();
             text = JSON.stringify({
               error: `upstream ${upstream.status} with empty body`,
             });
-          const upstreamError = !upstream.ok ? text.slice(0, 500) : undefined;
+          }
+          const upstreamError = !upstream.ok
+            ? materializeUpstreamText().slice(0, 500)
+            : undefined;
 
           const rawChatCompletionResponse =
             !shouldReturnChatCompletions &&
             rawResponseBytes &&
-            text.trimStart().startsWith("{") &&
-            text.includes('"chat.completion"')
-              ? chatCompletionJsonBytesToResponseObject(
+            rawResponseBytes.length > 0
+              ? chatCompletionJsonBytesToResponseBytes(
                   rawResponseBytes,
                   req.body?.model ?? payloadToUpstream?.model ?? "unknown",
+                  clientRequestedStream && upstream.ok,
                 )
               : undefined;
 
           let parsed: any = undefined;
           if (!rawChatCompletionResponse) {
             try {
-              parsed = JSON.parse(text);
+              parsed = JSON.parse(materializeUpstreamText());
             } catch {}
           }
           if (parsed?.object === "chat.completion") {
@@ -4176,16 +4187,46 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                   {
                     upstreamContentType: contentType,
                     upstreamEmptyBody,
-                    tracePayload: rawChatCompletionResponse?.response ?? parsed,
+                    usage: rawChatCompletionResponse?.usage,
                   },
                 );
                 continue;
               }
-              const respObj = rawChatCompletionResponse?.response ??
-                chatCompletionObjectToResponseObject(
-                  parsed,
-                  req.body?.model ?? payloadToUpstream?.model ?? "unknown",
-                );
+
+              if (rawChatCompletionResponse) {
+                res.status(200);
+                res.set("Content-Type", "text/event-stream");
+                res.set("Cache-Control", "no-cache");
+                res.set("Connection", "keep-alive");
+                res.write(rawChatCompletionResponse.body);
+                res.end();
+
+                recordTrace({
+                  at: Date.now(),
+                  route: req.path,
+                  accountId: selected.id,
+                  accountEmail: selected.email,
+                  model: tracedModel,
+            ...traceModelResolution,
+                  status: upstream.status,
+                  stream: true,
+                  latencyMs: Date.now() - startedAt,
+                  usage: rawChatCompletionResponse.usage,
+                  requestBody,
+            ...traceImage,
+                  upstreamError,
+                  upstreamContentType: contentType,
+                  upstreamEmptyBody,
+                  assistantEmptyOutput: false,
+                  assistantFinishReason: "completed",
+                });
+                return;
+              }
+
+              const respObj = chatCompletionObjectToResponseObject(
+                parsed,
+                req.body?.model ?? payloadToUpstream?.model ?? "unknown",
+              );
               res.status(200);
               res.set("Content-Type", "text/event-stream");
               res.set("Cache-Control", "no-cache");
@@ -4445,16 +4486,43 @@ export function createProxyRouter(options: ProxyRoutesOptions) {
                 {
                   upstreamContentType: contentType,
                   upstreamEmptyBody,
-                  tracePayload: rawChatCompletionResponse?.response ?? parsed,
+                  usage: rawChatCompletionResponse?.usage,
                 },
               );
               continue;
             }
-            const respObj = rawChatCompletionResponse?.response ??
-              chatCompletionObjectToResponseObject(
-                parsed,
-                req.body?.model ?? payloadToUpstream?.model ?? "unknown",
-              );
+
+            if (rawChatCompletionResponse) {
+              res
+                .status(upstream.ok ? 200 : upstream.status)
+                .set("Content-Type", "application/json; charset=utf-8")
+                .send(rawChatCompletionResponse.body);
+              recordTrace({
+                at: Date.now(),
+                route: req.path,
+                accountId: selected.id,
+                accountEmail: selected.email,
+                model: tracedModel,
+            ...traceModelResolution,
+                status: upstream.status,
+                stream: false,
+                latencyMs: Date.now() - startedAt,
+                usage: rawChatCompletionResponse.usage,
+                requestBody,
+            ...traceImage,
+                upstreamError,
+                upstreamContentType: contentType,
+                upstreamEmptyBody,
+                assistantEmptyOutput: false,
+                assistantFinishReason: "completed",
+              });
+              return;
+            }
+
+            const respObj = chatCompletionObjectToResponseObject(
+              parsed,
+              req.body?.model ?? payloadToUpstream?.model ?? "unknown",
+            );
             res.status(upstream.ok ? 200 : upstream.status).json(respObj);
             recordTrace({
               at: Date.now(),

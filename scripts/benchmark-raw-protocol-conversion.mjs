@@ -11,7 +11,7 @@ process.env.MULTIVIBE_PROXY_CORE_NATIVE = mode === "native" ? "on" : "off";
 process.env.MULTIVIBE_PROXY_CORE_PROTOCOL_CONVERSION = mode === "native" ? "on" : "off";
 
 const {
-  chatCompletionJsonBytesToResponseObject,
+  chatCompletionJsonBytesToResponseBytes,
   chatCompletionObjectToResponseObject,
 } = await import(new URL("../src/responses/converters.ts", import.meta.url).href);
 
@@ -49,20 +49,20 @@ const raw = Buffer.from(JSON.stringify(chat));
 const timings = [];
 for (let index = 0; index < Math.min(200, samples); index += 1) {
   if (mode === "native") {
-    chatCompletionJsonBytesToResponseObject(raw, "fallback-model");
+    chatCompletionJsonBytesToResponseBytes(raw, "fallback-model", false);
   } else {
     const parsed = JSON.parse(raw);
-    chatCompletionObjectToResponseObject(parsed, "fallback-model");
+    JSON.stringify(chatCompletionObjectToResponseObject(parsed, "fallback-model"));
   }
 }
 
 for (let index = 0; index < samples; index += 1) {
   const started = performance.now();
   const response = mode === "native"
-    ? chatCompletionJsonBytesToResponseObject(raw, "fallback-model")?.response
-    : chatCompletionObjectToResponseObject(JSON.parse(raw), "fallback-model");
+    ? chatCompletionJsonBytesToResponseBytes(raw, "fallback-model", false)?.body
+    : Buffer.from(JSON.stringify(chatCompletionObjectToResponseObject(JSON.parse(raw), "fallback-model")));
   timings.push(performance.now() - started);
-  if (response?.object !== "response") throw new Error("invalid conversion result");
+  if (!response?.length) throw new Error("invalid conversion result");
 }
 
 timings.sort((left, right) => left - right);
@@ -74,6 +74,7 @@ console.log(JSON.stringify({
   medianMs: percentile(0.5),
   p95Ms: percentile(0.95),
   totalMs: timings.reduce((sum, value) => sum + value, 0),
-  includesJsonParse: true,
+  includesJsonParse: mode !== "native",
+  output: mode === "native" ? "native_buffer" : "typescript_buffer",
   script: fileURLToPath(import.meta.url),
 }));

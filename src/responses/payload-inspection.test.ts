@@ -5,9 +5,11 @@ import test from "node:test";
 import {
   convertChatCompletionToResponseObjectFromJsonBytes,
   convertChatCompletionToResponseObjectFromNative,
+  convertChatCompletionToResponseBytesFromJsonBytes,
   inspectPayloadContextFromJsonBytes,
   inspectPayloadContext,
   nativePayloadInspectionAvailable,
+  nativeRawProtocolBytesConversionAvailable,
   nativeRawProtocolConversionAvailable,
   payloadHasImage,
 } from "./payload-inspection.js";
@@ -271,6 +273,55 @@ test("converts raw tool-call JSON while preserving its argument string", () => {
     response: fixture.expected,
     hasAssistantOutput: true,
   });
+});
+
+test("returns final raw JSON bytes without materializing the response object in JavaScript", () => {
+  const fixture = rawProtocolFixtures[0];
+  const converted = convertChatCompletionToResponseBytesFromJsonBytes(
+    Buffer.from(JSON.stringify(fixture.chat)),
+    fixture.fallbackModel,
+    fixture.responseId,
+    fixture.createdAt,
+    false,
+  );
+
+  if (!nativeRawProtocolBytesConversionAvailable) {
+    assert.equal(converted, undefined);
+    return;
+  }
+
+  assert.ok(converted);
+  assert.equal(Buffer.isBuffer(converted.body), true);
+  assert.deepEqual(JSON.parse(converted.body.toString("utf8")), fixture.expected);
+  assert.deepEqual(converted.usage, {
+    input_tokens: 10,
+    output_tokens: 4,
+    total_tokens: 14,
+  });
+});
+
+test("returns the final response.completed SSE frame as bytes", () => {
+  const fixture = rawProtocolFixtures[0];
+  const converted = convertChatCompletionToResponseBytesFromJsonBytes(
+    Buffer.from(JSON.stringify(fixture.chat)),
+    fixture.fallbackModel,
+    fixture.responseId,
+    fixture.createdAt,
+    true,
+  );
+
+  if (!nativeRawProtocolBytesConversionAvailable) {
+    assert.equal(converted, undefined);
+    return;
+  }
+
+  assert.ok(converted);
+  const body = converted.body.toString("utf8");
+  assert.match(body, /^event: response\.completed\ndata: /u);
+  assert.deepEqual(
+    JSON.parse(body.split("data: ")[1].trim()),
+    { type: "response.completed", response: fixture.expected },
+  );
 });
 
 test("falls back to the reference parser for unsupported raw shapes", () => {

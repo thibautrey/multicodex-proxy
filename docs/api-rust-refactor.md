@@ -168,14 +168,26 @@ itération doit déplacer la frontière avant le parse JSON pour supprimer le
 double marshalling. Les détails sont dans
 [`protocol-conversion-benchmark.json`](protocol-conversion-benchmark.json).
 
-Cette frontière a ensuite été évaluée sur les octets bruts de la réponse
-upstream, avant `JSON.parse`. Le candidat Rust/N-API est intégré derrière le
-même flag, avec repli automatique vers TypeScript pour les textes sensibles au
-sanitizer, les arguments d'outils objets et les corps non-Chat. Il reste plus
-lent sur 57 491 octets (médiane 0,382 ms contre 0,209 ms) et sur 229 547 octets
-(1,455 ms contre 0,806 ms) ; il n'est donc pas activé par défaut. Les détails
-sont dans
-[`raw-protocol-conversion-benchmark.json`](raw-protocol-conversion-benchmark.json).
+Cette frontière est maintenant évaluée comme une vraie tranche d'octets : Rust
+reçoit le `Buffer` upstream et renvoie le `Buffer` HTTP final, JSON ou SSE,
+avec uniquement les métadonnées scalaires nécessaires aux retries et aux
+traces. Le routeur n'exécute plus `JSON.parse` et n'expose plus l'objet réponse
+dans JavaScript lorsque cette tranche est utilisée. Le crate emploie encore un
+arbre `serde_json::Value` temporaire en mémoire Rust ; cette étape supprime donc
+le doublon d'objet V8 et le round-trip chaîne JSON/N-API, mais ne constitue pas
+encore une preuve de parsing zero-copy.
+
+Le repli TypeScript reste automatique pour les textes sensibles au sanitizer,
+les arguments d'outils objets, les identifiants d'outils absents, les corps
+non-Chat et les addons incompatibles. Le chemin direct est activé derrière le
+même flag `MULTIVIBE_PROXY_CORE_PROTOCOL_CONVERSION=on` et reste désactivé par
+défaut jusqu'à la mesure sous charge. Le benchmark mémoire est disponible via
+`npm run benchmark:raw-protocol-memory` ; il compare RSS, heap V8, mémoire
+externe, buffers et mémoire retenue après GC. Les timings synthétiques restent
+dans
+[`raw-protocol-conversion-benchmark.json`](raw-protocol-conversion-benchmark.json)
+et les résultats mémoire doivent être interprétés avec le débit, le p95, les
+pauses GC et le taux d'erreur.
 
 ### Phase 2 — edge Rust
 

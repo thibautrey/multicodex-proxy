@@ -31,6 +31,13 @@ type NativePayloadInspectionModule = {
     responseId: string,
     createdAt: number,
   ) => unknown;
+  tryConvertChatCompletionToResponseBytes?: (
+    payload: Buffer,
+    fallbackModel: string,
+    responseId: string,
+    createdAt: number,
+    stream: boolean,
+  ) => unknown;
 };
 
 function isNativePayloadInspectionModule(
@@ -94,6 +101,9 @@ const nativePayloadInspection = loadNativePayloadInspection();
 export const nativePayloadInspectionAvailable = Boolean(nativePayloadInspection);
 export const nativeRawProtocolConversionAvailable =
   typeof nativePayloadInspection?.tryConvertChatCompletionToResponseJson ===
+  "function";
+export const nativeRawProtocolBytesConversionAvailable =
+  typeof nativePayloadInspection?.tryConvertChatCompletionToResponseBytes ===
   "function";
 
 export function classifySseFrameTypeFromNative(
@@ -231,6 +241,16 @@ export type RawChatCompletionResponseConversion = {
   hasAssistantOutput: boolean;
 };
 
+export type RawChatCompletionResponseBytesConversion = {
+  body: Buffer;
+  hasAssistantOutput: boolean;
+  usage?: {
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+  };
+};
+
 /**
  * Convert an upstream Chat Completions JSON body before JavaScript parses it.
  * The native function returns an envelope so the router can keep the existing
@@ -295,6 +315,71 @@ export function convertChatCompletionToResponseObjectFromJsonBytes(
     return {
       response,
       hasAssistantOutput: candidate.hasAssistantOutput,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeNativeUsage(value: unknown):
+  | RawChatCompletionResponseBytesConversion["usage"]
+  | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const candidate = value as Record<string, unknown>;
+  const input = candidate.inputTokens;
+  const output = candidate.outputTokens;
+  const total = candidate.totalTokens;
+  if (
+    typeof input !== "number" ||
+    !Number.isFinite(input) ||
+    typeof output !== "number" ||
+    !Number.isFinite(output) ||
+    typeof total !== "number" ||
+    !Number.isFinite(total)
+  ) {
+    return undefined;
+  }
+  return {
+    input_tokens: input,
+    output_tokens: output,
+    total_tokens: total,
+  };
+}
+
+/**
+ * Convert raw Chat Completions bytes into the final JSON or SSE bytes. The
+ * returned body is intentionally opaque to JavaScript; only the small fields
+ * needed for retries and traces are materialized at the N-API boundary.
+ */
+export function convertChatCompletionToResponseBytesFromJsonBytes(
+  jsonBytes: Uint8Array,
+  fallbackModel: string,
+  responseId: string,
+  createdAt: number,
+  stream: boolean,
+): RawChatCompletionResponseBytesConversion | undefined {
+  const converter = nativePayloadInspection?.tryConvertChatCompletionToResponseBytes;
+  if (typeof converter !== "function") return undefined;
+
+  try {
+    const buffer = Buffer.isBuffer(jsonBytes)
+      ? jsonBytes
+      : Buffer.from(
+          jsonBytes.buffer as ArrayBuffer,
+          jsonBytes.byteOffset,
+          jsonBytes.byteLength,
+        );
+    const value = converter(buffer, fallbackModel, responseId, createdAt, stream);
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const candidate = value as Record<string, unknown>;
+    if (candidate.supported !== true || !Buffer.isBuffer(candidate.body)) {
+      return undefined;
+    }
+    if (typeof candidate.hasAssistantOutput !== "boolean") return undefined;
+    return {
+      body: candidate.body,
+      hasAssistantOutput: candidate.hasAssistantOutput,
+      usage: normalizeNativeUsage(candidate.usage),
     };
   } catch {
     return undefined;
