@@ -7,6 +7,11 @@ const samples = Math.max(
   1,
   Number(samplesArgument?.slice("--samples=".length) ?? 2000),
 );
+const segmentsArgument = process.argv.find((value) => value.startsWith("--segments="));
+const segments = Math.max(
+  1,
+  Number(segmentsArgument?.slice("--segments=".length) ?? 24),
+);
 
 if (mode === "typescript") {
   process.env.MULTIVIBE_PROXY_CORE_NATIVE = "off";
@@ -26,7 +31,7 @@ const chat = {
       index: 0,
       message: {
         role: "assistant",
-        content: Array.from({ length: 24 }, (_, index) => ({
+        content: Array.from({ length: segments }, (_, index) => ({
           type: "text",
           text: `Generated output segment ${index}: ${"x".repeat(160)}`,
         })),
@@ -37,7 +42,7 @@ const chat = {
             name: `tool_${index}`,
             arguments: JSON.stringify({
               index,
-              values: Array.from({ length: 16 }, (_, value) => value),
+              values: Array.from({ length: Math.max(16, Math.floor(segments / 2)) }, (_, value) => value),
             }),
           },
         })),
