@@ -8,6 +8,7 @@ UPDATE_SERVICE_NAME="multivibe-host-update.service"
 UPDATE_TIMER_NAME="multivibe-host-update.timer"
 SERVICE_MARKER="# Managed by the MultiVibe Host installer"
 LAUNCHER_MARKER="# Managed by the MultiVibe Host installer"
+AUTOSTART_MARKER="# Managed by the MultiVibe Host installer"
 
 fail() {
   printf '%s: %s\n' "$PROGRAM_NAME" "$*" >&2
@@ -69,6 +70,7 @@ validate_absolute_path "$HOME" "HOME"
 LOCAL_ROOT="$HOME/.local"
 INSTALL_ROOT="$LOCAL_ROOT/lib/multivibe-host"
 LAUNCHER="$LOCAL_ROOT/bin/multivibe-host"
+MENU_LAUNCHER="$LOCAL_ROOT/bin/multivibe-host-menu"
 CONFIG_HOME=${XDG_CONFIG_HOME:-"$HOME/.config"}
 validate_absolute_path "$CONFIG_HOME" "XDG_CONFIG_HOME"
 UNIT_FILE="$CONFIG_HOME/systemd/user/$SERVICE_NAME"
@@ -77,8 +79,12 @@ UPDATE_TIMER_FILE="$CONFIG_HOME/systemd/user/$UPDATE_TIMER_NAME"
 DATA_HOME=${XDG_DATA_HOME:-"$HOME/.local/share"}
 validate_absolute_path "$DATA_HOME" "XDG_DATA_HOME"
 DATA_DIRECTORY="$DATA_HOME/multivibe"
+AUTOSTART_DIRECTORY="$CONFIG_HOME/autostart"
+AUTOSTART_FILE="$AUTOSTART_DIRECTORY/multivibe-host-menu.desktop"
+APPLICATIONS_DIRECTORY="$DATA_HOME/applications"
+APPLICATION_DESKTOP_FILE="$APPLICATIONS_DIRECTORY/multivibe-host-menu.desktop"
 
-for managed_parent in "$LOCAL_ROOT" "$LOCAL_ROOT/lib" "$LOCAL_ROOT/bin" "$CONFIG_HOME" "$CONFIG_HOME/systemd" "$CONFIG_HOME/systemd/user"; do
+for managed_parent in "$LOCAL_ROOT" "$LOCAL_ROOT/lib" "$LOCAL_ROOT/bin" "$CONFIG_HOME" "$CONFIG_HOME/systemd" "$CONFIG_HOME/systemd/user" "$AUTOSTART_DIRECTORY" "$DATA_HOME" "$APPLICATIONS_DIRECTORY"; do
   if [ -L "$managed_parent" ]; then
     fail "a managed installation path contains a symbolic link"
   fi
@@ -99,6 +105,15 @@ fi
 
 if [ -e "$LAUNCHER" ] || [ -L "$LAUNCHER" ]; then
   is_managed_launcher "$LAUNCHER" || fail "$LAUNCHER is not managed by MultiVibe Host"
+fi
+if [ -e "$MENU_LAUNCHER" ] || [ -L "$MENU_LAUNCHER" ]; then
+  is_managed_launcher "$MENU_LAUNCHER" || fail "$MENU_LAUNCHER is not managed by MultiVibe Host"
+fi
+if [ -e "$AUTOSTART_FILE" ] || [ -L "$AUTOSTART_FILE" ]; then
+  is_managed_file "$AUTOSTART_FILE" "$AUTOSTART_MARKER" || fail "$AUTOSTART_FILE is not managed by MultiVibe Host"
+fi
+if [ -e "$APPLICATION_DESKTOP_FILE" ] || [ -L "$APPLICATION_DESKTOP_FILE" ]; then
+  is_managed_file "$APPLICATION_DESKTOP_FILE" "$AUTOSTART_MARKER" || fail "$APPLICATION_DESKTOP_FILE is not managed by MultiVibe Host"
 fi
 if [ -e "$UNIT_FILE" ] || [ -L "$UNIT_FILE" ]; then
   is_managed_file "$UNIT_FILE" "$SERVICE_MARKER" || fail "$UNIT_FILE is not managed by MultiVibe Host"
@@ -140,6 +155,18 @@ fi
 
 if [ -e "$LAUNCHER" ]; then
   rm -f "$LAUNCHER"
+fi
+if [ -e "$MENU_LAUNCHER" ]; then
+  rm -f "$MENU_LAUNCHER"
+fi
+if [ -e "$AUTOSTART_FILE" ]; then
+  rm -f "$AUTOSTART_FILE"
+fi
+if [ -e "$APPLICATION_DESKTOP_FILE" ]; then
+  rm -f "$APPLICATION_DESKTOP_FILE"
+fi
+if command -v update-desktop-database >/dev/null 2>&1 && [ -d "$APPLICATIONS_DIRECTORY" ]; then
+  update-desktop-database "$APPLICATIONS_DIRECTORY" >/dev/null 2>&1 || true
 fi
 if [ -d "$INSTALL_ROOT" ]; then
   rm -rf "$INSTALL_ROOT"

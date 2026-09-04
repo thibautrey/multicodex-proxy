@@ -696,7 +696,7 @@ async function validateNativeFiles(root, manifest) {
     `${prefix}Helpers/multivibe-runtime-benchmark`,
     `${prefix}MacOS/multivibe-host`,
     `${prefix}MacOS/MultiVibe Host`,
-  ] : ["bin/node", "runtime/ollama/bin/ollama", "bin/multivibe-provider-agent", "bin/multivibe-runtime-benchmark", "bin/multivibe-host"];
+  ] : ["bin/node", "runtime/ollama/bin/ollama", "bin/multivibe-provider-agent", "bin/multivibe-runtime-benchmark", "bin/multivibe-host", "bin/multivibe-host-menu"];
   const runtimePrefix = mac ? `${prefix}Resources/ollama-runtime/` : "runtime/ollama/";
   const native = manifest.files.filter((entry) => explicit.includes(entry.path) ||
     (mac ? /\.(?:dylib|node|so)$/u.test(entry.path) : /(?:\.node|\.so(?:\.|$))/u.test(entry.path)) ||
@@ -1170,7 +1170,8 @@ async function validateTree(root, options, archiveRoot) {
     "resources/provider/schemas/provider-runtime-benchmark-store.schema.json",
     "resources/provider/examples/runtime-profile-overrides.json",
     "resources/provider/examples/runtime-benchmark-spec.json",
-    "resources/provider/provider-host-dependencies.json", "verify-provider-host.mjs");
+    "resources/provider/provider-host-dependencies.json", "resources/provider/multivibe-host.png", "bin/multivibe-host-menu",
+    "verify-provider-host.mjs");
   if (required.some((file) => !seen.has(file))) throw new Error("provider-host archive is missing a required file");
   if (manifest.platform === "darwin") {
     const icon = await readBinaryHeader(path.join(root, macPrefix, "Resources", "MultiVibe.icns"), 8);
@@ -1229,6 +1230,7 @@ async function validateTree(root, options, archiveRoot) {
   const agent = manifest.platform === "darwin" ? path.join(application, "Contents", "Helpers", "multivibe-provider-agent") : path.join(root, "bin", "multivibe-provider-agent");
   const benchmark = manifest.platform === "darwin" ? path.join(application, "Contents", "Helpers", "multivibe-runtime-benchmark") : path.join(root, "bin", "multivibe-runtime-benchmark");
   const updater = manifest.platform === "darwin" ? path.join(application, "Contents", "Helpers", "multivibe-host-updater") : path.join(root, "bin", "multivibe-host-updater");
+  const menu = manifest.platform === "darwin" ? null : path.join(root, "bin", "multivibe-host-menu");
   const applicationDirectory = manifest.platform === "darwin" ? path.join(application, "Contents", "Resources", "app") : path.join(root, "app");
   const node = manifest.platform === "darwin" ? path.join(application, "Contents", "Frameworks", "node") : path.join(root, "bin", "node");
   let profile = null;
@@ -1244,7 +1246,9 @@ async function validateTree(root, options, archiveRoot) {
     const agentVersion = await command(agent, ["version"], { capture: true, captureLimit: 4096 });
     const benchmarkVersion = await command(benchmark, ["version"], { capture: true, captureLimit: 4096 });
     const updaterVersion = await command(updater, ["version"], { capture: true, captureLimit: 4096 });
-    if (hostVersion !== manifest.version || agentVersion !== manifest.version || benchmarkVersion !== manifest.version || updaterVersion !== manifest.version) {
+    const menuVersion = menu ? await command(menu, ["version"], { capture: true, captureLimit: 4096 }) : null;
+    if (hostVersion !== manifest.version || agentVersion !== manifest.version || benchmarkVersion !== manifest.version ||
+      updaterVersion !== manifest.version || (menu && menuVersion !== manifest.version)) {
       throw new Error("provider-host binary versions do not match the manifest");
     }
     await command(node, ["--eval", betterSQLiteSmokeTest], { cwd: applicationDirectory });

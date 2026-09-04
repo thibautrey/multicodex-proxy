@@ -69,6 +69,8 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
+      - name: Install GTK build dependencies
+        run: sudo apt-get update && sudo apt-get install --no-install-recommends -y libgtk-3-dev pkg-config
       - name: Install locked build dependencies
         run: |
           npm ci --no-audit --no-fund
@@ -78,6 +80,7 @@ jobs:
           go -C provider-agent test -race ./...
           go -C host-application test -race ./...
           go -C host-updater test -race ./...
+          go -C host-menu test -race ./...
       - name: Test provider archive and container hardening
         run: node --test scripts/package-provider-host.test.mjs scripts/provider-host-container.test.mjs scripts/provider-host-native-dependencies.test.mjs scripts/provider-host-update-feed.test.mjs scripts/provider-host-update-packaging.test.mjs scripts/runtime-benchmark-evidence.test.mjs scripts/verify-provider-host-archive-fixtures.test.mjs
       - name: Install the pinned Go vulnerability scanner
@@ -90,6 +93,9 @@ jobs:
         run: govulncheck ./...
       - name: Scan the Host updater for reachable Go vulnerabilities
         working-directory: host-updater
+        run: govulncheck ./...
+      - name: Scan the Linux Host menu for reachable Go vulnerabilities
+        working-directory: host-menu
         run: govulncheck ./...
       - name: Build the autonomous Linux archive
         run: >-

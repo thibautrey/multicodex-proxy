@@ -97,6 +97,9 @@ expected version. A failure restores the previous application and LaunchAgents.
 
 ## Linux amd64 with NVIDIA
 
+The native status menu requires a Linux desktop session with the GTK 3 runtime
+installed. The Host itself remains usable without a graphical session.
+
 From the extracted archive, run:
 
 ```sh
@@ -105,9 +108,14 @@ From the extracted archive, run:
 
 The application is installed for the current user in
 `~/.local/lib/multivibe-host`, with a command launcher at
-`~/.local/bin/multivibe-host`. If a working systemd user manager is available,
-the installer enables and starts `multivibe-host.service`. It never attempts to
-install or repair systemd.
+`~/.local/bin/multivibe-host`. The GTK 3 status menu is launched through
+`~/.local/bin/multivibe-host-menu` and registered as a per-user desktop
+autostart entry. The same desktop entry handles `multivibe://` Cloud connection
+links. It uses the same local dashboard endpoint and account/quota aggregation
+as the macOS menu, while GTK supplies the Linux-native rendering.
+If a working systemd user manager is available, the installer enables and
+starts `multivibe-host.service`. It never attempts to install or repair
+systemd.
 
 On private environment and other systems without a systemd user manager, run:
 

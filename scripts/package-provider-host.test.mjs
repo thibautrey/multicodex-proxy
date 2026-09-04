@@ -99,3 +99,11 @@ test("the packaging CLI remains active when invoked through a symlink", async ()
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("Linux archives use the native GTK menu binary and bundled icon", async () => {
+  const source = await readFile(packager, "utf8");
+  assert.match(source, /host-menu/u);
+  assert.match(source, /multivibe-host-menu/u);
+  assert.match(source, /favicon-32x32\.png/u);
+  assert.match(source, /CGO_ENABLED: "1"/u);
+});
