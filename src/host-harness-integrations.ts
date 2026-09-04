@@ -172,6 +172,11 @@ function decodeTomlBasicString(value: string): string | undefined {
   return match[1].replace(/\\(["\\])/g, "$1");
 }
 
+function matchTomlTableHeader(line: string): string | undefined {
+  const match = /^\s*\[((?:"(?:\\.|[^"\\])*"|'[^']*'|[^\[\]])+)\]\s*(?:#.*)?$/.exec(line);
+  return match?.[1].trim();
+}
+
 function parseCodexToml(current: string, expectedBaseUrl: string): CodexTomlInspection {
   let table = "";
   let rootProvider: string | undefined;
@@ -181,9 +186,9 @@ function parseCodexToml(current: string, expectedBaseUrl: string): CodexTomlInsp
   const seen = new Set<string>();
 
   for (const [index, line] of current.split(/\r?\n/).entries()) {
-    const tableMatch = /^\s*\[([^\[\]]+)\]\s*(?:#.*)?$/.exec(line);
+    const tableMatch = matchTomlTableHeader(line);
     if (tableMatch) {
-      table = tableMatch[1].trim();
+      table = tableMatch;
       continue;
     }
     if (/^\s*\[/.test(line) && !/^\s*\[\[/.test(line)) {
@@ -265,9 +270,9 @@ function stripCodexManagedContent(value: string): string {
       skippingProvider = false;
       continue;
     }
-    const tableMatch = /^\s*\[([^\[\]]+)\]\s*(?:#.*)?$/.exec(line);
+    const tableMatch = matchTomlTableHeader(line);
     if (tableMatch) {
-      table = tableMatch[1].trim();
+      table = tableMatch;
       skippingProvider = table === "model_providers.multivibe";
       if (skippingProvider) continue;
     }

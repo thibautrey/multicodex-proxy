@@ -227,6 +227,37 @@ test("Codex repair reconciles MultiVibe drift without removing unrelated changes
   assert.match(await fs.readFile(configPath, "utf8"), /\[plugins\.\"sites@openai-bundled\"\]/);
 });
 
+test("Codex accepts brackets inside quoted TOML table keys", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-codex-quoted-header-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const home = path.join(root, "home");
+  const bin = path.join(home, "bin");
+  await fs.mkdir(path.join(home, ".codex"), { recursive: true });
+  await fs.mkdir(bin, { recursive: true });
+  await fs.writeFile(path.join(bin, "codex"), "binary", { mode: 0o755 });
+  const configPath = path.join(home, ".codex", "config.toml");
+  await fs.writeFile(configPath, "model = \"gpt-5.6-luna\"\n");
+  const manager = new HostHarnessIntegrationManager({
+    homeDirectory: home,
+    statePath: path.join(home, ".multivibe", "harnesses.json"),
+    baseUrl: "http://127.0.0.1:1455",
+    definitions: HOST_HARNESS_DEFINITIONS.filter((entry) => entry.id === "openai-codex"),
+    executableDirectories: [bin],
+  });
+  const credential = { apiKeyId: "key-quoted-header", apiKey: "mv_quoted_header", application: "harness-openai-codex" };
+  await manager.install("openai-codex", credential);
+  await fs.appendFile(configPath, '\n[hooks.state."browser@openai-bundled:plugin.json#hooks[0]:stop:0:0"]\nenabled = true\n');
+
+  const drifted = await manager.get("openai-codex");
+  assert.equal(drifted.drifted, true);
+  assert.equal(drifted.repairable, true);
+
+  const repaired = await manager.repair("openai-codex", credential);
+  assert.equal(repaired.configured, true);
+  assert.equal(repaired.drifted, false);
+  assert.match(await fs.readFile(configPath, "utf8"), /hooks\[0\]:stop:0:0/);
+});
+
 test("Codex reports profile overrides without hiding a correct default provider", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "multivibe-codex-profile-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
