@@ -8,7 +8,11 @@ import {
   withFallbackAssistantContent,
 } from "./sanitizers.js";
 import { sanitizeOutputText, shouldExposeFunctionCallName } from "./helpers.js";
-import { convertChatCompletionToResponseObjectFromNative } from "./payload-inspection.js";
+import {
+  convertChatCompletionToResponseObjectFromJsonBytes,
+  convertChatCompletionToResponseObjectFromNative,
+  type RawChatCompletionResponseConversion,
+} from "./payload-inspection.js";
 
 import { randomUUID } from "node:crypto";
 
@@ -19,7 +23,7 @@ const NATIVE_PROTOCOL_CONVERSION_ENABLED_VALUES = new Set([
   "yes",
 ]);
 
-function nativeProtocolConversionEnabled(): boolean {
+export function nativeProtocolConversionEnabled(): boolean {
   const configured = process.env.MULTIVIBE_PROXY_CORE_PROTOCOL_CONVERSION
     ?.trim()
     .toLowerCase();
@@ -239,6 +243,24 @@ export function chatCompletionObjectToResponseObject(
     output: responseOutputFromChatMessage(choice?.message ?? {}),
     usage: usageChatToResponses(normalized?.usage),
   };
+}
+
+/**
+ * Opt-in raw-byte bridge used by the proxy only while the Rust candidate is
+ * being benchmarked. The native boundary receives the upstream bytes before
+ * the reference JSON.parse path is attempted.
+ */
+export function chatCompletionJsonBytesToResponseObject(
+  jsonBytes: Uint8Array,
+  fallbackModel = "unknown",
+): RawChatCompletionResponseConversion | undefined {
+  if (!nativeProtocolConversionEnabled()) return undefined;
+  return convertChatCompletionToResponseObjectFromJsonBytes(
+    jsonBytes,
+    fallbackModel,
+    `resp_${randomUUID().replace(/-/g, "").slice(0, 24)}`,
+    Math.floor(Date.now() / 1000),
+  );
 }
 
 function mergeToolCallDelta(toolCalls: any[], deltaToolCall: any) {

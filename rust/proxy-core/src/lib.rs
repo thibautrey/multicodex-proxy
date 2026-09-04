@@ -4,6 +4,7 @@ use napi::{Error, Status, bindgen_prelude::Buffer};
 use napi_derive::napi;
 
 const FAST_SSE_EVENT_PREFIXES: &[&str] = &["response.reasoning", "response.refusal"];
+const EMPTY_ASSISTANT_FALLBACK_TEXT: &str = "[upstream returned no assistant output; please retry]";
 
 fn is_fast_sse_event_type(event_type: &str) -> bool {
     matches!(
@@ -210,6 +211,309 @@ fn content_text(value: Option<&Value>) -> String {
     }
 }
 
+fn is_ascii_word(value: u8) -> bool {
+    value.is_ascii_alphanumeric() || value == b'_'
+}
+
+fn has_word_boundary_before(value: &[u8], index: usize) -> bool {
+    index == 0 || !is_ascii_word(value[index - 1])
+}
+
+fn has_word_boundary_after(value: &[u8], index: usize) -> bool {
+    index >= value.len() || !is_ascii_word(value[index])
+}
+
+fn contains_word_phrase(text: &str, phrase: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    let phrase = phrase.to_ascii_lowercase();
+    let mut search_from = 0;
+
+    while let Some(relative) = lower[search_from..].find(&phrase) {
+        let start = search_from + relative;
+        let end = start + phrase.len();
+        if has_word_boundary_before(lower.as_bytes(), start)
+            && has_word_boundary_after(lower.as_bytes(), end)
+        {
+            return true;
+        }
+        search_from = start + 1;
+    }
+
+    false
+}
+
+fn starts_with_word_prefix(text: &str, prefix: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    let prefix = prefix.to_ascii_lowercase();
+    lower.starts_with(&prefix) && has_word_boundary_after(lower.as_bytes(), prefix.len())
+}
+
+fn contains_assistant_to_functions(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    let bytes = lower.as_bytes();
+    let marker = "assistant";
+    let target = "to=functions.";
+    let mut search_from = 0;
+
+    while let Some(relative) = lower[search_from..].find(marker) {
+        let start = search_from + relative;
+        let after_assistant = start + marker.len();
+        if has_word_boundary_before(bytes, start) {
+            let whitespace_start = after_assistant;
+            let mut target_start = whitespace_start;
+            while target_start < bytes.len() && bytes[target_start].is_ascii_whitespace() {
+                target_start += 1;
+            }
+            if target_start > whitespace_start && lower[target_start..].starts_with(target) {
+                return true;
+            }
+        }
+        search_from = start + 1;
+    }
+
+    false
+}
+
+fn contains_named_protocol_tool(text: &str, prefix: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    let bytes = lower.as_bytes();
+    let mut search_from = 0;
+
+    while let Some(relative) = lower[search_from..].find(prefix) {
+        let start = search_from + relative;
+        if has_word_boundary_before(bytes, start) {
+            let name_start = start + prefix.len();
+            let mut name_end = name_start;
+            while name_end < bytes.len()
+                && (bytes[name_end].is_ascii_lowercase()
+                    || bytes[name_end].is_ascii_digit()
+                    || bytes[name_end] == b'_')
+            {
+                name_end += 1;
+            }
+            if name_end > name_start && has_word_boundary_after(bytes, name_end) {
+                return true;
+            }
+        }
+        search_from = start + 1;
+    }
+
+    false
+}
+
+fn looks_like_internal_tool_protocol_text(text: &str) -> bool {
+    contains_assistant_to_functions(text)
+        || contains_named_protocol_tool(text, "to=functions.")
+        || contains_named_protocol_tool(text, "functions.")
+}
+
+fn looks_like_internal_planner_text(text: &str) -> bool {
+    if text.is_empty() {
+        return false;
+    }
+
+    let trimmed = text.trim_start();
+    let lower = text.to_ascii_lowercase();
+    let trimmed_lower = trimmed.to_ascii_lowercase();
+
+    if contains_word_phrase(text, "the user earlier asked:")
+        || trimmed_lower.starts_with("now we need to reply final message")
+        || [
+            "need to",
+            "now run",
+            "let's run",
+            "use tool",
+            "use functions",
+            "input to tool",
+            "command:",
+            "we'll run",
+        ]
+        .iter()
+        .any(|prefix| starts_with_word_prefix(trimmed, prefix))
+        || trimmed_lower.starts_with("[use functions tool")
+    {
+        return true;
+    }
+
+    [
+        "need to",
+        "now run command",
+        "let's run",
+        "use functions",
+        "use tool",
+        "input to tool",
+        "use functions.",
+        "command:",
+    ]
+    .iter()
+    .filter(|marker| {
+        if **marker == "use functions." {
+            contains_named_protocol_tool(&lower, "functions.")
+                && contains_word_phrase(text, "use functions")
+        } else {
+            contains_word_phrase(text, marker)
+        }
+    })
+    .take(2)
+    .count()
+        >= 2
+}
+
+fn sanitize_output_text(text: &str) -> String {
+    if looks_like_internal_tool_protocol_text(text) || looks_like_internal_planner_text(text) {
+        String::new()
+    } else {
+        text.to_owned()
+    }
+}
+
+/// Keep the raw-byte rollout conservative around content whose exact
+/// sanitization or nested JSON-string ordering is observable by callers. The
+/// reference JavaScript path remains responsible for those less common
+/// shapes; ordinary text and string-valued tool arguments stay on the native
+/// candidate path.
+fn raw_projection_is_safe(value: &Value) -> bool {
+    let Some(choices) = value.get("choices").and_then(Value::as_array) else {
+        return true;
+    };
+
+    for choice in choices {
+        let Some(message) = choice.get("message").and_then(Value::as_object) else {
+            continue;
+        };
+
+        let content = message.get("content");
+        let mut text_values = Vec::new();
+        match content {
+            Some(Value::String(text)) => text_values.push(text.as_str()),
+            Some(Value::Array(parts)) => {
+                for part in parts {
+                    match part {
+                        Value::String(text) => text_values.push(text.as_str()),
+                        Value::Object(object) => {
+                            if let Some(text) = object.get("text").and_then(Value::as_str) {
+                                text_values.push(text);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+        if text_values.iter().any(|text| {
+            let lower = text.to_ascii_lowercase();
+            [
+                "<think>",
+                "</think>",
+                "functions.",
+                "to=functions.",
+                "need to",
+                "now run",
+                "let's run",
+                "use tool",
+                "use functions",
+                "input to tool",
+                "command:",
+                "the user earlier asked:",
+                "now we need to reply final message",
+                "need summary:",
+                "list commands run:",
+                "need final instructions:",
+            ]
+            .iter()
+            .any(|marker| lower.contains(marker))
+        }) {
+            return false;
+        }
+
+        if let Some(tool_calls) = message.get("tool_calls").and_then(Value::as_array) {
+            for tool_call in tool_calls {
+                if !is_valid_chat_tool_call(tool_call) {
+                    continue;
+                }
+                let arguments = tool_call
+                    .get("function")
+                    .and_then(|function| function.get("arguments"));
+                if !arguments.is_some_and(Value::is_string) {
+                    return false;
+                }
+                if tool_call.get("id").is_none() && tool_call.get("call_id").is_some() {
+                    return false;
+                }
+            }
+        }
+    }
+
+    true
+}
+
+fn chat_choice_has_assistant_output(choice: Option<&Value>) -> bool {
+    let Some(choice) = choice else {
+        return false;
+    };
+    let content = choice
+        .get("message")
+        .and_then(|message| message.get("content"));
+    let content_text = content_text(content);
+    let has_text = !content_text.trim().is_empty();
+    let has_tool_calls = choice
+        .get("message")
+        .and_then(|message| message.get("tool_calls"))
+        .and_then(Value::as_array)
+        .is_some_and(|tool_calls| tool_calls.iter().any(is_valid_chat_tool_call));
+    has_text || has_tool_calls
+}
+
+fn chat_completion_has_assistant_output(chat: &Value) -> bool {
+    if chat.get("object").and_then(Value::as_str) != Some("chat.completion") {
+        return false;
+    }
+    chat.get("choices")
+        .and_then(Value::as_array)
+        .and_then(|choices| choices.first())
+        .is_some_and(|choice| chat_choice_has_assistant_output(Some(choice)))
+}
+
+fn ensure_non_empty_chat_completion(chat: Value) -> Value {
+    let Some(object) = chat.as_object() else {
+        return chat;
+    };
+    if object.get("object").and_then(Value::as_str) != Some("chat.completion") {
+        return chat;
+    }
+    let Some(choices) = object.get("choices").and_then(Value::as_array) else {
+        return chat;
+    };
+    let Some(first) = choices.first() else {
+        return chat;
+    };
+    if chat_choice_has_assistant_output(Some(first)) {
+        return chat;
+    }
+
+    let mut next = object.clone();
+    let mut next_choices = choices.clone();
+    let mut next_choice = first.as_object().cloned().unwrap_or_default();
+    let mut message = first
+        .get("message")
+        .filter(|value| !value.is_null())
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    message.insert(
+        "content".to_owned(),
+        Value::String(EMPTY_ASSISTANT_FALLBACK_TEXT.to_owned()),
+    );
+    if first.get("finish_reason").is_none_or(Value::is_null) {
+        next_choice.insert("finish_reason".to_owned(), json!("stop"));
+    }
+    next_choice.insert("message".to_owned(), Value::Object(message));
+    next_choices[0] = Value::Object(next_choice);
+    next.insert("choices".to_owned(), Value::Array(next_choices));
+    Value::Object(next)
+}
+
 /// Remove paired, case-insensitive `<think>...</think>` sections while
 /// preserving unmatched markers. This mirrors the stream bridge's existing
 /// JavaScript behavior without bringing a regex engine into the native core.
@@ -280,9 +584,8 @@ fn response_usage_from_chat_usage(value: Option<&Value>) -> Option<Value> {
 
 fn response_output_from_chat_message(message: &Value) -> Vec<Value> {
     let raw_content = message.get("content");
-    let text = strip_think_blocks(&content_text(raw_content))
-        .trim_start()
-        .to_owned();
+    let stripped = strip_think_blocks(&content_text(raw_content));
+    let text = sanitize_output_text(&stripped).trim_start().to_owned();
     let mut output = Vec::new();
 
     if !text.is_empty() {
@@ -444,6 +747,60 @@ pub fn convert_chat_completion_to_response_json(
     })
 }
 
+/// Convert a raw upstream JSON body when it is a Chat Completions object.
+///
+/// An empty string means that the body is not a supported raw Chat Completions
+/// response shape. The envelope keeps the assistant-output decision next to
+/// the converted response so the TypeScript router can preserve its retry
+/// behavior without parsing the input a second time.
+fn try_chat_completion_to_response(
+    value: &Value,
+    fallback_model: &str,
+    response_id: &str,
+    created_at: i64,
+) -> Option<Value> {
+    if value.get("object").and_then(Value::as_str) != Some("chat.completion") {
+        return None;
+    }
+    if !raw_projection_is_safe(value) {
+        return None;
+    }
+
+    let has_assistant_output = chat_completion_has_assistant_output(value);
+    let normalized = ensure_non_empty_chat_completion(value.clone());
+    let response =
+        chat_completion_to_response(&normalized, fallback_model, response_id, created_at);
+    Some(json!({
+        "hasAssistantOutput": has_assistant_output,
+        "response": response,
+    }))
+}
+
+#[napi(js_name = "tryConvertChatCompletionToResponseJson")]
+pub fn try_convert_chat_completion_to_response_json(
+    payload: Buffer,
+    fallback_model: String,
+    response_id: String,
+    created_at: i64,
+) -> napi::Result<String> {
+    let value: Value = serde_json::from_slice(payload.as_ref()).map_err(|error| {
+        Error::new(Status::InvalidArg, format!("Invalid JSON payload: {error}"))
+    })?;
+
+    let Some(result) =
+        try_chat_completion_to_response(&value, &fallback_model, &response_id, created_at)
+    else {
+        return Ok(String::new());
+    };
+
+    serde_json::to_string(&result).map_err(|error| {
+        Error::new(
+            Status::GenericFailure,
+            format!("Serialization failed: {error}"),
+        )
+    })
+}
+
 /// Classify a high-frequency SSE frame without parsing its JSON payload.
 ///
 /// An empty string means that the frame is not eligible for the fast path and
@@ -460,8 +817,8 @@ pub fn classify_sse_frame(frame: String) -> napi::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        PayloadContextInspection, chat_completion_to_response, classify_sse_frame_type,
-        inspect_payload_context,
+        EMPTY_ASSISTANT_FALLBACK_TEXT, PayloadContextInspection, chat_completion_to_response,
+        classify_sse_frame_type, inspect_payload_context, try_chat_completion_to_response,
     };
     use serde_json::{Value, json};
 
@@ -618,5 +975,75 @@ mod tests {
             );
             assert_eq!(actual, fixture["expected"], "{}", fixture["name"]);
         }
+    }
+
+    #[test]
+    fn matches_every_shared_raw_protocol_conversion_fixture() {
+        let fixtures: Vec<Value> = serde_json::from_str(include_str!(
+            "../testdata/raw-protocol-conversion-cases.json"
+        ))
+        .expect("shared protocol conversion fixtures must be valid JSON");
+
+        for fixture in fixtures {
+            let raw = serde_json::to_vec(&fixture["chat"])
+                .expect("fixture Chat Completions body must serialize");
+            let parsed: Value = serde_json::from_slice(&raw).expect("raw fixture body must parse");
+            let actual = try_chat_completion_to_response(
+                &parsed,
+                fixture["fallbackModel"].as_str().expect("fallback model"),
+                fixture["responseId"].as_str().expect("response id"),
+                fixture["createdAt"].as_i64().expect("created at"),
+            )
+            .expect("fixture must be recognized as Chat Completions");
+            assert_eq!(
+                actual["response"], fixture["expected"],
+                "{}",
+                fixture["name"]
+            );
+            assert_eq!(actual["hasAssistantOutput"], true, "{}", fixture["name"]);
+        }
+    }
+
+    #[test]
+    fn raw_projection_preserves_retry_signal_and_falls_back_for_unsafe_text() {
+        let empty_chat = json!({
+            "object": "chat.completion",
+            "choices": [{"message": {"content": ""}}]
+        });
+
+        let actual = try_chat_completion_to_response(
+            &empty_chat,
+            "fallback-model",
+            "resp_raw_sanitized",
+            1710000101,
+        )
+        .expect("Chat Completions body must be recognized");
+        assert_eq!(actual["hasAssistantOutput"], false);
+        assert_eq!(
+            actual["response"]["output"][0]["content"][0]["text"],
+            EMPTY_ASSISTANT_FALLBACK_TEXT
+        );
+        let unsafe_chat = json!({
+            "object": "chat.completion",
+            "choices": [{"message": {"content": "Need to use tool now run command"}}]
+        });
+        assert!(
+            try_chat_completion_to_response(
+                &unsafe_chat,
+                "fallback-model",
+                "resp_unsafe",
+                1710000101,
+            )
+            .is_none()
+        );
+        assert!(
+            try_chat_completion_to_response(
+                &json!({"object": "response"}),
+                "fallback-model",
+                "resp_not_chat",
+                1710000101,
+            )
+            .is_none()
+        );
     }
 }

@@ -25,6 +25,12 @@ type NativePayloadInspectionModule = {
     responseId: string,
     createdAt: number,
   ) => unknown;
+  tryConvertChatCompletionToResponseJson?: (
+    payload: Buffer,
+    fallbackModel: string,
+    responseId: string,
+    createdAt: number,
+  ) => unknown;
 };
 
 function isNativePayloadInspectionModule(
@@ -86,6 +92,9 @@ function loadNativePayloadInspection(): NativePayloadInspectionModule | undefine
 const nativePayloadInspection = loadNativePayloadInspection();
 
 export const nativePayloadInspectionAvailable = Boolean(nativePayloadInspection);
+export const nativeRawProtocolConversionAvailable =
+  typeof nativePayloadInspection?.tryConvertChatCompletionToResponseJson ===
+  "function";
 
 export function classifySseFrameTypeFromNative(
   frame: string,
@@ -212,6 +221,81 @@ export function convertChatCompletionToResponseObjectFromNative(
       }
     }
     return response;
+  } catch {
+    return undefined;
+  }
+}
+
+export type RawChatCompletionResponseConversion = {
+  response: Record<string, unknown>;
+  hasAssistantOutput: boolean;
+};
+
+/**
+ * Convert an upstream Chat Completions JSON body before JavaScript parses it.
+ * The native function returns an envelope so the router can keep the existing
+ * empty-output retry decision without materializing the input object first.
+ */
+export function convertChatCompletionToResponseObjectFromJsonBytes(
+  jsonBytes: Uint8Array,
+  fallbackModel: string,
+  responseId: string,
+  createdAt: number,
+): RawChatCompletionResponseConversion | undefined {
+  const converter = nativePayloadInspection?.tryConvertChatCompletionToResponseJson;
+  if (typeof converter !== "function") return undefined;
+
+  try {
+    const buffer = Buffer.isBuffer(jsonBytes)
+      ? jsonBytes
+      : Buffer.from(
+          jsonBytes.buffer as ArrayBuffer,
+          jsonBytes.byteOffset,
+          jsonBytes.byteLength,
+        );
+    const value = converter(buffer, fallbackModel, responseId, createdAt);
+    if (typeof value !== "string" || !value.trim()) return undefined;
+
+    const envelope: unknown = JSON.parse(value);
+    if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) {
+      return undefined;
+    }
+    const candidate = envelope as Record<string, unknown>;
+    if (typeof candidate.hasAssistantOutput !== "boolean") return undefined;
+    const rawResponse = candidate.response;
+    if (
+      !rawResponse ||
+      typeof rawResponse !== "object" ||
+      Array.isArray(rawResponse) ||
+      (rawResponse as { object?: unknown }).object !== "response"
+    ) {
+      return undefined;
+    }
+
+    const response = rawResponse as Record<string, unknown>;
+    if (!Object.prototype.hasOwnProperty.call(response, "usage")) {
+      response.usage = undefined;
+    }
+    if (Array.isArray(response.output)) {
+      for (const item of response.output) {
+        if (!item || typeof item !== "object") continue;
+        const outputItem = item as Record<string, unknown>;
+        if (outputItem.type !== "function_call") continue;
+        const existingId = outputItem.id ?? outputItem.call_id;
+        if (existingId === null || typeof existingId === "undefined") {
+          const generatedId = `call_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
+          outputItem.id = generatedId;
+          outputItem.call_id = generatedId;
+        } else if (typeof outputItem.call_id === "undefined") {
+          outputItem.call_id = existingId;
+        }
+      }
+    }
+
+    return {
+      response,
+      hasAssistantOutput: candidate.hasAssistantOutput,
+    };
   } catch {
     return undefined;
   }

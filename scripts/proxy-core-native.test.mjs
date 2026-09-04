@@ -29,6 +29,12 @@ const protocolFixtures = JSON.parse(
     "utf8",
   ),
 );
+const rawProtocolFixtures = JSON.parse(
+  fs.readFileSync(
+    path.join(repositoryRoot, "rust", "proxy-core", "testdata", "raw-protocol-conversion-cases.json"),
+    "utf8",
+  ),
+);
 
 test("exports the raw-JSON payload inspection function", () => {
   assert.equal(typeof native.inspectPayloadContextJson, "function");
@@ -40,6 +46,7 @@ test("exports the conservative SSE fast-path classifier", () => {
 
 test("exports the Chat Completions to Responses protocol projection", () => {
   assert.equal(typeof native.convertChatCompletionToResponseJson, "function");
+  assert.equal(typeof native.tryConvertChatCompletionToResponseJson, "function");
 });
 
 test("matches every shared TypeScript and Rust migration fixture", () => {
@@ -81,4 +88,46 @@ test("matches every shared protocol conversion fixture", () => {
     );
     assert.deepEqual(converted, fixture.expected, fixture.name);
   }
+});
+
+test("matches every shared raw-JSON protocol conversion fixture", () => {
+  for (const fixture of rawProtocolFixtures) {
+    const converted = JSON.parse(
+      native.tryConvertChatCompletionToResponseJson(
+        Buffer.from(` \n${JSON.stringify(fixture.chat)}\n `),
+        fixture.fallbackModel,
+        fixture.responseId,
+        fixture.createdAt,
+      ),
+    );
+    assert.deepEqual(converted, {
+      hasAssistantOutput: true,
+      response: fixture.expected,
+    }, fixture.name);
+  }
+});
+
+test("falls back for raw shapes whose nested JSON ordering is not preserved", () => {
+  const fixture = protocolFixtures[1];
+  assert.equal(
+    native.tryConvertChatCompletionToResponseJson(
+      Buffer.from(JSON.stringify(fixture.chat)),
+      fixture.fallbackModel,
+      fixture.responseId,
+      fixture.createdAt,
+    ),
+    "",
+  );
+});
+
+test("returns an empty raw-JSON projection for non-Chat bodies", () => {
+  assert.equal(
+    native.tryConvertChatCompletionToResponseJson(
+      Buffer.from('{"object":"response","output":[]}'),
+      "fallback-model",
+      "resp_not_chat",
+      1710000100,
+    ),
+    "",
+  );
 });

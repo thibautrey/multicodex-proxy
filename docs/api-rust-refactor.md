@@ -168,6 +168,15 @@ itération doit déplacer la frontière avant le parse JSON pour supprimer le
 double marshalling. Les détails sont dans
 [`protocol-conversion-benchmark.json`](protocol-conversion-benchmark.json).
 
+Cette frontière a ensuite été évaluée sur les octets bruts de la réponse
+upstream, avant `JSON.parse`. Le candidat Rust/N-API est intégré derrière le
+même flag, avec repli automatique vers TypeScript pour les textes sensibles au
+sanitizer, les arguments d'outils objets et les corps non-Chat. Il reste plus
+lent sur 57 491 octets (médiane 0,382 ms contre 0,209 ms) et sur 229 547 octets
+(1,455 ms contre 0,806 ms) ; il n'est donc pas activé par défaut. Les détails
+sont dans
+[`raw-protocol-conversion-benchmark.json`](raw-protocol-conversion-benchmark.json).
+
 ### Phase 2 — edge Rust
 
 Si les mesures le justifient, faire terminer à Rust le body HTTP et le flux SSE

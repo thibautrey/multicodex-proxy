@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-04",
+  "benchmark": "raw_json_chat_completion_to_response_projection",
+  "cases": [
+    {
+      "samples": 1000,
+      "segments": 256,
+      "payloadBytes": 57491,
+      "baseline": {
+        "implementation": "JSON.parse_plus_typescript_conversion",
+        "medianMs": 0.2086670000000197,
+        "p95Ms": 0.28383300000001555
+      },
+      "candidate": {
+        "implementation": "rust_napi_raw_bytes_conversion",
+        "medianMs": 0.38162499999998545,
+        "p95Ms": 0.4458750000000009
+      }
+    },
+    {
+      "samples": 500,
+      "segments": 1024,
+      "payloadBytes": 229547,
+      "baseline": {
+        "implementation": "JSON.parse_plus_typescript_conversion",
+        "medianMs": 0.8058750000000146,
+        "p95Ms": 0.9706249999999272
+      },
+      "candidate": {
+        "implementation": "rust_napi_raw_bytes_conversion",
+        "medianMs": 1.455167000000074,
+        "p95Ms": 1.6202090000000453
+      }
+    }
+  ],
+  "decision": "not_enabled_by_default",
+  "reason": "The raw Rust parser and N-API result marshalling remain slower than JSON.parse plus the TypeScript projection on this host.",
+  "limitations": [
+    "Synthetic responses with text segments and string-valued function arguments; no network, provider, or model latency.",
+    "The candidate still serializes a response envelope and parses that envelope in JavaScript so the existing safe fallback contract remains intact.",
+    "The raw candidate is deliberately conservative and falls back for sanitizer-sensitive text and nested object tool arguments.",
+    "Absolute timings depend on host load; these measurements are rollout guards, not end-to-end or production performance claims."
+  ]
+}

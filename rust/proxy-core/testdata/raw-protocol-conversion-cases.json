@@ -1,0 +1,87 @@
+[
+  {
+    "name": "raw text response preserves the JSON contract",
+    "chat": {
+      "object": "chat.completion",
+      "created": 1710000200,
+      "model": "gpt-raw-test",
+      "choices": [
+        {
+          "index": 0,
+          "message": {"role": "assistant", "content": "Hello from raw bytes"},
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14}
+    },
+    "fallbackModel": "fallback-model",
+    "responseId": "resp_raw_text",
+    "createdAt": 1710000299,
+    "expected": {
+      "id": "resp_raw_text",
+      "object": "response",
+      "created_at": 1710000200,
+      "model": "gpt-raw-test",
+      "status": "completed",
+      "output": [
+        {
+          "type": "message",
+          "role": "assistant",
+          "content": [{"type": "output_text", "text": "Hello from raw bytes"}]
+        }
+      ],
+      "usage": {"input_tokens": 10, "output_tokens": 4, "total_tokens": 14}
+    }
+  },
+  {
+    "name": "raw string tool arguments remain stable",
+    "chat": {
+      "object": "chat.completion",
+      "created": 1710000201,
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "Calling the weather tool",
+            "tool_calls": [
+              {
+                "id": "call-weather-raw",
+                "type": "function",
+                "function": {
+                  "name": "weather",
+                  "arguments": "{\"city\":\"Paris\",\"unit\":\"metric\"}"
+                }
+              }
+            ]
+          },
+          "finish_reason": "tool_calls"
+        }
+      ]
+    },
+    "fallbackModel": "fallback-model",
+    "responseId": "resp_raw_tool",
+    "createdAt": 1710000299,
+    "expected": {
+      "id": "resp_raw_tool",
+      "object": "response",
+      "created_at": 1710000201,
+      "model": "fallback-model",
+      "status": "completed",
+      "output": [
+        {
+          "type": "message",
+          "role": "assistant",
+          "content": [{"type": "output_text", "text": "Calling the weather tool"}]
+        },
+        {
+          "id": "call-weather-raw",
+          "call_id": "call-weather-raw",
+          "type": "function_call",
+          "name": "weather",
+          "arguments": "{\"city\":\"Paris\",\"unit\":\"metric\"}"
+        }
+      ]
+    }
+  }
+]
