@@ -1,6 +1,6 @@
 import type { Account, StoreSettings, TraceStats } from "../../types";
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { fmt, maskEmail, maskId } from "../../lib/ui";
+import { fmt, maskEmail, maskId, usd } from "../../lib/ui";
 import { ApiError, api } from "../../lib/api";
 import {
   observeFloatingViewportChanges,
@@ -17,6 +17,7 @@ type Props = {
   traceStats: TraceStats;
   accounts: Account[];
   localWorker: LocalWorkerProvider | null;
+  multivibeCloud: MultivibeCloudProvider;
   usageCacheTtlMs: number;
   settings: StoreSettings;
   sanitized: boolean;
@@ -30,6 +31,7 @@ type Props = {
   createAccount: (body: any) => Promise<void>;
   importGrokAuth: () => Promise<any>;
   patchSettings: (body: Partial<StoreSettings>) => Promise<void>;
+  onConnectCloud: () => Promise<void>;
   startOAuth: (
     email: string,
     accountId?: string,
@@ -71,6 +73,13 @@ export type LocalWorkerProvider = {
     disclaimer: string;
   };
   connect_url: string;
+};
+
+export type MultivibeCloudProvider = {
+  status: "disconnected" | "connected" | "unavailable";
+  balanceUsd?: string;
+  subscription?: string;
+  topupUrl: string;
 };
 
 type AccountProvider =
@@ -431,6 +440,7 @@ export function AccountsTab(props: Props) {
     traceStats,
     accounts,
     localWorker,
+    multivibeCloud,
     usageCacheTtlMs,
     settings,
     sanitized,
@@ -444,6 +454,7 @@ export function AccountsTab(props: Props) {
     createAccount,
     importGrokAuth,
     patchSettings,
+    onConnectCloud,
     startOAuth,
     pollDeviceOAuth,
     completeOAuth,
@@ -454,6 +465,20 @@ export function AccountsTab(props: Props) {
     onSkipOnboarding,
   } = props;
   const [showAddAccount, setShowAddAccount] = useState(false);
+  const [cloudBusy, setCloudBusy] = useState(false);
+  const [cloudError, setCloudError] = useState("");
+
+  const connectCloud = async () => {
+    setCloudBusy(true);
+    setCloudError("");
+    try {
+      await onConnectCloud();
+    } catch (error: any) {
+      setCloudError(error?.message ?? "Could not connect to MultiVibe Cloud.");
+    } finally {
+      setCloudBusy(false);
+    }
+  };
   const [provider, setProvider] = useState<AccountProvider>("openai");
   const [manualEmail, setManualEmail] = useState("");
   const [manualAccessToken, setManualAccessToken] = useState("");
@@ -1586,6 +1611,38 @@ export function AccountsTab(props: Props) {
             {hasAnyProvider && <button className="btn" onClick={() => setShowAddAccount(true)}>Add provider</button>}
           </div>
         </div>
+        <article className="local-worker-provider multivibe-cloud-provider" aria-labelledby="multivibe-cloud-provider-title">
+          <div className="local-worker-provider-identity">
+            <img
+              className="local-worker-provider-icon"
+              src="/assets/brand/multivibe-app-icon.svg"
+              alt=""
+            />
+            <div>
+              <h3 id="multivibe-cloud-provider-title">MultiVibe Cloud</h3>
+              {multivibeCloud.status === "connected" ? (
+                <p className="muted">
+                  {usd(Number(multivibeCloud.balanceUsd ?? 0))}
+                  {multivibeCloud.subscription ? ` · ${multivibeCloud.subscription}` : ""}
+                </p>
+              ) : multivibeCloud.status === "unavailable" ? (
+                <p className="muted">Unavailable</p>
+              ) : null}
+              {cloudError && <p className="account-inline-error">{cloudError}</p>}
+            </div>
+          </div>
+          <div className="local-worker-provider-actions">
+            {multivibeCloud.status === "connected" ? (
+              <a className="btn" href={multivibeCloud.topupUrl} target="_blank" rel="noreferrer">
+                Top up
+              </a>
+            ) : (
+              <button className="btn" onClick={() => void connectCloud()} disabled={cloudBusy || multivibeCloud.status === "unavailable"}>
+                {cloudBusy ? "Connecting…" : "Connect"}
+              </button>
+            )}
+          </div>
+        </article>
         {localWorker && (
           <article className="local-worker-provider" aria-labelledby="local-worker-provider-title">
             <div className="local-worker-provider-identity">

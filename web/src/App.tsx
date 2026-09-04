@@ -26,7 +26,7 @@ import type {
   TraceRangePreset,
   TraceStats,
 } from "./types";
-import { AccountsTab, type LocalWorkerProvider } from "./components/tabs/AccountsTab";
+import { AccountsTab, type LocalWorkerProvider, type MultivibeCloudProvider } from "./components/tabs/AccountsTab";
 import { DocsTab } from "./components/tabs/DocsTab";
 import { OverviewTab } from "./components/tabs/OverviewTab";
 import { TracingTab } from "./components/tabs/TracingTab";
@@ -106,6 +106,10 @@ export default function App() {
   const [locationSearch, setLocationSearch] = useState(window.location.search);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [localWorker, setLocalWorker] = useState<LocalWorkerProvider | null>(null);
+  const [multivibeCloud, setMultivibeCloud] = useState<MultivibeCloudProvider>({
+    status: "unavailable",
+    topupUrl: "https://app.multivibe.cloud/billing",
+  });
   const [hostApplication, setHostApplication] = useState(false);
   const [baseLoaded, setBaseLoaded] = useState(false);
   const [hostOnboardingComplete, setHostOnboardingComplete] = useState(() =>
@@ -312,9 +316,10 @@ export default function App() {
   };
 
   const loadBase = async () => {
-    const [acc, localWorkerRes, cfg, mdl, aliasRes, settingsRes, apiKeysRes, policiesRes, modulesRes] = await Promise.all([
+    const [acc, localWorkerRes, cloudRes, cfg, mdl, aliasRes, settingsRes, apiKeysRes, policiesRes, modulesRes] = await Promise.all([
       api("/admin/accounts"),
       api("/admin/provider-agent/local-worker").catch(() => ({ localWorker: null })),
+      api("/admin/cloud").catch(() => ({ status: "unavailable", topupUrl: "https://app.multivibe.cloud/billing" })),
       api("/admin/config"),
       fetch("/v1/models").then((r) => r.json()),
       api("/admin/model-aliases"),
@@ -325,6 +330,7 @@ export default function App() {
     ]);
     setAccounts((acc.accounts ?? []) as Account[]);
     setLocalWorker((localWorkerRes.localWorker ?? null) as LocalWorkerProvider | null);
+    setMultivibeCloud(cloudRes as MultivibeCloudProvider);
     setHostApplication(Boolean(cfg.hostApplication));
     if (Number.isFinite(Number(cfg.usageCacheTtlMs)) && Number(cfg.usageCacheTtlMs) > 0) {
       setUsageCacheTtlMs(Number(cfg.usageCacheTtlMs));
@@ -700,6 +706,16 @@ export default function App() {
   const patchSettings = async (body: Partial<StoreSettings>) => {
     await api("/admin/settings", { method: "PATCH", body: JSON.stringify(body) });
     await loadBase();
+  };
+
+  const connectMultivibeCloud = async () => {
+    const result = await api("/admin/cloud/connect", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    const authorizeUrl = String(result?.authorizeUrl ?? "");
+    if (!authorizeUrl) throw new Error("MultiVibe Cloud authorization is unavailable.");
+    window.location.assign(authorizeUrl);
   };
 
   const startOAuth = async (
@@ -1172,6 +1188,7 @@ export default function App() {
             traceStats={filteredTraceStats}
             accounts={accounts}
             localWorker={localWorker}
+            multivibeCloud={multivibeCloud}
             usageCacheTtlMs={usageCacheTtlMs}
             settings={settings}
             sanitized={sanitized}
@@ -1187,6 +1204,7 @@ export default function App() {
             createAccount={createAccount}
             importGrokAuth={importGrokAuth}
             patchSettings={patchSettings}
+            onConnectCloud={connectMultivibeCloud}
             startOAuth={startOAuth}
             pollDeviceOAuth={pollDeviceOAuth}
             completeOAuth={completeOAuth}

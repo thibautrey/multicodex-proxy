@@ -77,6 +77,10 @@ import {
   REALTIME_PROVIDER,
   REALTIME_REQUEST_TIMEOUT_MS,
   REALTIME_WEBRTC_CALL_URL,
+  MULTIVIBE_CLOUD_AUTH_BASE_URL,
+  MULTIVIBE_CLOUD_API_BASE_URL,
+  MULTIVIBE_CLOUD_INFERENCE_BASE_URL,
+  MULTIVIBE_CLOUD_REDIRECT_URI,
 } from "./config.js";
 import { ModuleManager } from "./module-manager.js";
 import { createProviderWorkerEstimateClient } from "./provider-worker-estimate.js";
@@ -104,6 +108,7 @@ import {
   buildHostMenuBarGitHubStarPrompt,
 } from "./host-menu-bar.js";
 import { HostUpdateController } from "./host-update-controller.js";
+import { MultivibeCloudService } from "./multivibe-cloud.js";
 
 const app = express();
 app.use(createBodyParserMiddleware());
@@ -205,6 +210,13 @@ const hostUpdateController = MULTIVIBE_HOST_APPLICATION
   ? new HostUpdateController(MULTIVIBE_HOST_UPDATER_BINARY, providerAgent)
   : undefined;
 const providerWorkerEstimateClient = createProviderWorkerEstimateClient(ANONYMOUS_USAGE_API_BASE_URL);
+const multivibeCloud = new MultivibeCloudService(store, oauthStore, {
+  authBaseUrl: MULTIVIBE_CLOUD_AUTH_BASE_URL,
+  apiBaseUrl: MULTIVIBE_CLOUD_API_BASE_URL,
+  inferenceBaseUrl: MULTIVIBE_CLOUD_INFERENCE_BASE_URL,
+  redirectUri: MULTIVIBE_CLOUD_REDIRECT_URI,
+  topupUrl: `${MULTIVIBE_CLOUD_API_BASE_URL}/billing`,
+});
 await traceManager.seedStatsHistoryIfMissing();
 const anonymousUsageSharing = createAnonymousUsageSharingWorker({
   settingsStore: store,
@@ -246,6 +258,7 @@ const adminRouter = createAdminRouter({
   providerWorkerEstimateClient,
   moduleManager,
   hostUpdateController,
+  multivibeCloud,
   appVersion: process.env.APP_VERSION ?? "unknown",
   storagePaths: {
     accountsPath: STORE_PATH,

@@ -134,6 +134,8 @@ export type Account = {
   location?: ExecutionLocation;
   capacityProfile?: CapacityProfile;
   localRuntime?: LocalRuntimeMetadata;
+  /** Internal account created by the automatic MultiVibe Cloud connection flow. */
+  multivibeCloud?: boolean;
   usage?: UsageSnapshot;
   state?: AccountState;
 };
@@ -220,6 +222,14 @@ export type StoreSettings = {
   imageRequestModelOverride?: string;
   anonymousUsageSharingEnabled?: boolean;
   anonymousUsageSharingEnabledAt?: string;
+  /** Private OAuth credentials for the local MultiVibe Cloud connection. */
+  multivibeCloud?: {
+    accessToken: string;
+    refreshToken?: string;
+    expiresAt?: number;
+    projectId?: string;
+    apiKeyExpiresAt?: number;
+  };
 };
 
 export type StoredProxyApiKey = {

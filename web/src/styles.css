@@ -1623,6 +1623,20 @@ td .muted {
   text-align: center;
 }
 
+.multivibe-cloud-provider {
+  margin-bottom: 14px;
+}
+
+.multivibe-cloud-provider .local-worker-provider-identity {
+  align-items: center;
+}
+
+.account-inline-error {
+  margin: 7px 0 0;
+  color: var(--danger);
+  font-size: 12px;
+}
+
 @media (max-width: 1050px) {
   .local-worker-provider {
     grid-template-columns: 1fr 1fr;

@@ -83,6 +83,14 @@ export const ANONYMOUS_USAGE_STATE_PATH =
   process.env.ANONYMOUS_USAGE_STATE_PATH ?? "/data/anonymous-usage-state.json";
 export const ANONYMOUS_USAGE_API_BASE_URL =
   process.env.ANONYMOUS_USAGE_API_BASE_URL ?? "https://api.multivibe.cloud";
+export const MULTIVIBE_CLOUD_AUTH_BASE_URL =
+  (process.env.MULTIVIBE_CLOUD_AUTH_BASE_URL ?? "https://auth.multivibe.cloud").replace(/\/+$/, "");
+export const MULTIVIBE_CLOUD_API_BASE_URL =
+  (process.env.MULTIVIBE_CLOUD_API_BASE_URL ?? "https://app.multivibe.cloud").replace(/\/+$/, "");
+export const MULTIVIBE_CLOUD_INFERENCE_BASE_URL =
+  (process.env.MULTIVIBE_CLOUD_INFERENCE_BASE_URL ?? "https://api.multivibe.cloud").replace(/\/+$/, "");
+export const MULTIVIBE_CLOUD_REDIRECT_URI =
+  process.env.MULTIVIBE_CLOUD_REDIRECT_URI ?? "http://127.0.0.1:1455/admin/cloud/oauth/callback";
 export const CODEX_PROJECTS_PATH =
   process.env.CODEX_PROJECTS_PATH ?? "/data/codex-projects.json";
 export const JOBS_DB_PATH = process.env.JOBS_DB_PATH ?? "/data/jobs.sqlite";

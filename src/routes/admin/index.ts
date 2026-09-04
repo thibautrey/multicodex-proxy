@@ -88,6 +88,10 @@ import {
   type ProviderWorkerEstimateClient,
 } from "../../provider-worker-estimate.js";
 import type { HostUpdateController, HostUpdateStatus } from "../../host-update-controller.js";
+import type { MultivibeCloudService } from "../../multivibe-cloud.js";
+
+const MULTIVIBE_CLOUD_FLOW_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type StoragePaths = {
   accountsPath: string;
@@ -117,6 +121,7 @@ export type AdminRoutesOptions = {
   providerWorkerEstimateClient?: ProviderWorkerEstimateClient;
   moduleManager?: ModuleManager;
   hostUpdateController?: HostUpdateController;
+  multivibeCloud?: MultivibeCloudService;
   appVersion?: string;
 };
 
@@ -926,7 +931,7 @@ export function createAdminRouter(options: AdminRoutesOptions) {
   });
 
   router.get("/accounts", async (_req, res) =>
-    res.json({ accounts: (await store.listAccounts()).map(redact) }),
+    res.json({ accounts: (await store.listAccounts()).filter((account) => !account.multivibeCloud).map(redact) }),
   );
 
   router.post("/local-runtimes/discover", async (_req, res) => {
@@ -1289,9 +1294,10 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     }
   });
 
-  router.get("/settings", async (_req, res) =>
-    res.json({ ok: true, settings: await store.getSettings() }),
-  );
+  router.get("/settings", async (_req, res) => {
+    const { multivibeCloud: _privateCloud, ...settings } = await store.getSettings();
+    return res.json({ ok: true, settings });
+  });
 
   router.patch("/settings", async (req, res) => {
     const body = req.body ?? {};
@@ -1364,7 +1370,56 @@ export function createAdminRouter(options: AdminRoutesOptions) {
         });
       }
     }
-    res.json({ ok: true, settings });
+    const { multivibeCloud: _privateCloud, ...publicSettings } = settings;
+    res.json({ ok: true, settings: publicSettings });
+  });
+
+  router.get("/cloud", async (_req, res) => {
+    res.setHeader("cache-control", "no-store");
+    if (!options.multivibeCloud) {
+      return res.json({ status: "unavailable", topupUrl: "https://app.multivibe.cloud/billing" });
+    }
+    return res.json(await options.multivibeCloud.getStatus());
+  });
+
+  router.post("/cloud/connect", async (_req, res) => {
+    res.setHeader("cache-control", "no-store");
+    if (!options.multivibeCloud) return res.status(503).json({ error: "MultiVibe Cloud is unavailable" });
+    try {
+      return res.json(await options.multivibeCloud.startConnection());
+    } catch (error: any) {
+      return res.status(503).json({ error: error?.message ?? "MultiVibe Cloud connection failed" });
+    }
+  });
+
+  router.get("/cloud/oauth/callback", async (req, res) => {
+    res.setHeader("cache-control", "no-store");
+    if (!options.multivibeCloud) return res.status(404).send("MultiVibe Cloud is unavailable");
+    const allowedQueryKeys = new Set(["state", "code", "error", "error_description"]);
+    const queryKeys = Object.keys(req.query);
+    const hasUnexpectedQuery = queryKeys.some((key) => !allowedQueryKeys.has(key));
+    const hasDuplicateQuery = ["state", "code", "error", "error_description"].some((key) => Array.isArray(req.query[key]));
+    const state = typeof req.query.state === "string" ? req.query.state : "";
+    const error = typeof req.query.error === "string" ? req.query.error : "";
+    if (hasUnexpectedQuery || hasDuplicateQuery || !MULTIVIBE_CLOUD_FLOW_ID_PATTERN.test(state)) {
+      return res.redirect(303, "/?tab=accounts&cloud=error");
+    }
+    if (error) {
+      await options.multivibeCloud.failConnection(state, "Cloud authorization was cancelled");
+      return res.redirect(303, "/?tab=accounts&cloud=cancelled");
+    }
+    const code = typeof req.query.code === "string" ? req.query.code : "";
+    if (!state || !code) {
+      await options.multivibeCloud.failConnection(state, "Cloud authorization failed");
+      return res.redirect(303, "/?tab=accounts&cloud=error");
+    }
+    try {
+      await options.multivibeCloud.completeConnection(state, code);
+      return res.redirect(303, "/?tab=accounts&cloud=connected");
+    } catch {
+      await options.multivibeCloud.failConnection(state, "Cloud authorization failed");
+      return res.redirect(303, "/?tab=accounts&cloud=error");
+    }
   });
 
   router.get("/model-aliases", async (_req, res) =>
