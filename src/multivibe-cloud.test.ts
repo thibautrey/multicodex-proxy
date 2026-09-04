@@ -82,8 +82,9 @@ test("Cloud connection uses PKCE and provisions a local API-key account", async 
     if (url.endsWith("/oauth/token")) {
       return response({ access_token: "cloud-access", refresh_token: "cloud-refresh", expires_in: 3600 });
     }
-    if (url.endsWith("/client/v1/projects") && init?.method === "GET") return response({ data: [] });
-    if (url.endsWith("/client/v1/projects") && init?.method === "POST") return response({ id: projectId });
+    const parsedUrl = new URL(url);
+    if (parsedUrl.pathname === "/client/v1/projects" && init?.method === "GET") return response({ data: [] });
+    if (parsedUrl.pathname === "/client/v1/projects" && init?.method === "POST") return response({ id: projectId });
     if (url.includes(`/client/v1/projects/${projectId}/api-keys`)) {
       return response({
         secret: "mvk_cloud_secret",
