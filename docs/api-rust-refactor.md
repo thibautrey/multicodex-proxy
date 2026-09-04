@@ -5,10 +5,11 @@ Date : 4 septembre 2026
 ## Conclusion
 
 L'API reste un serveur Node.js/Express monolithique, avec un agent de runtime
-séparé en Go. Une première frontière Rust est maintenant stable : l'inspection
-déterministe du payload peut être exécutée in-process via N-API, sans
-subprocess ni aller-retour HTTP local. Le transport, le routage et les
-transformations restent volontairement en TypeScript.
+séparé en Go. Deux frontières Rust sont maintenant stables : l'inspection
+déterministe du payload et la classification conservatrice des frames SSE
+peuvent être exécutées in-process via N-API, sans subprocess ni aller-retour
+HTTP local. Le transport, le routage et les transformations restent
+volontairement en TypeScript.
 
 Le serveur est fonctionnel et bien couvert : la baseline locale sur `main`
 était de 373 tests Node passants et le build TypeScript de l'API passait. La
@@ -98,7 +99,7 @@ validation des modèles, sérialisation mémoïsée par requête et inspection S
 sélective. Une réécriture Rust qui supprime ces invariants serait une
 régression même si le benchmark CPU était meilleur.
 
-## Première frontière posée par cette itération
+## Frontières Rust posées par cette itération
 
 `src/responses/payload-inspection.ts` contient maintenant l'inspection pure
 utilisée avant le routage :
@@ -123,6 +124,28 @@ chemin d'exécution, mais pas encore un gain de performance : le parse JSON
 reste effectué par Express pour construire `req.body` et devra être déplacé ou
 fusionné dans une tranche ultérieure si les mesures le justifient.
 
+La classification des frames SSE possède maintenant une deuxième frontière
+optionnelle dans `src/responses/stream-diagnostics.ts` :
+
+- Rust reconnaît uniquement les frames mono-`data` dont le type est
+  `response.output_text.delta`, `response.output_text.done`, ou une famille
+  `response.reasoning*` / `response.refusal*` ;
+- le seuil de 512 octets réserve l'appel N-API aux frames assez longues pour
+  amortir le marshalling ; les petites frames utilisent le fast-path TypeScript
+  existant ;
+- les frames ambiguës, invalides, terminales, multi-`data` ou non supportées
+  retombent sur le parseur JSON complet ;
+- les fixtures SSE sont partagées entre les tests Rust, N-API et TypeScript.
+
+Un micro-benchmark local de 20 000 appels par frame a donné, à titre indicatif,
+un temps de 15,4 ms contre 37,3 ms pour une frame synthétique de 4,1 KiB, et
+43,8 ms contre 137,2 ms pour 16,5 KiB, Rust contre TypeScript. Sur le corpus
+standard de 1 283 frames, le seuil évite l'overhead mesurable du passage N-API
+(environ 0,53 ms de candidate dans les deux profils). Ces mesures isolent la
+classification : elles n'incluent ni décodage, ni écriture HTTP, ni réseau, ni
+latence provider/modèle et ne constituent pas une promesse de performance
+end-to-end.
+
 ## Trajectoire recommandée
 
 ### Phase 0 — caractérisation (réalisée)
@@ -132,14 +155,14 @@ fusionné dans une tranche ultérieure si les mesures le justifient.
 3. Maintenir des tests TypeScript et Rust sur les mêmes cas limites.
 4. Ajouter des golden fixtures lorsque le contrat devient plus riche.
 
-### Phase 1 — core Rust in-process (première tranche réalisée)
+### Phase 1 — core Rust in-process (réalisée)
 
-L'inspection de payload est portée. Les prochaines fonctions candidates sont,
-dans cet ordre, la classification des frames SSE puis les conversions qui
-peuvent être exprimées par des types stricts. Comparer les sorties JSON et SSE
-sur des fixtures, puis mesurer allocations, CPU, p50 et p95. Une liaison native
-ou WASM ne sera conservée que si son coût de marshalling reste inférieur au
-travail économisé.
+L'inspection de payload et la classification conservatrice des frames SSE sont
+portées. La prochaine fonction candidate est la conversion de protocole qui
+peut être exprimée par des types stricts, en commençant par une seule paire de
+fixtures JSON/SSE. Comparer les sorties et mesurer allocations, CPU, p50 et p95.
+Une liaison native ou WASM ne sera conservée que si son coût de marshalling
+reste inférieur au travail économisé.
 
 ### Phase 2 — edge Rust
 
