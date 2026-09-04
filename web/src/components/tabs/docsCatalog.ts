@@ -546,6 +546,35 @@ export const ENDPOINTS: ApiEndpoint[] = [
     }),
   },
   {
+    id: "discover-local-runtimes",
+    group: "Configuration",
+    method: "POST",
+    path: "/admin/local-runtimes/discover",
+    title: "Discover local runtimes",
+    summary: "Probe reviewed loopback runtimes and add newly detected models.",
+    description:
+      "Runs the bounded local probes for Ollama, LM Studio, OMLX, MTPLX and Exo. Successful detections are persisted as tokenless local provider accounts; unavailable runtimes are ignored.",
+    responseExample: json({
+      ok: true,
+      results: [
+        {
+          status: "discovered",
+          adapter: "lm-studio",
+          endpoint: "http://127.0.0.1:1234",
+          confirmedModelIds: ["publisher/model"],
+        },
+      ],
+      accounts: [
+        {
+          id: "local-runtime-lm-studio",
+          provider: "openai-compatible",
+          location: "local",
+          localRuntime: { adapter: "lm-studio", authentication: "none" },
+        },
+      ],
+    }),
+  },
+  {
     id: "provider-agent-adapters",
     group: "Configuration",
     method: "GET",
@@ -553,7 +582,7 @@ export const ENDPOINTS: ApiEndpoint[] = [
     title: "List embedded runtime adapters",
     summary: "Read the bounded adapter contracts shipped with the provider agent.",
     description:
-      "Automatic candidates exist only for reviewed Ollama and LM Studio defaults. All other adapters require one explicit literal loopback endpoint.",
+      "Automatic candidates exist only for reviewed Ollama, LM Studio, OMLX, MTPLX and Exo defaults. All other adapters require one explicit literal loopback endpoint.",
     responseExample: json({
       schema_version: "provider-runtime-registry-v2",
       adapters: [{ id: "vllm", display_name: "vLLM", automatic_loopback_candidates: [] }],

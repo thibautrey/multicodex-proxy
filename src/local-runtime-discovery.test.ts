@@ -16,14 +16,21 @@ import {
 import { AccountStore } from "./store.js";
 import type { Account } from "./types.js";
 
-const lmStudio = LOCAL_RUNTIME_ADAPTERS[0];
+const ollama = LOCAL_RUNTIME_ADAPTERS.find((adapter) => adapter.id === "ollama")!;
+const lmStudio = LOCAL_RUNTIME_ADAPTERS.find((adapter) => adapter.id === "lm-studio")!;
 const omlx = LOCAL_RUNTIME_ADAPTERS.find((adapter) => adapter.id === "omlx")!;
+const exo = LOCAL_RUNTIME_ADAPTERS.find((adapter) => adapter.id === "exo")!;
+const mtplx = LOCAL_RUNTIME_ADAPTERS.find((adapter) => adapter.id === "mtplx")!;
 
-function modelsResponse(ids: string[]): Response {
+function modelsResponse(ids: string[], ownedBy?: string): Response {
   return new Response(
     JSON.stringify({
       object: "list",
-      data: ids.map((id) => ({ id, object: "model" })),
+      data: ids.map((id) => ({
+        id,
+        object: "model",
+        ...(ownedBy ? { owned_by: ownedBy } : {}),
+      })),
     }),
     {
       status: 200,
@@ -100,7 +107,7 @@ test("OMLX discovery exposes exact loopback models without a public key or beare
       calls += 1;
       assert.equal(String(input), "http://127.0.0.1:8000/v1/models");
       assert.equal(new Headers(init?.headers).get("authorization"), null);
-      return modelsResponse(["Qwen3.8-27B-4bit"]);
+      return modelsResponse(["Qwen3.8-27B-4bit"], "omlx");
     },
   });
 
@@ -117,38 +124,91 @@ test("OMLX discovery exposes exact loopback models without a public key or beare
   );
 });
 
+test("shared loopback ports cannot cross-label OMLX and MTPLX", async () => {
+  await assert.rejects(
+    probeLocalRuntimeCandidate(omlx, omlx.candidates[0], {
+      fetchFn: async () => modelsResponse(["publisher/model"], "mtplx"),
+    }),
+    /invalid runtime signature/,
+  );
+  await assert.rejects(
+    probeLocalRuntimeCandidate(mtplx, mtplx.candidates[0], {
+      fetchFn: async () => modelsResponse(["publisher/model"], "omlx"),
+    }),
+    /invalid runtime signature/,
+  );
+});
+
 test("discovery persists one deterministic account per runtime and replay does not duplicate it", async (t) => {
-  const dataDir = await fs.mkdtemp(
-    path.join(os.tmpdir(), "multivibe-local-runtime-"),
-  );
-  t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
-  const store = new AccountStore(path.join(dataDir, "accounts.json"));
-  await store.init();
-  let calls = 0;
-  const options = {
-    fetchFn: async () => {
-      calls += 1;
-      return modelsResponse(["publisher/model"]);
+  const cases = [
+    {
+      adapter: ollama,
+      endpoint: "http://127.0.0.1:11434",
+      modelsUrl: "http://127.0.0.1:11434/v1/models",
+      ownedBy: undefined,
     },
-  };
+    {
+      adapter: lmStudio,
+      endpoint: "http://127.0.0.1:1234",
+      modelsUrl: "http://127.0.0.1:1234/v1/models",
+      ownedBy: undefined,
+    },
+    {
+      adapter: omlx,
+      endpoint: "http://127.0.0.1:8000",
+      modelsUrl: "http://127.0.0.1:8000/v1/models",
+      ownedBy: "omlx",
+    },
+    {
+      adapter: mtplx,
+      endpoint: "http://127.0.0.1:8000",
+      modelsUrl: "http://127.0.0.1:8000/v1/models",
+      ownedBy: "mtplx",
+    },
+    {
+      adapter: exo,
+      endpoint: "http://127.0.0.1:52415",
+      modelsUrl: "http://127.0.0.1:52415/models",
+      ownedBy: "exo",
+    },
+  ] as const;
 
-  await discoverAndPersistLocalRuntimes(store, options);
-  await discoverAndPersistLocalRuntimes(store, options);
+  for (const testCase of cases) {
+    await t.test(testCase.adapter.id, async (runtimeTest) => {
+      const dataDir = await fs.mkdtemp(
+        path.join(os.tmpdir(), "multivibe-local-runtime-"),
+      );
+      runtimeTest.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+      const store = new AccountStore(path.join(dataDir, "accounts.json"));
+      await store.init();
+      let calls = 0;
+      const requestedUrls: string[] = [];
+      const options = {
+        adapters: [testCase.adapter],
+        fetchFn: async (input: string | URL | Request, init?: RequestInit) => {
+          calls += 1;
+          requestedUrls.push(String(input));
+          assert.equal(new Headers(init?.headers).get("authorization"), null);
+          return modelsResponse(["publisher/model"], testCase.ownedBy);
+        },
+      };
 
-  const accounts = await store.listAccounts();
-  assert.equal(calls, 4);
-  assert.equal(accounts.length, 2);
-  assert.deepEqual(
-    accounts.map((account) => account.id),
-    ["local-runtime-lm-studio", "local-runtime-omlx"],
-  );
-  for (const account of accounts) {
-    assert.equal(account.accessToken, "");
-    assert.equal(account.location, "local");
-    assert.equal(account.localRuntime?.authentication, "none");
+      await discoverAndPersistLocalRuntimes(store, options);
+      await discoverAndPersistLocalRuntimes(store, options);
+
+      const accounts = await store.listAccounts();
+      assert.equal(calls, 2);
+      assert.deepEqual(requestedUrls, [testCase.modelsUrl, testCase.modelsUrl]);
+      assert.equal(accounts.length, 1);
+      const account = accounts[0];
+      assert.equal(account?.id, `local-runtime-${testCase.adapter.id}`);
+      assert.equal(account?.baseUrl, testCase.endpoint);
+      assert.equal(account?.accessToken, "");
+      assert.equal(account?.location, "local");
+      assert.equal(account?.localRuntime?.adapter, testCase.adapter.id);
+      assert.equal(account?.localRuntime?.authentication, "none");
+    });
   }
-  assert.equal(accounts[0].localRuntime?.adapter, "lm-studio");
-  assert.equal(accounts[1].localRuntime?.adapter, "omlx");
 });
 
 test("only exact IPv4 and IPv6 loopback LM Studio origins can omit auth", () => {
@@ -217,6 +277,26 @@ test("a non-allowlisted port or API path is refused", async () => {
       /outside the discovered LM Studio API boundary/,
     );
   }
+
+  const exoAccount: Account = {
+    ...discoveredAccount("http://127.0.0.1:52415"),
+    id: "local-runtime-exo",
+    localRuntime: {
+      source: "multivibe-local-discovery",
+      adapter: "exo",
+      endpoint: "http://127.0.0.1:52415",
+      confirmedModelIds: ["publisher/model"],
+      authentication: "none",
+    },
+  };
+  assert.equal(
+    authorizationForAccountRequest(exoAccount, "http://127.0.0.1:52415/models"),
+    undefined,
+  );
+  assert.throws(
+    () => authorizationForAccountRequest(discoveredAccount(), "http://127.0.0.1:1234/models"),
+    /outside the discovered LM Studio API boundary/,
+  );
 });
 
 test("redirects are never followed, including to remote origins", async () => {
@@ -314,27 +394,34 @@ test("a remote account without a token is refused before any request", () => {
   );
 });
 
-test("only the exact declared LM Studio and OMLX loopback candidates are probed", async () => {
-  const calls: string[] = [];
-  const results = await discoverLocalRuntimes({
-    fetchFn: async (input) => {
-      calls.push(String(input));
-      return modelsResponse(["publisher/model"]);
+test("only the exact declared automatic loopback candidates are probed", async () => {
+  const cases = [
+    { adapter: ollama, modelsUrl: "http://127.0.0.1:11434/v1/models", ownedBy: undefined },
+    { adapter: lmStudio, modelsUrl: "http://127.0.0.1:1234/v1/models", ownedBy: undefined },
+    { adapter: omlx, modelsUrl: "http://127.0.0.1:8000/v1/models", ownedBy: "omlx" },
+    { adapter: mtplx, modelsUrl: "http://127.0.0.1:8000/v1/models", ownedBy: "mtplx" },
+    { adapter: exo, modelsUrl: "http://127.0.0.1:52415/models", ownedBy: "exo" },
+  ] as const;
+
+  for (const testCase of cases) {
+    const calls: string[] = [];
+    const results = await discoverLocalRuntimes({
+      adapters: [testCase.adapter],
+      fetchFn: async (input) => {
+        calls.push(String(input));
+        return modelsResponse(["publisher/model"], testCase.ownedBy);
+      },
+    });
+    assert.deepEqual(calls, [testCase.modelsUrl]);
+    assert.equal(results[0]?.adapter, testCase.adapter.id);
+    assert.equal(results[0]?.status, "discovered");
+  }
+
+  const manualResults = await discoverLocalRuntimes({
+    adapters: LOCAL_RUNTIME_ADAPTERS.filter((adapter) => adapter.candidates.length === 0),
+    fetchFn: async () => {
+      throw new Error("manual adapters must not be probed automatically");
     },
   });
-
-  assert.deepEqual(calls, [
-    "http://127.0.0.1:1234/v1/models",
-    "http://127.0.0.1:8000/v1/models",
-  ]);
-  assert.equal(results[0]?.adapter, "lm-studio");
-  assert.equal(results[0]?.status, "discovered");
-  assert.equal(results.find((result) => result.adapter === "omlx")?.status, "discovered");
-  assert.equal(
-    results.filter((result) => result.adapter !== "lm-studio" && result.adapter !== "omlx")
-      .every((result) => result.status === "not-configured"),
-    true,
-  );
-  assert.equal(results.some((result) => result.adapter === "ollama"), true);
-  assert.equal(results.some((result) => result.adapter === "manual-openai-compatible"), true);
+  assert.equal(manualResults.every((result) => result.status === "not-configured"), true);
 });

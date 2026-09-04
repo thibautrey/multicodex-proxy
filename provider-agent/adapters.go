@@ -88,6 +88,50 @@ var runtimeAdapters = func() []runtimeAdapter {
 			CatalogURL: "http://[::1]:1234/v1/models",
 		},
 	}
+	omlx := manualOpenAIAdapter("omlx", "OMLX")
+	omlx.Authentication = "none"
+	omlx.Candidates = []adapterCandidate{
+		{
+			Endpoint:   "http://127.0.0.1:8000",
+			HealthURL:  "http://127.0.0.1:8000/v1/models",
+			CatalogURL: "http://127.0.0.1:8000/v1/models",
+		},
+		{
+			Endpoint:   "http://[::1]:8000",
+			HealthURL:  "http://[::1]:8000/v1/models",
+			CatalogURL: "http://[::1]:8000/v1/models",
+		},
+	}
+	exo := manualOpenAIAdapter("exo", "Exo")
+	exo.Authentication = "none"
+	exo.HealthPath = "/models"
+	exo.CatalogPath = "/models"
+	exo.Candidates = []adapterCandidate{
+		{
+			Endpoint:   "http://127.0.0.1:52415",
+			HealthURL:  "http://127.0.0.1:52415/models",
+			CatalogURL: "http://127.0.0.1:52415/models",
+		},
+		{
+			Endpoint:   "http://[::1]:52415",
+			HealthURL:  "http://[::1]:52415/models",
+			CatalogURL: "http://[::1]:52415/models",
+		},
+	}
+	mtplx := manualOpenAIAdapter("mtplx", "MTPLX")
+	mtplx.Authentication = "none"
+	mtplx.Candidates = []adapterCandidate{
+		{
+			Endpoint:   "http://127.0.0.1:8000",
+			HealthURL:  "http://127.0.0.1:8000/v1/models",
+			CatalogURL: "http://127.0.0.1:8000/v1/models",
+		},
+		{
+			Endpoint:   "http://[::1]:8000",
+			HealthURL:  "http://[::1]:8000/v1/models",
+			CatalogURL: "http://[::1]:8000/v1/models",
+		},
+	}
 	return []runtimeAdapter{
 		ollama,
 		lmStudio,
@@ -99,9 +143,9 @@ var runtimeAdapters = func() []runtimeAdapter {
 		manualOpenAIAdapter("transformers-serve", "Transformers Serve"),
 		manualOpenAIAdapter("xinference", "Xinference"),
 		manualOpenAIAdapter("mlx-lm", "MLX-LM"),
-		manualOpenAIAdapter("omlx", "OMLX"),
+		omlx,
 		manualOpenAIAdapter("mlc-llm", "MLC LLM"),
-		manualOpenAIAdapter("exo", "Exo"),
+		exo,
 		manualOpenAIAdapter("jan", "Jan"),
 		manualOpenAIAdapter("gpt4all", "GPT4All"),
 		manualOpenAIAdapter("koboldcpp", "KoboldCpp"),
@@ -115,7 +159,7 @@ var runtimeAdapters = func() []runtimeAdapter {
 		manualOpenAIAdapter("triton", "NVIDIA Triton"),
 		manualOpenAIAdapter("openllm", "OpenLLM"),
 		manualOpenAIAdapter("bentoml", "BentoML"),
-		manualOpenAIAdapter("mtplx", "MTPLX"),
+		mtplx,
 		manualOpenAIAdapter("manual-openai-compatible", "Manual OpenAI-compatible server"),
 	}
 }()
@@ -155,7 +199,7 @@ func validateAdapterRegistry(registry adapterRegistryDocument) error {
 			return fmt.Errorf("provider runtime adapter %s has invalid limits", adapter.ID)
 		}
 		expectedCandidates := 0
-		if adapter.ID == "ollama" || adapter.ID == "lm-studio" {
+		if adapter.ID == "ollama" || adapter.ID == "lm-studio" || adapter.ID == "omlx" || adapter.ID == "exo" || adapter.ID == "mtplx" {
 			expectedCandidates = 2
 		}
 		if len(adapter.Candidates) != expectedCandidates {
@@ -205,7 +249,24 @@ func validateLoopbackCandidate(adapter runtimeAdapter, candidate adapterCandidat
 		(candidate.Endpoint == "http://[::1]:11434" &&
 			candidate.HealthURL == "http://[::1]:11434/v1/models" &&
 			candidate.CatalogURL == "http://[::1]:11434/v1/models")
-	if (adapter.ID != "lm-studio" || !approvedLMStudio) && (adapter.ID != "ollama" || !approvedOllama) {
+	approvedOMLX := (candidate.Endpoint == "http://127.0.0.1:8000" &&
+		candidate.HealthURL == "http://127.0.0.1:8000/v1/models" &&
+		candidate.CatalogURL == "http://127.0.0.1:8000/v1/models") ||
+		(candidate.Endpoint == "http://[::1]:8000" &&
+			candidate.HealthURL == "http://[::1]:8000/v1/models" &&
+			candidate.CatalogURL == "http://[::1]:8000/v1/models")
+	approvedExo := (candidate.Endpoint == "http://127.0.0.1:52415" &&
+		candidate.HealthURL == "http://127.0.0.1:52415/models" &&
+		candidate.CatalogURL == "http://127.0.0.1:52415/models") ||
+		(candidate.Endpoint == "http://[::1]:52415" &&
+			candidate.HealthURL == "http://[::1]:52415/models" &&
+			candidate.CatalogURL == "http://[::1]:52415/models")
+	approvedMTPLX := approvedOMLX
+	if (adapter.ID != "lm-studio" || !approvedLMStudio) &&
+		(adapter.ID != "ollama" || !approvedOllama) &&
+		(adapter.ID != "omlx" || !approvedOMLX) &&
+		(adapter.ID != "exo" || !approvedExo) &&
+		(adapter.ID != "mtplx" || !approvedMTPLX) {
 		return fmt.Errorf("provider runtime adapter %s candidate is outside the reviewed port allowlist", adapter.ID)
 	}
 	return nil

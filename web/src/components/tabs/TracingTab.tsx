@@ -19,6 +19,10 @@ import { estimateCostUsd } from "../../model-pricing";
 import { fmt, formatTokenCount, formatTokenRate, maskEmail, maskId, pct, routeLabel, usd } from "../../lib/ui";
 import { api } from "../../lib/api";
 import { copyTextToClipboard } from "../../lib/clipboard";
+import {
+  runtimeIdentityForAccount,
+  runtimeIdentityForProvider,
+} from "../../lib/runtimeCatalog";
 import { Metric } from "../Metric";
 import type { Account, ProjectUsageStats, StoreSettings, Trace, TracePagination, TraceRangePreset, TraceStats } from "../../types";
 
@@ -51,24 +55,6 @@ type TtftModelGroup = {
   provider: string;
   model: string;
   rows: TraceStats["ttftByProviderModel"];
-};
-
-const TTFT_PROVIDER_LABELS: Record<string, string> = {
-  openai: "OpenAI",
-  "openai-compatible": "OpenAI-compatible",
-  opencode: "OpenCode",
-  mistral: "Mistral",
-  zai: "z.ai",
-  xai: "Grok Build",
-};
-
-const TTFT_PROVIDER_FAVICONS: Record<string, string> = {
-  openai: "https://openai.com/favicon.ico",
-  "openai-compatible": "https://openai.com/favicon.ico",
-  opencode: "https://opencode.ai/favicon-v3.svg",
-  mistral: "https://mistral.ai/favicon.ico",
-  zai: "https://z.ai/favicon.png",
-  xai: "https://grok.com/favicon.ico",
 };
 
 const TTFT_CONTEXT_LABELS: Record<TtftBucket, string> = {
@@ -172,6 +158,7 @@ export function TtftLatencyBoard({ traceStats }: { traceStats: TraceStats }) {
         <div className="ttft-groups">
           {providerGroups.map((modelGroup) => {
             const representative = modelGroup.rows[0];
+            const runtimeIdentity = runtimeIdentityForProvider(modelGroup.provider);
             const groupSamples = modelGroup.rows.reduce((sum, row) => sum + row.samples, 0);
             const groupP50 = modelGroup.rows.reduce((sum, row) => sum + row.ttftP50Ms * row.samples, 0) / Math.max(1, groupSamples);
             const providerClass = modelGroup.provider === "mistral"
@@ -184,11 +171,11 @@ export function TtftLatencyBoard({ traceStats }: { traceStats: TraceStats }) {
                     ? "provider-xai"
                     : "provider-openai";
             return (
-              <section key={modelGroup.key} className={`ttft-provider-group ${providerClass}`} aria-label={`${TTFT_PROVIDER_LABELS[modelGroup.provider] ?? modelGroup.provider} — ${modelGroup.model}`}>
+              <section key={modelGroup.key} className={`ttft-provider-group ${providerClass}`} aria-label={`${runtimeIdentity.label} — ${modelGroup.model}`}>
                 <header className="ttft-provider-head">
                   <span className="ttft-provider-name">
-                    <img src={TTFT_PROVIDER_FAVICONS[modelGroup.provider] ?? TTFT_PROVIDER_FAVICONS.openai} alt="" loading="lazy" />
-                    {TTFT_PROVIDER_LABELS[modelGroup.provider] ?? modelGroup.provider}
+                    <img src={runtimeIdentity.iconUrl} alt="" loading="lazy" />
+                    {runtimeIdentity.label}
                   </span>
                   <span className="ttft-provider-meta mono">{modelGroup.model}</span>
                 </header>
@@ -250,25 +237,28 @@ function TtftLatencyDetails({ traceStats }: { traceStats: TraceStats }) {
               <tr><th>Rank</th><th>Provider</th><th>Model</th><th>Input bucket</th><th>Samples</th><th>p50 TTFT</th><th>p95 TTFT</th><th>Median input</th><th>Cached input</th><th>Confidence</th></tr>
             </thead>
             <tbody>
-              {traceStats.ttftByProviderModel.map((group) => (
-                <tr key={`${group.provider}:${group.model}:${group.inputTokenBucket}`}>
-                  <td>{group.rank ?? "—"}</td>
-                  <td>
-                    <span className="provider-badge">
-                      <img className="provider-icon" src={TTFT_PROVIDER_FAVICONS[group.provider] ?? TTFT_PROVIDER_FAVICONS.openai} alt="" loading="lazy" />
-                      {TTFT_PROVIDER_LABELS[group.provider] ?? group.provider}
-                    </span>
-                  </td>
-                  <td className="mono">{group.model}</td>
-                  <td>{TTFT_CONTEXT_LABELS[group.inputTokenBucket as TtftBucket] ?? "Unknown"}</td>
-                  <td>{group.samples}</td>
-                  <td>{formatTtftDuration(group.ttftP50Ms)}</td>
-                  <td>{formatTtftDuration(group.ttftP95Ms)}</td>
-                  <td>{group.medianInputTokens === undefined ? "—" : formatTokenCount(group.medianInputTokens)}</td>
-                  <td>{group.cachedInputRatio === undefined ? "—" : pct(group.cachedInputRatio)}</td>
-                  <td><span className={group.confidence === "low" ? "badge badge-warn" : "badge badge-live"}>{group.confidence === "low" ? "Low" : "Sufficient"}</span></td>
-                </tr>
-              ))}
+              {traceStats.ttftByProviderModel.map((group) => {
+                const runtimeIdentity = runtimeIdentityForProvider(group.provider);
+                return (
+                  <tr key={`${group.provider}:${group.model}:${group.inputTokenBucket}`}>
+                    <td>{group.rank ?? "—"}</td>
+                    <td>
+                      <span className="provider-badge">
+                        <img className="provider-icon" src={runtimeIdentity.iconUrl} alt="" loading="lazy" />
+                        {runtimeIdentity.label}
+                      </span>
+                    </td>
+                    <td className="mono">{group.model}</td>
+                    <td>{TTFT_CONTEXT_LABELS[group.inputTokenBucket as TtftBucket] ?? "Unknown"}</td>
+                    <td>{group.samples}</td>
+                    <td>{formatTtftDuration(group.ttftP50Ms)}</td>
+                    <td>{formatTtftDuration(group.ttftP95Ms)}</td>
+                    <td>{group.medianInputTokens === undefined ? "—" : formatTokenCount(group.medianInputTokens)}</td>
+                    <td>{group.cachedInputRatio === undefined ? "—" : pct(group.cachedInputRatio)}</td>
+                    <td><span className={group.confidence === "low" ? "badge badge-warn" : "badge badge-live"}>{group.confidence === "low" ? "Low" : "Sufficient"}</span></td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -301,8 +291,8 @@ function TracingTabContent(props: Props) {
     settings,
     patchSettings,
   } = props;
-  const accountProviderById = React.useMemo(
-    () => new Map(accounts.map((account) => [account.id, account.provider])),
+  const accountRuntimeById = React.useMemo(
+    () => new Map(accounts.map((account) => [account.id, runtimeIdentityForAccount(account)])),
     [accounts],
   );
   const [installHookBusy, setInstallHookBusy] = React.useState(false);
@@ -361,30 +351,6 @@ function TracingTabContent(props: Props) {
       setSharingBusy(false);
     }
   };
-
-  const providerFavicon = (provider?: string) =>
-    provider === "mistral"
-      ? "https://mistral.ai/favicon.ico"
-      : provider === "opencode"
-        ? "https://opencode.ai/favicon-v3.svg"
-        : provider === "zai"
-          ? "https://z.ai/favicon.png"
-          : provider === "xai"
-            ? "https://grok.com/favicon.ico"
-            : "https://openai.com/favicon.ico";
-
-  const providerLabel = (provider?: string) =>
-    provider === "mistral"
-      ? "Mistral"
-      : provider === "opencode"
-        ? "OpenCode"
-        : provider === "openai-compatible"
-          ? "OpenAI-compatible"
-          : provider === "zai"
-            ? "z.ai"
-            : provider === "xai"
-              ? "Grok Build"
-              : "OpenAI";
 
   const formatTokenChartValue = (value: number | string | undefined) => formatTokenCount(Number(value ?? 0));
 
@@ -771,7 +737,11 @@ function TracingTabContent(props: Props) {
                   {traces.map((t) => {
                     const isExpanded = expandedTraceId === t.id;
                     const rowCost = typeof t.costUsd === "number" ? t.costUsd : (estimateCostUsd(t.model, t.tokensInput ?? 0, t.tokensOutput ?? 0, t.tokensInputCached ?? 0, t.tokensInputCacheWrite ?? 0) ?? 0);
-                    const provider = t.provider ?? (t.accountId ? accountProviderById.get(t.accountId) : undefined);
+                    const provider = t.provider ?? (t.accountId ? accounts.find((account) => account.id === t.accountId)?.provider : undefined);
+                    const runtimeIdentity = t.accountId
+                      ? accountRuntimeById.get(t.accountId)
+                      : undefined;
+                    const targetIdentity = runtimeIdentity ?? runtimeIdentityForProvider(provider);
                     const accountLabel = sanitized ? maskEmail(t.accountEmail) || maskId(t.accountId) : t.accountEmail ?? t.accountId ?? "—";
                     const modelLabel = t.requestedModel && t.resolvedModel ? `${t.requestedModel} → ${t.resolvedModel}` : (t.model ?? "—");
                     const hasError = t.isError || t.status >= 400;
@@ -780,7 +750,7 @@ function TracingTabContent(props: Props) {
                         <tr className={`trace-row${hasError ? " trace-row-error" : ""}`}>
                           <td><div className="trace-cell-stack"><strong>{fmt(t.at)}</strong><span className="mono">{routeLabel(t.route)}</span><span className="muted">{t.traceKind === "client-request" ? `Client outcome · ${t.providerAttempts ?? 0} provider attempts` : t.traceKind === "upstream-attempt" ? `Provider attempt ${t.upstreamAttempt ?? "—"}` : t.traceKind === "diagnostic" ? "Proxy diagnostic" : "Legacy trace"}</span></div></td>
                           <td><div className="trace-cell-stack"><strong className="mono">{t.application ?? "Unspecified app"}</strong><span className="mono">{t.projectId ? sanitized ? "Private project" : t.projectName ?? t.projectId : "No project"}</span></div></td>
-                          <td><div className="trace-cell-stack"><strong className="mono">{modelLabel}</strong><span className="trace-target-account">{provider && <span className="provider-badge"><img className="provider-icon" src={providerFavicon(provider)} alt="" loading="lazy" />{providerLabel(provider)}</span>}<span className="mono">{accountLabel}</span></span></div></td>
+                          <td><div className="trace-cell-stack"><strong className="mono">{modelLabel}</strong><span className="trace-target-account">{(provider || runtimeIdentity) && <span className="provider-badge"><img className="provider-icon" src={targetIdentity.iconUrl} alt="" loading="lazy" />{targetIdentity.label}</span>}<span className="mono">{accountLabel}</span></span></div></td>
                           <td><div className="trace-cell-stack"><span><span className={`badge ${hasError ? "badge-warn" : "badge-live"}`}>{t.status}</span></span><span className={hasError ? "trace-error-copy" : "muted"}>{t.error?.slice(0, 72) ?? (hasError ? "Request failed" : "Completed")}</span></div></td>
                           <td><div className="trace-cell-stack"><strong>{t.latencyMs}ms total</strong><span>{typeof t.ttftMs === "number" ? `${Math.round(t.ttftMs)}ms TTFT` : "TTFT not measured"}</span></div></td>
                           <td><div className="trace-cell-stack"><strong>{typeof (t.tokensTotal ?? t.usage?.total_tokens) === "number" ? formatTokenCount(t.tokensTotal ?? t.usage?.total_tokens) : "—"} tokens</strong><span className="mono">{usd(rowCost)}</span></div></td>

@@ -24,8 +24,18 @@ type detectedModelsDocument struct {
 
 type modelCatalogPayload struct {
 	Data []struct {
-		ID string `json:"id"`
+		ID      string `json:"id"`
+		OwnedBy string `json:"owned_by"`
 	} `json:"data"`
+}
+
+func automaticRuntimeOwner(adapterID string) string {
+	switch adapterID {
+	case "omlx", "mtplx", "exo":
+		return adapterID
+	default:
+		return ""
+	}
 }
 
 func detectedModels(ctx context.Context, registry adapterRegistryDocument, configured []runtimeEndpoint, client *http.Client) detectedModelsDocument {
@@ -121,9 +131,13 @@ func probeRuntimeCatalogAuthenticated(ctx context.Context, adapter runtimeAdapte
 	if err := json.Unmarshal(body, &payload); err != nil || len(payload.Data) == 0 || len(payload.Data) > adapter.Limits.MaxCatalogModels {
 		return nil, errors.New("provider runtime catalog payload is invalid")
 	}
+	expectedOwner := automaticRuntimeOwner(adapter.ID)
 	models := make([]string, 0, len(payload.Data))
 	seen := make(map[string]struct{}, len(payload.Data))
 	for _, entry := range payload.Data {
+		if expectedOwner != "" && entry.OwnedBy != expectedOwner {
+			return nil, errors.New("provider runtime catalog has an invalid runtime signature")
+		}
 		if !validSelectedModelID(entry.ID) {
 			return nil, errors.New("provider runtime catalog contains an invalid model id")
 		}

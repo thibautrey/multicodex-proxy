@@ -114,14 +114,14 @@ func TestWorkerTestUsesOnlyEnrolledModelAndLoopbackRuntime(t *testing.T) {
 	if err := store.record(cloudEnrollmentView{
 		SchemaVersion: providerEnrollmentStateV1, Revision: 1, State: "submitted",
 		ProviderID: testProviderID, NodeID: testNodeID, DeviceKeyID: keyID, CredentialEpoch: 1,
-		ManifestDigest: strings.Repeat("8", 64), RuntimeFamily: "omlx", DeclaredMaxConcurrency: 1,
+		ManifestDigest: strings.Repeat("8", 64), RuntimeFamily: "manual-openai-compatible", DeclaredMaxConcurrency: 1,
 		CloudAPIOrigin: cloudServer.URL, SubmittedAt: now.Format("2006-01-02T15:04:05.000Z"),
 		RoutingEligible: false, CompensationEligible: false, SafetyProfile: "shadow_only_no_routing_no_compensation",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	runtimes := newMemoryRuntimeEndpointStore()
-	if _, conflict, err := runtimes.replace(1, []runtimeEndpoint{{AdapterID: "omlx", Endpoint: runtimeServer.URL}}, runtimeAdapterRegistry()); err != nil || conflict {
+	if _, conflict, err := runtimes.replace(1, []runtimeEndpoint{{AdapterID: "manual-openai-compatible", Endpoint: runtimeServer.URL}}, runtimeAdapterRegistry()); err != nil || conflict {
 		t.Fatalf("runtime setup failed: conflict=%v err=%v", conflict, err)
 	}
 	service := newWorkerTestService(cloudURL, http.DefaultClient, identity, store, newMemorySelectionStore([]string{model}), runtimes)

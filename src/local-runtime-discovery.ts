@@ -7,9 +7,16 @@ import type { AccountStore } from "./store.js";
 
 export const LOCAL_RUNTIME_DISCOVERY_TIMEOUT_MS = 1_500;
 export const LOCAL_RUNTIME_MAX_RESPONSE_BYTES = 256 * 1024;
+export const OLLAMA_ALLOWED_PORTS = [11434] as const;
 export const LM_STUDIO_ALLOWED_PORTS = [1234] as const;
 export const OMLX_ALLOWED_PORTS = [8000] as const;
+export const EXO_ALLOWED_PORTS = [52415] as const;
+export const MTPLX_ALLOWED_PORTS = [8000] as const;
 
+const OLLAMA_ORIGINS = [
+  "http://127.0.0.1:11434",
+  "http://[::1]:11434",
+] as const;
 const LM_STUDIO_ORIGINS = [
   "http://127.0.0.1:1234",
   "http://[::1]:1234",
@@ -18,26 +25,69 @@ const OMLX_ORIGINS = [
   "http://127.0.0.1:8000",
   "http://[::1]:8000",
 ] as const;
-const LOCAL_RUNTIME_REQUEST_PATHS = new Set([
+const EXO_ORIGINS = [
+  "http://127.0.0.1:52415",
+  "http://[::1]:52415",
+] as const;
+const MTPLX_ORIGINS = [
+  "http://127.0.0.1:8000",
+  "http://[::1]:8000",
+] as const;
+const OPENAI_COMPATIBLE_REQUEST_PATHS = [
+  "/models",
   "/v1/models",
   "/v1/responses",
   "/v1/chat/completions",
   "/v1/completions",
   "/v1/embeddings",
-]);
+] as const;
+const LOOPBACK_OPENAI_REQUEST_PATHS = new Set(
+  OPENAI_COMPATIBLE_REQUEST_PATHS.filter((path) => path !== "/models"),
+);
+const EXO_REQUEST_PATHS = new Set(OPENAI_COMPATIBLE_REQUEST_PATHS);
 
-type AutomaticLocalRuntimeAdapterId = "lm-studio" | "omlx";
+type AutomaticLocalRuntimeAdapterId =
+  | "ollama"
+  | "lm-studio"
+  | "omlx"
+  | "exo"
+  | "mtplx";
 
 const AUTOMATIC_LOCAL_RUNTIME_BOUNDARIES = {
+  ollama: {
+    name: "Ollama",
+    origins: OLLAMA_ORIGINS,
+    ports: OLLAMA_ALLOWED_PORTS,
+    catalogPath: "/v1/models",
+    requestPaths: LOOPBACK_OPENAI_REQUEST_PATHS,
+  },
   "lm-studio": {
     name: "LM Studio",
     origins: LM_STUDIO_ORIGINS,
     ports: LM_STUDIO_ALLOWED_PORTS,
+    catalogPath: "/v1/models",
+    requestPaths: LOOPBACK_OPENAI_REQUEST_PATHS,
   },
   omlx: {
     name: "OMLX",
     origins: OMLX_ORIGINS,
     ports: OMLX_ALLOWED_PORTS,
+    catalogPath: "/v1/models",
+    requestPaths: LOOPBACK_OPENAI_REQUEST_PATHS,
+  },
+  exo: {
+    name: "Exo",
+    origins: EXO_ORIGINS,
+    ports: EXO_ALLOWED_PORTS,
+    catalogPath: "/models",
+    requestPaths: EXO_REQUEST_PATHS,
+  },
+  mtplx: {
+    name: "MTPLX",
+    origins: MTPLX_ORIGINS,
+    ports: MTPLX_ALLOWED_PORTS,
+    catalogPath: "/v1/models",
+    requestPaths: LOOPBACK_OPENAI_REQUEST_PATHS,
   },
 } as const;
 
@@ -83,6 +133,22 @@ function registeredAdapter(id: LocalRuntimeAdapterId, displayName: string): Loca
 }
 export const LOCAL_RUNTIME_ADAPTERS: readonly LocalRuntimeAdapter[] = [
   {
+    id: "ollama",
+    displayName: "Ollama",
+    ...DEFAULT_ADAPTER_CONTRACT,
+    authentication: "none",
+    candidates: [
+      {
+        endpoint: "http://127.0.0.1:11434",
+        modelsUrl: "http://127.0.0.1:11434/v1/models",
+      },
+      {
+        endpoint: "http://[::1]:11434",
+        modelsUrl: "http://[::1]:11434/v1/models",
+      },
+    ],
+  },
+  {
     id: "lm-studio",
     displayName: "LM Studio",
     ...DEFAULT_ADAPTER_CONTRACT,
@@ -98,7 +164,6 @@ export const LOCAL_RUNTIME_ADAPTERS: readonly LocalRuntimeAdapter[] = [
       },
     ],
   },
-  registeredAdapter("ollama", "Ollama"),
   registeredAdapter("llama-cpp", "llama.cpp / llama-server / llama-cpp-python"),
   registeredAdapter("vllm", "vLLM"),
   registeredAdapter("sglang", "SGLang"),
@@ -124,7 +189,24 @@ export const LOCAL_RUNTIME_ADAPTERS: readonly LocalRuntimeAdapter[] = [
     ],
   },
   registeredAdapter("mlc-llm", "MLC LLM"),
-  registeredAdapter("exo", "Exo"),
+  {
+    id: "exo",
+    displayName: "Exo",
+    ...DEFAULT_ADAPTER_CONTRACT,
+    healthPath: "/models",
+    catalogPath: "/models",
+    authentication: "none",
+    candidates: [
+      {
+        endpoint: "http://127.0.0.1:52415",
+        modelsUrl: "http://127.0.0.1:52415/models",
+      },
+      {
+        endpoint: "http://[::1]:52415",
+        modelsUrl: "http://[::1]:52415/models",
+      },
+    ],
+  },
   registeredAdapter("jan", "Jan"),
   registeredAdapter("gpt4all", "GPT4All"),
   registeredAdapter("koboldcpp", "KoboldCpp"),
@@ -138,7 +220,22 @@ export const LOCAL_RUNTIME_ADAPTERS: readonly LocalRuntimeAdapter[] = [
   registeredAdapter("triton", "NVIDIA Triton"),
   registeredAdapter("openllm", "OpenLLM"),
   registeredAdapter("bentoml", "BentoML"),
-  registeredAdapter("mtplx", "MTPLX"),
+  {
+    id: "mtplx",
+    displayName: "MTPLX",
+    ...DEFAULT_ADAPTER_CONTRACT,
+    authentication: "none",
+    candidates: [
+      {
+        endpoint: "http://127.0.0.1:8000",
+        modelsUrl: "http://127.0.0.1:8000/v1/models",
+      },
+      {
+        endpoint: "http://[::1]:8000",
+        modelsUrl: "http://[::1]:8000/v1/models",
+      },
+    ],
+  },
   registeredAdapter("manual-openai-compatible", "Manual OpenAI-compatible server"),
 ];
 
@@ -172,11 +269,31 @@ export type LocalRuntimeDiscoveryOptions = {
 function isAutomaticLocalRuntimeAdapterId(
   id: LocalRuntimeAdapterId,
 ): id is AutomaticLocalRuntimeAdapterId {
-  return id === "lm-studio" || id === "omlx";
+  return (
+    id === "ollama" ||
+    id === "lm-studio" ||
+    id === "omlx" ||
+    id === "exo" ||
+    id === "mtplx"
+  );
 }
 
 function automaticRuntimeBoundary(id: AutomaticLocalRuntimeAdapterId) {
   return AUTOMATIC_LOCAL_RUNTIME_BOUNDARIES[id];
+}
+
+export function localRuntimeCatalogPath(adapter: LocalRuntimeAdapterId): string {
+  return isAutomaticLocalRuntimeAdapterId(adapter)
+    ? automaticRuntimeBoundary(adapter).catalogPath
+    : "/v1/models";
+}
+
+function automaticRuntimeSignature(id: AutomaticLocalRuntimeAdapterId):
+  { ownedBy: string } | undefined {
+  if (id === "omlx" || id === "mtplx" || id === "exo") {
+    return { ownedBy: id };
+  }
+  return undefined;
 }
 
 function hasExactAutomaticRuntimeOrigin(id: AutomaticLocalRuntimeAdapterId, raw: string): boolean {
@@ -219,7 +336,7 @@ function parseAutomaticRuntimeRequestUrl(id: AutomaticLocalRuntimeAdapterId, raw
     throw new Error("local runtime request must use a valid URL");
   }
   const hasExactRequestUrl = boundary.origins.some((origin) =>
-    LOCAL_RUNTIME_REQUEST_PATHS.has(raw.slice(origin.length)) &&
+    boundary.requestPaths.has(raw.slice(origin.length)) &&
     raw === `${origin}${url.pathname}`,
   );
   if (
@@ -230,7 +347,7 @@ function parseAutomaticRuntimeRequestUrl(id: AutomaticLocalRuntimeAdapterId, raw
     url.password ||
     url.search ||
     url.hash ||
-    !LOCAL_RUNTIME_REQUEST_PATHS.has(url.pathname)
+    !boundary.requestPaths.has(url.pathname)
   ) {
     throw new Error(`request is outside the discovered ${boundary.name} API boundary`);
   }
@@ -299,7 +416,10 @@ export function authorizationForAccountRequest(
   return undefined;
 }
 
-function parseModelsPayload(value: unknown): string[] {
+function parseModelsPayload(
+  value: unknown,
+  signature?: { ownedBy: string },
+): string[] {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("model catalog must be a JSON object");
   }
@@ -311,7 +431,11 @@ function parseModelsPayload(value: unknown): string[] {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
       throw new Error("model catalog entry must be an object");
     }
-    const id = (entry as { id?: unknown }).id;
+    const model = entry as { id?: unknown; owned_by?: unknown };
+    if (signature && model.owned_by !== signature.ownedBy) {
+      throw new Error("model catalog has an invalid runtime signature");
+    }
+    const id = model.id;
     if (
       typeof id !== "string" ||
       id.length === 0 ||
@@ -375,7 +499,10 @@ export async function probeLocalRuntimeCandidate(
   const boundary = automaticRuntimeBoundary(adapter.id);
   const endpoint = parseAutomaticRuntimeEndpoint(adapter.id, candidate.endpoint);
   const modelsUrl = parseAutomaticRuntimeRequestUrl(adapter.id, candidate.modelsUrl);
-  if (endpoint.origin !== modelsUrl.origin || modelsUrl.pathname !== "/v1/models") {
+  if (
+    endpoint.origin !== modelsUrl.origin ||
+    modelsUrl.pathname !== boundary.catalogPath
+  ) {
     throw new Error(`model catalog URL does not match the ${boundary.name} endpoint`);
   }
 
@@ -408,6 +535,7 @@ export async function probeLocalRuntimeCandidate(
         }
         const confirmedModelIds = parseModelsPayload(
           await readBoundedJson(response, maxResponseBytes),
+          automaticRuntimeSignature(adapter.id),
         );
         return {
           status: "discovered" as const,
@@ -428,17 +556,14 @@ export async function discoverLocalRuntimes(
   options: LocalRuntimeDiscoveryOptions = {},
 ): Promise<LocalRuntimeProbeResult[]> {
   const adapters = options.adapters ?? LOCAL_RUNTIME_ADAPTERS;
-  const results: LocalRuntimeProbeResult[] = [];
-
-  for (const adapter of adapters) {
+  return Promise.all(adapters.map(async (adapter): Promise<LocalRuntimeProbeResult> => {
     if (adapter.candidates.length === 0) {
-      results.push({
+      return {
         status: "not-configured",
         adapter: adapter.id,
         displayName: adapter.displayName,
         attempts: 0,
-      });
-      continue;
+      };
     }
 
     let lastError: string | undefined;
@@ -454,18 +579,14 @@ export async function discoverLocalRuntimes(
       }
     }
 
-    results.push(
-      discovered ?? {
-        status: "unavailable",
-        adapter: adapter.id,
-        displayName: adapter.displayName,
-        attempts,
-        error: lastError,
-      },
-    );
-  }
-
-  return results;
+    return discovered ?? {
+      status: "unavailable",
+      adapter: adapter.id,
+      displayName: adapter.displayName,
+      attempts,
+      error: lastError,
+    };
+  }));
 }
 
 function discoveredAccountId(adapter: LocalRuntimeAdapterId): string {

@@ -36,11 +36,15 @@ back to the fixed standalone port.
 `GET /v1/adapters` exposes the bounded runtime contract embedded in the agent:
 protocol, health and catalog paths, capabilities, authentication, measurement
 dimensions, limits and reviewed automatic candidates. The registry covers the
-full Core runtime list and keeps every adapter manual except the literal
-IPv4/IPv6 Ollama and LM Studio loopback candidates. Ollama uses only its
-official default port `11434` and documented OpenAI-compatible `/v1/models`
-surface; the review source is the official
+full Core runtime list and keeps every adapter manual except the reviewed
+literal IPv4/IPv6 Ollama, LM Studio, OMLX, MTPLX and Exo loopback candidates.
+Ollama uses only its official default port `11434` and documented
+OpenAI-compatible `/v1/models` surface; the review source is the official
 [Ollama OpenAI compatibility reference](https://docs.ollama.com/api/openai-compatibility).
+OMLX and MTPLX share port `8000` and are accepted only when every returned
+model carries the matching `owned_by` signature. Exo uses its documented
+loopback port `52415` and `/models` catalog path, with the same
+`owned_by: "exo"` signature requirement.
 The standalone agent preserves the documented literal `127.0.0.1` or `::1`
 port `1460`. The embedded supervisor instead forces port `0` on one of those
 literal loopback addresses and learns the resulting non-zero port only through
