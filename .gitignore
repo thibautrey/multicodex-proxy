@@ -2,6 +2,7 @@ node_modules
 web/node_modules
 dist
 web-dist
+target
 .env
 web/*.tsbuildinfo
 data/*
