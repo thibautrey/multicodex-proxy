@@ -47,6 +47,11 @@ func setStartAtLogin(enabled bool) {
 		value = "1\n"
 	}
 	_ = os.WriteFile(path, []byte(value), 0600)
+	if enabled {
+		_ = exec.Command("systemctl", "--user", "enable", "--now", "multivibe-host.service").Run()
+	} else {
+		_ = exec.Command("systemctl", "--user", "disable", "--now", "multivibe-host.service").Run()
+	}
 }
 
 const actionHostExited = 100
