@@ -134,7 +134,7 @@ func openManagedControllerState(path string) (managedControllerState, error) {
 	if errors.Is(err, os.ErrNotExist) {
 		return empty, nil
 	}
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 ||
+	if err != nil || !providerPrivateFile(path, info) ||
 		info.Size() < 1 || info.Size() > managedControllerStateMaximumBytes {
 		return managedControllerState{}, errors.New("managed controller state must be a bounded mode-0600 regular file")
 	}

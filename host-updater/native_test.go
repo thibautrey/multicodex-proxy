@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"compress/gzip"
 	"os"
 	"path/filepath"
@@ -46,6 +47,68 @@ func TestExtractLinuxArchive(t *testing.T) {
 func TestExtractLinuxArchiveRejectsTraversal(t *testing.T) {
 	if _, err := extractLinuxArchive(writeTarFixture(t, "../install.sh"), t.TempDir()); err == nil {
 		t.Fatal("archive traversal accepted")
+	}
+}
+
+func writeWindowsZipFixture(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "fixture.zip")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := zip.NewWriter(file)
+	directory := &zip.FileHeader{Name: "multivibe-host_1.0.0_windows_amd64/"}
+	directory.SetMode(os.ModeDir | 0o700)
+	if _, err := writer.CreateHeader(directory); err != nil {
+		t.Fatal(err)
+	}
+	installer := &zip.FileHeader{Name: "multivibe-host_1.0.0_windows_amd64/install.ps1"}
+	installer.SetMode(0o600)
+	entry, err := writer.CreateHeader(installer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := entry.Write([]byte("Write-Output ready\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestSafeWindowsArchivePath(t *testing.T) {
+	tests := map[string]bool{
+		"multivibe-host_1.0.0_windows_amd64/":            true,
+		"multivibe-host_1.0.0_windows_amd64/install.ps1": true,
+		"":                                     false,
+		"/install.ps1":                         false,
+		"multivibe-host_1.0.0_windows_amd64//": false,
+		"multivibe-host_1.0.0_windows_amd64/../escape": false,
+		"multivibe-host_1.0.0_windows_amd64\\escape":   false,
+		"C:/escape": false,
+		"multivibe-host_1.0.0_windows_amd64/./install.ps1": false,
+	}
+	for name, expected := range tests {
+		if actual := safeWindowsArchivePath(name); actual != expected {
+			t.Errorf("safeWindowsArchivePath(%q) = %v, want %v", name, actual, expected)
+		}
+	}
+}
+
+func TestExtractWindowsArchiveAllowsDirectoryEntries(t *testing.T) {
+	destination := t.TempDir()
+	root, err := extractWindowsArchive(writeWindowsZipFixture(t), destination)
+	if err != nil || filepath.Base(root) != "multivibe-host_1.0.0_windows_amd64" {
+		t.Fatalf("valid Windows archive failed: %q %v", root, err)
+	}
+	contents, err := os.ReadFile(filepath.Join(root, "install.ps1"))
+	if err != nil || string(contents) != "Write-Output ready\n" {
+		t.Fatalf("staged installer is invalid: %q %v", contents, err)
 	}
 }
 

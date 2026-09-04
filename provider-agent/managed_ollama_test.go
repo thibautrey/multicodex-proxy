@@ -179,6 +179,9 @@ func writeManagedOllamaTestDependencies(t *testing.T, directory, darwinSHA strin
 				"linux-amd64": map[string]any{
 					"url": "https://github.com/ollama/ollama/releases/download/v0.33.2/ollama-linux-amd64.tar.zst", "sha256": strings.Repeat("1", 64), "archive": "tar-zstd",
 				},
+				"windows-amd64": map[string]any{
+					"url": "https://github.com/ollama/ollama/releases/download/v0.33.2/ollama-windows-amd64.zip", "sha256": "2439cbea65310b1aadf7d8fc41d7faf5d033f920d42e00a476c58bf9bff695e0", "archive": "zip",
+				},
 			},
 		},
 	}
@@ -238,7 +241,7 @@ func installManagedOllamaTestRuntime(t *testing.T, manager *managedOllama, archi
 	}
 	directory := manager.runtimeDirectory()
 	binary := filepath.Join(directory, managedOllamaBinaryRelativePath(manager.platform))
-	if err := os.MkdirAll(filepath.Dir(binary), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(binary), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(binary, []byte("test-ollama"), 0o755); err != nil {

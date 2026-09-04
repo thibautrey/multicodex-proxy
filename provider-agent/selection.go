@@ -75,7 +75,7 @@ func openSelectionStore(path string, initial []string) (*selectionStore, error) 
 	if err != nil {
 		return nil, errors.New("provider selection state cannot be inspected")
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || info.Size() > 64*1024 {
+	if !providerPrivateFile(path, info) || info.Size() > 64*1024 {
 		return nil, errors.New("provider selection state must be a bounded mode-0600 regular file")
 	}
 	file, err := os.Open(path)
@@ -150,52 +150,12 @@ func (store *selectionStore) replace(expectedRevision uint64, models []string) (
 }
 
 func (store *selectionStore) persistLocked() error {
-	directory := filepath.Dir(store.path)
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		return errors.New("provider selection state directory cannot be created")
-	}
-	directoryInfo, err := os.Lstat(directory)
-	if err != nil || !directoryInfo.IsDir() || directoryInfo.Mode()&os.ModeSymlink != 0 {
-		return errors.New("provider selection state directory is invalid")
-	}
-	temporary, err := os.CreateTemp(directory, "."+filepath.Base(store.path)+".*.tmp")
-	if err != nil {
-		return errors.New("provider selection state temporary file cannot be created")
-	}
-	if err := temporary.Chmod(0o600); err != nil {
-		_ = temporary.Close()
-		_ = os.Remove(temporary.Name())
-		return errors.New("provider selection state temporary file cannot be secured")
-	}
-	temporaryPath := temporary.Name()
-	removeTemporary := true
-	defer func() {
-		_ = temporary.Close()
-		if removeTemporary {
-			_ = os.Remove(temporaryPath)
-		}
-	}()
-	encoder := json.NewEncoder(temporary)
-	encoder.SetEscapeHTML(true)
-	if err := encoder.Encode(store.documentLocked()); err != nil {
+	encoded, err := json.Marshal(store.documentLocked())
+	if err != nil || len(encoded) > 64*1024 {
 		return errors.New("provider selection state cannot be encoded")
 	}
-	if err := temporary.Sync(); err != nil {
-		return errors.New("provider selection state cannot be synchronized")
-	}
-	if err := temporary.Close(); err != nil {
-		return errors.New("provider selection state cannot be closed")
-	}
-	if destination, err := os.Lstat(store.path); err == nil {
-		if !destination.Mode().IsRegular() || destination.Mode().Perm() != 0o600 {
-			return errors.New("provider selection state destination is unsafe")
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return errors.New("provider selection state destination cannot be inspected")
-	}
-	if err := os.Rename(temporaryPath, store.path); err != nil {
+	if err := atomicWrite0600(store.path, append(encoded, '\n')); err != nil {
 		return fmt.Errorf("provider selection state cannot be committed: %w", err)
 	}
-	removeTemporary = false
 	return nil
 }

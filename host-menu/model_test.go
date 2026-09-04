@@ -60,7 +60,7 @@ func TestSerializeMenuModelUsesNativePopupCopy(t *testing.T) {
 	if got, want := lines[15], "current"; got != want {
 		t.Fatalf("update status = %q, want %q", got, want)
 	}
-	if got := lines[20]; !strings.HasPrefix(got, "A\tperson@example.com\tready\tavailable\t0\t\tNo reset time\t0\t\tNo reset time\t0\t\tNo reset time\tUpdated ") {
+	if got := lines[modelFirstAccount]; !strings.HasPrefix(got, "A\tperson@example.com\tready\tavailable\t0\t\tNo reset time\t0\t\tNo reset time\t0\t\tNo reset time\tUpdated ") {
 		t.Fatalf("account model = %q", got)
 	}
 }

@@ -33,6 +33,7 @@ test("builds an Ed25519-signed stable update feed for every Host target", async 
     `multivibe-host_${version}_darwin_arm64.dmg`,
     `multivibe-host_${version}_darwin_amd64.dmg`,
     `multivibe-host_${version}_linux_amd64.tar.gz`,
+    `multivibe-host_${version}_windows_amd64.zip`,
   ]) {
     const data = Buffer.from(`fixture:${name}`);
     await writeFile(path.join(directory, name), data);
@@ -62,7 +63,7 @@ test("builds an Ed25519-signed stable update feed for every Host target", async 
   const signed = JSON.parse(Buffer.from(envelope.signed, "base64url").toString("utf8"));
   assert.equal(signed.version, version);
   assert.equal(signed.channel, "stable");
-  assert.deepEqual(Object.keys(signed.targets), ["darwin-arm64", "darwin-amd64", "linux-amd64", "docker-linux-amd64"]);
+  assert.deepEqual(Object.keys(signed.targets), ["darwin-arm64", "darwin-amd64", "linux-amd64", "windows-amd64", "docker-linux-amd64"]);
   assert.equal((await stat(output)).mode & 0o777, 0o444);
 
   const mismatch = await run([

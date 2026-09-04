@@ -360,7 +360,7 @@ func validateRuntimeBackendDescriptor(descriptor runtimeBackendDescriptor) error
 	seenAccelerators := map[string]struct{}{}
 	for _, accelerator := range descriptor.Accelerators {
 		key := accelerator.Profile + "\x00" + accelerator.OS + "\x00" + accelerator.Architecture + "\x00" + accelerator.Kind
-		if !runtimeBackendProfilePattern.MatchString(accelerator.Profile) || (accelerator.OS != "darwin" && accelerator.OS != "linux") ||
+		if !runtimeBackendProfilePattern.MatchString(accelerator.Profile) || (accelerator.OS != "darwin" && accelerator.OS != "linux" && accelerator.OS != "windows") ||
 			(accelerator.Architecture != "arm64" && accelerator.Architecture != "amd64") ||
 			(accelerator.Kind != "metal" && accelerator.Kind != "cuda") {
 			return errRuntimeBackendInvalid
@@ -377,7 +377,7 @@ func validateRuntimeBackendDescriptor(descriptor runtimeBackendDescriptor) error
 		return errRuntimeBackendInvalid
 	}
 	for platform, path := range launch.ExecutableRelativePaths {
-		if (platform != "darwin-arm64" && platform != "darwin-amd64" && platform != "linux-amd64") || !runtimeBackendExecutablePattern.MatchString(path) || filepath.IsAbs(path) || filepath.Clean(path) != path ||
+		if (platform != "darwin-arm64" && platform != "darwin-amd64" && platform != "linux-amd64" && platform != "windows-amd64") || !runtimeBackendExecutablePattern.MatchString(path) || filepath.IsAbs(path) || filepath.Clean(path) != path ||
 			strings.Contains(path, "\\") || path == ".." || strings.HasPrefix(path, ".."+string(filepath.Separator)) {
 			return errRuntimeBackendInvalid
 		}
@@ -454,7 +454,7 @@ func validateRuntimeWorkloadProfile(profile runtimeWorkloadProfile) error {
 			return errRuntimeBackendInvalid
 		}
 	}
-	if accelerator.OS != "darwin" && accelerator.OS != "linux" {
+	if accelerator.OS != "darwin" && accelerator.OS != "linux" && accelerator.OS != "windows" {
 		return errRuntimeBackendInvalid
 	}
 	if accelerator.Architecture != "arm64" && accelerator.Architecture != "amd64" {
@@ -474,7 +474,7 @@ func validateRuntimeProvenancePin(pin runtimeProvenancePin) error {
 		return errRuntimeBackendInvalid
 	}
 	for platform, digest := range pin.ArtifactSHA256 {
-		if (platform != "darwin-arm64" && platform != "darwin-amd64" && platform != "linux-amd64") || !validManagedOllamaSHA256(digest) {
+		if (platform != "darwin-arm64" && platform != "darwin-amd64" && platform != "linux-amd64" && platform != "windows-amd64") || !validManagedOllamaSHA256(digest) {
 			return errRuntimeBackendInvalid
 		}
 	}
@@ -731,9 +731,10 @@ func newOllamaRuntimeBackend(runtime managedControllerRuntime, catalogPath, depe
 			{Profile: "apple-silicon", OS: "darwin", Architecture: "arm64", Kind: "metal"},
 			{Profile: "intel-mac", OS: "darwin", Architecture: "amd64", Kind: "metal"},
 			{Profile: "linux-nvidia", OS: "linux", Architecture: "amd64", Kind: "cuda"},
+			{Profile: "windows-nvidia", OS: "windows", Architecture: "amd64", Kind: "cuda"},
 		},
 		Launch: runtimeBackendLaunchAllowlist{
-			ExecutableRelativePaths: map[string]string{"darwin-arm64": "ollama", "darwin-amd64": "ollama", "linux-amd64": filepath.Join("bin", "ollama")},
+			ExecutableRelativePaths: map[string]string{"darwin-arm64": "ollama", "darwin-amd64": "ollama", "linux-amd64": filepath.Join("bin", "ollama"), "windows-amd64": "ollama.exe"},
 			ContainerImages:         []string{},
 			ArgumentTemplates:       [][]string{{"serve"}, {"pull", "{catalog_model}"}, {"stop", "{catalog_model}"}},
 			Resources: runtimeBackendResourceBounds{

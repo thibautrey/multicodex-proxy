@@ -17,6 +17,11 @@
         "url": "https://nodejs.org/dist/v22.23.2/node-v22.23.2-linux-x64.tar.gz",
         "sha256": "b294a556e639d64338823920e5866c21c02741742d2e1529ee1a225c1ec9252a",
         "archive": "tar-gzip"
+      },
+      "windows-amd64": {
+        "url": "https://nodejs.org/dist/v22.23.2/node-v22.23.2-win-x64.zip",
+        "sha256": "1177b4137ba5adaa56354ae40f1080c7450e8ae09cecb47da459d1c52ac99f97",
+        "archive": "zip"
       }
     }
   },
@@ -37,6 +42,11 @@
         "url": "https://github.com/ollama/ollama/releases/download/v0.33.2/ollama-linux-amd64.tar.zst",
         "sha256": "9785247dea264d9072f09f6c9c0eb4b8e666892826a3d8388eba3e8fb9ed1db9",
         "archive": "tar-zstd"
+      },
+      "windows-amd64": {
+        "url": "https://github.com/ollama/ollama/releases/download/v0.33.2/ollama-windows-amd64.zip",
+        "sha256": "2439cbea65310b1aadf7d8fc41d7faf5d033f920d42e00a476c58bf9bff695e0",
+        "archive": "zip"
       }
     }
   }

@@ -105,5 +105,34 @@ test("Linux archives use the native GTK menu binary and bundled icon", async () 
   assert.match(source, /host-menu/u);
   assert.match(source, /multivibe-host-menu/u);
   assert.match(source, /favicon-32x32\.png/u);
-  assert.match(source, /CGO_ENABLED: "1"/u);
+  assert.match(source, /CGO_ENABLED: selectedTarget\.goos === "linux" \? "1" : "0"/u);
+});
+
+test("Windows packaging emits a ZIP with the native installer pair", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "multivibe-host-windows-archive-test-"));
+  try {
+    const baseName = "multivibe-host_0.2.0_windows_amd64";
+    const root = path.join(directory, baseName);
+    await mkdir(root, { recursive: true });
+    await writeFile(path.join(root, "install.ps1"), "Write-Output install\n");
+    await writeFile(path.join(root, "uninstall.ps1"), "Write-Output uninstall\n");
+    const archive = await archiveBundle(
+      { root, baseName },
+      { output: path.join(directory, "out") },
+      { archive: "zip" },
+    );
+    assert.match(archive, /multivibe-host_0\.2\.0_windows_amd64\.zip$/u);
+    const bytes = await readFile(archive);
+    assert.ok(bytes.includes(Buffer.from(`${baseName}/install.ps1`)));
+    assert.ok(bytes.includes(Buffer.from(`${baseName}/uninstall.ps1`)));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Windows packaging uses the ZIP64-capable .NET archive writer", async () => {
+  const source = await readFile(packager, "utf8");
+  assert.match(source, /ZipArchiveMode.*Create/u);
+  assert.match(source, /CreateEntry/u);
+  assert.doesNotMatch(source, /Compress-Archive/u);
 });

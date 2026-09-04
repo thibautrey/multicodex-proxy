@@ -70,7 +70,7 @@ async function archiveTarget(directory, checksums, version, platform, architectu
     const size = await regularFileSize(file);
     return { kind: "archive", url: releaseURL(version, name), size, sha256: digest };
   } catch (error) {
-    if (platform !== "linux" || error?.code !== "ENOENT") throw error;
+    if (!(["linux", "windows"].includes(platform)) || error?.code !== "ENOENT") throw error;
   }
 
   const parts = [];
@@ -81,7 +81,7 @@ async function archiveTarget(directory, checksums, version, platform, architectu
     const size = await regularFileSize(path.join(directory, partName), 2 * 1024 * 1024 * 1024);
     parts.push({ url: releaseURL(version, partName), size, sha256: partDigest });
   }
-  if (parts.length < 2) throw new Error("multipart Linux release is incomplete");
+  if (parts.length < 2) throw new Error("multipart provider-host release is incomplete");
   return {
     kind: "archive",
     size: parts.reduce((total, part) => total + part.size, 0),
@@ -140,6 +140,7 @@ async function main() {
       "darwin-arm64": await archiveTarget(directory, checksums, version, "darwin", "arm64", "dmg"),
       "darwin-amd64": await archiveTarget(directory, checksums, version, "darwin", "amd64", "dmg"),
       "linux-amd64": await archiveTarget(directory, checksums, version, "linux", "amd64", "tar.gz"),
+      "windows-amd64": await archiveTarget(directory, checksums, version, "windows", "amd64", "zip"),
       "docker-linux-amd64": {
         kind: "container",
         image: canonicalImage,

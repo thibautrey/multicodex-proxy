@@ -1,7 +1,7 @@
 {
   "schema_version": "provider-runtime-profile-catalog-v3",
   "format": "multivibe-runtime-profile-catalog",
-  "catalog_digest": "sha256:f67f5caf61690ea78564416e922e36ab5b9c3b9d486b7db1a67181d6d760dcfe",
+  "catalog_digest": "sha256:09da3cbd3ff29b515422c3bd88416fef84996d2a6d9d675aa00479c10b09b2cb",
   "license": "Apache-2.0",
   "provenance": {
     "source_url": "https://github.com/thibautrey/multivibe/blob/main/packaging/provider-model-catalog.json",
@@ -36,6 +36,50 @@
         "contract_version": "provider-runtime-backend-v1",
         "adapter_version": "ollama-adapter-v1",
         "runtime_artifact_digest": "sha256:9785247dea264d9072f09f6c9c0eb4b8e666892826a3d8388eba3e8fb9ed1db9"
+      },
+      "tuning": {
+        "context_tokens": 8192,
+        "batch_size": 128,
+        "parallelism": 1,
+        "gpu_offload_layers": 24,
+        "estimated_memory_bytes": 1207959552,
+        "reserve_memory_bytes": 1073741824
+      },
+      "provenance": {
+        "recommendation_source_url": "https://github.com/thibautrey/multivibe/blob/main/packaging/provider-model-catalog.json",
+        "recommendation_digest": "sha256:00e159947c55f937b28a7dcb5ae566a76e40776a73eb27b9da112143dc10dd97",
+        "method": "reviewed-static",
+        "license": "Apache-2.0"
+      }
+    },
+    {
+      "schema_version": "provider-runtime-profile-v3",
+      "id": "qwen2.5-0.5b-q4km-cuda8-ollama-windows",
+      "profile_digest": "sha256:f3ef71d536118653b8bc953c3f2bbc995be8ac579435fb5c4b0c40c5b0453fc0",
+      "priority": 100,
+      "model": {
+        "id": "hf:qwen/qwen2.5-0.5b-instruct",
+        "content_digest": "sha256:a8b0c51577010a279d933d14c2a8ab4b268079d44c5c8830c0a93900f1827c67",
+        "format": "gguf",
+        "quantization": "q4_k_m",
+        "artifact_bytes": 397821319,
+        "license": "Apache-2.0",
+        "hosted_inference_allowed": true,
+        "license_assessment_digest": "sha256:820d427dba05fb3ef3694ea46c991e1317dbc6de9dcededfaf7937023ebd77c8"
+      },
+      "hardware": {
+        "class": "nvidia-cuda-8gb",
+        "os": "windows",
+        "architecture": "amd64",
+        "accelerator_kind": "cuda",
+        "minimum_accelerator_memory_bytes": 8589934592,
+        "unified_memory": false
+      },
+      "runtime": {
+        "backend_id": "ollama-managed",
+        "contract_version": "provider-runtime-backend-v1",
+        "adapter_version": "ollama-adapter-v1",
+        "runtime_artifact_digest": "sha256:2439cbea65310b1aadf7d8fc41d7faf5d033f920d42e00a476c58bf9bff695e0"
       },
       "tuning": {
         "context_tokens": 8192,

@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
@@ -15,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -24,7 +26,7 @@ func verifyDownloadedArchive(state updaterState) error {
 		return errors.New("no verified downloaded update is available")
 	}
 	info, err := os.Lstat(state.DownloadedPath)
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() != state.Target.Size {
+	if err != nil || !updaterPrivateFile(state.DownloadedPath, info) || info.Size() != state.Target.Size {
 		return errors.New("the downloaded update archive is unavailable")
 	}
 	file, err := os.Open(state.DownloadedPath)
@@ -146,7 +148,7 @@ type hostCredentials struct {
 func (update *updater) hostRequest(ctx context.Context, method, route string) (*http.Response, error) {
 	credentialPath := filepath.Join(update.store.directory, "host-credentials.json")
 	info, err := os.Lstat(credentialPath)
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 || info.Size() > 16*1024 {
+	if err != nil || !updaterPrivateFile(credentialPath, info) || info.Size() > 16*1024 {
 		return nil, errors.New("the local Host credentials are unavailable")
 	}
 	data, err := os.ReadFile(credentialPath)
@@ -216,6 +218,9 @@ func commandWithLog(ctx context.Context, logPath, program string, arguments ...s
 		return errors.New("the update log cannot be opened")
 	}
 	defer logFile.Close()
+	if err := secureUpdaterPrivateFile(logPath); err != nil {
+		return errors.New("the update log cannot be protected")
+	}
 	command := exec.CommandContext(ctx, program, arguments...)
 	command.Stdin = nil
 	command.Stdout = logFile
@@ -274,6 +279,25 @@ func (update *updater) applyNative(ctx context.Context, state *updaterState) err
 		application := filepath.Join(mountPoint, "MultiVibe Host.app")
 		installer := filepath.Join(application, "Contents", "Resources", "update", "install.sh")
 		installErr = commandWithLog(ctx, update.store.log, installer, "--automatic-update", "--source-application", application)
+	} else if runtime.GOOS == "windows" {
+		staging, err := os.MkdirTemp(update.store.cache, ".extract-*")
+		if err != nil {
+			return setFailure(update.store, state, "extract_stage_failed", err)
+		}
+		defer os.RemoveAll(staging)
+		if err := secureUpdaterPrivateDirectory(staging); err != nil {
+			return setFailure(update.store, state, "extract_stage_failed", err)
+		}
+		root, err := extractWindowsArchive(state.DownloadedPath, staging)
+		if err != nil {
+			return setFailure(update.store, state, "archive_extract_failed", err)
+		}
+		powershell, err := nativePowerShellPath()
+		if err != nil {
+			return setFailure(update.store, state, "installer_unavailable", err)
+		}
+		installArguments := []string{"-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", filepath.Join(root, "install.ps1"), "-AutomaticUpdate", "-SourceDirectory", root, "-UpdaterProcessId", strconv.Itoa(os.Getpid())}
+		installErr = commandWithLog(ctx, update.store.log, powershell, installArguments...)
 	} else {
 		installErr = errors.New("native updates are unsupported on this operating system")
 	}
@@ -299,4 +323,115 @@ func (update *updater) applyNative(ctx context.Context, state *updaterState) err
 		_ = exec.Command("/usr/bin/open", filepath.Join(os.Getenv("HOME"), "Applications", "MultiVibe Host.app")).Start()
 	}
 	return nil
+}
+
+func extractWindowsArchive(archive, destination string) (string, error) {
+	info, err := os.Stat(archive)
+	if err != nil || !updaterPrivateFile(archive, info) || info.Size() < 1 || info.Size() > maximumArtifactBytes {
+		return "", errors.New("the Windows update archive is invalid")
+	}
+	file, err := os.Open(archive)
+	if err != nil {
+		return "", errors.New("the Windows update archive cannot be opened")
+	}
+	defer file.Close()
+	reader, err := zip.NewReader(file, info.Size())
+	if err != nil || len(reader.File) == 0 || len(reader.File) > 200000 {
+		return "", errors.New("the Windows update archive is invalid")
+	}
+	seen := make(map[string]struct{}, len(reader.File))
+	var rootName string
+	var total int64
+	for _, entry := range reader.File {
+		if strings.Contains(entry.Name, "\\") {
+			return "", errors.New("the Windows update archive contains an unsafe path")
+		}
+		name := entry.Name
+		trimmed := strings.TrimSuffix(name, "/")
+		parts := strings.Split(trimmed, "/")
+		if len(parts) < 1 || parts[0] == "" || !safeWindowsArchivePath(name) {
+			return "", errors.New("the Windows update archive contains an unsafe path")
+		}
+		if rootName == "" {
+			rootName = parts[0]
+		}
+		if parts[0] != rootName {
+			return "", errors.New("the Windows update archive has multiple roots")
+		}
+		canonical := strings.ToLower(trimmed)
+		if _, exists := seen[canonical]; exists {
+			return "", errors.New("the Windows update archive contains duplicate paths")
+		}
+		seen[canonical] = struct{}{}
+		if entry.UncompressedSize64 > uint64(maximumArtifactBytes) || uint64(total) > uint64(maximumArtifactBytes)-entry.UncompressedSize64 {
+			return "", errors.New("the Windows update archive expands beyond its safety bound")
+		}
+		total += int64(entry.UncompressedSize64)
+		target := filepath.Join(destination, filepath.FromSlash(trimmed))
+		if !archivePathWithin(destination, target) {
+			return "", errors.New("the Windows update archive escapes its staging directory")
+		}
+		if strings.HasSuffix(name, "/") || entry.FileInfo().IsDir() {
+			if err := os.MkdirAll(target, 0o700); err != nil || secureUpdaterPrivateDirectory(target) != nil {
+				return "", errors.New("the Windows update archive directory cannot be secured")
+			}
+			continue
+		}
+		parent := filepath.Dir(target)
+		if err := os.MkdirAll(parent, 0o700); err != nil || secureUpdaterPrivateDirectory(parent) != nil {
+			return "", errors.New("the Windows update archive parent cannot be secured")
+		}
+		entryInfo := entry.FileInfo()
+		if !entryInfo.Mode().IsRegular() || entryInfo.Mode()&os.ModeSymlink != 0 {
+			return "", errors.New("the Windows update archive contains an unsupported entry")
+		}
+		output, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			return "", errors.New("the Windows update archive file cannot be staged")
+		}
+		input, openErr := entry.Open()
+		if openErr != nil {
+			_ = output.Close()
+			_ = os.Remove(target)
+			return "", errors.New("the Windows update archive entry cannot be opened")
+		}
+		written, copyErr := io.Copy(output, io.LimitReader(input, int64(entry.UncompressedSize64)+1))
+		inputCloseErr := input.Close()
+		closeErr := output.Close()
+		if copyErr != nil || inputCloseErr != nil || closeErr != nil || written != int64(entry.UncompressedSize64) || secureUpdaterPrivateFile(target) != nil {
+			_ = os.Remove(target)
+			return "", errors.New("the Windows update archive could not be extracted completely")
+		}
+	}
+	if rootName == "" {
+		return "", errors.New("the Windows update archive is empty")
+	}
+	installer := filepath.Join(destination, rootName, "install.ps1")
+	installerInfo, err := os.Lstat(installer)
+	if err != nil || !updaterPrivateFile(installer, installerInfo) {
+		return "", errors.New("the Windows update installer is unavailable")
+	}
+	return filepath.Join(destination, rootName), nil
+}
+
+func safeWindowsArchivePath(name string) bool {
+	if name == "" || strings.ContainsRune(name, '\x00') || strings.Contains(name, "\\") || strings.HasPrefix(name, "/") || strings.HasPrefix(name, "//") {
+		return false
+	}
+	trimmed := strings.TrimSuffix(name, "/")
+	if trimmed == "" || strings.HasSuffix(trimmed, "/") {
+		return false
+	}
+	parts := strings.Split(trimmed, "/")
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." || strings.Contains(part, ":") {
+			return false
+		}
+	}
+	return true
+}
+
+func archivePathWithin(root, candidate string) bool {
+	relative, err := filepath.Rel(root, candidate)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) && !filepath.IsAbs(relative)
 }

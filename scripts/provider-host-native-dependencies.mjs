@@ -5,6 +5,7 @@ const expectedPrebuildByTarget = Object.freeze({
   "darwin-arm64": "darwin-arm64.node",
   "darwin-amd64": "darwin-x64.node",
   "linux-amd64": "linux-x64.node",
+  "windows-amd64": "win32-x64.node",
 });
 
 const reviewedBetterSQLitePrebuilds = new Set([

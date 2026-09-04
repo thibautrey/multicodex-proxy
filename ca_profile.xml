@@ -1,5 +1,5 @@
 <CommunityApplications>
-  <Profile>MultiVibe Host packages the auditable MultiVibe Core, its private provider agent and a managed Ollama runtime as one security-bounded container for Linux amd64 systems with a supported NVIDIA GPU. The application is currently beta; state and model storage remain local and provider sharing stays disabled until the operator explicitly enables it.</Profile>
+  <Profile>MultiVibe Host packages the auditable MultiVibe Core, its private provider agent and a managed Ollama runtime as one security-bounded container for Linux amd64 systems with a supported NVIDIA GPU. The native Windows amd64 Host is distributed separately as a verified ZIP and is not this Unraid container. The application is currently beta; state and model storage remain local and provider sharing stays disabled until the operator explicitly enables it.</Profile>
   <Icon>https://raw.githubusercontent.com/thibautrey/multivibe/main/assets/brand/vector/multivibe-app-icon.svg</Icon>
   <WebPage>https://github.com/thibautrey/multivibe</WebPage>
 </CommunityApplications>

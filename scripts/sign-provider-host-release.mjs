@@ -91,12 +91,13 @@ async function main() {
   if (!directoryInfo.isDirectory() || directoryInfo.isSymbolicLink()) throw new Error("release directory is invalid");
   const directoryEntries = await readdir(directory, { withFileTypes: true });
   const entries = directoryEntries
-    .filter((entry) => entry.isFile() && /^multivibe-host_[0-9A-Za-z._-]+\.(?:dmg|tar\.gz)$/u.test(entry.name))
+    .filter((entry) => entry.isFile() && /^multivibe-host_[0-9A-Za-z._-]+\.(?:dmg|tar\.gz|zip)$/u.test(entry.name))
     .map((entry) => entry.name)
     .sort();
-  if (entries.length !== 3 || !entries.some((name) => name.includes("darwin_arm64")) ||
-    !entries.some((name) => name.includes("darwin_amd64")) || !entries.some((name) => name.includes("linux_amd64"))) {
-    throw new Error("release directory must contain exactly one Apple Silicon, one Intel macOS, and one Linux provider-host archive");
+  if (entries.length !== 4 || !entries.some((name) => name.includes("darwin_arm64")) ||
+    !entries.some((name) => name.includes("darwin_amd64")) || !entries.some((name) => name.includes("linux_amd64")) ||
+    !entries.some((name) => name.includes("windows_amd64"))) {
+    throw new Error("release directory must contain exactly one Apple Silicon, one Intel macOS, one Linux and one Windows provider-host archive");
   }
   const reports = [];
   for (const name of entries) {
@@ -108,16 +109,17 @@ async function main() {
     if (report.verified !== true || report.releaseReady !== true || report.sourceTreeDirty !== false || report.runtimeChecked !== false) {
       throw new Error(`release archive is not eligible for signing: ${name}`);
     }
-    const extension = report.platform === "darwin" ? "dmg" : "tar.gz";
+    const extension = report.platform === "darwin" ? "dmg" : report.platform === "windows" ? "zip" : "tar.gz";
     const expected = `multivibe-host_${report.version}_${report.platform}_${report.architecture}.${extension}`;
     if (name !== expected) throw new Error(`release archive filename is inconsistent: ${name}`);
     reports.push(report);
   }
   if (new Set(reports.map((report) => report.version)).size !== 1 ||
     new Set(reports.map((report) => report.sourceCommit)).size !== 1) {
-    throw new Error("macOS and Linux archives must come from the same version and source commit");
+    throw new Error("native provider-host archives must come from the same version and source commit");
   }
   const releaseArchives = [];
+  const multipartBases = [];
   for (const name of entries) {
     const file = path.join(directory, name);
     const info = await stat(file);
@@ -125,14 +127,16 @@ async function main() {
       releaseArchives.push(name);
       continue;
     }
-    if (!name.endsWith("_linux_amd64.tar.gz")) throw new Error(`release asset exceeds GitHub's size limit: ${name}`);
+    if (!name.endsWith("_linux_amd64.tar.gz") && !name.endsWith("_windows_amd64.zip")) {
+      throw new Error(`release asset exceeds GitHub's size limit: ${name}`);
+    }
     releaseArchives.push(...await splitReleaseAsset(file, directory));
+    multipartBases.push(name);
   }
-  const multipartGuide = path.join(directory, "LINUX-MULTIPART.txt");
-  if (releaseArchives.some((name) => name.includes("_linux_amd64.tar.gz.part-"))) {
-    const linuxBase = entries.find((name) => name.endsWith("_linux_amd64.tar.gz"));
+  const multipartGuide = path.join(directory, "NATIVE-MULTIPART.txt");
+  if (multipartBases.length > 0) {
     await writeFile(multipartGuide,
-      `The Linux archive exceeds GitHub's per-file limit. Reconstruct it before verification and installation:\n\ncat ${linuxBase}.part-* > ${linuxBase}\nshasum -a 256 -c SHA256SUMS\n\nDo not extract or execute it unless the signed checksum succeeds.\n`,
+      `A native provider-host archive exceeds GitHub's per-file limit. Reconstruct the affected archive before verification and installation:\n\n${multipartBases.map((name) => `cat ${name}.part-* > ${name}`).join("\n")}\nshasum -a 256 -c SHA256SUMS\n\nDo not extract or execute an archive unless the signed checksum succeeds.\n`,
       { flag: "wx", mode: 0o444 });
     releaseArchives.push(path.basename(multipartGuide));
   }

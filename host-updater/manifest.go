@@ -142,7 +142,7 @@ func validateUpdateDocument(document updateDocument, now time.Time, channel stri
 	if err != nil || !expires.After(now) || !expires.After(published) || expires.Sub(published) > 366*24*time.Hour {
 		return errors.New("update feed is expired or has an invalid lifetime")
 	}
-	requiredTargets := []string{"darwin-arm64", "darwin-amd64", "linux-amd64", "docker-linux-amd64"}
+	requiredTargets := []string{"darwin-arm64", "darwin-amd64", "linux-amd64", "windows-amd64", "docker-linux-amd64"}
 	if len(document.Targets) != len(requiredTargets) {
 		return errors.New("update feed target set is invalid")
 	}
@@ -211,6 +211,9 @@ func targetName(container bool) (string, error) {
 	}
 	if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
 		return "linux-amd64", nil
+	}
+	if runtime.GOOS == "windows" && runtime.GOARCH == "amd64" {
+		return "windows-amd64", nil
 	}
 	return "", errors.New("this operating system and architecture are unsupported")
 }

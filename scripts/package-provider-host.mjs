@@ -74,7 +74,24 @@ function target() {
   if (process.platform === "linux" && process.arch === "x64") {
     return { key: "linux-amd64", goos: "linux", goarch: "amd64", archive: "tar.gz" };
   }
-  throw new Error("provider-host packages can be built only on macOS arm64, macOS amd64, or Linux amd64");
+  if (process.platform === "win32" && process.arch === "x64") {
+    return { key: "windows-amd64", goos: "windows", goarch: "amd64", archive: "zip" };
+  }
+  throw new Error("provider-host packages can be built only on macOS arm64, macOS amd64, Linux amd64, or Windows amd64");
+}
+
+function windowsPowerShellPath() {
+  const systemRoot = process.env.SystemRoot?.trim();
+  if (!systemRoot || !path.isAbsolute(systemRoot)) throw new Error("SystemRoot is unavailable");
+  return path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+}
+
+async function runWindowsPowerShell(script, variables) {
+  const environment = { ...process.env };
+  for (const [name, value] of Object.entries(variables)) environment[name] = value;
+  await command(windowsPowerShellPath(), [
+    "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script,
+  ], { env: environment });
 }
 
 async function command(program, args, options = {}) {
@@ -164,6 +181,16 @@ async function extractTar(archive, destination, format, profile, maximumFileByte
   });
 }
 
+async function extractZip(archive, destination) {
+  await runWindowsPowerShell(
+    "$ErrorActionPreference = 'Stop'; Expand-Archive -LiteralPath $env:MULTIVIBE_PACKAGE_ZIP_SOURCE -DestinationPath $env:MULTIVIBE_PACKAGE_ZIP_DESTINATION -Force",
+    {
+      MULTIVIBE_PACKAGE_ZIP_SOURCE: archive,
+      MULTIVIBE_PACKAGE_ZIP_DESTINATION: destination,
+    },
+  );
+}
+
 async function validateDereferenceableTree(root, relative = "") {
   const entries = await readdir(path.join(root, relative), { withFileTypes: true });
   for (const entry of entries) {
@@ -244,22 +271,17 @@ async function productionApplication(destination, selectedTarget) {
 }
 
 async function nodeRuntime(work, destination, dependency) {
-  const archive = path.join(work, "node.tar.gz");
+  const archive = path.join(work, dependency.archive === "zip" ? "node.zip" : "node.tar.gz");
   await download(dependency.url, archive, dependency.sha256, 512 * 1024 * 1024);
   const extraction = path.join(work, "node-extracted");
   await mkdir(extraction, { mode: 0o700 });
-  await extractTar(
-    archive,
-    extraction,
-    dependency.archive,
-    "node-runtime",
-    maximumNodeFileBytes,
-    maximumNodeExtractedBytes,
-  );
+  if (dependency.archive === "zip") await extractZip(archive, extraction);
+  else await extractTar(archive, extraction, dependency.archive, "node-runtime", maximumNodeFileBytes, maximumNodeExtractedBytes);
+  await validateDereferenceableTree(extraction);
   const entries = await readdir(extraction, { withFileTypes: true });
   const root = entries.filter((entry) => entry.isDirectory());
   if (entries.length !== 1 || root.length !== 1) throw new Error("Node archive layout is invalid");
-  const source = path.join(extraction, root[0].name, "bin", "node");
+  const source = path.join(extraction, root[0].name, dependency.archive === "zip" ? "node.exe" : path.join("bin", "node"));
   const sourceInfo = await lstat(source);
   if (!sourceInfo.isFile() || sourceInfo.isSymbolicLink()) throw new Error("Node executable layout is invalid");
   await cp(source, destination);
@@ -288,19 +310,14 @@ async function findOllamaRoot(extraction) {
 }
 
 async function ollamaRuntime(work, destination, dependency, selectedTarget, version) {
-  const archive = path.join(work, dependency.archive === "tar-zstd" ? "ollama.tar.zst" : "ollama.tar.gz");
+  const archiveName = dependency.archive === "zip" ? "ollama.zip" : dependency.archive === "tar-zstd" ? "ollama.tar.zst" : "ollama.tar.gz";
+  const archive = path.join(work, archiveName);
   const maximumBytes = selectedTarget.goos === "darwin" ? 512 * 1024 * 1024 : 4 * 1024 * 1024 * 1024;
   await download(dependency.url, archive, dependency.sha256, maximumBytes);
   const extraction = path.join(work, "ollama-extracted");
   await mkdir(extraction, { mode: 0o700 });
-  await extractTar(
-    archive,
-    extraction,
-    dependency.archive,
-    "ollama-runtime",
-    maximumOllamaFileBytes,
-    maximumOllamaExtractedBytes,
-  );
+  if (dependency.archive === "zip") await extractZip(archive, extraction);
+  else await extractTar(archive, extraction, dependency.archive, "ollama-runtime", maximumOllamaFileBytes, maximumOllamaExtractedBytes);
   await validateDereferenceableTree(extraction);
   await mkdir(destination, { recursive: true, mode: 0o755 });
 
@@ -335,7 +352,7 @@ async function ollamaRuntime(work, destination, dependency, selectedTarget, vers
       });
     }
     await chmod(path.join(destination, "ollama"), 0o555);
-  } else {
+  } else if (selectedTarget.goos === "linux") {
     const runtimeRoot = await findOllamaRoot(extraction);
     if (!runtimeRoot) throw new Error("Ollama Linux archive layout is invalid");
     const topLevel = await readdir(runtimeRoot, { withFileTypes: true });
@@ -356,6 +373,36 @@ async function ollamaRuntime(work, destination, dependency, selectedTarget, vers
       });
     }
     await chmod(path.join(destination, "bin", "ollama"), 0o555);
+  } else {
+    const entries = await readdir(extraction, { withFileTypes: true });
+    if (entries.length !== 2 || !entries.some((entry) => entry.isDirectory() && entry.name === "lib") ||
+      !entries.some((entry) => entry.isFile() && entry.name === "ollama.exe")) {
+      throw new Error("Ollama Windows archive layout is invalid");
+    }
+    const runtimeLibraryRoot = path.join(extraction, "lib", "ollama");
+    const libraryInfo = await lstat(runtimeLibraryRoot);
+    if (!libraryInfo.isDirectory() || libraryInfo.isSymbolicLink()) throw new Error("Ollama Windows library layout is invalid");
+    const runtimeFiles = await allFiles(extraction);
+    for (const relative of runtimeFiles) {
+      if (relative === "ollama.exe") continue;
+      const parts = relative.split("/");
+      const validLocation = parts.length === 4 && parts[0] === "lib" && parts[1] === "ollama" &&
+        new Set(["cuda_v12", "cuda_v13", "vulkan"]).has(parts[2]) && /^(?:[A-Za-z0-9._-]+)\.(?:dll|exe)$/u.test(parts[3]);
+      const validRootRuntime = parts.length === 3 && parts[0] === "lib" && parts[1] === "ollama" &&
+        /^(?:[A-Za-z0-9._-]+)\.(?:dll|exe)$/u.test(parts[2]);
+      if (!validLocation && !validRootRuntime) throw new Error("Ollama Windows archive contains an unexpected runtime file");
+    }
+    for (const required of ["ollama.exe", "lib/ollama/llama-server.exe", "lib/ollama/llama-quantize.exe"]) {
+      if (!runtimeFiles.includes(required)) throw new Error("Ollama Windows archive is missing a required runtime executable");
+    }
+    await cp(path.join(extraction, "lib"), path.join(destination, "lib"), {
+      recursive: true,
+      dereference: true,
+      force: false,
+      errorOnExist: true,
+    });
+    await cp(path.join(extraction, "ollama.exe"), path.join(destination, "ollama.exe"));
+    await chmod(path.join(destination, "ollama.exe"), 0o555);
   }
   await writeFile(path.join(destination, ".multivibe-bundle.json"), `${JSON.stringify({
     schema_version: "managed-ollama-bundle-v1",
@@ -370,7 +417,7 @@ async function allFiles(root, relative = "") {
   const entries = await readdir(directory, { withFileTypes: true });
   const files = [];
   for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-    const child = path.join(relative, entry.name);
+    const child = relative ? `${relative}/${entry.name}` : entry.name;
     if (entry.isSymbolicLink()) throw new Error(`release bundles may not contain symlinks: ${child}`);
     if (entry.isDirectory()) files.push(...await allFiles(root, child));
     else if (entry.isFile()) files.push(child);
@@ -481,11 +528,18 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
   await cp(path.join(repositoryRoot, "NOTICE"), path.join(root, "NOTICE"));
   await cp(path.join(repositoryRoot, "packaging", "PROVIDER-HOST-README.md"), path.join(root, "README.md"));
   await cp(path.join(repositoryRoot, "docker-compose.host.yml"), path.join(root, "docker-compose.host.yml"));
-  const installerPlatform = selectedTarget.goos === "darwin" ? "macos" : "linux";
-  for (const script of ["install.sh", "uninstall.sh"]) {
-    const destination = path.join(root, script);
-    await cp(path.join(repositoryRoot, "packaging", installerPlatform, script), destination);
-    await chmod(destination, 0o555);
+  const installerPlatform = selectedTarget.goos === "darwin" ? "macos" : selectedTarget.goos === "linux" ? "linux" : "windows";
+  if (selectedTarget.goos === "windows") {
+    for (const script of ["install.ps1", "uninstall.ps1"]) {
+      await cp(path.join(repositoryRoot, "packaging", installerPlatform, script), path.join(root, script));
+      await chmod(path.join(root, script), 0o444);
+    }
+  } else {
+    for (const script of ["install.sh", "uninstall.sh"]) {
+      const destination = path.join(root, script);
+      await cp(path.join(repositoryRoot, "packaging", installerPlatform, script), destination);
+      await chmod(destination, 0o555);
+    }
   }
   if (selectedTarget.goos === "linux") {
     for (const [source, destinationName] of [
@@ -554,12 +608,13 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
     await createMacApplicationIcon(work, path.join(contents, "Resources", "MultiVibe.icns"));
   } else {
     applicationDirectory = path.join(root, "app");
-    nodeDestination = path.join(root, "bin", "node");
-    agentDestination = path.join(root, "bin", "multivibe-provider-agent");
-    updaterDestination = path.join(root, "bin", "multivibe-host-updater");
-    benchmarkDestination = path.join(root, "bin", "multivibe-runtime-benchmark");
-    hostDestination = path.join(root, "bin", "multivibe-host");
-    menuDestination = path.join(root, "bin", "multivibe-host-menu");
+    const executableSuffix = selectedTarget.goos === "windows" ? ".exe" : "";
+    agentDestination = path.join(root, "bin", `multivibe-provider-agent${executableSuffix}`);
+    updaterDestination = path.join(root, "bin", `multivibe-host-updater${executableSuffix}`);
+    benchmarkDestination = path.join(root, "bin", `multivibe-runtime-benchmark${executableSuffix}`);
+    hostDestination = path.join(root, "bin", `multivibe-host${executableSuffix}`);
+    menuDestination = path.join(root, "bin", `multivibe-host-menu${executableSuffix}`);
+    nodeDestination = path.join(root, "bin", `node${executableSuffix}`);
     ollamaDestination = path.join(root, "runtime", "ollama");
     resourceDirectory = path.join(root, "resources", "provider");
     verifierDestination = path.join(root, "verify-provider-host.mjs");
@@ -579,6 +634,11 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
       path.join(repositoryRoot, "web", "public", "assets", "brand", "favicon-32x32.png"),
       path.join(resourceDirectory, "multivibe-host.png"),
     );
+  } else if (selectedTarget.goos === "windows") {
+    await cp(
+      path.join(repositoryRoot, "web", "public", "assets", "brand", "favicon.ico"),
+      path.join(resourceDirectory, "multivibe-host.ico"),
+    );
   }
   await cp(path.join(repositoryRoot, "scripts", "verify-provider-host.mjs"), verifierDestination);
   await chmod(verifierDestination, 0o444);
@@ -597,7 +657,7 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
   if (menuDestination) {
     await buildGo(
       path.join(repositoryRoot, "host-menu"), menuDestination, "menuApplicationVersion", options.version, selectedTarget,
-      ".", { CGO_ENABLED: "1" },
+      ".", { CGO_ENABLED: selectedTarget.goos === "linux" ? "1" : "0" },
     );
   }
   if (menuBarDestination) {
@@ -671,7 +731,7 @@ export async function archiveBundle(bundle, options, selectedTarget) {
       await command("codesign", ["--force", "--sign", options.signIdentity, "--timestamp", destination]);
     }
     if (options.notaryProfile) await notarizeMacDiskImage(destination, options.notaryProfile);
-  } else {
+  } else if (selectedTarget.archive === "tar.gz") {
     await command("tar", [
       "--format=ustar",
       "-czf",
@@ -680,6 +740,43 @@ export async function archiveBundle(bundle, options, selectedTarget) {
       path.dirname(bundle.root),
       path.basename(bundle.root),
     ]);
+  } else {
+    if (process.platform === "win32") {
+      await runWindowsPowerShell(
+        [
+          "$ErrorActionPreference = 'Stop'",
+          "Add-Type -AssemblyName System.IO.Compression",
+          "Add-Type -AssemblyName System.IO.Compression.FileSystem",
+          "$source = [System.IO.Path]::GetFullPath($env:MULTIVIBE_PACKAGE_ARCHIVE_SOURCE)",
+          "$parent = [System.IO.Path]::GetDirectoryName($source)",
+          "$rootName = [System.IO.Path]::GetFileName($source)",
+          "$archive = [System.IO.Compression.ZipFile]::Open($env:MULTIVIBE_PACKAGE_ARCHIVE_DESTINATION, [System.IO.Compression.ZipArchiveMode]::Create)",
+          "try {",
+          "  $null = $archive.CreateEntry(($rootName + '/'), [System.IO.Compression.CompressionLevel]::Optimal)",
+          "  foreach ($item in @(Get-ChildItem -LiteralPath $source -Force -Recurse | Sort-Object FullName)) {",
+          "    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Windows release bundles may not contain reparse points.' }",
+          "    $relative = $item.FullName.Substring($parent.Length + 1).Replace([System.IO.Path]::DirectorySeparatorChar, '/')",
+          "    if ($item.PSIsContainer) {",
+          "      $null = $archive.CreateEntry(($relative + '/'), [System.IO.Compression.CompressionLevel]::Optimal)",
+          "      continue",
+          "    }",
+          "    $entry = $archive.CreateEntry($relative, [System.IO.Compression.CompressionLevel]::Optimal)",
+          "    $input = [System.IO.File]::OpenRead($item.FullName)",
+          "    try {",
+          "      $output = $entry.Open()",
+          "      try { $input.CopyTo($output, 1048576) } finally { $output.Dispose() }",
+          "    } finally { $input.Dispose() }",
+          "  }",
+          "} finally { $archive.Dispose() }",
+        ].join('\n'),
+        {
+          MULTIVIBE_PACKAGE_ARCHIVE_SOURCE: bundle.root,
+          MULTIVIBE_PACKAGE_ARCHIVE_DESTINATION: destination,
+        },
+      );
+    } else {
+      await command("zip", ["-q", "-r", destination, path.basename(bundle.root)], { cwd: path.dirname(bundle.root) });
+    }
   }
   return destination;
 }
@@ -692,12 +789,12 @@ async function main() {
     !/^\d+\.\d+\.\d+$/u.test(dependencies.ollama?.version ?? "")) {
     throw new Error("provider-host dependency manifest is invalid");
   }
-  for (const key of ["darwin-arm64", "darwin-amd64", "linux-amd64"]) {
-    validateDependency(`Node ${key}`, dependencies.node?.artifacts?.[key], "tar-gzip");
+  for (const key of ["darwin-arm64", "darwin-amd64", "linux-amd64", "windows-amd64"]) {
+    validateDependency(`Node ${key}`, dependencies.node?.artifacts?.[key], key === "windows-amd64" ? "zip" : "tar-gzip");
     validateDependency(
       `Ollama ${key}`,
       dependencies.ollama?.artifacts?.[key],
-      key.startsWith("darwin-") ? "tar-gzip" : "tar-zstd",
+      key === "windows-amd64" ? "zip" : key.startsWith("darwin-") ? "tar-gzip" : "tar-zstd",
     );
   }
   const initialStatus = await command("git", ["status", "--porcelain"], { capture: true });

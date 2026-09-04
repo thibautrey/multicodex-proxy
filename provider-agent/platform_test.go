@@ -68,7 +68,7 @@ func TestDetectHostCapabilityFailsClosed(t *testing.T) {
 		err    error
 		reason string
 	}{
-		{name: "unsupported OS", goos: "windows", goarch: "amd64", reason: "supported hosts"},
+		{name: "unsupported OS", goos: "freebsd", goarch: "amd64", reason: "supported hosts"},
 		{name: "missing driver", goos: "linux", goarch: "amd64", err: errors.New("missing"), reason: "working NVIDIA driver"},
 		{name: "old GPU", goos: "linux", goarch: "amd64", output: "Tesla P100, 16280, 6.0\n", reason: "compute capability 7.0"},
 		{name: "malformed", goos: "linux", goarch: "amd64", output: "NVIDIA GPU, unknown, 8.6\n", reason: "response is invalid"},
@@ -143,6 +143,7 @@ func TestParseNVIDIACapabilitiesRejectsMalformedOrUnboundedValues(t *testing.T) 
 func TestSelectNVIDIACUDADeviceRequiresOneAvailableCanonicalPin(t *testing.T) {
 	capability := hostCapability{
 		Supported:    true,
+		Profile:      "linux-nvidia",
 		OS:           "linux",
 		Architecture: "amd64",
 		Accelerator:  "cuda",

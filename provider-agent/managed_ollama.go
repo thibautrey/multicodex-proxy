@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -20,7 +21,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 	"unicode"
 )
@@ -378,7 +378,7 @@ func validateManagedOllamaCUDAVisibleDevices(goos, value string) error {
 	if value == "" {
 		return nil
 	}
-	if goos != "linux" {
+	if goos != "linux" && goos != "windows" {
 		return errors.New("managed Ollama CUDA device pin is invalid")
 	}
 	if _, err := parseNVIDIACUDADevicePin(value); err != nil {
@@ -397,10 +397,19 @@ func managedOllamaPlatform(goos, goarch string) (string, error) {
 	if goos == "linux" && goarch == "amd64" {
 		return "linux-amd64", nil
 	}
-	return "", errors.New("managed Ollama supports only darwin/arm64, darwin/amd64 and linux/amd64")
+	if goos == "windows" && goarch == "amd64" {
+		return "windows-amd64", nil
+	}
+	return "", errors.New("managed Ollama supports only darwin/arm64, darwin/amd64, linux/amd64 and windows/amd64")
 }
 
 func resolveManagedOllamaTar(goos, configured string) (string, error) {
+	if goos == "windows" {
+		if configured != "" {
+			return "", errors.New("managed Ollama does not use tar on Windows")
+		}
+		return "", nil
+	}
 	allowlist := []string{"/usr/bin/tar"}
 	if goos == "linux" {
 		allowlist = append(allowlist, "/bin/tar")
@@ -449,11 +458,11 @@ func openManagedOllamaDependencyManifest(path string) (managedOllamaDependencyMa
 }
 
 func validateManagedOllamaDependencyManifest(document managedOllamaDependencyManifest) error {
-	if document.SchemaVersion != 1 || len(document.Node) == 0 || document.Ollama.Version != managedOllamaVersion || len(document.Ollama.Artifacts) != 3 {
+	if document.SchemaVersion != 1 || len(document.Node) == 0 || document.Ollama.Version != managedOllamaVersion || len(document.Ollama.Artifacts) != 4 {
 		return errors.New("managed Ollama dependency manifest is invalid")
 	}
-	expectedArchive := map[string]string{"darwin-arm64": "tar-gzip", "darwin-amd64": "tar-gzip", "linux-amd64": "tar-zstd"}
-	expectedFilename := map[string]string{"darwin-arm64": "ollama-darwin.tgz", "darwin-amd64": "ollama-darwin.tgz", "linux-amd64": "ollama-linux-amd64.tar.zst"}
+	expectedArchive := map[string]string{"darwin-arm64": "tar-gzip", "darwin-amd64": "tar-gzip", "linux-amd64": "tar-zstd", "windows-amd64": "zip"}
+	expectedFilename := map[string]string{"darwin-arm64": "ollama-darwin.tgz", "darwin-amd64": "ollama-darwin.tgz", "linux-amd64": "ollama-linux-amd64.tar.zst", "windows-amd64": "ollama-windows-amd64.zip"}
 	for platform, archive := range expectedArchive {
 		artifact, exists := document.Ollama.Artifacts[platform]
 		if !exists || artifact.Archive != archive || !validManagedOllamaSHA256(artifact.SHA256) {
@@ -578,7 +587,7 @@ func (manager *managedOllama) adoptBundledRuntime(ctx context.Context, policySta
 		return errors.New("managed Ollama adoption staging cannot be created")
 	}
 	defer os.RemoveAll(staging)
-	if err := os.Chmod(staging, 0o700); err != nil {
+	if err := secureProviderPrivateDirectory(staging); err != nil {
 		return errors.New("managed Ollama adoption staging cannot be secured")
 	}
 	if err := copyManagedOllamaTree(ctx, manager.bundledRuntimeRoot, staging); err != nil {
@@ -588,10 +597,13 @@ func (manager *managedOllama) adoptBundledRuntime(ctx context.Context, policySta
 		return errors.New("managed Ollama adopted runtime tree is unsafe")
 	}
 	binaryPath := filepath.Join(staging, managedOllamaBinaryRelativePath(manager.platform))
+	if err := secureManagedOllamaTree(staging, binaryPath); err != nil {
+		return err
+	}
 	if err := validateManagedOllamaBinary(binaryPath); err != nil {
 		return err
 	}
-	if err := os.Chmod(binaryPath, 0o755); err != nil {
+	if err := secureProviderExecutableFile(binaryPath); err != nil {
 		return errors.New("managed Ollama adopted runtime binary cannot be made executable")
 	}
 	if err := ctx.Err(); err != nil {
@@ -784,8 +796,14 @@ func ensureManagedOllamaDirectory(path string, private bool) error {
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return errors.New("managed Ollama directory is unsafe")
 	}
-	if private && info.Mode().Perm() != 0o700 {
-		return errors.New("managed Ollama directory must use mode 0700")
+	if private {
+		if err := secureProviderPrivateDirectory(path); err != nil {
+			return errors.New("managed Ollama directory cannot be secured")
+		}
+		info, err = os.Lstat(path)
+		if err != nil || !providerPrivateDirectory(path, info) {
+			return errors.New("managed Ollama directory is not private")
+		}
 	}
 	return nil
 }
@@ -798,7 +816,7 @@ func ensureManagedOllamaModelStorage(path string) error {
 		return errors.New("managed Ollama model storage cannot be created")
 	}
 	info, err := os.Lstat(path)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o700 || !managedOllamaOwnedByCurrentUser(info) {
+	if err != nil || !providerPrivateDirectory(path, info) || !providerOwnedByCurrentUser(path, info) {
 		return errors.New("managed Ollama model storage is unsafe")
 	}
 	return nil
@@ -835,7 +853,7 @@ func (manager *managedOllama) downloadDependency(ctx context.Context, artifact m
 			_ = os.Remove(temporaryPath)
 		}
 	}()
-	if err := temporary.Chmod(0o600); err != nil {
+	if err := secureProviderPrivateFile(temporaryPath); err != nil {
 		return "", errors.New("managed Ollama dependency temporary file cannot be secured")
 	}
 	hash := sha256.New()
@@ -859,7 +877,7 @@ func (manager *managedOllama) extractRuntime(ctx context.Context, policyState *c
 	if err != nil {
 		return errors.New("managed Ollama staging directory cannot be created")
 	}
-	if err := os.Chmod(staging, 0o700); err != nil {
+	if err := secureProviderPrivateDirectory(staging); err != nil {
 		_ = os.RemoveAll(staging)
 		return errors.New("managed Ollama staging directory cannot be secured")
 	}
@@ -869,25 +887,34 @@ func (manager *managedOllama) extractRuntime(ctx context.Context, policyState *c
 			_ = os.RemoveAll(staging)
 		}
 	}()
-	listArguments, extractArguments, err := managedOllamaTarArguments(manager.platform, archivePath, staging)
-	if err != nil {
-		return err
-	}
-	listing, err := manager.commands.Run(ctx, manager.tarPath, listArguments, manager.commandEnvironment(filepath.Join(manager.root, "models-unused")), manager.root, managedOllamaCommandOutputMaxBytes)
-	if err != nil || validateManagedOllamaArchiveListing(listing) != nil {
-		return errors.New("managed Ollama archive listing is unsafe")
-	}
-	if _, err := manager.commands.Run(ctx, manager.tarPath, extractArguments, manager.commandEnvironment(filepath.Join(manager.root, "models-unused")), manager.root, managedOllamaCommandOutputMaxBytes); err != nil {
-		return errors.New("managed Ollama archive extraction failed")
+	if manager.goos == "windows" {
+		if err := extractManagedOllamaZip(ctx, archivePath, staging); err != nil {
+			return err
+		}
+	} else {
+		listArguments, extractArguments, err := managedOllamaTarArguments(manager.platform, archivePath, staging)
+		if err != nil {
+			return err
+		}
+		listing, err := manager.commands.Run(ctx, manager.tarPath, listArguments, manager.commandEnvironment(filepath.Join(manager.root, "models-unused")), manager.root, managedOllamaCommandOutputMaxBytes)
+		if err != nil || validateManagedOllamaArchiveListing(listing) != nil {
+			return errors.New("managed Ollama archive listing is unsafe")
+		}
+		if _, err := manager.commands.Run(ctx, manager.tarPath, extractArguments, manager.commandEnvironment(filepath.Join(manager.root, "models-unused")), manager.root, managedOllamaCommandOutputMaxBytes); err != nil {
+			return errors.New("managed Ollama archive extraction failed")
+		}
 	}
 	if err := validateManagedOllamaExtractedTree(staging); err != nil {
 		return err
 	}
 	binaryPath := filepath.Join(staging, managedOllamaBinaryRelativePath(manager.platform))
+	if err := secureManagedOllamaTree(staging, binaryPath); err != nil {
+		return err
+	}
 	if err := validateManagedOllamaBinary(binaryPath); err != nil {
 		return err
 	}
-	if err := os.Chmod(binaryPath, 0o755); err != nil {
+	if err := secureProviderExecutableFile(binaryPath); err != nil {
 		return errors.New("managed Ollama runtime binary cannot be made executable")
 	}
 	if err := ctx.Err(); err != nil {
@@ -924,7 +951,7 @@ func (manager *managedOllama) commitStagedRuntime(staging, archiveSHA256 string)
 	if _, err := os.Lstat(recordPath); err == nil || !errors.Is(err, os.ErrNotExist) {
 		return errors.New("managed Ollama runtime collides with managed state")
 	}
-	if err := os.WriteFile(recordPath, append(encoded, '\n'), 0o600); err != nil || os.Chmod(recordPath, 0o600) != nil {
+	if err := os.WriteFile(recordPath, append(encoded, '\n'), 0o600); err != nil || secureProviderPrivateFile(recordPath) != nil {
 		return errors.New("managed Ollama runtime record cannot be persisted")
 	}
 	destination := manager.runtimeDirectory()
@@ -956,6 +983,86 @@ func managedOllamaTarArguments(platform, archivePath, staging string) ([]string,
 	default:
 		return nil, nil, errors.New("managed Ollama archive platform is unsupported")
 	}
+}
+
+func extractManagedOllamaZip(ctx context.Context, archivePath, staging string) error {
+	info, err := os.Stat(archivePath)
+	if err != nil || !info.Mode().IsRegular() || info.Size() < 1 || info.Size() > managedOllamaArchiveMaxBytes {
+		return errors.New("managed Ollama ZIP archive is invalid")
+	}
+	archive, err := os.Open(archivePath)
+	if err != nil {
+		return errors.New("managed Ollama ZIP archive cannot be opened")
+	}
+	defer archive.Close()
+	reader, err := zip.NewReader(archive, info.Size())
+	if err != nil || len(reader.File) == 0 || len(reader.File) > managedOllamaMaximumArchiveEntries {
+		return errors.New("managed Ollama ZIP archive is invalid")
+	}
+	seen := make(map[string]struct{}, len(reader.File))
+	var totalBytes uint64
+	for _, entry := range reader.File {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if entry.Flags&0x1 != 0 || !safeManagedOllamaArchivePath(entry.Name) {
+			return errors.New("managed Ollama ZIP archive contains an unsafe path")
+		}
+		trimmed := strings.TrimSuffix(entry.Name, "/")
+		canonical := strings.ToLower(trimmed)
+		if canonical == "" {
+			return errors.New("managed Ollama ZIP archive contains an empty path")
+		}
+		if _, exists := seen[canonical]; exists {
+			return errors.New("managed Ollama ZIP archive contains duplicate paths")
+		}
+		seen[canonical] = struct{}{}
+		if entry.UncompressedSize64 > uint64(managedOllamaArchiveMaxBytes) || totalBytes > uint64(managedOllamaArchiveMaxBytes)-entry.UncompressedSize64 {
+			return errors.New("managed Ollama ZIP archive exceeds its size bound")
+		}
+		totalBytes += entry.UncompressedSize64
+		target := filepath.Join(staging, filepath.FromSlash(trimmed))
+		if !managedOllamaPathWithin(staging, target) {
+			return errors.New("managed Ollama ZIP archive escaped staging")
+		}
+		if strings.HasSuffix(entry.Name, "/") || entry.FileInfo().IsDir() {
+			if err := os.MkdirAll(target, 0o700); err != nil || secureProviderPrivateDirectory(target) != nil {
+				return errors.New("managed Ollama ZIP directory cannot be created securely")
+			}
+			continue
+		}
+		parent := filepath.Dir(target)
+		if err := os.MkdirAll(parent, 0o700); err != nil || secureProviderPrivateDirectory(parent) != nil {
+			return errors.New("managed Ollama ZIP parent directory cannot be created securely")
+		}
+		output, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			return errors.New("managed Ollama ZIP file cannot be created")
+		}
+		ok := false
+		func() {
+			defer func() {
+				_ = output.Close()
+				if !ok {
+					_ = os.Remove(target)
+				}
+			}()
+			input, inputErr := entry.Open()
+			if inputErr != nil {
+				return
+			}
+			defer input.Close()
+			written, copyErr := io.Copy(output, io.LimitReader(managedOllamaContextReader{ctx: ctx, reader: input}, int64(entry.UncompressedSize64)+1))
+			if copyErr != nil || written != int64(entry.UncompressedSize64) || output.Sync() != nil || secureProviderPrivateFile(target) != nil {
+				return
+			}
+			ok = true
+		}()
+		if !ok {
+			return errors.New("managed Ollama ZIP file cannot be extracted securely")
+		}
+	}
+	return nil
 }
 
 func validateManagedOllamaArchiveListing(listing []byte) error {
@@ -1054,21 +1161,18 @@ func managedOllamaBinaryRelativePath(platform string) string {
 	if platform == "linux-amd64" {
 		return filepath.Join("bin", "ollama")
 	}
+	if platform == "windows-amd64" {
+		return "ollama.exe"
+	}
 	return "ollama"
 }
 
 func validateManagedOllamaBinary(path string) error {
 	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() < 1 || info.Mode().Perm()&0o111 == 0 ||
-		info.Mode().Perm()&0o022 != 0 || !managedOllamaOwnedByCurrentUser(info) {
+	if err != nil || !providerExecutableFile(path, info) || info.Size() < 1 || !providerOwnedByCurrentUser(path, info) {
 		return errors.New("managed Ollama runtime binary is invalid")
 	}
 	return nil
-}
-
-func managedOllamaOwnedByCurrentUser(info os.FileInfo) bool {
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	return ok && int(stat.Uid) == os.Geteuid()
 }
 
 func managedOllamaStableInfo(before, after os.FileInfo) bool {
@@ -1077,9 +1181,17 @@ func managedOllamaStableInfo(before, after os.FileInfo) bool {
 }
 
 func openManagedOllamaStableRegularFile(path string, maximum, expected int64) (*os.File, os.FileInfo, error) {
+	return openManagedOllamaStableFile(path, maximum, expected, providerPrivateFile)
+}
+
+func openManagedOllamaStableRuntimeFile(path string, maximum, expected int64) (*os.File, os.FileInfo, error) {
+	return openManagedOllamaStableFile(path, maximum, expected, providerManagedRuntimeFile)
+}
+
+func openManagedOllamaStableFile(path string, maximum, expected int64, validator func(string, os.FileInfo) bool) (*os.File, os.FileInfo, error) {
 	before, err := os.Lstat(path)
-	if err != nil || !before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0 || before.Size() < 1 || before.Size() > maximum ||
-		(expected >= 0 && before.Size() != expected) || before.Mode().Perm()&0o022 != 0 || !managedOllamaOwnedByCurrentUser(before) {
+	if err != nil || !validator(path, before) || before.Size() < 1 || before.Size() > maximum ||
+		(expected >= 0 && before.Size() != expected) || !providerOwnedByCurrentUser(path, before) {
 		return nil, nil, errors.New("managed Ollama regular file is unsafe")
 	}
 	file, err := os.Open(path)
@@ -1104,7 +1216,15 @@ func finishManagedOllamaStableRegularFile(path string, file *os.File, before os.
 }
 
 func hashManagedOllamaStableRegularFile(path string, maximum, expected int64) (string, error) {
-	file, before, err := openManagedOllamaStableRegularFile(path, maximum, expected)
+	return hashManagedOllamaStableFile(path, maximum, expected, providerPrivateFile)
+}
+
+func hashManagedOllamaStableRuntimeFile(path string, maximum, expected int64) (string, error) {
+	return hashManagedOllamaStableFile(path, maximum, expected, providerManagedRuntimeFile)
+}
+
+func hashManagedOllamaStableFile(path string, maximum, expected int64, validator func(string, os.FileInfo) bool) (string, error) {
+	file, before, err := openManagedOllamaStableFile(path, maximum, expected, validator)
 	if err != nil {
 		return "", err
 	}
@@ -1136,8 +1256,7 @@ func readManagedOllamaStableRegularFile(path string, maximum int64) ([]byte, str
 // and regular-file contents all contribute to the deterministic digest.
 func managedOllamaRuntimeTreeSHA256(root string) (string, error) {
 	rootInfo, err := os.Lstat(root)
-	if err != nil || !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 || rootInfo.Mode().Perm()&0o022 != 0 ||
-		!managedOllamaOwnedByCurrentUser(rootInfo) {
+	if err != nil || !providerPrivateDirectory(root, rootInfo) || !providerOwnedByCurrentUser(root, rootInfo) {
 		return "", errors.New("managed Ollama runtime tree root is unsafe")
 	}
 	hash := sha256.New()
@@ -1162,13 +1281,13 @@ func managedOllamaRuntimeTreeSHA256(root string) (string, error) {
 			return errors.New("managed Ollama runtime tree has too many entries")
 		}
 		info, err := os.Lstat(path)
-		if err != nil || !managedOllamaOwnedByCurrentUser(info) {
+		if err != nil || !providerOwnedByCurrentUser(path, info) {
 			return errors.New("managed Ollama runtime tree entry is unsafe")
 		}
 		mode := info.Mode()
 		switch {
 		case mode.IsDir():
-			if mode.Perm()&0o022 != 0 {
+			if !providerPrivateDirectory(path, info) {
 				return errors.New("managed Ollama runtime directory is writable by another user")
 			}
 			_, _ = fmt.Fprintf(hash, "d\x00%s\x00%o\x00", filepath.ToSlash(relative), mode.Perm())
@@ -1177,7 +1296,7 @@ func managedOllamaRuntimeTreeSHA256(root string) (string, error) {
 				return errors.New("managed Ollama runtime tree exceeds its size bound")
 			}
 			totalBytes += info.Size()
-			digest, err := hashManagedOllamaStableRegularFile(path, managedOllamaArchiveMaxBytes, info.Size())
+			digest, err := hashManagedOllamaStableRuntimeFile(path, managedOllamaArchiveMaxBytes, info.Size())
 			if err != nil {
 				return err
 			}
@@ -1218,7 +1337,7 @@ func (manager *managedOllama) installedRuntimeMetadata() (string, managedOllamaR
 	}
 	recordPath := filepath.Join(directory, ".multivibe-runtime.json")
 	recordInfo, err := os.Lstat(recordPath)
-	if err != nil || !recordInfo.Mode().IsRegular() || recordInfo.Mode()&os.ModeSymlink != 0 || recordInfo.Mode().Perm() != 0o600 || recordInfo.Size() < 1 || recordInfo.Size() > 4096 {
+	if err != nil || !providerPrivateFile(recordPath, recordInfo) || !providerOwnedByCurrentUser(recordPath, recordInfo) || recordInfo.Size() < 1 || recordInfo.Size() > 4096 {
 		return "", managedOllamaRuntimeRecord{}, errors.New("managed Ollama runtime record is invalid")
 	}
 	file, err := os.Open(recordPath)
@@ -1254,19 +1373,38 @@ func (manager *managedOllama) installedRuntime() (string, managedOllamaRuntimeRe
 }
 
 func (manager *managedOllama) commandEnvironment(modelStoragePath string) []string {
-	environment := []string{
-		"HOME=" + filepath.Join(manager.root, "home"),
-		"LANG=C",
-		"LC_ALL=C",
-		"OLLAMA_HOST=" + manager.listenAddress,
-		"OLLAMA_MODELS=" + modelStoragePath,
-		"PATH=/usr/bin:/bin",
-		"TMPDIR=" + filepath.Join(manager.root, "tmp"),
-		"XDG_CACHE_HOME=" + filepath.Join(manager.root, "home", ".cache"),
-		"XDG_CONFIG_HOME=" + filepath.Join(manager.root, "home", ".config"),
-		"XDG_DATA_HOME=" + filepath.Join(manager.root, "home", ".local", "share"),
+	privateHome := filepath.Join(manager.root, "home")
+	temporary := filepath.Join(manager.root, "tmp")
+	var environment []string
+	if manager.goos == "windows" {
+		environment = []string{
+			"APPDATA=" + filepath.Join(privateHome, "AppData", "Roaming"),
+			"HOME=" + privateHome,
+			"LOCALAPPDATA=" + filepath.Join(privateHome, "AppData", "Local"),
+			"OLLAMA_HOST=" + manager.listenAddress,
+			"OLLAMA_MODELS=" + modelStoragePath,
+			"TEMP=" + temporary,
+			"TMP=" + temporary,
+			"USERPROFILE=" + privateHome,
+		}
+		if systemRoot := strings.TrimSpace(os.Getenv("SystemRoot")); filepath.IsAbs(systemRoot) {
+			environment = append(environment, "PATH="+filepath.Join(systemRoot, "System32")+string(os.PathListSeparator)+systemRoot, "SystemRoot="+systemRoot)
+		}
+	} else {
+		environment = []string{
+			"HOME=" + privateHome,
+			"LANG=C",
+			"LC_ALL=C",
+			"OLLAMA_HOST=" + manager.listenAddress,
+			"OLLAMA_MODELS=" + modelStoragePath,
+			"PATH=/usr/bin:/bin",
+			"TMPDIR=" + temporary,
+			"XDG_CACHE_HOME=" + filepath.Join(privateHome, ".cache"),
+			"XDG_CONFIG_HOME=" + filepath.Join(privateHome, ".config"),
+			"XDG_DATA_HOME=" + filepath.Join(privateHome, ".local", "share"),
+		}
 	}
-	if manager.goos == "linux" && manager.cudaVisibleDevices != "" {
+	if (manager.goos == "linux" || manager.goos == "windows") && manager.cudaVisibleDevices != "" {
 		environment = append(environment, "CUDA_VISIBLE_DEVICES="+manager.cudaVisibleDevices)
 	}
 	sort.Strings(environment)
@@ -1308,7 +1446,7 @@ func (manager *managedOllama) start(ctx context.Context, policyState *capacityPo
 		manager.lifecycleMu.Unlock()
 		return manager.status(policyState), errors.New("managed Ollama log cannot be opened")
 	}
-	if err := logFile.Chmod(0o600); err != nil {
+	if err := secureProviderPrivateFile(logPath); err != nil {
 		_ = logFile.Close()
 		manager.setStateIfIdle("failed")
 		manager.lifecycleMu.Unlock()
@@ -1404,7 +1542,7 @@ func (manager *managedOllama) stop(ctx context.Context) error {
 	}
 	manager.state = "stopping"
 	manager.mu.Unlock()
-	if err := process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+	if err := requestManagedOllamaStop(process); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		_ = process.Kill()
 	}
 	if managedOllamaWait(ctx, done, manager.shutdownTimeout) {
@@ -1737,8 +1875,7 @@ func (manager *managedOllama) verifyCatalogModel(modelStoragePath string, entry 
 		return managedOllamaModelRecord{}, errors.New("managed Ollama catalog entry is invalid")
 	}
 	storageInfo, err := os.Lstat(modelStoragePath)
-	if err != nil || !storageInfo.IsDir() || storageInfo.Mode()&os.ModeSymlink != 0 || storageInfo.Mode().Perm() != 0o700 ||
-		!managedOllamaOwnedByCurrentUser(storageInfo) {
+	if err != nil || !providerPrivateDirectory(modelStoragePath, storageInfo) || !providerOwnedByCurrentUser(modelStoragePath, storageInfo) {
 		return managedOllamaModelRecord{}, errors.New("managed Ollama model storage is unsafe")
 	}
 	manifestPath := filepath.Join(modelStoragePath, "manifests", filepath.FromSlash(entry.OllamaManifestPath))
@@ -1854,7 +1991,7 @@ func (manager *managedOllama) loadModelState(storagePath string) (managedOllamaM
 	if errors.Is(err, os.ErrNotExist) {
 		return empty, nil
 	}
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o600 || info.Size() < 1 || info.Size() > managedOllamaDependencyManifestMaxBytes {
+	if err != nil || !providerPrivateFile(path, info) || !providerOwnedByCurrentUser(path, info) || info.Size() < 1 || info.Size() > managedOllamaDependencyManifestMaxBytes {
 		return managedOllamaModelState{}, errors.New("managed Ollama model inventory is unsafe")
 	}
 	file, err := os.Open(path)
