@@ -15,7 +15,10 @@ const segments = Math.max(
 
 if (mode === "typescript") {
   process.env.MULTIVIBE_PROXY_CORE_NATIVE = "off";
+  process.env.MULTIVIBE_PROXY_CORE_OBJECT_CONVERSION = "off";
 } else {
+  process.env.MULTIVIBE_PROXY_CORE_NATIVE = "on";
+  process.env.MULTIVIBE_PROXY_CORE_OBJECT_CONVERSION = "on";
   process.env.MULTIVIBE_PROXY_CORE_PROTOCOL_CONVERSION = "on";
 }
 

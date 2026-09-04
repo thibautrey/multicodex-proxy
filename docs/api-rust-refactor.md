@@ -179,9 +179,10 @@ encore une preuve de parsing zero-copy.
 
 Le repli TypeScript reste automatique pour les textes sensibles au sanitizer,
 les arguments d'outils objets, les identifiants d'outils absents, les corps
-non-Chat et les addons incompatibles. Le chemin direct est activé derrière le
-même flag `MULTIVIBE_PROXY_CORE_PROTOCOL_CONVERSION=on` et reste désactivé par
-défaut jusqu'à la mesure sous charge. Le benchmark mémoire est disponible via
+non-Chat et les addons incompatibles. Le chemin direct est maintenant activé
+par défaut lorsque l'addon est disponible ;
+`MULTIVIBE_PROXY_CORE_PROTOCOL_CONVERSION=off` fournit le rollback explicite.
+Le pont objet historique reste opt-in séparément. Le benchmark mémoire est disponible via
 `npm run benchmark:raw-protocol-memory` ; il compare RSS, heap V8, mémoire
 externe, buffers et mémoire retenue après GC. Les timings synthétiques restent
 dans

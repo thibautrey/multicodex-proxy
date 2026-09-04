@@ -25,13 +25,18 @@ const NATIVE_PROTOCOL_CONVERSION_ENABLED_VALUES = new Set([
   "yes",
 ]);
 
-export function nativeProtocolConversionEnabled(): boolean {
-  const configured = process.env.MULTIVIBE_PROXY_CORE_PROTOCOL_CONVERSION
-    ?.trim()
-    .toLowerCase();
-  return Boolean(
-    configured && NATIVE_PROTOCOL_CONVERSION_ENABLED_VALUES.has(configured),
-  );
+function nativeFlagEnabled(name: string, defaultValue: boolean): boolean {
+  const configured = process.env[name]?.trim().toLowerCase();
+  if (!configured) return defaultValue;
+  return NATIVE_PROTOCOL_CONVERSION_ENABLED_VALUES.has(configured);
+}
+
+function nativeObjectProtocolConversionEnabled(): boolean {
+  return nativeFlagEnabled("MULTIVIBE_PROXY_CORE_OBJECT_CONVERSION", false);
+}
+
+export function nativeRawProtocolConversionEnabled(): boolean {
+  return nativeFlagEnabled("MULTIVIBE_PROXY_CORE_PROTOCOL_CONVERSION", true);
 }
 
 export type ChatStreamAccumulator = {
@@ -222,11 +227,11 @@ export function chatCompletionObjectToResponseObject(
   const responseId = `resp_${randomUUID().replace(/-/g, "").slice(0, 24)}`;
   const createdAt = normalized?.created ?? Math.floor(Date.now() / 1000);
 
-  // This object-level bridge is intentionally opt-in: after Express has
+  // This object-level bridge remains intentionally opt-in: after Express has
   // already parsed the JSON, N-API would otherwise add a second JSON
-  // serialization round-trip. Enable it only while evaluating a future
-  // raw-byte integration where that cost can be removed.
-  if (nativeProtocolConversionEnabled()) {
+  // serialization round-trip. The proxy's raw-byte path is the default
+  // native integration and does not use this object bridge.
+  if (nativeObjectProtocolConversionEnabled()) {
     const native = convertChatCompletionToResponseObjectFromNative(
       normalized,
       fallbackModel,
@@ -248,15 +253,15 @@ export function chatCompletionObjectToResponseObject(
 }
 
 /**
- * Opt-in raw-byte bridge used by the proxy only while the Rust candidate is
- * being benchmarked. The native boundary receives the upstream bytes before
- * the reference JSON.parse path is attempted.
+ * Compatibility wrapper for callers that still need the legacy object
+ * envelope. The proxy uses the final-byte bridge below for raw upstream
+ * responses.
  */
 export function chatCompletionJsonBytesToResponseObject(
   jsonBytes: Uint8Array,
   fallbackModel = "unknown",
 ): RawChatCompletionResponseConversion | undefined {
-  if (!nativeProtocolConversionEnabled()) return undefined;
+  if (!nativeRawProtocolConversionEnabled()) return undefined;
   return convertChatCompletionToResponseObjectFromJsonBytes(
     jsonBytes,
     fallbackModel,
@@ -270,7 +275,7 @@ export function chatCompletionJsonBytesToResponseBytes(
   fallbackModel = "unknown",
   stream = false,
 ): RawChatCompletionResponseBytesConversion | undefined {
-  if (!nativeProtocolConversionEnabled()) return undefined;
+  if (!nativeRawProtocolConversionEnabled()) return undefined;
   return convertChatCompletionToResponseBytesFromJsonBytes(
     jsonBytes,
     fallbackModel,

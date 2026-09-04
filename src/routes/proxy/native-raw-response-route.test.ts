@@ -4,9 +4,6 @@ import test from "node:test";
 import express from "express";
 import type { Account } from "../../types.js";
 
-process.env.MULTIVIBE_PROXY_CORE_NATIVE = "on";
-process.env.MULTIVIBE_PROXY_CORE_PROTOCOL_CONVERSION = "on";
-
 const { createProxyRouter } = await import("./index.js");
 const { nativeRawProtocolBytesConversionAvailable } = await import(
   "../../responses/payload-inspection.js",
