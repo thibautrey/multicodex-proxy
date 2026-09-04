@@ -156,6 +156,22 @@ export function HostHarnessCards({ onApiKeysChanged, variant = "default" }: Prop
     }
   };
 
+  const repair = async (harness: HostHarness) => {
+    setBusyId(harness.id);
+    setMessage("");
+    setError("");
+    try {
+      const result = await api(`/admin/host-harnesses/${encodeURIComponent(harness.id)}/repair`, { method: "POST" });
+      updateHarness(result.harness as HostHarness);
+      setMessage(`${harness.name} was repaired and reconnected to MultiVibe.`);
+      await onApiKeysChanged?.();
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const toggleDetails = (harnessId: string) => {
     setExpandedHarnesses((current) => {
       const next = new Set(current);
@@ -219,12 +235,14 @@ export function HostHarnessCards({ onApiKeysChanged, variant = "default" }: Prop
                 </div>
                 {harness.configPath && <code className="host-harness-path">{harness.configPath}</code>}
                 {!harness.canInstall && !connected && harness.unavailableReason && <p className="host-harness-note">{harness.unavailableReason}</p>}
-                {harness.drifted && <p className="host-harness-note">MultiVibe will not overwrite this file. Restore the installed version or remove the integration manually.</p>}
+                {harness.configurationIssue && <p className="host-harness-note">{harness.configurationIssue}</p>}
+                {harness.drifted && !harness.repairable && <p className="host-harness-note">MultiVibe cannot repair this file safely. Restore the installed version or remove the integration manually.</p>}
               </div>
             </div>}
 
             <div className="host-harness-actions">
               {!connected && harness.canInstall && <button className="btn host-harness-primary-action" type="button" disabled={busyId === harness.id} onClick={() => void connect(harness)}>{busyId === harness.id ? "Connecting…" : "Connect automatically"}</button>}
+              {harness.managed && harness.drifted && harness.repairable && <button className="btn secondary host-harness-primary-action" type="button" disabled={busyId === harness.id} onClick={() => void repair(harness)}>{busyId === harness.id ? "Repairing…" : "Repair connection"}</button>}
               {harness.managed && <button className="btn secondary host-harness-primary-action" type="button" disabled={busyId === harness.id || !harness.canUninstall} onClick={() => void disconnect(harness)}>{busyId === harness.id ? "Restoring…" : "Disconnect and restore"}</button>}
               {connected && !harness.managed && <span className="muted">Already configured outside MultiVibe.</span>}
               {!harness.canInstall && !connected && <span className="muted">Manual setup required</span>}
