@@ -693,7 +693,7 @@ async function validateNativeFiles(root, manifest) {
   const explicit = mac ? [
     `${prefix}Frameworks/node`, `${prefix}Resources/ollama-runtime/ollama`, `${prefix}Resources/ollama-runtime/llama-server`,
     `${prefix}Resources/ollama-runtime/llama-quantize`, `${prefix}Helpers/multivibe-provider-agent`,
-    `${prefix}Helpers/multivibe-runtime-benchmark`,
+    `${prefix}Helpers/multivibe-runtime-benchmark`, `${prefix}Helpers/multivibe-v1-edge`,
     `${prefix}MacOS/multivibe-host`,
     `${prefix}MacOS/MultiVibe Host`,
   ] : ["bin/node", "runtime/ollama/bin/ollama", "bin/multivibe-provider-agent", "bin/multivibe-runtime-benchmark", "bin/multivibe-host", "bin/multivibe-host-menu"];

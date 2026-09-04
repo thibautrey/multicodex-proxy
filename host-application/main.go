@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -23,6 +24,7 @@ var hostApplicationVersion = "dev"
 type bundleLayout struct {
 	Root               string
 	Node               string
+	Edge               string
 	Agent              string
 	Updater            string
 	App                string
@@ -89,6 +91,7 @@ func executableLayout(executable, goos string) (bundleLayout, error) {
 		return bundleLayout{
 			Root:               filepath.Dir(contents),
 			Node:               filepath.Join(contents, "Frameworks", "node"),
+			Edge:               filepath.Join(contents, "Helpers", "multivibe-v1-edge"),
 			Agent:              filepath.Join(contents, "Helpers", "multivibe-provider-agent"),
 			Updater:            filepath.Join(contents, "Helpers", "multivibe-host-updater"),
 			App:                filepath.Join(contents, "Resources", "app"),
@@ -153,6 +156,11 @@ func validateLayout(layout bundleLayout) error {
 		{layout.DependencyManifest, false},
 	} {
 		if err := requireRegular(candidate.path, candidate.executable); err != nil {
+			return err
+		}
+	}
+	if runtime.GOOS == "darwin" {
+		if err := requireRegular(layout.Edge, true); err != nil {
 			return err
 		}
 	}
@@ -415,11 +423,15 @@ func managedDirectory(dataDirectory string) (string, error) {
 }
 
 func coreEnvironment(layout bundleLayout, dataDirectory, managedDirectory string, credentials localCredentials, network coreNetworkConfiguration) []string {
+	nodeHost, nodePort := network.BindAddress, network.Port
+	if runtime.GOOS == "darwin" {
+		nodeHost, nodePort = "127.0.0.1", "1456"
+	}
 	environment := []string{
 		"NODE_ENV=production",
 		"APP_VERSION=" + hostApplicationVersion,
-		"HOST=" + network.BindAddress,
-		"PORT=" + network.Port,
+		"HOST=" + nodeHost,
+		"PORT=" + nodePort,
 		"PUBLIC_BASE_URL=" + network.PublicBaseURL,
 		"OAUTH_REDIRECT_URI=" + network.PublicBaseURL + "/auth/callback",
 		"ADMIN_TOKEN=" + credentials.AdminToken,
@@ -451,6 +463,9 @@ func coreEnvironment(layout bundleLayout, dataDirectory, managedDirectory string
 		"TRACE_INCLUDE_HEADERS=false",
 		"PATH=/usr/bin:/bin:/usr/sbin:/sbin",
 	}
+	if runtime.GOOS == "darwin" {
+		environment = append(environment, "CONTROL_PLANE_PORT=1456", "MULTIVIBE_CONTROL_PLANE=true")
+	}
 	if inheritedEnvironment("MULTIVIBE_HOST_CONTAINER") != "true" {
 		environment = append(environment, "MULTIVIBE_HOST_UPDATER_BINARY="+layout.Updater)
 	}
@@ -473,6 +488,18 @@ func coreEnvironment(layout bundleLayout, dataDirectory, managedDirectory string
 			environment = append(environment, pair.destination+"="+value)
 		}
 	}
+	return environment
+}
+
+func edgeEnvironment(base []string, network coreNetworkConfiguration, internalToken string) []string {
+	environment := append([]string{}, base...)
+	environment = append(environment,
+		"V1_EDGE_HOST="+network.BindAddress,
+		"V1_EDGE_PORT="+network.Port,
+		"V1_EDGE_BASE_URL="+network.PublicBaseURL,
+		"NODE_CONTROL_PLANE_URL=http://127.0.0.1:1456",
+		"V1_EDGE_INTERNAL_JOB_TOKEN="+internalToken,
+	)
 	return environment
 }
 
@@ -520,7 +547,52 @@ func run() error {
 	if err := os.Chdir(layout.App); err != nil {
 		return errors.New("the bundled application directory is unavailable")
 	}
-	return syscall.Exec(layout.Node, arguments, coreEnvironment(layout, data, managed, credentials, coreNetworkConfiguration{
-		BindAddress: bindAddress, Port: port, PublicBaseURL: publicBaseURL,
-	}))
+	network := coreNetworkConfiguration{BindAddress: bindAddress, Port: port, PublicBaseURL: publicBaseURL}
+	internalToken, err := randomCredential()
+	if err != nil {
+		return err
+	}
+	baseEnvironment := coreEnvironment(layout, data, managed, credentials, network)
+	if runtime.GOOS != "darwin" {
+		return syscall.Exec(layout.Node, arguments, baseEnvironment)
+	}
+	node := exec.Command(layout.Node, arguments[1:]...)
+	node.Dir = layout.App
+	node.Env = baseEnvironment
+	node.Stdout, node.Stderr = os.Stdout, os.Stderr
+	edge := exec.Command(layout.Edge)
+	edge.Dir = layout.App
+	edge.Env = edgeEnvironment(baseEnvironment, network, internalToken)
+	edge.Stdout, edge.Stderr = os.Stdout, os.Stderr
+	if err := node.Start(); err != nil {
+		return errors.New("the Node control plane could not be started")
+	}
+	if err := edge.Start(); err != nil {
+		_ = node.Process.Kill()
+		_ = node.Wait()
+		return errors.New("the Rust v1 edge could not be started")
+	}
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	defer signal.Stop(stop)
+	nodeDone := make(chan error, 1)
+	edgeDone := make(chan error, 1)
+	go func() { nodeDone <- node.Wait() }()
+	go func() { edgeDone <- edge.Wait() }()
+	select {
+	case signal := <-stop:
+		_ = node.Process.Signal(signal)
+		_ = edge.Process.Signal(signal)
+		<-nodeDone
+		<-edgeDone
+		return nil
+	case err := <-edgeDone:
+		_ = node.Process.Kill()
+		<-nodeDone
+		return fmt.Errorf("Rust v1 edge stopped: %w", err)
+	case err := <-nodeDone:
+		_ = edge.Process.Kill()
+		<-edgeDone
+		return fmt.Errorf("Node control plane stopped: %w", err)
+	}
 }

@@ -209,6 +209,12 @@ async function buildGo(moduleDirectory, output, versionVariable, version, select
   await chmod(output, 0o555);
 }
 
+async function buildRustEdge(output) {
+  await command("cargo", ["build", "-p", "multivibe-v1-edge", "--release"]);
+  await cp(path.join(repositoryRoot, "target", "release", "multivibe-v1-edge"), output);
+  await chmod(output, 0o555);
+}
+
 async function productionApplication(destination, selectedTarget) {
   await mkdir(destination, { recursive: true, mode: 0o755 });
   for (const file of ["package.json", "package-lock.json"]) {
@@ -401,6 +407,7 @@ async function signMacApplication(application, identity) {
     path.join(contents, "Helpers", "multivibe-provider-agent"),
     path.join(contents, "Helpers", "multivibe-runtime-benchmark"),
     path.join(contents, "Helpers", "multivibe-host-updater"),
+    path.join(contents, "Helpers", "multivibe-v1-edge"),
     path.join(contents, "MacOS", "multivibe-host"),
     path.join(contents, "MacOS", "MultiVibe Host"),
   ])) {
@@ -507,6 +514,7 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
   let updaterDestination;
   let benchmarkDestination;
   let hostDestination;
+  let edgeDestination;
   let menuDestination;
   let menuBarDestination;
   let resourceDirectory;
@@ -522,10 +530,11 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
     updaterDestination = path.join(contents, "Helpers", "multivibe-host-updater");
     benchmarkDestination = path.join(contents, "Helpers", "multivibe-runtime-benchmark");
     hostDestination = path.join(contents, "MacOS", "multivibe-host");
+    edgeDestination = path.join(contents, "Helpers", "multivibe-v1-edge");
     menuBarDestination = path.join(contents, "MacOS", "MultiVibe Host");
     resourceDirectory = path.join(contents, "Resources", "provider");
     verifierDestination = path.join(contents, "Resources", "verify-provider-host.mjs");
-    for (const directory of [applicationDirectory, path.dirname(nodeDestination), path.dirname(agentDestination), path.dirname(hostDestination)]) {
+    for (const directory of [applicationDirectory, path.dirname(nodeDestination), path.dirname(agentDestination), path.dirname(hostDestination), path.dirname(edgeDestination)]) {
       await mkdir(directory, { recursive: true, mode: 0o755 });
     }
     const info = (await readFile(path.join(repositoryRoot, "packaging", "macos", "Info.plist"), "utf8"))
@@ -584,6 +593,7 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
     selectedTarget, "./cmd/runtime-benchmark",
   );
   await buildGo(path.join(repositoryRoot, "host-application"), hostDestination, "hostApplicationVersion", options.version, selectedTarget);
+  if (edgeDestination) await buildRustEdge(edgeDestination);
   if (menuDestination) {
     await buildGo(
       path.join(repositoryRoot, "host-menu"), menuDestination, "menuApplicationVersion", options.version, selectedTarget,

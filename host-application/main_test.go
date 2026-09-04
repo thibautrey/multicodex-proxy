@@ -109,7 +109,7 @@ func TestCoreEnvironmentIsAllowlistedAndPinsAllState(t *testing.T) {
 	)
 	joined := strings.Join(environment, "\n")
 	for _, expected := range []string{
-		"HOST=0.0.0.0", "PORT=1455", "PUBLIC_BASE_URL=https://multivibe.home.example.com",
+		"HOST=127.0.0.1", "PORT=1456", "CONTROL_PLANE_PORT=1456", "MULTIVIBE_CONTROL_PLANE=true", "PUBLIC_BASE_URL=https://multivibe.home.example.com",
 		"OAUTH_REDIRECT_URI=https://multivibe.home.example.com/auth/callback",
 		"STORE_PATH=/var/lib/multivibe/accounts.json",
 		"PROVIDER_AGENT_ENABLED=true", "PROVIDER_AGENT_BINARY=/opt/multivibe/bin/agent",
