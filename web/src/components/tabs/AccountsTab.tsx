@@ -426,21 +426,6 @@ function usageStatusLabel(account: Account, usageCacheTtlMs: number) {
   return "Usage checked";
 }
 
-function localWorkerEstimateLabel(worker: LocalWorkerProvider): string {
-  const amount = Number(worker.estimated_monthly_earnings.amount);
-  return Number.isFinite(amount)
-    ? new Intl.NumberFormat(undefined, { style: "currency", currency: "USD" }).format(amount)
-    : "$0.00";
-}
-
-function localWorkerEstimateBasis(worker: LocalWorkerProvider): string {
-  const estimate = worker.estimated_monthly_earnings;
-  if (estimate.basis === "same_chip") return `Median for the same chip · ${estimate.sample_count} qualifying hosts`;
-  if (estimate.basis === "fleet_median") return `Fleet median fallback · ${estimate.sample_count} qualifying hosts`;
-  if (estimate.basis === "catalog_unavailable") return "Estimate catalog temporarily unavailable";
-  return "No qualifying observations yet · conservative fallback";
-}
-
 export function AccountsTab(props: Props) {
   const {
     traceStats,
@@ -1615,22 +1600,11 @@ export function AccountsTab(props: Props) {
                   <span className="badge badge-warn">
                     {localWorker.configuration_state === "submitted" ? "Submitted" : "Unconfigured"}
                   </span>
-                  <span className="badge">Local · managed by MultiVibe Host</span>
                 </div>
                 <p className="muted">
                   {localWorker.capability.hardware} · {localWorker.capability.accelerator.toUpperCase()} · {Math.round(localWorker.capability.accelerator_memory_bytes / (1024 ** 3))} GiB usable capacity
                 </p>
-                
               </div>
-            </div>
-            <div className="local-worker-provider-estimate">
-              <span>Estimated monthly earnings</span>
-              <strong>{localWorkerEstimateLabel(localWorker)}<small>/month</small></strong>
-              <small>{localWorkerEstimateBasis(localWorker)}</small>
-              {localWorker.estimated_monthly_earnings.as_of_date && (
-                <small>Data through {localWorker.estimated_monthly_earnings.as_of_date}</small>
-              )}
-              <p>{localWorker.estimated_monthly_earnings.disclaimer}</p>
             </div>
             <div className="local-worker-provider-actions">
               <a className="btn" href={localWorker.connect_url} target="_blank" rel="noreferrer">
