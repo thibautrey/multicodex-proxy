@@ -72,6 +72,15 @@ const subtract = (left, right) => Object.fromEntries(
   Object.keys(left).map((key) => [key, left[key] - right[key]]),
 );
 
+const yieldToEventLoop = () => new Promise((resolve) => setImmediate(resolve));
+const forceGc = async () => {
+  if (typeof globalThis.gc !== "function") return;
+  for (let index = 0; index < 5; index += 1) {
+    globalThis.gc();
+    await yieldToEventLoop();
+  }
+};
+
 const convert = () => {
   if (mode === "native") {
     const result = chatCompletionJsonBytesToResponseBytes(raw, "fallback-model", stream);
@@ -88,7 +97,7 @@ const convert = () => {
 };
 
 for (let index = 0; index < Math.min(100, samples); index += 1) convert();
-if (typeof globalThis.gc === "function") globalThis.gc();
+await forceGc();
 
 const before = snapshot();
 let peak = before;
@@ -102,10 +111,11 @@ while (completed < samples) {
   const current = snapshot();
   if (current.rss > peak.rss) peak = current;
   batch.length = 0;
+  await yieldToEventLoop();
 }
 const elapsedMs = performance.now() - started;
 const after = snapshot();
-if (typeof globalThis.gc === "function") globalThis.gc();
+await forceGc();
 const afterGc = snapshot();
 
 console.log(JSON.stringify({
