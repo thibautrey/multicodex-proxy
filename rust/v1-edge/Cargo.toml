@@ -27,4 +27,5 @@ uuid = { version = "1", features = ["v4"] }
 zstd = "0.13"
 
 [dev-dependencies]
+tokio-tungstenite = "0.29"
 tower = "0.5"

@@ -566,6 +566,10 @@ app.delete("/admin/session", (req, res) => {
 });
 
 app.use("/admin", adminGuard, adminRouter);
+
+// These middleware instances remain available to the single-process profile.
+// The native profile does not mount them on `/v1`: that surface terminates in
+// the Rust edge and reaches Node only for the separate control-plane routes.
 const inferenceIdempotencyMiddleware = createInferenceIdempotencyMiddleware({
   ttlMs: INFERENCE_IDEMPOTENCY_TTL_MS,
   inFlightTimeoutMs: INFERENCE_IDEMPOTENCY_IN_FLIGHT_TIMEOUT_MS,
@@ -575,6 +579,9 @@ const inferenceIdempotencyMiddleware = createInferenceIdempotencyMiddleware({
 });
 const admissionMiddleware = createAdmissionMiddleware(smartRouting);
 const smartRoutingRouter = createSmartRoutingRouter(smartRouting);
+// In the native profile Rust owns the complete `/v1` surface. Keep the
+// historical Express stack only for the single-process development profile;
+// the control-plane listener must not become a second `/v1` implementation.
 if (!MULTIVIBE_CONTROL_PLANE) {
   app.use(
     "/v1",

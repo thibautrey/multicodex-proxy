@@ -922,6 +922,7 @@ file before they reach the container.
 | `TRACE_INCLUDE_HEADERS` | `false` | Persist sanitized inbound headers in recent traces |
 | `CODEX_PROJECT_REGISTRATION_TOKEN` | `ADMIN_TOKEN` | Limited project-registration secret |
 | `CODEX_SESSION_AFFINITY` | `false` | In-memory per-session account stickiness |
+| `CODEX_SESSION_AFFINITY_TTL_MS` | `3600000` | Affinity TTL in the native Rust edge |
 | `CODEX_SESSION_AFFINITY_MAX_ENTRIES` | `10000` | Affinity cache limit |
 | `INFERENCE_IDEMPOTENCY_TTL_MS` | `300000` | Completed synchronous inference replay TTL |
 | `INFERENCE_IDEMPOTENCY_IN_FLIGHT_TIMEOUT_MS` | `300000` | Maximum single-flight reservation lifetime |

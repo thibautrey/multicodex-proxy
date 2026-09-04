@@ -18,14 +18,13 @@ use axum::{
         HeaderMap, Method, Request, StatusCode,
         header::{self, HeaderName, HeaderValue},
     },
-    response::{IntoResponse, Response},
-    routing::{any, delete, get, post},
+    response::Response,
+    routing::{get, post},
 };
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use bytes::Bytes;
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{StreamExt, future::join_all};
 use hmac::{Hmac, Mac};
-use http_body_util::BodyExt;
 use reqwest::redirect::Policy;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -35,7 +34,7 @@ use std::{
     collections::{HashMap, HashSet},
     convert::Infallible,
     io::{Cursor, Read},
-    path::{Path as FsPath, PathBuf},
+    path::PathBuf,
     sync::Arc,
     sync::atomic::{AtomicU64, Ordering as AtomicOrdering},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -79,6 +78,10 @@ pub struct EdgeConfig {
     pub trace_path: Option<PathBuf>,
     pub request_body_limit: usize,
     pub realtime_body_limit: usize,
+    pub models_cache_ttl: Duration,
+    pub session_affinity_enabled: bool,
+    pub session_affinity_ttl: Duration,
+    pub session_affinity_max_entries: usize,
     pub upstream_timeout: Duration,
     pub max_account_retry_attempts: usize,
     pub idempotency_ttl: Duration,
@@ -90,9 +93,12 @@ pub struct EdgeConfig {
     pub zai_base_url: String,
     pub zai_upstream_path: String,
     pub zai_compact_upstream_path: String,
+    pub zai_models_path: String,
     pub xai_base_url: String,
     pub xai_responses_path: String,
     pub xai_chat_completions_path: String,
+    pub xai_models_path: String,
+    pub models_client_version: String,
     pub realtime_provider: String,
     pub realtime_webrtc_call_url: Option<String>,
     pub proxy_models: Vec<String>,
@@ -112,6 +118,10 @@ impl Default for EdgeConfig {
             trace_path: None,
             request_body_limit: 100 * 1024 * 1024,
             realtime_body_limit: 2 * 1024 * 1024,
+            models_cache_ttl: Duration::from_secs(10 * 60),
+            session_affinity_enabled: false,
+            session_affinity_ttl: Duration::from_secs(60 * 60),
+            session_affinity_max_entries: 10_000,
             upstream_timeout: Duration::from_secs(10 * 60),
             max_account_retry_attempts: 10,
             idempotency_ttl: Duration::from_secs(5 * 60),
@@ -123,9 +133,12 @@ impl Default for EdgeConfig {
             zai_base_url: "https://api.z.ai".to_owned(),
             zai_upstream_path: "/api/coding/paas/v4/chat/completions".to_owned(),
             zai_compact_upstream_path: "/api/coding/paas/v4/chat/completions".to_owned(),
+            zai_models_path: "/api/paas/v4/models".to_owned(),
             xai_base_url: "https://cli-chat-proxy.grok.com/v1".to_owned(),
             xai_responses_path: "/responses".to_owned(),
             xai_chat_completions_path: "/chat/completions".to_owned(),
+            xai_models_path: "/models".to_owned(),
+            models_client_version: "0.144.1".to_owned(),
             realtime_provider: "openai".to_owned(),
             realtime_webrtc_call_url: None,
             proxy_models: vec![
@@ -192,6 +205,24 @@ impl EdgeConfig {
             trace_path: env("TRACE_FILE_PATH").map(PathBuf::from),
             request_body_limit: request_body_limit.max(1),
             realtime_body_limit: 2 * 1024 * 1024,
+            models_cache_ttl: Duration::from_millis(
+                env("MODELS_CACHE_MS")
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(defaults.models_cache_ttl.as_millis() as u64)
+                    .max(1_000),
+            ),
+            session_affinity_enabled: env("CODEX_SESSION_AFFINITY")
+                .is_some_and(|value| value.eq_ignore_ascii_case("true")),
+            session_affinity_ttl: Duration::from_millis(
+                env("CODEX_SESSION_AFFINITY_TTL_MS")
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(defaults.session_affinity_ttl.as_millis() as u64)
+                    .max(1_000),
+            ),
+            session_affinity_max_entries: env("CODEX_SESSION_AFFINITY_MAX_ENTRIES")
+                .and_then(|v| v.parse::<usize>().ok())
+                .unwrap_or(defaults.session_affinity_max_entries)
+                .max(1),
             upstream_timeout: Duration::from_millis(timeout_ms.max(1)),
             max_account_retry_attempts: env("MAX_ACCOUNT_RETRY_ATTEMPTS")
                 .and_then(|v| v.parse::<usize>().ok())
@@ -217,10 +248,14 @@ impl EdgeConfig {
             zai_upstream_path: env("ZAI_UPSTREAM_PATH").unwrap_or(defaults.zai_upstream_path),
             zai_compact_upstream_path: env("ZAI_COMPACT_UPSTREAM_PATH")
                 .unwrap_or(defaults.zai_compact_upstream_path),
+            zai_models_path: env("ZAI_MODELS_PATH").unwrap_or(defaults.zai_models_path),
             xai_base_url: env("XAI_BASE_URL").unwrap_or(defaults.xai_base_url),
             xai_responses_path: env("XAI_RESPONSES_PATH").unwrap_or(defaults.xai_responses_path),
             xai_chat_completions_path: env("XAI_CHAT_COMPLETIONS_PATH")
                 .unwrap_or(defaults.xai_chat_completions_path),
+            xai_models_path: env("XAI_MODELS_PATH").unwrap_or(defaults.xai_models_path),
+            models_client_version: env("MODELS_CLIENT_VERSION")
+                .unwrap_or(defaults.models_client_version),
             realtime_provider: env("REALTIME_PROVIDER").unwrap_or(defaults.realtime_provider),
             realtime_webrtc_call_url: realtime_url,
             proxy_models,
@@ -285,6 +320,7 @@ pub struct AccountState {
     pub model_blocks: HashMap<String, ModelBlock>,
     pub auth_blocked_until: Option<u64>,
     pub last_selected_at: Option<u64>,
+    pub needs_token_refresh: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -319,6 +355,8 @@ pub struct Account {
     pub email: Option<String>,
     #[serde(default)]
     pub access_token: String,
+    pub refresh_token: Option<String>,
+    pub expires_at: Option<u64>,
     pub chatgpt_account_id: Option<String>,
     pub opencode_api_key: Option<String>,
     #[serde(default)]
@@ -614,7 +652,9 @@ pub fn authorize(
         })
     {
         return Ok(AuthContext {
-            application: "admin".to_owned(),
+            // Express lets an authenticated dashboard session use the normal
+            // default proxy scope; keep the native edge attribution identical.
+            application: "default".to_owned(),
         });
     }
     let token = bearer_or_api_key(headers);
@@ -817,6 +857,62 @@ fn infer_provider(model: &str) -> String {
     "openai".to_owned()
 }
 
+fn catalog_model<'a>(models: &'a [Value], requested: &str) -> Option<&'a Value> {
+    let key = normalize_model_key(requested);
+    models.iter().find(|entry| {
+        entry
+            .get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| normalize_model_key(id) == key)
+    })
+}
+
+fn catalog_string_array(entry: &Value, key: &str) -> Vec<String> {
+    entry
+        .get("metadata")
+        .and_then(|metadata| metadata.get(key))
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(ToOwned::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn providers_for_model(model: &str, catalog: &[Value]) -> Vec<String> {
+    let Some(entry) = catalog_model(catalog, model) else {
+        return vec![infer_provider(model)];
+    };
+    let mut providers = catalog_string_array(entry, "provider_candidates");
+    if providers.is_empty()
+        && let Some(provider) = entry
+            .get("metadata")
+            .and_then(|metadata| metadata.get("provider"))
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+    {
+        providers.push(provider.to_owned());
+    }
+    if providers.is_empty() {
+        providers.push(infer_provider(model));
+    }
+    let mut unique = HashSet::new();
+    providers
+        .into_iter()
+        .filter(|provider| unique.insert(provider.clone()))
+        .collect()
+}
+
+fn account_ids_for_model(model: &str, catalog: &[Value]) -> Vec<String> {
+    catalog_model(catalog, model)
+        .map(|entry| catalog_string_array(entry, "account_ids"))
+        .unwrap_or_default()
+}
+
 fn is_local_runtime(account: &Account) -> bool {
     let runtime = account.local_runtime.as_ref();
     account.provider.as_deref() == Some("openai-compatible")
@@ -834,7 +930,13 @@ fn account_usable(account: &Account, model: &str, blocked: &HashMap<String, u64>
     if !account.enabled {
         return false;
     }
-    if account.access_token.is_empty() && !is_local_runtime(account) {
+    if account.access_token.is_empty()
+        && account
+            .opencode_api_key
+            .as_deref()
+            .is_none_or(str::is_empty)
+        && !is_local_runtime(account)
+    {
         return false;
     }
     let now = now_ms();
@@ -867,6 +969,46 @@ fn usage_percent(window: Option<&UsageWindow>) -> Option<f64> {
         .map(|value| value.clamp(0.0, 100.0))
 }
 
+fn remaining_percent(value: Option<&UsageWindow>) -> Option<f64> {
+    usage_percent(value).map(|used| 100.0 - used)
+}
+
+fn account_headroom(account: &Account) -> Option<f64> {
+    [
+        remaining_percent(
+            account
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.primary.as_ref()),
+        ),
+        remaining_percent(
+            account
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.secondary.as_ref()),
+        ),
+        remaining_percent(
+            account
+                .usage
+                .as_ref()
+                .and_then(|usage| usage.monthly.as_ref()),
+        ),
+    ]
+    .into_iter()
+    .flatten()
+    .min_by(|left, right| left.partial_cmp(right).unwrap_or(Ordering::Equal))
+}
+
+fn five_hour_near_limit(account: &Account) -> bool {
+    usage_percent(
+        account
+            .usage
+            .as_ref()
+            .and_then(|usage| usage.primary.as_ref()),
+    )
+    .is_some_and(|used| used >= 90.0)
+}
+
 fn select_accounts(
     accounts: &[Account],
     route: &RouteCandidate,
@@ -883,7 +1025,32 @@ fn select_accounts(
         .cloned()
         .collect::<Vec<_>>();
     let provider = route.provider.clone().unwrap_or_default();
+    let effective_pool = {
+        let filtered = candidates
+            .iter()
+            .filter(|account| !five_hour_near_limit(account))
+            .cloned()
+            .collect::<Vec<_>>();
+        if filtered.is_empty() {
+            candidates.clone()
+        } else {
+            filtered
+        }
+    };
+    let all_effective_accounts_near_limit =
+        !effective_pool.is_empty() && effective_pool.iter().all(five_hour_near_limit);
+    candidates = effective_pool;
     candidates.sort_by(|left, right| {
+        if all_effective_accounts_near_limit {
+            match (account_headroom(left), account_headroom(right)) {
+                (None, Some(_)) => return Ordering::Greater,
+                (Some(_), None) => return Ordering::Less,
+                (Some(left), Some(right)) if left != right => {
+                    return right.partial_cmp(&left).unwrap_or(Ordering::Equal);
+                }
+                _ => {}
+            }
+        }
         let left_usage = usage_percent(
             left.usage
                 .as_ref()
@@ -919,7 +1086,8 @@ fn select_accounts(
             .iter()
             .position(|account| &account.id == previous)
         {
-            candidates.rotate_left((index + 1) % candidates.len());
+            let rotation = (index + 1) % candidates.len();
+            candidates.rotate_left(rotation);
         }
     }
     candidates
@@ -930,9 +1098,15 @@ struct RouteCandidate {
     requested_model: String,
     model: String,
     provider: Option<String>,
+    account_ids: Vec<String>,
 }
 
-fn routes_for_model(store: &StoreFile, model: &str, default_model: &str) -> Vec<RouteCandidate> {
+fn routes_for_model(
+    store: &StoreFile,
+    model: &str,
+    default_model: &str,
+    catalog: &[Value],
+) -> Vec<RouteCandidate> {
     let requested = if model.trim().is_empty() {
         default_model
     } else {
@@ -943,28 +1117,42 @@ fn routes_for_model(store: &StoreFile, model: &str, default_model: &str) -> Vec<
         .iter()
         .find(|alias| alias.enabled && alias.id.eq_ignore_ascii_case(requested))
     {
-        let mut routes = alias
+        let routes = alias
             .rules
             .iter()
             .flat_map(|rule| rule.candidates.iter())
-            .map(|candidate| RouteCandidate {
-                requested_model: requested.to_owned(),
-                model: candidate.model.clone(),
-                provider: candidate
+            .flat_map(|candidate| {
+                let providers = candidate
                     .provider
                     .clone()
-                    .or_else(|| Some(infer_provider(&candidate.model))),
+                    .map(|provider| vec![provider])
+                    .unwrap_or_else(|| providers_for_model(&candidate.model, catalog));
+                let account_ids = if candidate.account_ids.is_empty() {
+                    account_ids_for_model(&candidate.model, catalog)
+                } else {
+                    candidate.account_ids.clone()
+                };
+                providers.into_iter().map(move |provider| RouteCandidate {
+                    requested_model: requested.to_owned(),
+                    model: candidate.model.clone(),
+                    provider: Some(provider),
+                    account_ids: account_ids.clone(),
+                })
             })
             .collect::<Vec<_>>();
         if !routes.is_empty() {
             return routes;
         }
     }
-    vec![RouteCandidate {
-        requested_model: requested.to_owned(),
-        model: requested.to_owned(),
-        provider: Some(infer_provider(requested)),
-    }]
+    providers_for_model(requested, catalog)
+        .into_iter()
+        .map(|provider| RouteCandidate {
+            requested_model: requested.to_owned(),
+            model: requested.to_owned(),
+            provider: Some(provider),
+            account_ids: account_ids_for_model(requested, catalog),
+        })
+        .collect()
 }
 
 fn trim_slashes(value: &str) -> String {
@@ -1515,6 +1703,36 @@ fn sanitize_generic_chat_payload(body: &Value) -> Value {
     Value::Object(payload)
 }
 
+fn has_reasoning_effort(payload: &Value) -> bool {
+    payload.get("reasoning_effort").is_some()
+        || payload
+            .get("reasoning")
+            .and_then(Value::as_object)
+            .is_some_and(|reasoning| reasoning.contains_key("effort"))
+}
+
+fn default_chatgpt_reasoning_effort(payload: &mut Value, sends_chat: bool) {
+    if has_reasoning_effort(payload) {
+        return;
+    }
+    let Some(object) = payload.as_object_mut() else {
+        return;
+    };
+    if sends_chat {
+        object.insert(
+            "reasoning_effort".to_owned(),
+            Value::String("low".to_owned()),
+        );
+        return;
+    }
+    let mut reasoning = object
+        .remove("reasoning")
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+    reasoning.insert("effort".to_owned(), Value::String("low".to_owned()));
+    object.insert("reasoning".to_owned(), Value::Object(reasoning));
+}
+
 fn is_claude_code_request(headers: &HeaderMap) -> bool {
     header_value(headers, "user-agent").is_some_and(|value| value.starts_with("claude-cli/"))
         && header_value(headers, "x-app").is_some_and(|value| value.eq_ignore_ascii_case("cli"))
@@ -1771,46 +1989,6 @@ fn responses_to_anthropic(response: &Value, requested_model: &str) -> Value {
         "stop_sequence": Value::Null,
         "usage": response_usage(response),
     })
-}
-
-fn is_assistant_output(value: &Value) -> bool {
-    if value.get("object").and_then(Value::as_str) == Some("chat.completion") {
-        let choice = value
-            .get("choices")
-            .and_then(Value::as_array)
-            .and_then(|choices| choices.first());
-        let message = choice.and_then(|choice| choice.get("message"));
-        let text = message
-            .and_then(|message| message.get("content"))
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        return !text.trim().is_empty()
-            || message
-                .and_then(|message| message.get("tool_calls"))
-                .and_then(Value::as_array)
-                .is_some_and(|calls| !calls.is_empty());
-    }
-    if value.get("object").and_then(Value::as_str) == Some("response") {
-        return value
-            .get("output")
-            .and_then(Value::as_array)
-            .is_some_and(|items| {
-                items.iter().any(|item| {
-                    item.get("type").and_then(Value::as_str) == Some("function_call")
-                        || (item.get("type").and_then(Value::as_str) == Some("message")
-                            && item
-                                .get("content")
-                                .and_then(Value::as_array)
-                                .is_some_and(|parts| {
-                                    parts.iter().any(|part| {
-                                        value_string(part.get("text"))
-                                            .is_some_and(|text| !text.trim().is_empty())
-                                    })
-                                }))
-                })
-            });
-    }
-    false
 }
 
 fn sanitize_response(value: &Value) -> Value {
@@ -2172,6 +2350,140 @@ struct BufferedReplyData {
     body: Bytes,
 }
 
+#[derive(Default)]
+struct ModelCatalogCache {
+    signature: String,
+    fetched_at: u64,
+    models: Vec<Value>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct SessionAffinityKey {
+    application: String,
+    session_id: String,
+    provider: String,
+}
+
+#[derive(Clone, Debug)]
+struct SessionAffinityEntry {
+    account_id: String,
+    expires_at: u64,
+    recency: u64,
+}
+
+/// Bounded in-memory account stickiness for Codex sessions.
+///
+/// The cache is deliberately scoped by application, session and provider. It
+/// is only consulted after normal account eligibility/quota filtering, so a
+/// sticky mapping cannot bypass policy or a blocked account. The cache is not
+/// persisted: an edge restart must not make an old session claim a credential
+/// from a different process lifetime.
+struct SessionAffinityCache {
+    ttl_ms: u64,
+    max_entries: usize,
+    next_recency: u64,
+    entries: HashMap<SessionAffinityKey, SessionAffinityEntry>,
+}
+
+impl SessionAffinityCache {
+    fn new(ttl: Duration, max_entries: usize) -> Self {
+        Self {
+            ttl_ms: ttl.as_millis().min(u64::MAX as u128) as u64,
+            max_entries: max_entries.max(1),
+            next_recency: 0,
+            entries: HashMap::new(),
+        }
+    }
+
+    fn key(application: &str, session_id: &str, provider: &str) -> SessionAffinityKey {
+        SessionAffinityKey {
+            application: application.to_owned(),
+            session_id: session_id.to_owned(),
+            provider: provider.to_owned(),
+        }
+    }
+
+    fn next_recency(&mut self) -> u64 {
+        self.next_recency = self.next_recency.saturating_add(1);
+        self.next_recency
+    }
+
+    fn peek(
+        &self,
+        application: &str,
+        session_id: &str,
+        provider: &str,
+        now: u64,
+    ) -> Option<String> {
+        let entry = self
+            .entries
+            .get(&Self::key(application, session_id, provider))?;
+        (entry.expires_at > now).then(|| entry.account_id.clone())
+    }
+
+    fn get(
+        &mut self,
+        application: &str,
+        session_id: &str,
+        provider: &str,
+        now: u64,
+    ) -> Option<String> {
+        let key = Self::key(application, session_id, provider);
+        if self.peek(application, session_id, provider, now).is_none() {
+            self.entries.remove(&key);
+            return None;
+        }
+        let recency = self.next_recency();
+        self.entries.get_mut(&key).map(|entry| {
+            // A read changes LRU order but, like the Express implementation,
+            // does not extend the affinity TTL.
+            entry.recency = recency;
+            entry.account_id.clone()
+        })
+    }
+
+    fn remember(
+        &mut self,
+        application: &str,
+        session_id: &str,
+        provider: &str,
+        account_id: &str,
+        now: u64,
+    ) {
+        self.prune_expired(now);
+        let key = Self::key(application, session_id, provider);
+        let recency = self.next_recency();
+        self.entries.insert(
+            key,
+            SessionAffinityEntry {
+                account_id: account_id.to_owned(),
+                expires_at: now.saturating_add(self.ttl_ms),
+                recency,
+            },
+        );
+        while self.entries.len() > self.max_entries {
+            let Some(oldest_key) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.recency)
+                .map(|(key, _)| key.clone())
+            else {
+                break;
+            };
+            self.entries.remove(&oldest_key);
+        }
+    }
+
+    fn forget(&mut self, application: &str, session_id: &str, provider: &str) {
+        self.entries
+            .remove(&Self::key(application, session_id, provider));
+    }
+
+    fn prune_expired(&mut self, now: u64) {
+        self.entries.retain(|_, entry| entry.expires_at > now);
+    }
+}
+
 struct TraceSink {
     path: Option<PathBuf>,
     lock: Mutex<()>,
@@ -2236,6 +2548,9 @@ pub struct EdgeState {
     blocked: Arc<Mutex<HashMap<String, u64>>>,
     selected: Arc<Mutex<HashMap<String, String>>>,
     idempotency: Arc<Mutex<HashMap<String, CachedReply>>>,
+    model_catalog: Arc<Mutex<ModelCatalogCache>>,
+    model_catalog_refresh: Arc<Mutex<()>>,
+    session_affinity: Arc<Mutex<SessionAffinityCache>>,
     pub jobs: Arc<JobManager>,
     trace: Arc<TraceSink>,
     capacity_version: Arc<AtomicU64>,
@@ -2247,6 +2562,10 @@ impl EdgeState {
             .redirect(Policy::limited(5))
             .build()
             .map_err(|error| format!("failed to create upstream HTTP client: {error}"))?;
+        let session_affinity = SessionAffinityCache::new(
+            config.session_affinity_ttl,
+            config.session_affinity_max_entries,
+        );
         Ok(Self {
             store: AccountStore::new(config.store_path.clone()),
             jobs: Arc::new(JobManager::new(config.jobs_path.clone()).await?),
@@ -2259,6 +2578,9 @@ impl EdgeState {
             blocked: Arc::new(Mutex::new(HashMap::new())),
             selected: Arc::new(Mutex::new(HashMap::new())),
             idempotency: Arc::new(Mutex::new(HashMap::new())),
+            model_catalog: Arc::new(Mutex::new(ModelCatalogCache::default())),
+            model_catalog_refresh: Arc::new(Mutex::new(())),
+            session_affinity: Arc::new(Mutex::new(session_affinity)),
             capacity_version: Arc::new(AtomicU64::new(1)),
         })
     }
@@ -2317,10 +2639,57 @@ fn request_session_id(headers: &HeaderMap) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn valid_codex_session_id(value: String) -> Option<String> {
+    let value = value.trim().to_owned();
+    if value.is_empty() || value.len() > 200 {
+        return None;
+    }
+    value
+        .chars()
+        .all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | ':' | '-')
+        })
+        .then_some(value)
+}
+
+/// Return the stable Codex conversation/session identifier used for routing
+/// affinity. `session_id` remains the provider conversation header; native
+/// Codex clients commonly send `thread-id` or the forwarded session header
+/// instead, so those must participate in affinity without being copied to an
+/// upstream that does not understand them.
+fn request_codex_session_id(headers: &HeaderMap) -> Option<String> {
+    let direct = [
+        "x-multivibe-codex-session-id",
+        "thread-id",
+        "session_id",
+        "session-id",
+        "x-session-id",
+        "x-session_id",
+    ]
+    .iter()
+    .find_map(|name| header_value(headers, name))
+    .and_then(valid_codex_session_id);
+    if direct.is_some() {
+        return direct;
+    }
+
+    let metadata = header_value(headers, "x-codex-turn-metadata")?;
+    let value = serde_json::from_str::<Value>(&metadata).ok()?;
+    valid_codex_session_id(
+        value
+            .get("session_id")
+            .or_else(|| value.get("thread_id"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+    )
+}
+
 fn upstream_headers(
     account: &Account,
     incoming: &HeaderMap,
     url: &str,
+    model: Option<&str>,
     config: &EdgeConfig,
 ) -> HeaderMap {
     let provider = normalize_provider(account);
@@ -2340,8 +2709,12 @@ fn upstream_headers(
     }
     if provider == "openai" {
         set_header(&mut headers, "originator", "codex_cli_rs");
-        set_header(&mut headers, "user-agent", "codex_cli_rs/0.144.1");
-        set_header(&mut headers, "version", "0.144.1");
+        set_header(
+            &mut headers,
+            "user-agent",
+            format!("codex_cli_rs/{}", config.models_client_version),
+        );
+        set_header(&mut headers, "version", &config.models_client_version);
         set_header(&mut headers, "openai-beta", "responses=experimental");
         if let Some(account_id) = account.chatgpt_account_id.as_deref() {
             set_header(&mut headers, "chatgpt-account-id", account_id);
@@ -2355,6 +2728,12 @@ fn upstream_headers(
         set_header(&mut headers, "x-grok-client-version", "0.2.114");
         set_header(&mut headers, "x-grok-client-identifier", "grok-pager");
         set_header(&mut headers, "user-agent", "grok-pager/0.2.114");
+        if let Some(model) = model.filter(|value| !value.trim().is_empty()) {
+            set_header(&mut headers, "x-grok-model-override", model);
+        }
+        if let Some(session) = request_session_id(incoming) {
+            set_header(&mut headers, "x-grok-conv-id", session);
+        }
     }
     if provider == "opencode" {
         for (name, value) in &account.opencode_headers {
@@ -2587,9 +2966,12 @@ async fn proxy_inference(
         .first()
         .map(String::as_str)
         .unwrap_or("unknown");
-    let routes = routes_for_model(&store, &requested_model, default_model);
+    let catalog = exposed_models(state, &store).await;
+    let routes = routes_for_model(&store, &requested_model, default_model, &catalog);
     let client_stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
     let session_id = request_session_id(headers);
+    let codex_session_id = request_codex_session_id(headers);
+    let prompt_cache_session_id = session_id.clone().or_else(|| codex_session_id.clone());
     let mut last_status = StatusCode::SERVICE_UNAVAILABLE;
     let mut last_error = "no eligible account configured".to_owned();
     let mut attempted = 0_usize;
@@ -2601,18 +2983,46 @@ async fn proxy_inference(
         }
         let blocked = state.blocked.lock().await.clone();
         let selected = state.selected.lock().await.clone();
-        let accounts = select_accounts(
+        let mut accounts = select_accounts(
             &store.accounts,
             &RouteCandidate {
                 requested_model: route.requested_model.clone(),
                 model: route.model.clone(),
                 provider: route.provider.clone(),
+                account_ids: route.account_ids.clone(),
             },
             &blocked,
             &selected,
         );
         if accounts.is_empty() {
             continue;
+        }
+        let provider = route.provider.as_deref().unwrap_or_default();
+        if state.config.session_affinity_enabled {
+            if let Some(session_id) = codex_session_id.as_deref() {
+                let sticky_account_id = {
+                    let mut affinity = state.session_affinity.lock().await;
+                    affinity.get(application, session_id, provider, now_ms())
+                };
+                if let Some(sticky_account_id) = sticky_account_id {
+                    if let Some(index) = accounts
+                        .iter()
+                        .position(|account| account.id == sticky_account_id)
+                    {
+                        let sticky_account = accounts.remove(index);
+                        accounts.insert(0, sticky_account);
+                    } else {
+                        // The account may have become blocked, exceeded quota,
+                        // or fallen outside an alias policy. Forget the stale
+                        // mapping so the normal selector can fail over.
+                        state.session_affinity.lock().await.forget(
+                            application,
+                            session_id,
+                            provider,
+                        );
+                    }
+                }
+            }
         }
         had_account = true;
         for account in accounts {
@@ -2621,21 +3031,38 @@ async fn proxy_inference(
             }
             attempted += 1;
             let provider = normalize_provider(&account);
+            if state.config.session_affinity_enabled {
+                if let Some(session_id) = codex_session_id.as_deref() {
+                    // Record the attempt before the upstream call. If this
+                    // account fails and the loop rotates, the next attempt
+                    // immediately replaces the mapping, matching Express.
+                    state.session_affinity.lock().await.remember(
+                        application,
+                        session_id,
+                        &provider,
+                        &account.id,
+                        now_ms(),
+                    );
+                }
+            }
             let sends_chat = resolve_upstream_mode(
                 &account,
                 path.contains("chat/completions"),
                 path.ends_with("/responses/compact"),
             );
-            let payload = prepared_payload(
+            let mut payload = prepared_payload(
                 body,
                 path,
                 &account,
                 &route,
-                session_id.as_deref(),
+                prompt_cache_session_id.as_deref(),
                 client_stream,
                 is_claude_code_request(headers),
                 &state.config,
             );
+            if provider == "openai" && account.chatgpt_account_id.is_some() {
+                default_chatgpt_reasoning_effort(&mut payload, sends_chat);
+            }
             let url = upstream_url(
                 &account,
                 &state.config,
@@ -2655,7 +3082,13 @@ async fn proxy_inference(
             let request = state
                 .client
                 .request(Method::POST, &url)
-                .headers(upstream_headers(&account, headers, &url, &state.config))
+                .headers(upstream_headers(
+                    &account,
+                    headers,
+                    &url,
+                    Some(&route.model),
+                    &state.config,
+                ))
                 .body(serialized);
             let response = match timeout(state.config.upstream_timeout, request.send()).await {
                 Ok(Ok(response)) => response,
@@ -2676,7 +3109,8 @@ async fn proxy_inference(
                     continue;
                 }
             };
-            last_status = response.status();
+            let status = response.status();
+            last_status = status;
             let response_headers = copy_public_headers(response.headers());
             let content_type = response
                 .headers()
@@ -2684,20 +3118,20 @@ async fn proxy_inference(
                 .and_then(|value| value.to_str().ok())
                 .unwrap_or_default()
                 .to_owned();
-            if !response.status().is_success() {
+            if !status.is_success() {
                 let bytes = response.bytes().await.unwrap_or_default();
                 let text = String::from_utf8_lossy(&bytes).to_string();
                 last_error = if text.is_empty() {
-                    format!("upstream returned HTTP {}", response.status())
+                    format!("upstream returned HTTP {status}")
                 } else {
                     text.chars().take(500).collect()
                 };
-                if should_retry_status(response.status(), &text) {
+                if should_retry_status(status, &text) {
                     state
                         .mark_blocked(
                             &account,
                             &route.model,
-                            if is_quota_error(response.status(), &text) {
+                            if is_quota_error(status, &text) {
                                 Duration::from_secs(60)
                             } else {
                                 Duration::from_secs(5)
@@ -2707,7 +3141,7 @@ async fn proxy_inference(
                     continue;
                 }
                 let body = if path.ends_with("/messages") {
-                    serde_json::to_vec(&anthropic_error_value(response.status(), &text))
+                    serde_json::to_vec(&anthropic_error_value(status, &text))
                         .unwrap_or_else(|_| b"{}".to_vec())
                 } else {
                     bytes.to_vec()
@@ -2718,14 +3152,14 @@ async fn proxy_inference(
                         path,
                         application,
                         Some(&account),
-                        response.status().as_u16(),
+                        status.as_u16(),
                         client_stream,
                         started_at,
                         Some(&last_error),
                     )
                     .await;
                 return Ok(ProxyResult::Buffered(BufferedReply {
-                    status: response.status(),
+                    status,
                     headers: response_headers,
                     body: Bytes::from(body),
                 }));
@@ -2734,9 +3168,28 @@ async fn proxy_inference(
                 .selected
                 .lock()
                 .await
-                .insert(provider, account.id.clone());
+                .insert(provider.clone(), account.id.clone());
             let transform = transform_for(path, &account, client_stream, &content_type);
-            if transform != StreamTransform::None {
+            let content_type_is_sse = content_type
+                .to_ascii_lowercase()
+                .contains("text/event-stream");
+            // Preserve a real upstream stream even when no protocol
+            // conversion is needed. ChatGPT and xAI have also returned SSE
+            // for an explicit stream request without a Content-Type header;
+            // their native edge path must not buffer those bytes into a
+            // synthetic one-event response.
+            let can_stream_without_content_type = client_stream
+                && content_type.trim().is_empty()
+                && matches!(provider.as_str(), "openai" | "xai");
+            if transform != StreamTransform::None
+                || (client_stream && (content_type_is_sse || can_stream_without_content_type))
+            {
+                let mut stream_headers = response_headers;
+                if can_stream_without_content_type {
+                    stream_headers.retain(|(name, _)| name != "content-type");
+                    stream_headers
+                        .push(("content-type".to_owned(), "text/event-stream".to_owned()));
+                }
                 state
                     .trace
                     .record(
@@ -2751,7 +3204,7 @@ async fn proxy_inference(
                     .await;
                 return Ok(ProxyResult::Streaming(StreamingReply {
                     status: response.status(),
-                    headers: response_headers,
+                    headers: stream_headers,
                     upstream: response,
                     transform,
                     requested_model: requested_model.clone().if_empty_then(default_model),
@@ -3133,7 +3586,6 @@ impl AnthropicStreamState {
 
 struct SseStreamTransformer {
     mode: StreamTransform,
-    requested_model: String,
     buffer: String,
     chat_response: ChatResponseStreamState,
     response_chat: ResponseChatStreamState,
@@ -3144,7 +3596,6 @@ impl SseStreamTransformer {
     fn new(mode: StreamTransform, model: &str) -> Self {
         Self {
             mode,
-            requested_model: model.to_owned(),
             buffer: String::new(),
             chat_response: ChatResponseStreamState::new(model),
             response_chat: ResponseChatStreamState::new(model),
@@ -3180,7 +3631,8 @@ impl SseStreamTransformer {
 
     fn transform_frame(&mut self, frame: &str) -> String {
         let mut data = Vec::new();
-        for line in frame.replace('\r', "").lines() {
+        let normalized_frame = frame.replace('\r', "");
+        for line in normalized_frame.lines() {
             if let Some(value) = line.strip_prefix("data:") {
                 data.push(value.trim());
             }
@@ -3983,78 +4435,156 @@ fn model_entry(
     json!({"id": id, "object": "model", "created": 0, "owned_by": provider, "metadata": metadata})
 }
 
-fn exposed_models(store: &StoreFile, config: &EdgeConfig) -> Vec<Value> {
-    let mut ids = Vec::new();
-    let mut providers: HashMap<String, (String, Vec<String>)> = HashMap::new();
+fn model_entry_from_upstream(
+    id: &str,
+    provider: &str,
+    account_id: &str,
+    upstream: &Value,
+) -> Value {
+    let mut entry = model_entry(id, provider, vec![account_id.to_owned()], false, Vec::new());
+    let metadata = entry
+        .get_mut("metadata")
+        .and_then(Value::as_object_mut)
+        .expect("model_entry always creates metadata");
+    for (destination, alternatives) in [
+        (
+            "context_window",
+            &[
+                "context_window",
+                "contextWindow",
+                "context_length",
+                "max_context_tokens",
+                "max_input_tokens",
+            ][..],
+        ),
+        (
+            "max_output_tokens",
+            &[
+                "max_output_tokens",
+                "maxOutputTokens",
+                "max_completion_tokens",
+            ][..],
+        ),
+    ] {
+        if let Some(value) = alternatives.iter().find_map(|key| upstream.get(*key)) {
+            if value.is_number() {
+                metadata.insert(destination.to_owned(), value.clone());
+            }
+        }
+    }
+    for (destination, source) in [
+        ("supports_reasoning", "supports_reasoning"),
+        ("supports_tools", "supports_tools"),
+    ] {
+        if let Some(value) = upstream.get(source).and_then(Value::as_bool) {
+            metadata.insert(destination.to_owned(), Value::Bool(value));
+        }
+    }
+    if let Some(types) = upstream
+        .get("supported_tool_types")
+        .or_else(|| upstream.get("supportedToolTypes"))
+        .or_else(|| upstream.get("tool_types"))
+        .and_then(Value::as_array)
+    {
+        let types = types
+            .iter()
+            .filter_map(Value::as_str)
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+        if !types.is_empty() {
+            metadata.insert("supported_tool_types".to_owned(), json!(types));
+        }
+    }
+    if provider == "openai" && upstream.is_object() {
+        entry["codexModelInfo"] = upstream.clone();
+    }
+    entry
+}
+
+fn merge_model_entry(existing: &mut Value, next: Value) {
+    let Some(existing_metadata) = existing.get_mut("metadata").and_then(Value::as_object_mut)
+    else {
+        *existing = next;
+        return;
+    };
+    let Some(next_metadata) = next.get("metadata").and_then(Value::as_object) else {
+        return;
+    };
+    for key in ["provider_candidates", "account_ids"] {
+        let mut values = existing_metadata
+            .get(key)
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if let Some(next_values) = next_metadata.get(key).and_then(Value::as_array) {
+            for value in next_values {
+                if !values.contains(value) {
+                    values.push(value.clone());
+                }
+            }
+        }
+        existing_metadata.insert(key.to_owned(), Value::Array(values));
+    }
+    for key in [
+        "context_window",
+        "max_output_tokens",
+        "supports_reasoning",
+        "supports_tools",
+        "supported_tool_types",
+    ] {
+        if existing_metadata.get(key).is_none_or(Value::is_null)
+            && let Some(value) = next_metadata.get(key)
+        {
+            existing_metadata.insert(key.to_owned(), value.clone());
+        }
+    }
+    if existing.get("codexModelInfo").is_none()
+        && let Some(value) = next.get("codexModelInfo")
+    {
+        existing["codexModelInfo"] = value.clone();
+    }
+}
+
+fn upsert_model(models: &mut Vec<Value>, next: Value) {
+    let Some(id) = next.get("id").and_then(Value::as_str) else {
+        return;
+    };
+    if let Some(existing) = models.iter_mut().find(|entry| {
+        entry
+            .get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|value| normalize_model_key(value) == normalize_model_key(id))
+    }) {
+        merge_model_entry(existing, next);
+    } else {
+        models.push(next);
+    }
+}
+
+fn static_exposed_models(store: &StoreFile, config: &EdgeConfig) -> Vec<Value> {
+    let mut models = Vec::new();
     for model in &config.proxy_models {
-        ids.push((model.clone(), infer_provider(model), false, Vec::new()));
+        upsert_model(
+            &mut models,
+            model_entry(model, &infer_provider(model), Vec::new(), false, Vec::new()),
+        );
     }
     for account in &store.accounts {
         if !account.enabled {
             continue;
         }
-        let provider = normalize_provider(account);
         if let Some(runtime) = account.local_runtime.as_ref() {
             for model in &runtime.confirmed_model_ids {
-                ids.push((model.clone(), provider.clone(), false, Vec::new()));
-                providers
-                    .entry(normalize_model_key(model))
-                    .or_insert((provider.clone(), Vec::new()))
-                    .1
-                    .push(account.id.clone());
-            }
-        }
-    }
-    for (id, provider, alias, targets) in ids {
-        let entry = providers
-            .entry(normalize_model_key(&id))
-            .or_insert((provider.clone(), Vec::new()));
-        if !entry.1.is_empty() {
-            continue;
-        }
-        entry.0 = provider;
-        let _ = alias;
-        let _ = targets;
-    }
-    let mut models = providers
-        .into_iter()
-        .map(|(_, (provider, account_ids))| (provider, account_ids))
-        .enumerate()
-        .map(|(index, (provider, account_ids))| {
-            let id = if let Some(model) = config.proxy_models.get(index) {
-                model.clone()
-            } else {
-                format!("model-{index}")
-            };
-            model_entry(&id, &provider, account_ids, false, Vec::new())
-        })
-        .collect::<Vec<_>>();
-    // Rebuild the basic catalog in deterministic order; aliases are appended.
-    models.clear();
-    let mut seen = HashSet::new();
-    for model in &config.proxy_models {
-        if seen.insert(normalize_model_key(model)) {
-            models.push(model_entry(
-                model,
-                &infer_provider(model),
-                Vec::new(),
-                false,
-                Vec::new(),
-            ));
-        }
-    }
-    for account in &store.accounts {
-        if let Some(runtime) = account.local_runtime.as_ref() {
-            for model in &runtime.confirmed_model_ids {
-                if seen.insert(normalize_model_key(model)) {
-                    models.push(model_entry(
+                upsert_model(
+                    &mut models,
+                    model_entry(
                         model,
                         &normalize_provider(account),
                         vec![account.id.clone()],
                         false,
                         Vec::new(),
-                    ));
-                }
+                    ),
+                );
             }
         }
     }
@@ -4068,18 +4598,304 @@ fn exposed_models(store: &StoreFile, config: &EdgeConfig) -> Vec<Value> {
                     .map(|candidate| candidate.model.clone())
             })
             .collect::<Vec<_>>();
-        if targets.is_empty() || !seen.insert(normalize_model_key(&alias.id)) {
+        if targets.is_empty() {
             continue;
         }
-        models.push(model_entry(
-            &alias.id,
-            &infer_provider(&targets[0]),
-            Vec::new(),
-            true,
-            targets,
-        ));
+        upsert_model(
+            &mut models,
+            model_entry(
+                &alias.id,
+                &infer_provider(&targets[0]),
+                Vec::new(),
+                true,
+                targets,
+            ),
+        );
     }
     models
+}
+
+fn catalog_signature(store: &StoreFile, config: &EdgeConfig) -> String {
+    let account_configuration = store
+        .accounts
+        .iter()
+        .map(|account| {
+            json!({
+                "id": account.id,
+                "provider": account.provider,
+                "upstream_mode": account.upstream_mode,
+                "compatibility_mode": account.compatibility_mode,
+                "base_url": account.base_url,
+                "enabled": account.enabled,
+                "location": account.location,
+                "chatgpt_account_id": account.chatgpt_account_id,
+                "access_token": secret_signature(Some(&account.access_token)),
+                "opencode_api_key": secret_signature(account.opencode_api_key.as_deref()),
+                "opencode_headers": account.opencode_headers,
+                "local_runtime": account.local_runtime,
+            })
+        })
+        .collect::<Vec<_>>();
+    let value = json!({
+        "proxy_models": config.proxy_models,
+        "accounts": account_configuration,
+        "model_aliases": store.model_aliases,
+    });
+    let digest = Sha256::digest(serde_json::to_vec(&value).unwrap_or_default());
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn secret_signature(value: Option<&str>) -> Option<String> {
+    let value = value.filter(|value| !value.is_empty())?;
+    Some(
+        Sha256::digest(value.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
+    )
+}
+
+fn model_discovery_url(account: &Account, config: &EdgeConfig) -> String {
+    let provider = normalize_provider(account);
+    let base = if provider == "openai-compatible" {
+        account.base_url.clone().unwrap_or_default()
+    } else if provider == "opencode" {
+        let configured = account
+            .base_url
+            .clone()
+            .unwrap_or_else(|| "https://opencode.ai/zen".to_owned());
+        if configured.eq_ignore_ascii_case("https://opencode.ai/inference/openai") {
+            "https://opencode.ai/zen".to_owned()
+        } else {
+            configured
+        }
+    } else {
+        account_base_url(account, config)
+    };
+    if provider == "openai" {
+        return format!(
+            "{}/backend-api/codex/models?client_version={}",
+            trim_slashes(&base),
+            config.models_client_version
+        );
+    }
+    if provider == "xai" {
+        return format!("{}{}", trim_slashes(&base), config.xai_models_path.as_str());
+    }
+    if provider == "zai" {
+        return format!("{}{}", trim_slashes(&base), config.zai_models_path.as_str());
+    }
+    let path = "/v1/models";
+    if base.ends_with("/v1") {
+        format!("{}{}", trim_slashes(&base), &path[3..])
+    } else {
+        format!("{}{}", trim_slashes(&base), path)
+    }
+}
+
+fn model_discovery_headers(account: &Account) -> HeaderMap {
+    let provider = normalize_provider(account);
+    let mut headers = HeaderMap::new();
+    set_header(&mut headers, "accept", "application/json");
+    let token = if provider == "opencode" {
+        account
+            .opencode_api_key
+            .as_deref()
+            .unwrap_or(&account.access_token)
+    } else {
+        &account.access_token
+    };
+    if !token.is_empty() && !is_local_runtime(account) {
+        set_header(&mut headers, "authorization", format!("Bearer {token}"));
+    }
+    if provider == "openai"
+        && let Some(account_id) = account.chatgpt_account_id.as_deref()
+    {
+        set_header(&mut headers, "chatgpt-account-id", account_id);
+    }
+    if provider == "xai" {
+        set_header(&mut headers, "x-xai-token-auth", "xai-grok-cli");
+        set_header(&mut headers, "x-grok-client-version", "0.2.114");
+        set_header(&mut headers, "x-grok-client-identifier", "grok-pager");
+        set_header(&mut headers, "user-agent", "grok-pager/0.2.114");
+    }
+    if provider == "opencode" {
+        for (name, value) in &account.opencode_headers {
+            set_header(&mut headers, name, value);
+        }
+    }
+    headers
+}
+
+fn upstream_model_entries(provider: &str, value: &Value) -> Vec<(String, Value)> {
+    if provider == "openai" {
+        return value
+            .get("models")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| {
+                let id = entry.get("slug").and_then(Value::as_str)?.trim();
+                (!id.is_empty()).then(|| (id.to_owned(), entry.clone()))
+            })
+            .collect();
+    }
+    if let Some(entries) = value.as_array() {
+        return entries
+            .iter()
+            .filter_map(|entry| {
+                let id = entry
+                    .get("id")
+                    .or_else(|| entry.get("name"))
+                    .and_then(Value::as_str)?
+                    .trim();
+                (!id.is_empty()).then(|| (id.to_owned(), entry.clone()))
+            })
+            .collect();
+    }
+    if let Some(entries) = value.get("data").and_then(Value::as_array) {
+        return entries
+            .iter()
+            .filter_map(|entry| {
+                let id = entry
+                    .get("id")
+                    .or_else(|| entry.get("name"))
+                    .and_then(Value::as_str)?
+                    .trim();
+                (!id.is_empty()).then(|| (id.to_owned(), entry.clone()))
+            })
+            .collect();
+    }
+    value
+        .get("models")
+        .and_then(Value::as_object)
+        .map(|entries| {
+            entries
+                .iter()
+                .map(|(id, entry)| (id.clone(), entry.clone()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+async fn discover_account_models(state: &EdgeState, account: Account) -> Vec<Value> {
+    let provider = normalize_provider(&account);
+    let url = model_discovery_url(&account, &state.config);
+    let response = match timeout(
+        Duration::from_secs(3),
+        state
+            .client
+            .get(url)
+            .headers(model_discovery_headers(&account))
+            .send(),
+    )
+    .await
+    {
+        Ok(Ok(response)) if response.status().is_success() => response,
+        _ => return Vec::new(),
+    };
+    let bytes = match timeout(Duration::from_secs(3), response.bytes()).await {
+        Ok(Ok(bytes)) if bytes.len() <= 4 * 1024 * 1024 => bytes,
+        _ => return Vec::new(),
+    };
+    let value = match serde_json::from_slice::<Value>(&bytes) {
+        Ok(value) => value,
+        Err(_) => return Vec::new(),
+    };
+    upstream_model_entries(&provider, &value)
+        .into_iter()
+        .map(|(id, entry)| model_entry_from_upstream(&id, &provider, &account.id, &entry))
+        .collect()
+}
+
+async fn exposed_models(state: &EdgeState, store: &StoreFile) -> Vec<Value> {
+    let _refresh_guard = state.model_catalog_refresh.lock().await;
+    let signature = catalog_signature(store, &state.config);
+    let now = now_ms();
+    {
+        let cache = state.model_catalog.lock().await;
+        if cache.signature == signature
+            && cache.fetched_at + state.config.models_cache_ttl.as_millis() as u64 > now
+            && !cache.models.is_empty()
+        {
+            return cache.models.clone();
+        }
+    }
+
+    let mut models = static_exposed_models(store, &state.config);
+    let discovered = join_all(
+        store
+            .accounts
+            .iter()
+            .filter(|account| {
+                account.enabled
+                    && (!account.access_token.is_empty()
+                        || account
+                            .opencode_api_key
+                            .as_deref()
+                            .is_some_and(|value| !value.is_empty())
+                        || is_local_runtime(account))
+            })
+            .cloned()
+            .map(|account| discover_account_models(state, account)),
+    )
+    .await;
+    for entries in discovered {
+        for entry in entries {
+            upsert_model(&mut models, entry);
+        }
+    }
+    let mut cache = state.model_catalog.lock().await;
+    cache.signature = signature;
+    cache.fetched_at = now_ms();
+    cache.models = models.clone();
+    models
+}
+
+fn openai_model_shape(model: &Value) -> Value {
+    let mut value = model.clone();
+    if let Some(object) = value.as_object_mut() {
+        object.remove("codexModelInfo");
+    }
+    value
+}
+
+fn codex_model_shape(model: &Value) -> Option<Value> {
+    if let Some(value) = model.get("codexModelInfo") {
+        return Some(value.clone());
+    }
+    if model
+        .get("metadata")
+        .and_then(|metadata| metadata.get("provider"))
+        .and_then(Value::as_str)
+        != Some("zai")
+    {
+        return None;
+    }
+    let id = model.get("id").and_then(Value::as_str)?;
+    Some(json!({
+        "slug": id,
+        "display_name": id,
+        "description": format!("z.ai model {id}"),
+        "base_instructions": "",
+        "supported_reasoning_levels": [],
+        "shell_type": "shell_command",
+        "visibility": "list",
+        "supported_in_api": true,
+        "priority": 100,
+        "support_verbosity": false,
+        "truncation_policy": {"mode": "tokens", "limit": 10000},
+        "experimental_supported_tools": [],
+    }))
+}
+
+fn models_list_response(models: &[Value]) -> Value {
+    let data = models.iter().map(openai_model_shape).collect::<Vec<_>>();
+    let native = models
+        .iter()
+        .filter_map(codex_model_shape)
+        .collect::<Vec<_>>();
+    json!({"object": "list", "data": data, "models": native})
 }
 
 async fn list_models_handler(State(state): State<EdgeState>, req: Request<Body>) -> Response {
@@ -4104,11 +4920,8 @@ async fn list_models_handler(State(state): State<EdgeState>, req: Request<Body>)
             ]}),
         );
     }
-    let models = exposed_models(&store, &state.config);
-    json_response(
-        StatusCode::OK,
-        json!({"object": "list", "data": models, "models": []}),
-    )
+    let models = exposed_models(&state, &store).await;
+    json_response(StatusCode::OK, models_list_response(&models))
 }
 
 async fn get_model_handler(
@@ -4126,14 +4939,13 @@ async fn get_model_handler(
     if let Err(response) = authorize(&headers, req.uri().path(), &store, &state.config) {
         return response;
     }
-    let model = exposed_models(&store, &state.config)
-        .into_iter()
-        .find(|model| {
-            model
-                .get("id")
-                .and_then(Value::as_str)
-                .is_some_and(|value| value == id)
-        });
+    let models = exposed_models(&state, &store).await;
+    let model = models.into_iter().find(|model| {
+        model
+            .get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|value| value == id)
+    });
     match model {
         Some(model) => json_response(StatusCode::OK, model),
         None => json_response(
@@ -4202,17 +5014,19 @@ async fn capacity_handler(
             json!({"error": "invalid priority"}),
         );
     }
-    let route = RouteCandidate {
-        requested_model: model.clone(),
-        model: model.clone(),
-        provider: Some(infer_provider(&model)),
-    };
-    let accounts = select_accounts(
-        &store.accounts,
-        &route,
-        &state.blocked.lock().await,
-        &state.selected.lock().await,
-    );
+    let catalog = exposed_models(&state, &store).await;
+    let route = routes_for_model(&store, &model, &model, &catalog)
+        .into_iter()
+        .next()
+        .unwrap_or(RouteCandidate {
+            requested_model: model.clone(),
+            model: model.clone(),
+            provider: Some(infer_provider(&model)),
+            account_ids: Vec::new(),
+        });
+    let blocked = state.blocked.lock().await.clone();
+    let selected = state.selected.lock().await.clone();
+    let accounts = select_accounts(&store.accounts, &route, &blocked, &selected);
     let free_slots = accounts
         .iter()
         .map(|account| {
@@ -4502,13 +5316,11 @@ async fn realtime_call_handler(State(state): State<EdgeState>, req: Request<Body
         requested_model: "realtime".to_owned(),
         model: "realtime".to_owned(),
         provider: Some(state.config.realtime_provider.clone()),
+        account_ids: Vec::new(),
     };
-    let accounts = select_accounts(
-        &store.accounts,
-        &route,
-        &state.blocked.lock().await,
-        &state.selected.lock().await,
-    );
+    let blocked = state.blocked.lock().await.clone();
+    let selected = state.selected.lock().await.clone();
+    let accounts = select_accounts(&store.accounts, &route, &blocked, &selected);
     let mut last_error = "no eligible realtime account configured".to_owned();
     for account in accounts {
         let url = match realtime_url(&account, &state.config) {
@@ -4518,7 +5330,7 @@ async fn realtime_call_handler(State(state): State<EdgeState>, req: Request<Body
                 continue;
             }
         };
-        let mut upstream_headers = upstream_headers(&account, &headers, &url, &state.config);
+        let mut upstream_headers = upstream_headers(&account, &headers, &url, None, &state.config);
         set_header(&mut upstream_headers, "content-type", &content_type);
         set_header(
             &mut upstream_headers,
@@ -4597,15 +5409,14 @@ async fn realtime_voices_handler(State(state): State<EdgeState>, req: Request<Bo
         requested_model: "realtime-voices".to_owned(),
         model: "realtime-voices".to_owned(),
         provider: Some("openai".to_owned()),
+        account_ids: Vec::new(),
     };
-    let Some(account) = select_accounts(
-        &store.accounts,
-        &route,
-        &state.blocked.lock().await,
-        &state.selected.lock().await,
-    )
-    .into_iter()
-    .next() else {
+    let blocked = state.blocked.lock().await.clone();
+    let selected = state.selected.lock().await.clone();
+    let Some(account) = select_accounts(&store.accounts, &route, &blocked, &selected)
+        .into_iter()
+        .next()
+    else {
         return json_response(
             StatusCode::SERVICE_UNAVAILABLE,
             json!({"error": {"message": "no eligible ChatGPT account configured for voice discovery", "type": "service_unavailable", "code": "voice_account_unavailable"}}),
@@ -4628,7 +5439,13 @@ async fn realtime_voices_handler(State(state): State<EdgeState>, req: Request<Bo
         state
             .client
             .get(&url)
-            .headers(upstream_headers(&account, &headers, &url, &state.config))
+            .headers(upstream_headers(
+                &account,
+                &headers,
+                &url,
+                None,
+                &state.config,
+            ))
             .send(),
     )
     .await
@@ -4671,13 +5488,16 @@ async fn websocket_handler(
                 .unwrap_or_else(|_| Response::new(Body::empty()));
         }
     };
-    if authorize(&headers, "/v1/responses", &store, &state.config).is_err() {
-        return Response::builder()
-            .status(StatusCode::UNAUTHORIZED)
-            .body(Body::empty())
-            .unwrap_or_else(|_| Response::new(Body::empty()));
-    }
-    ws.on_upgrade(move |socket| handle_websocket(socket, state, headers))
+    let auth = match authorize(&headers, "/v1/responses", &store, &state.config) {
+        Ok(auth) => auth,
+        Err(_) => {
+            return Response::builder()
+                .status(StatusCode::UNAUTHORIZED)
+                .body(Body::empty())
+                .unwrap_or_else(|_| Response::new(Body::empty()));
+        }
+    };
+    ws.on_upgrade(move |socket| handle_websocket(socket, state, headers, auth.application))
 }
 
 async fn ws_send_json(socket: &mut WebSocket, value: Value) -> bool {
@@ -4687,7 +5507,12 @@ async fn ws_send_json(socket: &mut WebSocket, value: Value) -> bool {
         .is_ok()
 }
 
-async fn handle_websocket(mut socket: WebSocket, state: EdgeState, headers: HeaderMap) {
+async fn handle_websocket(
+    mut socket: WebSocket,
+    state: EdgeState,
+    headers: HeaderMap,
+    application: String,
+) {
     while let Some(Ok(message)) = socket.next().await {
         match message {
             Message::Text(text) => {
@@ -4711,7 +5536,15 @@ async fn handle_websocket(mut socket: WebSocket, state: EdgeState, headers: Head
                     object.remove("previous_response_id");
                     object.insert("stream".to_owned(), Value::Bool(true));
                 }
-                match proxy_inference(&state, "/v1/responses", &headers, &frame, "default").await {
+                match proxy_inference(
+                    &state,
+                    "/v1/responses",
+                    &headers,
+                    &frame,
+                    &application,
+                )
+                .await
+                {
                     Ok(ProxyResult::Buffered(reply)) => {
                         if reply.status.is_success() {
                             let text = String::from_utf8_lossy(&reply.body);
@@ -4850,6 +5683,9 @@ async fn fallback_handler(State(state): State<EdgeState>, req: Request<Body>) ->
 
 pub fn build_router(state: EdgeState) -> Router {
     Router::new()
+        // Every `/v1` route terminates in this native edge.  Node remains a
+        // control-plane peer for the dashboard and OAuth, never an HTTP hop
+        // for the public API.
         .route(
             "/v1/models",
             get(list_models_handler).post(method_not_allowed),
@@ -4885,10 +5721,16 @@ pub fn build_router(state: EdgeState) -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{Json, routing::post};
+    use axum::{
+        Json,
+        routing::{get, post},
+    };
+    use futures_util::SinkExt;
     use std::io::Cursor;
+    use std::sync::atomic::AtomicUsize;
     use tokio::net::TcpListener;
     use tokio::task::JoinHandle;
+    use tokio_tungstenite::{connect_async, tungstenite::client::IntoClientRequest};
 
     fn temporary_path(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -4947,6 +5789,39 @@ mod tests {
     }
 
     #[test]
+    fn codex_session_headers_are_distinguished_from_provider_session_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert("thread-id", HeaderValue::from_static("thread-123"));
+        assert_eq!(
+            request_codex_session_id(&headers).as_deref(),
+            Some("thread-123")
+        );
+        assert_eq!(request_session_id(&headers), None);
+
+        headers.insert("session_id", HeaderValue::from_static("provider-123"));
+        assert_eq!(
+            request_session_id(&headers).as_deref(),
+            Some("provider-123")
+        );
+        // The explicit native Codex id remains authoritative for affinity.
+        assert_eq!(
+            request_codex_session_id(&headers).as_deref(),
+            Some("thread-123")
+        );
+
+        headers.remove("thread-id");
+        headers.remove("session_id");
+        headers.insert(
+            "x-codex-turn-metadata",
+            HeaderValue::from_static(r#"{"session_id":"metadata-123"}"#),
+        );
+        assert_eq!(
+            request_codex_session_id(&headers).as_deref(),
+            Some("metadata-123")
+        );
+    }
+
+    #[test]
     fn configured_keys_reject_duplicates() {
         let error = parse_configured_api_keys("legacy", r#"{"batch":"legacy"}"#).unwrap_err();
         assert!(error.contains("unique"));
@@ -4959,7 +5834,10 @@ mod tests {
     fn zstd_decompression_is_bounded() {
         let source = br#"{"input":"hello"}"#;
         let compressed = zstd::stream::encode_all(Cursor::new(source), 1).unwrap();
-        assert_eq!(decompress_zstd(&compressed, source.len()).unwrap(), source);
+        assert_eq!(
+            decompress_zstd(&compressed, source.len()).unwrap().as_ref(),
+            source.as_slice()
+        );
         assert!(decompress_zstd(&compressed, source.len() - 1).is_err());
     }
 
@@ -4985,6 +5863,7 @@ mod tests {
             requested_model: "gpt-5.3-codex".to_owned(),
             model: "gpt-5.3-codex".to_owned(),
             provider: Some("openai".to_owned()),
+            account_ids: Vec::new(),
         };
         let accounts = vec![first, second];
         let empty = HashMap::new();
@@ -5003,6 +5882,44 @@ mod tests {
         });
         let accounts = vec![blocked];
         assert!(select_accounts(&accounts, &route, &empty, &HashMap::new()).is_empty());
+    }
+
+    #[test]
+    fn session_affinity_is_scoped_expiring_and_lru_bounded() {
+        let mut cache = SessionAffinityCache::new(Duration::from_millis(100), 2);
+        cache.remember("app-one", "thread", "openai", "account-one", 1_000);
+        cache.remember("app-two", "thread", "openai", "account-two", 1_000);
+
+        assert_eq!(
+            cache.peek("app-one", "thread", "openai", 1_050),
+            Some("account-one".to_owned())
+        );
+        assert_eq!(
+            cache.peek("app-two", "thread", "openai", 1_050),
+            Some("account-two".to_owned())
+        );
+        assert_eq!(cache.peek("app-one", "thread", "xai", 1_050), None);
+
+        // A read makes app-one the most recently used entry without extending
+        // its TTL. The new entry therefore evicts app-two.
+        assert_eq!(
+            cache.get("app-one", "thread", "openai", 1_050),
+            Some("account-one".to_owned())
+        );
+        cache.remember("app-three", "thread", "openai", "account-three", 1_050);
+        assert_eq!(
+            cache.get("app-one", "thread", "openai", 1_099),
+            Some("account-one".to_owned())
+        );
+        assert_eq!(cache.get("app-two", "thread", "openai", 1_099), None);
+        assert_eq!(
+            cache.get("app-three", "thread", "openai", 1_099),
+            Some("account-three".to_owned())
+        );
+
+        // Reads do not renew the TTL: app-one was inserted at 1,000 and is
+        // expired at 1,100 even though it was recently read.
+        assert_eq!(cache.get("app-one", "thread", "openai", 1_100), None);
     }
 
     #[test]
@@ -5113,7 +6030,7 @@ mod tests {
                 },
             )
             .await;
-        assert_eq!(manager.get_for("other-app", &job.id).await, None);
+        assert!(manager.get_for("other-app", &job.id).await.is_none());
         let stored = manager.get_for("batch-app", &job.id).await.unwrap();
         assert_eq!(stored.status, "succeeded");
         assert_eq!(stored.result.unwrap()["ok"], true);
@@ -5122,6 +6039,422 @@ mod tests {
         let reloaded = JobManager::new(path.clone()).await.unwrap();
         assert_eq!(reloaded.list_for("batch-app", 10).await.len(), 1);
         let _ = fs::remove_file(path).await;
+    }
+
+    #[tokio::test]
+    async fn native_catalog_and_routing_do_not_cross_the_node_control_plane() {
+        let model_discovery_requests = Arc::new(AtomicUsize::new(0));
+        let upstream_requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let control_plane_requests = Arc::new(AtomicUsize::new(0));
+
+        let discovery_requests = model_discovery_requests.clone();
+        let request_bodies = upstream_requests.clone();
+        let upstream = Router::new()
+            .route(
+                "/backend-api/codex/models",
+                get(move || {
+                    let discovery_requests = discovery_requests.clone();
+                    async move {
+                        discovery_requests.fetch_add(1, AtomicOrdering::Relaxed);
+                        Json(json!({
+                            "models": [{
+                                "slug": "gpt-5.6-sol",
+                                "display_name": "GPT 5.6 Sol",
+                                "supported_tool_types": ["function"],
+                                "supports_reasoning": true
+                            }]
+                        }))
+                    }
+                }),
+            )
+            .route(
+                "/backend-api/codex/responses",
+                post(move |request: Request<Body>| {
+                    let request_bodies = request_bodies.clone();
+                    async move {
+                        let bytes = to_bytes(request.into_body(), 4 * 1024 * 1024)
+                            .await
+                            .unwrap();
+                        request_bodies
+                            .lock()
+                            .await
+                            .push(serde_json::from_slice::<Value>(&bytes).unwrap());
+                        Json(json!({
+                            "id": "resp-native",
+                            "object": "response",
+                            "model": "gpt-5.6-sol",
+                            "status": "completed",
+                            "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "ok"}]}],
+                            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
+                        }))
+                    }
+                }),
+            );
+        let (upstream_url, upstream_task) = start_server(upstream).await;
+
+        let control_requests = control_plane_requests.clone();
+        let control_plane = Router::new().fallback(move || {
+            let control_requests = control_requests.clone();
+            async move {
+                control_requests.fetch_add(1, AtomicOrdering::Relaxed);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "unexpected control-plane request",
+                )
+            }
+        });
+        let (control_plane_url, control_plane_task) = start_server(control_plane).await;
+
+        let store_path = temporary_path("native-catalog");
+        let jobs_path = temporary_path("native-catalog-jobs");
+        fs::write(
+            &store_path,
+            serde_json::to_vec(&store_with_accounts(vec![account("openai-1")])).unwrap(),
+        )
+        .await
+        .unwrap();
+        let mut config = EdgeConfig::default();
+        config.store_path = store_path.clone();
+        config.jobs_path = jobs_path.clone();
+        config.chatgpt_base_url = upstream_url;
+        config.node_control_plane_url = control_plane_url;
+        config.configured_api_keys = vec![("interactive".to_owned(), "edge-secret".to_owned())];
+        config.models_cache_ttl = Duration::from_secs(60);
+        config.upstream_timeout = Duration::from_secs(5);
+
+        let state = EdgeState::new(config).await.unwrap();
+        let (edge_url, edge_task) = start_server(build_router(state)).await;
+        let client = reqwest::Client::new();
+
+        let response = client
+            .get(format!("{edge_url}/v1/models"))
+            .header("authorization", "Bearer edge-secret")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let catalog: Value = response.json().await.unwrap();
+        let discovered = catalog["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|model| model["id"] == "gpt-5.6-sol")
+            .unwrap();
+        assert!(discovered.get("codexModelInfo").is_none());
+        assert_eq!(discovered["metadata"]["account_ids"][0], "openai-1");
+        assert_eq!(catalog["models"][0]["slug"], "gpt-5.6-sol");
+        assert_eq!(model_discovery_requests.load(AtomicOrdering::Relaxed), 1);
+        assert_eq!(control_plane_requests.load(AtomicOrdering::Relaxed), 0);
+
+        let response = client
+            .post(format!("{edge_url}/v1/responses"))
+            .header("authorization", "Bearer edge-secret")
+            .json(&json!({
+                "model": "gpt-5.6-sol",
+                "input": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "describe this"},
+                        {"type": "input_image", "image_url": "data:image/png;base64,AAAA"}
+                    ]
+                }],
+                "tools": [{"type": "function", "name": "lookup", "parameters": {"type": "object"}}]
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.json::<Value>().await.unwrap()["id"], "resp-native");
+
+        let request_bodies = upstream_requests.lock().await;
+        assert_eq!(request_bodies.len(), 1);
+        assert_eq!(request_bodies[0]["model"], "gpt-5.6-sol");
+        assert_eq!(
+            request_bodies[0]["input"][0]["content"][1]["type"],
+            "input_image"
+        );
+        assert_eq!(request_bodies[0]["tools"][0]["type"], "function");
+        drop(request_bodies);
+
+        let response = client
+            .get(format!(
+                "{edge_url}/v1/capacity?model=gpt-5.6-sol&priority=interactive"
+            ))
+            .header("authorization", "Bearer edge-secret")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.json::<Value>().await.unwrap()["state"], "ready");
+
+        let response = client
+            .get(format!("{edge_url}/v1/jobs"))
+            .header("authorization", "Bearer edge-secret")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.json::<Value>().await.unwrap()["object"], "list");
+        assert_eq!(control_plane_requests.load(AtomicOrdering::Relaxed), 0);
+
+        edge_task.abort();
+        upstream_task.abort();
+        control_plane_task.abort();
+        let _ = fs::remove_file(store_path).await;
+        let _ = fs::remove_file(jobs_path).await;
+    }
+
+    #[tokio::test]
+    async fn native_sse_stream_is_relayed_without_a_node_hop() {
+        let upstream = Router::new()
+            .route(
+                "/backend-api/codex/models",
+                get(|| async {
+                    Json(json!({
+                        "models": [{"slug": "gpt-5.6-sol", "display_name": "GPT 5.6 Sol"}]
+                    }))
+                }),
+            )
+            .route(
+                "/backend-api/codex/responses",
+                post(|| async {
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .body(Body::from(concat!(
+                            "event: response.output_text.delta\n",
+                            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"native\"}\n\n",
+                            "event: response.completed\n",
+                            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-stream\",\"object\":\"response\",\"status\":\"completed\",\"output\":[]}}\n\n",
+                        )))
+                        .unwrap()
+                }),
+            );
+        let (upstream_url, upstream_task) = start_server(upstream).await;
+
+        let store_path = temporary_path("native-stream");
+        let jobs_path = temporary_path("native-stream-jobs");
+        fs::write(
+            &store_path,
+            serde_json::to_vec(&store_with_accounts(vec![account("openai-1")])).unwrap(),
+        )
+        .await
+        .unwrap();
+        let mut config = EdgeConfig::default();
+        config.store_path = store_path.clone();
+        config.jobs_path = jobs_path.clone();
+        config.chatgpt_base_url = upstream_url;
+        config.configured_api_keys = vec![("stream-app".to_owned(), "stream-key".to_owned())];
+        config.models_cache_ttl = Duration::from_secs(60);
+        config.upstream_timeout = Duration::from_secs(5);
+
+        let state = EdgeState::new(config).await.unwrap();
+        let (edge_url, edge_task) = start_server(build_router(state)).await;
+        let response = reqwest::Client::new()
+            .post(format!("{edge_url}/v1/responses"))
+            .header("authorization", "Bearer stream-key")
+            .json(&json!({
+                "model": "gpt-5.6-sol",
+                "input": "hello",
+                "stream": true
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|value| value.starts_with("text/event-stream"))
+        );
+        let body = response.text().await.unwrap();
+        assert!(body.contains("response.output_text.delta"));
+        assert!(body.contains("resp-stream"));
+
+        edge_task.abort();
+        upstream_task.abort();
+        let _ = fs::remove_file(store_path).await;
+        let _ = fs::remove_file(jobs_path).await;
+    }
+
+    #[tokio::test]
+    async fn native_websocket_responses_are_authenticated_and_served_by_rust() {
+        let store_path = temporary_path("native-websocket");
+        let jobs_path = temporary_path("native-websocket-jobs");
+        fs::write(
+            &store_path,
+            serde_json::to_vec(&store_with_accounts(Vec::new())).unwrap(),
+        )
+        .await
+        .unwrap();
+        let mut config = EdgeConfig::default();
+        config.store_path = store_path.clone();
+        config.jobs_path = jobs_path.clone();
+        config.configured_api_keys = vec![("websocket-app".to_owned(), "websocket-key".to_owned())];
+
+        let state = EdgeState::new(config).await.unwrap();
+        let (edge_url, edge_task) = start_server(build_router(state)).await;
+        let mut request = format!("{}/v1/responses", edge_url.replace("http://", "ws://"))
+            .into_client_request()
+            .unwrap();
+        request.headers_mut().insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer websocket-key"),
+        );
+        let (mut socket, _) = connect_async(request).await.unwrap();
+        socket
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                r#"{"type":"response.create","model":"gpt-5.3-codex","generate":false}"#.into(),
+            ))
+            .await
+            .unwrap();
+
+        let created = socket.next().await.unwrap().unwrap();
+        let completed = socket.next().await.unwrap().unwrap();
+        let created = match created {
+            tokio_tungstenite::tungstenite::Message::Text(value) => {
+                serde_json::from_str::<Value>(&value).unwrap()
+            }
+            other => panic!("expected response.created text frame, got {other:?}"),
+        };
+        let completed = match completed {
+            tokio_tungstenite::tungstenite::Message::Text(value) => {
+                serde_json::from_str::<Value>(&value).unwrap()
+            }
+            other => panic!("expected response.completed text frame, got {other:?}"),
+        };
+        assert_eq!(created["type"], "response.created");
+        assert_eq!(completed["type"], "response.completed");
+        assert_eq!(completed["response"]["status"], "completed");
+        socket.close(None).await.unwrap();
+
+        edge_task.abort();
+        let _ = fs::remove_file(store_path).await;
+        let _ = fs::remove_file(jobs_path).await;
+    }
+
+    #[tokio::test]
+    async fn native_session_affinity_is_isolated_by_application() {
+        let inference_accounts = Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen_accounts = inference_accounts.clone();
+        let upstream = Router::new()
+            .route(
+                "/backend-api/codex/models",
+                get(|| async {
+                    Json(json!({
+                        "models": [{
+                            "slug": "gpt-5.6-sol",
+                            "display_name": "GPT 5.6 Sol"
+                        }]
+                    }))
+                }),
+            )
+            .route(
+                "/backend-api/codex/responses",
+                post(move |request: Request<Body>| {
+                    let seen_accounts = seen_accounts.clone();
+                    async move {
+                        if let Some(value) = request.headers().get(header::AUTHORIZATION) {
+                            seen_accounts
+                                .lock()
+                                .await
+                                .push(value.to_str().unwrap_or_default().to_owned());
+                        }
+                        Json(json!({
+                            "id": "resp-affinity",
+                            "object": "response",
+                            "model": "gpt-5.6-sol",
+                            "status": "completed",
+                            "output": [{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "ok"}]}],
+                            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}
+                        }))
+                    }
+                }),
+            );
+        let (upstream_url, upstream_task) = start_server(upstream).await;
+
+        let mut first = account("account-one");
+        first.access_token = "token-one".to_owned();
+        let mut second = account("account-two");
+        second.access_token = "token-two".to_owned();
+        let store_path = temporary_path("native-affinity");
+        let jobs_path = temporary_path("native-affinity-jobs");
+        fs::write(
+            &store_path,
+            serde_json::to_vec(&store_with_accounts(vec![first, second])).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        let mut config = EdgeConfig::default();
+        config.store_path = store_path.clone();
+        config.jobs_path = jobs_path.clone();
+        config.chatgpt_base_url = upstream_url;
+        config.configured_api_keys = vec![
+            (
+                "application-one".to_owned(),
+                "application-one-key".to_owned(),
+            ),
+            (
+                "application-two".to_owned(),
+                "application-two-key".to_owned(),
+            ),
+        ];
+        config.models_cache_ttl = Duration::from_secs(60);
+        config.session_affinity_enabled = true;
+        config.session_affinity_ttl = Duration::from_secs(60);
+        config.session_affinity_max_entries = 32;
+        config.upstream_timeout = Duration::from_secs(5);
+
+        let state = EdgeState::new(config).await.unwrap();
+        let (edge_url, edge_task) = start_server(build_router(state)).await;
+        let client = reqwest::Client::new();
+
+        let request = |key: &'static str, session: &'static str| {
+            client
+                .post(format!("{edge_url}/v1/responses"))
+                .header("authorization", format!("Bearer {key}"))
+                .header("thread-id", session)
+                .json(&json!({"model": "gpt-5.6-sol", "input": "hello"}))
+        };
+
+        for response in [
+            request("application-one-key", "same-thread")
+                .send()
+                .await
+                .unwrap(),
+            request("application-one-key", "same-thread")
+                .send()
+                .await
+                .unwrap(),
+            request("application-two-key", "same-thread")
+                .send()
+                .await
+                .unwrap(),
+            request("application-one-key", "same-thread")
+                .send()
+                .await
+                .unwrap(),
+        ] {
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+
+        let seen = inference_accounts.lock().await.clone();
+        assert_eq!(
+            seen,
+            vec![
+                "Bearer token-one",
+                "Bearer token-one",
+                "Bearer token-two",
+                "Bearer token-one",
+            ]
+        );
+
+        edge_task.abort();
+        upstream_task.abort();
+        let _ = fs::remove_file(store_path).await;
+        let _ = fs::remove_file(jobs_path).await;
     }
 
     #[tokio::test]

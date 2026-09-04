@@ -1,7 +1,10 @@
 import type { Account, ProviderId } from "./types.js";
-import { CODEX_SESSION_AFFINITY_MAX_ENTRIES } from "./config.js";
+import {
+  CODEX_SESSION_AFFINITY_MAX_ENTRIES,
+  CODEX_SESSION_AFFINITY_TTL_MS,
+} from "./config.js";
 
-export const SESSION_AFFINITY_TTL_MS = 60 * 60_000;
+export const SESSION_AFFINITY_TTL_MS = CODEX_SESSION_AFFINITY_TTL_MS;
 
 type SessionAffinityEntry = {
   accountId: string;

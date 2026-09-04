@@ -1,226 +1,196 @@
-# API actuelle et trajectoire de migration Rust
+# Architecture actuelle de l'API et refactorisation Rust
 
 Date : 4 septembre 2026
 
 ## Conclusion
 
-L'API reste un serveur Node.js/Express monolithique, avec un agent de runtime
-séparé en Go. Deux frontières Rust sont maintenant stables : l'inspection
-déterministe du payload et la classification conservatrice des frames SSE
-peuvent être exécutées in-process via N-API, sans subprocess ni aller-retour
-HTTP local. Le transport, le routage et les transformations restent
-volontairement en TypeScript.
+Dans le profil natif (`MULTIVIBE_CONTROL_PLANE=true`), les chemins publics
+`/v1` ne passent plus par Express. Le binaire Rust/Axum écoute sur `1455` et
+termine directement l'authentification, la lecture du store, la découverte des
+modèles, le routage de compte/provider, les conversions de protocole, le JSON,
+le SSE, le WebSocket, les jobs, la capacité et le realtime.
 
-Le serveur est fonctionnel et bien couvert : la baseline locale sur `main`
-était de 373 tests Node passants et le build TypeScript de l'API passait. La
-première étape Rust ne doit donc pas remplacer tout le serveur d'un coup. Elle
-doit isoler les fonctions déterministes et CPU-bound, prouver leur équivalence,
-puis déplacer le transport seulement lorsque le coût de l'interopérabilité est
-mesuré.
+Node/Express reste lancé sur `127.0.0.1:1456` comme plan de contrôle pour le
+dashboard, l'administration, OAuth, la persistance métier et les tâches
+existantes. L'edge Rust lui relaie uniquement les requêtes hors `/v1` qui ne
+sont pas possédées par l'edge. Le profil local historique
+(`MULTIVIBE_CONTROL_PLANE=false`) conserve Express pour permettre le
+développement en processus unique.
 
-## Structure observée
+Cette séparation réduit un hop HTTP local, un parsing/re-encodage JavaScript et
+la présence d'objets V8 sur le chemin chaud. Elle ne prouve pas à elle seule un
+gain de bout en bout : la latence du provider, les quotas, le TLS et la durée
+de génération dominent souvent. La mémoire et la stabilité doivent donc être
+mesurées sur une charge représentative après déploiement.
 
-| Couche | Emplacement | Responsabilité principale |
+## Structure actuelle
+
+| Couche | Emplacement | Rôle dans le profil natif |
 | --- | --- | --- |
-| Bootstrap HTTP | `src/server.ts` | Configuration, initialisation des stores, middleware, montage des routeurs, jobs et shutdown |
-| Proxy d'inférence | `src/routes/proxy/index.ts` | Sélection de compte/provider, quotas, conversions, retries, JSON/SSE, compatibilité modèles |
-| Compatibilité Anthropic | `src/anthropic-compat.ts` | Messages, outils, images, usage et SSE Anthropic ↔ Responses |
-| Routage différé | `src/smart-routing.ts`, `src/smart-routing-routes.ts` | Admission, capacité, alias, files de jobs, SSE de capacité |
-| WebSocket | `src/websocket-responses.ts` | Upgrade `/v1/responses` et relais SSE → WebSocket |
-| Realtime | `src/realtime-proxy.ts` | Négociation SDP multipart et voix |
-| Persistance | `src/store.ts`, `src/jobs.ts`, `src/traces.ts` | JSON d'état, SQLite des jobs, traces JSONL et agrégats |
-| Runtime local | `provider-agent/` et `host-application/` | Agent Go embarqué, détection de runtimes et exécution locale |
+| Edge HTTP public | `rust/v1-edge/src/lib.rs` | Surface `/v1`, auth, body limit, zstd, routage, conversions et transports |
+| Bootstrap edge | `rust/v1-edge/src/main.rs` | Lecture de la configuration, bind `V1_EDGE_HOST:V1_EDGE_PORT`, shutdown |
+| Plan de contrôle | `src/server.ts` | Dashboard, `/admin/*`, OAuth, stores, agent, tâches et fallback hors `/v1` |
+| Store partagé | `data/accounts.json` via `AccountStore` Rust/Node | Comptes, aliases, clés et politiques applicatives |
+| Runtime local | `provider-agent/`, `host-application/` | Agent Go et intégration des runtimes locaux |
+| Compatibilité historique | `src/routes/proxy/`, `src/realtime-proxy.ts`, `src/websocket-responses.ts` | Montée seulement dans le profil Express non natif |
 
-Les ordres de grandeur du code confirment le couplage actuel :
+Le code TypeScript peut donc rester chargé en mémoire dans le plan de contrôle,
+mais il ne reçoit pas les requêtes `/v1` du port public natif. Les routeurs
+Express historiques ne sont pas montés sous `/v1` lorsque le profil natif est
+actif.
 
-- `src/routes/proxy/index.ts` : environ 5 000 lignes ;
-- `src/traces.ts` : environ 2 250 lignes ;
-- `src/routes/admin/index.ts` : environ 2 300 lignes ;
-- `src/server.ts` : environ 700 lignes ;
-- 118 fichiers TypeScript sous `src`, dont 62 tests au moment de l'audit.
+## Surface `/v1` possédée par Rust
 
-## Surface HTTP
-
-| Famille | Routes principales | Transport |
+| Méthode | Route | Traitement |
 | --- | --- | --- |
-| Santé | `GET /health`, `HEAD /api/hello` | JSON / vide, public |
-| Inference | `POST /v1/responses`, `/v1/responses/compact`, `/v1/chat/completions`, `/v1/messages` | JSON ou SSE |
-| Compatibilité modèles | `GET /v1/models`, `/v1/models/:id`, `/api/v1/models`, `/api/tags`, `/version`, `/props` | JSON |
-| Realtime | `POST /v1/realtime/calls`, `GET /v1/realtime/voices`, `/v1/settings/voices` | multipart SDP / JSON |
-| WebSocket | upgrade `GET /v1/responses` | Frames Responses |
-| Capacité et jobs | `GET /v1/capacity`, `/v1/capacity/events`, `/v1/jobs/*`, `DELETE /v1/jobs/*` | JSON / SSE |
-| Administration | `/admin/*` | JSON, session ou token admin |
-| Interface | assets statiques et fallback SPA | fichiers / HTML |
+| `GET` | `/v1/models`, `/v1/models/:id` | Catalogue statique + découverte upstream mise en cache |
+| `GET` | `/v1/props` | Propriétés de compatibilité |
+| `POST` | `/v1/responses`, `/v1/responses/compact` | Responses JSON/SSE et compaction |
+| `POST` | `/v1/chat/completions` | Chat Completions JSON/SSE |
+| `POST` | `/v1/messages` | Compatibilité Anthropic JSON/SSE |
+| `GET` upgrade | `/v1/responses` | Frames WebSocket Responses |
+| `POST` | `/v1/realtime/calls` | Négociation WebRTC/SDP multipart |
+| `GET` | `/v1/realtime/voices`, `/v1/settings/voices` | Catalogue vocal |
+| `GET` | `/v1/capacity`, `/v1/capacity/events` | Capacité et événements SSE |
+| `GET`/`DELETE` | `/v1/jobs/*` | Jobs différés, événements, résultats et annulation |
 
-Les routes d'inférence sont aussi exposées sans préfixe `/v1` pour certaines
-compatibilités. L'authentification proxy est montée avant les routeurs `/v1`
-et la liste des clés applicatives détermine aussi l'attribution des traces et
-l'isolation des jobs.
+Un chemin `/v1` inconnu est authentifié puis renvoie `404` depuis Rust ; il
+n'est pas relégué à Express. Les compatibilités sans préfixe (`/responses`,
+`/chat/completions`, `/messages`, `/models`, `/api/tags`, `/version`, `/props`)
+restent disponibles via le fallback vers le plan de contrôle afin de ne pas
+modifier le contrat existant hors du périmètre demandé.
 
-## Chemin d'une requête d'inférence
+## Chemin d'une requête native
 
 ```text
-HTTP
-  -> body-parser / décompression zstd / limite de taille
-  -> auth proxy + drain de mise à jour
-  -> idempotence et admission smart-routing
-  -> inspection du payload et découverte du catalogue
-  -> préparation usage/token des comptes
-  -> candidats modèle/provider + quotas + affinité de session
-  -> conversion de protocole + sérialisation upstream
-  -> fetch, retry et rotation de compte
-  -> réponse JSON, SSE ou relais WebSocket
-  -> traces, capacité observée et persistance
+client :1455
+  -> Rust/Axum
+  -> limite de body + décompression zstd + JSON
+  -> authentification et application
+  -> catalogue/alias/provider/model
+  -> quotas, compte bloqué, policy et session affinity facultative
+  -> conversion Responses/Chat/Anthropic
+  -> requête provider et rotation de compte
+  -> relais JSON ou flux SSE/WebSocket
+  -> trace légère et état des jobs Rust
+
+requête hors /v1
+  -> Rust/Axum
+  -> Node/Express :1456 (loopback)
 ```
 
-La plus grosse difficulté de la migration n'est pas le calcul local : chaque
-étape dépend de snapshots mutables, de credentials, de l'état des quotas, de la
-persistance et de l'annulation client. Les conversions et les flux doivent
-également conserver une compatibilité octet/par événement avec les clients.
+Le store est relu avec cache invalidé par la date de modification du fichier.
+Le catalogue de modèles est rafraîchi sous un verrou de déduplication et sa
+signature ignore les seules valeurs volatiles de quota. Les comptes découverts
+sont associés au modèle via `metadata.provider_candidates` et
+`metadata.account_ids`, ce qui évite de choisir un provider ou un compte qui ne
+figure pas dans la découverte disponible.
 
-## Hotspots et preuves disponibles
+La session affinity Rust est désactivée par défaut. Lorsqu'elle est activée,
+la clé est `(application, session, provider)`, le TTL et la taille sont bornés,
+et le compte sticky n'est consulté qu'après les filtres de quota, blocage et
+policy. Un compte devenu inéligible est oublié et le failover remplace le
+mapping ; une application ne peut donc pas récupérer l'affinité d'une autre.
 
-Les benchmarks du dépôt sont des mesures locales synthétiques ; ils ne prouvent
-pas une amélioration de la latence fournisseur ou de la latence de production.
-Ils indiquent néanmoins les premiers candidats mesurables :
+## Parité couverte et limites explicites
 
-| Travail | Mesure existante | Lecture pour Rust |
-| --- | ---: | --- |
-| Overhead proxy court | médiane ajoutée 0,18 ms | garder Node tant que l'I/O domine |
-| Payload Responses de 10 000 éléments | médiane ajoutée 3,30 ms | candidat si Rust reçoit les octets une seule fois |
-| Détection d'image text-only | 95,76 % sur la phase isolée | bon candidat déterministe |
-| Sérialisations lors d'une rotation de 3 comptes | 66,48 % d'amélioration | ne pas repayer une conversion/IPC |
-| Diagnostics SSE Responses | 32,93 % d'amélioration | candidat après stabilisation du parseur SSE |
-| Relais SSE → WebSocket | 28,48 % d'amélioration | conserver la granularité d'un message par événement |
+Les tests Rust couvrent notamment :
 
-Le code TypeScript contient déjà des optimisations importantes : cache de
-catalogue stale-while-revalidate, déduplication des refresh d'usage, cache de
-validation des modèles, sérialisation mémoïsée par requête et inspection SSE
-sélective. Une réécriture Rust qui supprime ces invariants serait une
-régression même si le benchmark CPU était meilleur.
+- l'authentification constant-time et l'isolation par application ;
+- la découverte/routage `/v1` sans requête au plan de contrôle Node ;
+- la sélection quota-aware, la session affinity, son TTL, son LRU et son
+  isolation application/provider ;
+- les conversions outils, images, Chat Completions, Responses et Anthropic ;
+- le relais SSE direct, le WebSocket authentifié et les réponses JSON ;
+- la décompression zstd bornée, les jobs persistés et leurs résultats isolés.
 
-## Frontières Rust posées par cette itération
+La migration n'est pas une promesse de parité fonctionnelle absolue avec le
+profil Express. Les écarts à traiter ou à accepter explicitement sont :
 
-`src/responses/payload-inspection.ts` contient maintenant l'inspection pure
-utilisée avant le routage :
+- les hooks JavaScript d'inférence et les politiques de modules ;
+- l'admission/smart-routing avancé et les observations de capacité détaillées ;
+- le refresh automatique des tokens OAuth ;
+- les retries, fairness, webhooks et certains détails de reprise des jobs ;
+- le stale-while-revalidate complet du catalogue et des usages ;
+- la télémétrie détaillée du routeur et l'intégration de certains hooks host.
 
-- détection des types contenant `image` dans `messages` et `input` ;
-- comptage des items `compaction` ;
-- conservation de l'index de la dernière compaction ;
-- aucune mutation, I/O, dépendance Express ou conservation du contenu.
+Ces fonctions restent dans Express pour le profil historique ou doivent être
+portées avec un contrat propre avant d'être annoncées comme natives. Le
+provider-agent Go reste également un sous-système séparé : le fait que l'edge
+soit écrit en Rust ne transforme pas son runtime local.
 
-Le crate `rust/proxy-core` porte le même contrat sur `serde_json::Value` et
-expose `inspectPayloadContextJson(Buffer)` via N-API. Le body parser appelle
-cette fonction sur les octets JSON reçus et le routeur réutilise les trois
-scalaires retournés. L'addon reste optionnel : une image ou une installation
-qui ne l'embarque pas retombe sur TypeScript ; un hook qui remplace le payload
-force également cette implémentation de référence afin de conserver le
-comportement existant.
+## Performance et mémoire
 
-Le chemin natif est construit par `npm run build:proxy-core-native` et embarqué
-par le `Dockerfile`. `npm run test:proxy-core-native` vérifie directement le
-chargement N-API et toutes les fixtures communes. Cette intégration prouve le
-chemin d'exécution, mais pas encore un gain de performance : le parse JSON
-reste effectué par Express pour construire `req.body` et devra être déplacé ou
-fusionné dans une tranche ultérieure si les mesures le justifient.
+Un binaire Rust peut être plus léger qu'un serveur Node sur le chemin de
+traitement : pas de V8 pour le transport `/v1`, moins de conversions d'objets,
+et un flux de bytes qui peut rester dans Rust. Mais la consommation totale du
+conteneur inclut encore Node/Express, le dashboard, l'agent Go, les caches et
+les providers. Le profil natif n'est donc pas « Rust seul ».
 
-La classification des frames SSE possède maintenant une deuxième frontière
-optionnelle dans `src/responses/stream-diagnostics.ts` :
+Les micro-benchmarks existants dans `docs/` mesurent des fonctions isolées ; ils
+ne valident ni la latence provider ni la stabilité en production. La validation
+à retenir pour une activation est : p50/p95/p99, débit, RSS, heap V8, mémoire
+native, pauses GC, erreurs, reconnexions SSE/WebSocket et consommation CPU sur
+les mêmes payloads et la même configuration.
 
-- Rust reconnaît uniquement les frames mono-`data` dont le type est
-  `response.output_text.delta`, `response.output_text.done`, ou une famille
-  `response.reasoning*` / `response.refusal*` ;
-- le seuil de 512 octets réserve l'appel N-API aux frames assez longues pour
-  amortir le marshalling ; les petites frames utilisent le fast-path TypeScript
-  existant ;
-- les frames ambiguës, invalides, terminales, multi-`data` ou non supportées
-  retombent sur le parseur JSON complet ;
-- les fixtures SSE sont partagées entre les tests Rust, N-API et TypeScript.
+## Configuration native
 
-Un micro-benchmark local de 20 000 appels par frame a donné, à titre indicatif,
-un temps de 15,4 ms contre 37,3 ms pour une frame synthétique de 4,1 KiB, et
-43,8 ms contre 137,2 ms pour 16,5 KiB, Rust contre TypeScript. Sur le corpus
-standard de 1 283 frames, le seuil évite l'overhead mesurable du passage N-API
-(environ 0,53 ms de candidate dans les deux profils). Ces mesures isolent la
-classification : elles n'incluent ni décodage, ni écriture HTTP, ni réseau, ni
-latence provider/modèle et ne constituent pas une promesse de performance
-end-to-end.
+Les variables principales sont :
 
-## Trajectoire recommandée
+| Variable | Défaut | Usage |
+| --- | --- | --- |
+| `MULTIVIBE_CONTROL_PLANE` | `false` | Active le split Node loopback + edge Rust |
+| `CONTROL_PLANE_PORT` | `1456` | Port Node interne |
+| `V1_EDGE_HOST` | `0.0.0.0` | Adresse d'écoute Rust |
+| `V1_EDGE_PORT` | `1455` | Port public Rust |
+| `NODE_CONTROL_PLANE_URL` | `http://127.0.0.1:1456` | Fallback hors `/v1` |
+| `V1_EDGE_BASE_URL` | `http://127.0.0.1:1455` | URL utilisée par les jobs du plan de contrôle |
+| `V1_EDGE_INTERNAL_JOB_TOKEN` | généré par le launcher | Capability partagée pour les jobs internes |
+| `MODELS_CACHE_MS` | `600000` | TTL du catalogue Rust |
+| `CODEX_SESSION_AFFINITY` | `false` | Active l'affinité de session |
+| `CODEX_SESSION_AFFINITY_TTL_MS` | `3600000` | TTL d'un mapping en mémoire |
+| `CODEX_SESSION_AFFINITY_MAX_ENTRIES` | `10000` | Limite LRU |
+| `V1_EDGE_JOBS_PATH` | `/data/v1-edge-jobs.json` en Compose | État des jobs natifs |
 
-### Phase 0 — caractérisation (réalisée)
+Compose publie uniquement `1455`. Le launcher démarre ensuite Node sur
+`127.0.0.1:1456` et le binaire `/opt/multivibe/bin/multivibe-v1-edge` sur
+`1455`. Le token interne est généré une seule fois par le launcher puis injecté
+dans les deux processus.
 
-1. Conserver la baseline Node et le build API.
-2. Extraire les fonctions déterministes sans changer le contrat HTTP.
-3. Maintenir des tests TypeScript et Rust sur les mêmes cas limites.
-4. Ajouter des golden fixtures lorsque le contrat devient plus riche.
+## Validation locale
 
-### Phase 1 — core Rust in-process (réalisée)
+Depuis la racine du dépôt :
 
-L'inspection de payload et la classification conservatrice des frames SSE sont
-portées. Une première projection de protocole `chat.completion` → `response` a
-été caractérisée avec des fixtures JSON partagées et une liaison N-API. Le
-pont objet historique, appelé après `JSON.parse`, reste désactivé par défaut et
-ne sert qu'à la compatibilité ou à l'évaluation explicite via
-`MULTIVIBE_PROXY_CORE_OBJECT_CONVERSION=on` ; son benchmark est conservé dans
-[`protocol-conversion-benchmark.json`](protocol-conversion-benchmark.json).
+```bash
+cargo fmt --all -- --check
+cargo check -p multivibe-v1-edge
+cargo test -p multivibe-v1-edge
+npm run build:api
+npm test
+docker compose config
+```
 
-La tranche suivante déplace la frontière avant le parse JavaScript : Rust
-reçoit les octets upstream et produit directement le body JSON ou SSE final.
-Sur les mesures synthétiques finales, la médiane est quasi à parité sur 57 Ko
-et Rust est plus rapide sur 229 Ko ; le p95 est inférieur dans les deux cas.
-Les détails sont dans
-[`raw-protocol-conversion-benchmark.json`](raw-protocol-conversion-benchmark.json).
-
-Cette frontière est maintenant évaluée comme une vraie tranche d'octets : Rust
-reçoit le `Buffer` upstream et renvoie le `Buffer` HTTP final, JSON ou SSE,
-avec uniquement les métadonnées scalaires nécessaires aux retries et aux
-traces. Le routeur n'exécute plus `JSON.parse` et n'expose plus l'objet réponse
-dans JavaScript lorsque cette tranche est utilisée. Le crate emploie encore un
-arbre `serde_json::Value` temporaire en mémoire Rust ; cette étape supprime donc
-le doublon d'objet V8 et le round-trip chaîne JSON/N-API, mais ne constitue pas
-encore une preuve de parsing zero-copy.
-
-Le repli TypeScript reste automatique pour les textes sensibles au sanitizer,
-les arguments d'outils objets, les identifiants d'outils absents, les corps
-non-Chat et les addons incompatibles. Le chemin direct est activé par défaut
-lorsque l'addon est disponible ; `MULTIVIBE_PROXY_CORE_PROTOCOL_CONVERSION=off`
-fournit le rollback explicite. Le benchmark mémoire est disponible via
-`npm run benchmark:raw-protocol-memory` et ses résultats sont conservés dans
-[`raw-protocol-memory-benchmark.json`](raw-protocol-memory-benchmark.json) ; il
-compare RSS, heap V8, mémoire externe, buffers et mémoire retenue après GC.
-Les mesures synthétiques montrent une forte baisse de pression mémoire, mais
-elles doivent être confirmées par un test de charge HTTP réel avec débit, p95,
-pauses GC et taux d'erreur.
-
-### Phase 2 — edge Rust
-
-Si les mesures le justifient, faire terminer à Rust le body HTTP et le flux SSE
-des routes d'inférence, avec Node conservé pour l'administration, OAuth, la
-persistance et l'orchestration des providers au début. Le body doit être parsé
-une seule fois ; une API Rust appelée après `express.json()` ne serait pas la
-cible de performance recherchée.
-
-### Phase 3 — état et orchestration
-
-Évaluer séparément quota/affinité, jobs SQLite, traces et WebSocket. Ces
-composants ne doivent migrer qu'avec des contrats d'annulation, de reprise,
-d'isolation applicative et de shutdown documentés. Le provider-agent Go reste
-un sous-système distinct tant qu'une migration de runtime n'est pas demandée.
+Pour une recette native locale, démarrer le plan de contrôle Node sur `1456`
+avec `MULTIVIBE_CONTROL_PLANE=true`, puis le binaire Rust sur `1455`. La
+preuve utile est une requête authentifiée `GET /v1/models` ou
+`POST /v1/responses` qui atteint le provider attendu, tandis qu'un endpoint
+hors `/v1` atteint le plan de contrôle loopback. Les tests d'intégration Rust
+reproduisent cette séparation avec des serveurs upstream et control-plane
+distincts.
 
 ## Barrière de non-régression
 
-Avant chaque tranche Rust, les tests doivent au minimum vérifier :
+Avant chaque élargissement de la surface native, conserver des tests qui
+vérifient :
 
-- mêmes routes, méthodes et codes d'erreur ;
-- même sélection de modèle/provider/compte pour un état identique ;
-- mêmes transformations OpenAI, Anthropic et images ;
-- mêmes événements SSE, ordre, usage et comportement EOF/annulation ;
-- mêmes frames WebSocket et mêmes limites de buffering ;
-- aucune propagation de credentials, prompt, réponse ou état entre applications ;
-- aucun changement de tokens ou d'identifiants exposés sans décision explicite.
+- routes, méthodes, statuts, erreurs et limites de body ;
+- choix modèle/provider/compte pour un snapshot identique ;
+- outils, images, transformations et headers provider ;
+- ordre et fin des événements SSE, EOF, erreur et annulation ;
+- frames WebSocket et authentification de l'application ;
+- isolation des credentials, prompts, réponses, jobs et affinités ;
+- absence de hop Node pour les routes `/v1` du profil natif.
 
-Le critère de performance final doit comparer une instance de référence et la
-candidate sur des payloads représentatifs, avec p50/p95, CPU, mémoire, débit,
-taux d'erreur et coût d'exploitation. Les benchmarks synthétiques présents
-dans le dépôt servent de garde-fous locaux, pas de preuve de déploiement.
+La mise en production doit séparer la preuve du code compilé, le démarrage des
+deux processus, le comportement HTTP vivant et les mesures de charge. Un test
+Rust local seul ne prouve pas la stabilité ou le gain mémoire du déploiement.
