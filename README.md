@@ -17,7 +17,7 @@
   <a href="./LICENSE"><img alt="Apache 2.0 license" src="https://img.shields.io/github/license/thibautrey/multivibe?style=for-the-badge" /></a>
 </p>
 
-MultiVibe is a self-hosted AI gateway and native Provider Host. Use one stable,
+MultiVibe is a 100% free self-hosted AI gateway and native Provider Host. Use one stable,
 OpenAI-compatible endpoint to route OpenAI, Anthropic, Codex, and compatible
 clients across provider accounts, or run local models on your own supported
 hardware. Quota-aware failover, model policies, deferred jobs, Realtime and
