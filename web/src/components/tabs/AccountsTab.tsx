@@ -671,7 +671,7 @@ export function AccountsTab(props: Props) {
         setProviderCapacityDraft(emptyProviderCapacityPolicyDraft());
         setProviderCapacityStatus("ready");
         setProviderCapacityMessage(
-          "No capacity policy is stored yet. Fill every limit below; the first save will create revision 1 from revision 0.",
+          "No limits saved yet. Fill them in and save.",
         );
         return;
       }
@@ -882,7 +882,7 @@ export function AccountsTab(props: Props) {
     );
     if (!input) {
       setProviderCapacityMessage(
-        "Complete every limit with a valid value and choose an absolute model storage path before saving.",
+        "Fill in every limit with valid values and an absolute model folder.",
       );
       return;
     }
@@ -899,10 +899,10 @@ export function AccountsTab(props: Props) {
       setProviderCapacityStatus("ready");
       setProviderCapacityMessage(
         next.paused
-          ? "Capacity limits saved locally. Manual pause is active and overrides downloads and Cloud workload consent. No workload, route or payment was activated."
+          ? "Limits saved. Sharing is paused."
           : next.allow_cloud_workloads
-            ? "Capacity limits and explicit Cloud consent saved locally. This records permission only; it does not enroll the host, route traffic or activate payments."
-            : "Capacity limits saved locally. Cloud workloads remain disabled; no traffic or payment was activated.",
+            ? "Limits saved. Cloud jobs are allowed."
+            : "Limits saved. Cloud jobs are off.",
       );
     } catch (error: unknown) {
       if (error instanceof ApiError && error.status === 409) {
@@ -914,7 +914,7 @@ export function AccountsTab(props: Props) {
           setProviderCapacityDraft(capacityPolicyDraftFromState(latest));
           setProviderCapacityStatus("ready");
           setProviderCapacityMessage(
-            "The capacity policy changed in another session. The latest local revision is shown; review every value before saving again.",
+            "These limits changed elsewhere. Review and save again.",
           );
           return;
         } catch {
@@ -2022,11 +2022,10 @@ export function AccountsTab(props: Props) {
                 <span className="badge badge-warn">
                   {providerLabel(makeMoneyPreviewAccount.provider)} local · Preview
                 </span>
-                <h2 id="make-money-preview-title">Share capacity on your terms</h2>
+                <h2 id="make-money-preview-title">Share your GPU</h2>
                 <p id="make-money-preview-summary" className="muted">
-                  MultiVibe Cloud is a separate, optional service built on top of
-                  the public MultiVibe Core. This local provider keeps working
-                  without a Cloud account.
+                  Choose how much of this computer you want to share. You can
+                  pause it anytime.
                 </p>
               </div>
               <button
@@ -2041,30 +2040,23 @@ export function AccountsTab(props: Props) {
             </div>
 
             <div id="make-money-preview-status" className="make-money-preview-status">
-              <strong>Preview only.</strong> Provider enrollment, customer
-              workloads, earnings, payouts and Cloud credits are not active yet.
-              Opening this window reads protected local provider settings and
-              performs only the agent&apos;s reviewed loopback catalog probes. It
-              does not scan the LAN, inspect processes or files, install
-              anything, or share the result.
+              <strong>Preview only.</strong> Nothing is shared or paid yet.
             </div>
 
             <section className="provider-selection-panel provider-capacity-panel" aria-labelledby="provider-capacity-title">
               <div className="provider-selection-heading">
                 <div>
-                  <span className="eyebrow">Local capacity policy</span>
-                  <h3 id="provider-capacity-title">Set hard host limits</h3>
+                  <span className="eyebrow">Your limits</span>
+                  <h3 id="provider-capacity-title">Choose what to share</h3>
                   <p>
-                    Every value is an explicit local choice. Saving this policy
-                    does not enroll the host, send workloads, enable payments or
-                    make the machine reachable from MultiVibe Cloud.
+                    Sharing is paused by default. Set limits before turning it on.
                   </p>
                 </div>
                 {(providerCapacityStatus === "ready" || providerCapacityStatus === "saving") && (
                   <span className={providerCapacityDraft.paused ? "badge badge-warn" : "badge"}>
                     {providerCapacityPolicy
-                      ? `${providerCapacityDraft.paused ? "Paused" : "Limits set"} · revision ${providerCapacityPolicy.revision}`
-                      : "Not configured · revision 0"}
+                      ? `${providerCapacityDraft.paused ? "Paused" : "On"} · saved`
+                      : "Not set"}
                   </span>
                 )}
               </div>
@@ -2090,19 +2082,19 @@ export function AccountsTab(props: Props) {
                   >
                     <strong>
                       {providerCapacityDraft.paused
-                        ? "Manual pause is selected"
-                        : "Manual pause is off"}
+                        ? "Sharing is paused"
+                        : "Sharing is on"}
                     </strong>
                     <span>
-                      Manual pause is the highest-priority local choice. It
-                      keeps this policy fail-closed even when automatic downloads
-                      or Cloud consent are selected.
+                      {providerCapacityDraft.paused
+                        ? "Your GPU is not shared."
+                        : "Your saved limits still apply."}
                     </span>
                   </div>
 
                   <div className="provider-capacity-grid">
                     <label>
-                      Host state
+                      Sharing
                       <select
                         value={providerCapacityDraft.paused ? "paused" : "available"}
                         disabled={providerCapacityStatus === "saving"}
@@ -2111,14 +2103,14 @@ export function AccountsTab(props: Props) {
                           event.target.value === "paused",
                         )}
                       >
-                        <option value="paused">Paused — safest default</option>
-                        <option value="available">Not paused — saved limits still apply</option>
+                        <option value="paused">Paused</option>
+                        <option value="available">On</option>
                       </select>
-                      <small>Pause overrides every other choice below.</small>
+                      <small>Pause stops sharing.</small>
                     </label>
 
                     <label>
-                      Maximum GPU utilization (%)
+                      GPU use limit (%)
                       <input
                         type="number"
                         min="1"
@@ -2133,11 +2125,11 @@ export function AccountsTab(props: Props) {
                           event.target.value,
                         )}
                       />
-                      <small>Whole number from 1 to 100.</small>
+                      <small>Maximum GPU workload.</small>
                     </label>
 
                     <label>
-                      Maximum GPU memory use (%)
+                      GPU memory limit (%)
                       <input
                         type="number"
                         min="1"
@@ -2152,11 +2144,11 @@ export function AccountsTab(props: Props) {
                           event.target.value,
                         )}
                       />
-                      <small>Whole number from 1 to 100.</small>
+                      <small>Maximum GPU memory.</small>
                     </label>
 
                     <label className="provider-capacity-wide">
-                      Model storage path
+                      Model folder
                       <input
                         type="text"
                         value={providerCapacityDraft.modelStoragePath}
@@ -2169,11 +2161,11 @@ export function AccountsTab(props: Props) {
                           event.target.value,
                         )}
                       />
-                      <small>Choose an absolute folder other than the filesystem root.</small>
+                      <small>Where downloaded models are stored.</small>
                     </label>
 
                     <label>
-                      Maximum model storage (GiB)
+                      Model storage limit (GiB)
                       <input
                         type="number"
                         min="0"
@@ -2187,11 +2179,11 @@ export function AccountsTab(props: Props) {
                           event.target.value,
                         )}
                       />
-                      <small>Must be greater than 0 GiB.</small>
+                      <small>Maximum space for models.</small>
                     </label>
 
                     <label>
-                      Free disk reserve (GiB)
+                      Keep free (GiB)
                       <input
                         type="number"
                         min="0"
@@ -2205,11 +2197,11 @@ export function AccountsTab(props: Props) {
                           event.target.value,
                         )}
                       />
-                      <small>Disk space the agent must leave untouched.</small>
+                      <small>Space always kept free.</small>
                     </label>
 
                     <label>
-                      Daily download cap (GiB)
+                      Daily download limit (GiB)
                       <input
                         type="number"
                         min="0"
@@ -2223,11 +2215,11 @@ export function AccountsTab(props: Props) {
                           event.target.value,
                         )}
                       />
-                      <small>0 explicitly disables model downloads.</small>
+                      <small>Set to 0 to block downloads.</small>
                     </label>
 
                     <label>
-                      Minimum model residency (seconds)
+                      Keep models for (seconds)
                       <input
                         type="number"
                         min="1"
@@ -2241,11 +2233,11 @@ export function AccountsTab(props: Props) {
                           event.target.value,
                         )}
                       />
-                      <small>For example, 21600 is 6 hours.</small>
+                      <small>How long models stay ready.</small>
                     </label>
 
                     <label>
-                      Maximum model changes per day
+                      Model changes per day
                       <input
                         type="number"
                         min="0"
@@ -2259,7 +2251,7 @@ export function AccountsTab(props: Props) {
                           event.target.value,
                         )}
                       />
-                      <small>0 freezes the managed model set.</small>
+                      <small>Set to 0 to keep current models.</small>
                     </label>
 
                     <label className="provider-capacity-toggle provider-capacity-wide">
@@ -2273,10 +2265,9 @@ export function AccountsTab(props: Props) {
                         )}
                       />
                       <span>
-                        <strong>Allow automatic model downloads</strong>
+                        <strong>Download models automatically</strong>
                         <small>
-                          This permission remains bounded by the storage,
-                          reserve, daily download and model-change limits.
+                          Still limited by the settings above.
                         </small>
                       </span>
                     </label>
@@ -2293,20 +2284,16 @@ export function AccountsTab(props: Props) {
                       )}
                     />
                     <span>
-                      <strong>Allow MultiVibe Cloud workloads</strong>
+                      <strong>Allow MultiVibe Cloud jobs</strong>
                       <small>
-                        Separate explicit consent, off by default. Saving it only
-                        records local permission; it does not enroll this host,
-                        open a route, deliver traffic or activate payments.
+                        Off by default. You can pause sharing anytime.
                       </small>
                     </span>
                   </label>
 
                   {!providerCapacityInput && (
                     <p className="provider-capacity-validation">
-                      Complete both percentages, all numeric limits and an
-                      absolute storage path. GiB values are converted to whole
-                      bytes when saved.
+                      Complete every limit and use an absolute model folder.
                     </p>
                   )}
 
@@ -2319,10 +2306,10 @@ export function AccountsTab(props: Props) {
                   <div className="provider-selection-actions">
                     <span className="muted">
                       {!providerCapacityPolicy
-                        ? "No local policy saved · next write expects revision 0"
+                        ? "Not saved yet"
                         : providerCapacityChanged
-                          ? "Unsaved local capacity changes"
-                          : "Local capacity policy is up to date"}
+                          ? "Unsaved changes"
+                          : "Saved locally"}
                     </span>
                     <button
                       type="button"
@@ -2335,15 +2322,21 @@ export function AccountsTab(props: Props) {
                       onClick={() => void saveProviderCapacityPolicy()}
                     >
                       {providerCapacityStatus === "saving"
-                        ? "Saving locally…"
-                        : providerCapacityPolicy
-                          ? "Save local capacity policy"
-                          : "Create local capacity policy"}
+                        ? "Saving…"
+                        : "Save limits"}
                     </button>
                   </div>
                 </>
               )}
             </section>
+
+            <details className="make-money-preview-advanced">
+              <summary>
+                <span className="make-money-preview-advanced-copy">
+                  <strong>Advanced setup</strong>
+                  <span>Connect a local server and choose models.</span>
+                </span>
+              </summary>
 
             <section className="provider-selection-panel" aria-labelledby="provider-runtime-endpoints-title">
               <div className="provider-selection-heading">
@@ -2597,67 +2590,11 @@ export function AccountsTab(props: Props) {
               )}
             </section>
 
-            <div className="make-money-preview-grid">
-              <section className="make-money-preview-card" aria-labelledby="make-money-route-title">
-                <h3 id="make-money-route-title">A compartmentalized route</h3>
-                <p>
-                  No customer or other provider connects directly to your
-                  machine. In the planned design, only MultiVibe&apos;s authenticated
-                  relay can reach a dedicated agent, and each bounded request is
-                  forwarded only to an allowlisted local inference endpoint.
-                </p>
-              </section>
-
-              <section className="make-money-preview-card" aria-labelledby="make-money-boundary-title">
-                <h3 id="make-money-boundary-title">No general machine access</h3>
-                <p>
-                  The dedicated agent exposes no shell, filesystem, arbitrary URL
-                  or general network access. This is a security target that must
-                  pass independent review, negative authorization tests and
-                  containment exercises before activation. A local runtime may
-                  still have its own logging behavior, which must be disclosed.
-                </p>
-              </section>
-
-              <section className="make-money-preview-card" aria-labelledby="make-money-control-title">
-                <h3 id="make-money-control-title">You stay in control</h3>
-                <p>
-                  The local policy above records hard limits, a highest-priority
-                  manual pause and a separate Cloud workload opt-in. It is also
-                  separate from anonymous model-demand sharing in Tracing.
-                  Saving these choices does not enroll the host or activate
-                  customer traffic; recurring availability windows and
-                  idle-aware sharing remain planned controls.
-                </p>
-              </section>
-
-              <section className="make-money-preview-card" aria-labelledby="make-money-earnings-title">
-                <h3 id="make-money-earnings-title">Verified earnings, not promises</h3>
-                <p>
-                  If every marketplace gate passes, eligible cleared earnings are
-                  planned with 85% for the host operator and a 15% MultiVibe
-                  service fee, before applicable taxes, reserves, disputes and
-                  reversals. The separate 5% fee applies only to customer
-                  purchases or top-ups, not to the host operator&apos;s 85% share.
-                  Cleared balances are planned for monthly Stripe Connect payouts
-                  in real money, or an optional conversion to eligible Cloud
-                  credits. Earnings are never guaranteed: accepted work or
-                  estimated usage is not payable.
-                </p>
-              </section>
-            </div>
-
-            <p className="make-money-preview-fineprint">
-              Identity, capacity rights, tax, verified usage, ledger, dispute and
-              authoritative settlement checks must all pass before compensation.
-              This preview creates no Cloud request, provider enrollment, route,
-              workload, payable, payout or Cloud credit, and it does not change
-              this account.
-            </p>
+            </details>
 
             <div className="modal-actions make-money-preview-actions">
               <span className="muted">
-                Local preview only · no Cloud connection or collection
+                Nothing is shared yet
               </span>
               <button
                 type="button"
