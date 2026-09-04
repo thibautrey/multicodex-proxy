@@ -146,7 +146,7 @@ func serializeMenuModel(state menuState) string {
 func serializeAccount(account menuAccount) string {
 	fields := []string{"A", account.DisplayName, account.Status, account.UsageStatus}
 	for _, window := range []*quotaWindow{account.FiveHour, account.Weekly, account.Monthly} {
-		if window == nil || account.UsageStatus == "unsupported" {
+		if window == nil || account.UsageStatus == "unsupported" || !hasResetTime(window.ResetAt) {
 			fields = append(fields, "0", "", "No reset time")
 			continue
 		}
@@ -187,10 +187,14 @@ func earningValue(value *float64, currency *string) string {
 }
 
 func resetText(timestamp *float64) string {
-	if timestamp == nil || math.IsNaN(*timestamp) || math.IsInf(*timestamp, 0) {
+	if !hasResetTime(timestamp) {
 		return "No reset time"
 	}
 	return "Resets " + relativeTime(time.UnixMilli(int64(*timestamp)))
+}
+
+func hasResetTime(timestamp *float64) bool {
+	return timestamp != nil && !math.IsNaN(*timestamp) && !math.IsInf(*timestamp, 0)
 }
 
 func usageText(account menuAccount) string {

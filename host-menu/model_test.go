@@ -60,8 +60,26 @@ func TestSerializeMenuModelUsesNativePopupCopy(t *testing.T) {
 	if got, want := lines[15], "current"; got != want {
 		t.Fatalf("update status = %q, want %q", got, want)
 	}
-	if got := lines[20]; !strings.HasPrefix(got, "A\tperson@example.com\tready\tavailable\t1\t82%\tNo reset time\t0\t\tNo reset time\t0\t\tNo reset time\tUpdated ") {
+	if got := lines[20]; !strings.HasPrefix(got, "A\tperson@example.com\tready\tavailable\t0\t\tNo reset time\t0\t\tNo reset time\t0\t\tNo reset time\tUpdated ") {
 		t.Fatalf("account model = %q", got)
+	}
+}
+
+func TestSerializeAccountOnlyMarksWindowsWithResetTimesPresent(t *testing.T) {
+	model := serializeAccount(menuAccount{
+		DisplayName: "person@example.com",
+		Status:      "ready",
+		UsageStatus: "available",
+		FiveHour:    &quotaWindow{RemainingPercent: 82.4, ResetAt: floatPointer(float64(time.Now().Add(2 * time.Hour).UnixMilli()))},
+		Weekly:      &quotaWindow{RemainingPercent: 61.2},
+		Monthly:     &quotaWindow{RemainingPercent: 31.5, ResetAt: floatPointer(float64(time.Now().Add(24 * time.Hour).UnixMilli()))},
+	})
+
+	if want := "A\tperson@example.com\tready\tavailable\t1\t82%\tResets "; !strings.HasPrefix(model, want) {
+		t.Fatalf("five-hour window = %q, want prefix %q", model, want)
+	}
+	if want := "\t0\t\tNo reset time\t1\t32%\tResets "; !strings.Contains(model, want) {
+		t.Fatalf("weekly-only window was not omitted from the display model: %q", model)
 	}
 }
 

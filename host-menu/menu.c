@@ -148,18 +148,21 @@ static GtkWidget *summary_card(const char *five_present, const char *five_value,
     return frame;
 }
 
-static GtkWidget *compact_quota(const char *title, const char *present, const char *value,
-                                const char *reset, int unsupported) {
+static GtkWidget *compact_quota(const char *title, const char *value, const char *reset) {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
     GtkWidget *title_label = text_label(title, "compact-title");
-    GtkWidget *value_label = text_label(unsupported ? "N/A" : (present[0] == '1' ? value : "—"), "compact-value");
-    GtkWidget *progress = quota_progress(!unsupported && present[0] == '1', g_ascii_strtod(value, NULL));
-    GtkWidget *reset_label = text_label(unsupported ? "Not exposed" : reset, "compact-reset");
+    GtkWidget *value_label = text_label(value, "compact-value");
+    GtkWidget *progress = quota_progress(1, g_ascii_strtod(value, NULL));
+    GtkWidget *reset_label = text_label(reset, "compact-reset");
     gtk_box_pack_start(GTK_BOX(box), title_label, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), value_label, FALSE, FALSE, 0);
-    if (!unsupported) gtk_box_pack_start(GTK_BOX(box), progress, FALSE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(box), progress, FALSE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(box), reset_label, FALSE, FALSE, 0);
     return box;
+}
+
+static int quota_window_displayable(const char *present, const char *reset, int unsupported) {
+    return !unsupported && present[0] == '1' && reset[0] != '\0' && g_strcmp0(reset, "No reset time") != 0;
 }
 
 static const char *status_copy(const char *status) {
@@ -185,6 +188,11 @@ static GtkWidget *account_card(gchar **fields) {
     GtkWidget *badge = text_label(status_copy(fields[2]), "badge");
     GtkWidget *grid = gtk_grid_new();
     int unsupported = g_strcmp0(fields[3], "unsupported") == 0;
+    const char *titles[] = {"5H", "WEEK", "MONTH"};
+    const char *presents[] = {fields[4], fields[7], fields[10]};
+    const char *values[] = {fields[5], fields[8], fields[11]};
+    const char *resets[] = {fields[6], fields[9], fields[12]};
+    int column = 0;
 
     add_class(badge, status_class(fields[2]));
     gtk_widget_set_hexpand(name, TRUE);
@@ -195,12 +203,15 @@ static GtkWidget *account_card(gchar **fields) {
 
     gtk_grid_set_column_spacing(GTK_GRID(grid), 12);
     gtk_grid_set_column_homogeneous(GTK_GRID(grid), TRUE);
-    gtk_grid_attach(GTK_GRID(grid), compact_quota("5H", fields[4], fields[5], fields[6], unsupported), 0, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), compact_quota("WEEK", fields[7], fields[8], fields[9], unsupported), 1, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), compact_quota("MONTH", fields[10], fields[11], fields[12], unsupported), 2, 0, 1, 1);
+    gtk_widget_set_hexpand(grid, TRUE);
+    for (int index = 0; index < 3; index++) {
+        if (!quota_window_displayable(presents[index], resets[index], unsupported)) continue;
+        gtk_grid_attach(GTK_GRID(grid), compact_quota(titles[index], values[index], resets[index]), column, 0, 1, 1);
+        column++;
+    }
 
     gtk_box_pack_start(GTK_BOX(box), header, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box), grid, FALSE, FALSE, 11);
+    if (column > 0) gtk_box_pack_start(GTK_BOX(box), grid, FALSE, TRUE, 11);
     gtk_box_pack_start(GTK_BOX(box), text_label(fields[13], "updated"), FALSE, FALSE, 0);
     return frame;
 }
@@ -326,7 +337,7 @@ static void apply_model(const char *model) {
         if (lines[index][0] != 'A' || lines[index][1] != '\t') continue;
         gchar **fields = g_strsplit(lines[index], "\t", -1);
         if (g_strv_length(fields) >= 14) {
-            gtk_box_pack_start(GTK_BOX(content_box), account_card(fields), FALSE, FALSE, 0);
+            gtk_box_pack_start(GTK_BOX(content_box), account_card(fields), FALSE, TRUE, 0);
             account_count++;
         }
         g_strfreev(fields);
