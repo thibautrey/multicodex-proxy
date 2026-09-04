@@ -556,6 +556,7 @@ func run() error {
 	if runtime.GOOS != "darwin" {
 		return syscall.Exec(layout.Node, arguments, baseEnvironment)
 	}
+	baseEnvironment = append(baseEnvironment, "V1_EDGE_INTERNAL_JOB_TOKEN="+internalToken)
 	node := exec.Command(layout.Node, arguments[1:]...)
 	node.Dir = layout.App
 	node.Env = baseEnvironment
