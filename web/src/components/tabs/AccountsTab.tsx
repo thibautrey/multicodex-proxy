@@ -1434,12 +1434,6 @@ export function AccountsTab(props: Props) {
   const openAiCount = accounts.filter(
     (account) => (account.provider ?? "openai") === "openai",
   ).length;
-  const passthroughAccounts = accounts.filter(
-    (account) => (account.provider ?? "openai") === "openai" && account.enabled,
-  );
-  const selectedPassthroughAccount = accounts.find(
-    (account) => account.id === settings.defaultPassthroughAccountId,
-  );
   const openAiCompatibleCount = accounts.filter(
     (account) => account.provider === "openai-compatible",
   ).length;
@@ -1567,61 +1561,6 @@ export function AccountsTab(props: Props) {
       </section>
         </>
       )}
-
-      {accounts.length > 0 && <section className="panel">
-        <div className="section-split-header">
-          <div>
-            <h2>Default passthrough</h2>
-            <p className="muted">
-              Non-completions API routes are forwarded through this OpenAI account.
-            </p>
-          </div>
-          <label className="compact-field">
-            Account
-            <select
-              value={settings.defaultPassthroughAccountId ?? ""}
-              disabled={!passthroughAccounts.length}
-              onChange={(e) =>
-                void patchSettings({
-                  defaultPassthroughAccountId: e.target.value || undefined,
-                })
-              }
-            >
-              <option value="">
-                {passthroughAccounts.length
-                  ? "No default selected"
-                  : "No enabled OpenAI account"}
-              </option>
-              {passthroughAccounts.map((account) => (
-                <option key={account.id} value={account.id}>
-                  {sanitized
-                    ? maskEmail(account.email)
-                    : (account.email ?? account.id)}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <div className="state-stack">
-          {settings.defaultPassthroughAccountId ? (
-            selectedPassthroughAccount &&
-            (selectedPassthroughAccount.provider ?? "openai") === "openai" &&
-            selectedPassthroughAccount.enabled ? (
-              <span className="badge badge-live">
-                Active: {sanitized
-                  ? maskEmail(selectedPassthroughAccount.email)
-                  : (selectedPassthroughAccount.email ?? selectedPassthroughAccount.id)}
-              </span>
-            ) : (
-              <span className="badge badge-warn">
-                Selected passthrough account is unavailable
-              </span>
-            )
-          ) : (
-            <span className="badge badge-warn">No default account selected</span>
-          )}
-        </div>
-      </section>}
 
       <section className={hasAnyProvider ? "panel" : "panel providers-empty-state"}>
         <div className="section-split-header">
@@ -1988,6 +1927,25 @@ export function AccountsTab(props: Props) {
                             >
                               Refresh usage
                             </button>
+                            {((isOpenAiAccount(a) && a.enabled) ||
+                              settings.defaultPassthroughAccountId === a.id) && (
+                              <button
+                                className="account-action-item"
+                                onClick={() => {
+                                  setOpenMenu(null);
+                                  void patchSettings({
+                                    defaultPassthroughAccountId:
+                                      settings.defaultPassthroughAccountId === a.id
+                                        ? undefined
+                                        : a.id,
+                                  });
+                                }}
+                              >
+                                {settings.defaultPassthroughAccountId === a.id
+                                  ? "Clear default passthrough"
+                                  : "Set as default passthrough"}
+                              </button>
+                            )}
                             {isOpenAiAccount(a) && (
                               <button
                                 className="account-action-item"
