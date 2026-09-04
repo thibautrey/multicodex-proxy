@@ -6,6 +6,10 @@ const MAX_CONFIG_BYTES = 1024 * 1024;
 const STATE_SCHEMA_VERSION = "multivibe-host-harness-integrations-v1";
 const MANAGED_BLOCK_START = "# >>> MultiVibe Host >>>";
 const MANAGED_BLOCK_END = "# <<< MultiVibe Host <<<";
+const CODEX_ROOT_BLOCK_START = "# >>> MultiVibe Host Codex root >>>";
+const CODEX_ROOT_BLOCK_END = "# <<< MultiVibe Host Codex root <<<";
+const CODEX_PROVIDER_BLOCK_START = "# >>> MultiVibe Host Codex provider >>>";
+const CODEX_PROVIDER_BLOCK_END = "# <<< MultiVibe Host Codex provider <<<";
 
 export type HostHarnessCategory = "cli" | "editor" | "agent" | "framework" | "service";
 
@@ -19,17 +23,30 @@ export type HostHarnessView = {
   managed: boolean;
   drifted: boolean;
   canInstall: boolean;
+  repairable: boolean;
   canUninstall: boolean;
   configPath?: string;
   unavailableReason?: string;
+  configurationIssue?: string;
+  effectiveProvider?: string;
+  effectiveBaseUrl?: string;
 };
 
 export type HarnessContext = { baseUrl: string; apiKey: string };
+
+type HarnessInspection = {
+  configured: boolean;
+  repairable: boolean;
+  configurationIssue?: string;
+  effectiveProvider?: string;
+  effectiveBaseUrl?: string;
+};
 
 export type HarnessConfiguration = {
   relativePath: string;
   render: (current: string | null, context: HarnessContext) => string;
   isConfigured: (current: string, baseUrl: string) => boolean;
+  inspect?: (current: string, baseUrl: string) => HarnessInspection;
 };
 
 export type HostHarnessDefinition = {
@@ -145,33 +162,138 @@ function stripManagedBlock(value: string): string {
   return `${value.slice(0, start)}${value.slice(end + MANAGED_BLOCK_END.length)}`;
 }
 
-function renderCodexToml(current: string | null, context: HarnessContext): string {
-  let value = stripManagedBlock(current ?? "");
-  const lines = value.split(/\r?\n/);
+type CodexTomlInspection = HarnessInspection & {
+  profileProviders: Record<string, string>;
+};
+
+function decodeTomlBasicString(value: string): string | undefined {
+  const match = /^"((?:\\.|[^"\\])*)"/.exec(value.trim());
+  if (!match) return undefined;
+  return match[1].replace(/\\(["\\])/g, "$1");
+}
+
+function parseCodexToml(current: string, expectedBaseUrl: string): CodexTomlInspection {
+  let table = "";
+  let rootProvider: string | undefined;
+  let providerBaseUrl: string | undefined;
+  const profileProviders: Record<string, string> = {};
+  const errors: string[] = [];
+  const seen = new Set<string>();
+
+  for (const [index, line] of current.split(/\r?\n/).entries()) {
+    const tableMatch = /^\s*\[([^\[\]]+)\]\s*(?:#.*)?$/.exec(line);
+    if (tableMatch) {
+      table = tableMatch[1].trim();
+      continue;
+    }
+    if (/^\s*\[/.test(line) && !/^\s*\[\[/.test(line)) {
+      errors.push(`invalid TOML table header on line ${index + 1}`);
+      continue;
+    }
+
+    const assignment = /^\s*([A-Za-z0-9_-]+)\s*=\s*("(?:\\.|[^"\\])*")\s*(?:#.*)?$/.exec(line);
+    if (!assignment) continue;
+    const key = assignment[1];
+    const value = decodeTomlBasicString(assignment[2]);
+    if (value === undefined) continue;
+    if (table === "" && key === "model_provider") {
+      if (seen.has("root.model_provider")) errors.push("duplicate root model_provider");
+      seen.add("root.model_provider");
+      rootProvider = value;
+    } else if (table.startsWith("profiles.") && key === "model_provider") {
+      const profile = table.slice("profiles.".length);
+      const seenKey = `profile.${profile}.model_provider`;
+      if (seen.has(seenKey)) errors.push(`duplicate ${seenKey}`);
+      seen.add(seenKey);
+      profileProviders[profile] = value;
+    } else if (table === "model_providers.multivibe" && key === "base_url") {
+      if (seen.has("provider.multivibe.base_url")) errors.push("duplicate model_providers.multivibe.base_url");
+      seen.add("provider.multivibe.base_url");
+      providerBaseUrl = value;
+    }
+  }
+
+  const profileOverrides = Object.entries(profileProviders)
+    .filter(([, provider]) => provider !== "multivibe")
+    .map(([profile, provider]) => `${profile}=${provider}`);
+  const configurationIssue = profileOverrides.length > 0
+    ? `Codex profiles override MultiVibe: ${profileOverrides.join(", ")}`
+    : undefined;
+  return {
+    configured: rootProvider === "multivibe" && providerBaseUrl === expectedBaseUrl,
+    repairable: errors.length === 0,
+    configurationIssue: errors.length > 0 ? errors.join("; ") : configurationIssue,
+    effectiveProvider: rootProvider,
+    effectiveBaseUrl: providerBaseUrl,
+    profileProviders,
+  };
+}
+
+function inspectCodexToml(current: string, baseUrl: string): HarnessInspection {
+  const parsed = parseCodexToml(current, `${baseUrl}/v1`);
+  return {
+    ...parsed,
+    configured: parsed.configured,
+  };
+}
+
+function isCodexMarker(line: string, marker: string): boolean {
+  return line.trim() === marker;
+}
+
+function stripCodexManagedContent(value: string): string {
   const output: string[] = [];
   let table = "";
+  let insideManagedBlock = false;
   let skippingProvider = false;
-  for (const line of lines) {
-    const tableMatch = /^\s*\[([^\]]+)\]\s*(?:#.*)?$/.exec(line);
+  let blockEnd: string | undefined;
+  for (const line of value.split(/\r?\n/)) {
+    if (!insideManagedBlock && (
+      isCodexMarker(line, MANAGED_BLOCK_START) ||
+      isCodexMarker(line, CODEX_ROOT_BLOCK_START) ||
+      isCodexMarker(line, CODEX_PROVIDER_BLOCK_START)
+    )) {
+      insideManagedBlock = true;
+      blockEnd = isCodexMarker(line, MANAGED_BLOCK_START)
+        ? MANAGED_BLOCK_END
+        : isCodexMarker(line, CODEX_ROOT_BLOCK_START) ? CODEX_ROOT_BLOCK_END : CODEX_PROVIDER_BLOCK_END;
+      continue;
+    }
+    if (insideManagedBlock && blockEnd && isCodexMarker(line, blockEnd)) {
+      insideManagedBlock = false;
+      blockEnd = undefined;
+      skippingProvider = false;
+      continue;
+    }
+    const tableMatch = /^\s*\[([^\[\]]+)\]\s*(?:#.*)?$/.exec(line);
     if (tableMatch) {
       table = tableMatch[1].trim();
       skippingProvider = table === "model_providers.multivibe";
       if (skippingProvider) continue;
     }
     if (skippingProvider) continue;
-    if (!table && /^\s*model_provider\s*=/.test(line)) continue;
+    if (table === "" && /^\s*model_provider\s*=/.test(line)) continue;
+    if (insideManagedBlock && /^\s*model_provider\s*=/.test(line)) continue;
     output.push(line);
   }
-  value = output.join("\n").trimEnd();
-  const prefix = value ? `${value}\n\n` : "";
-  return `${prefix}${MANAGED_BLOCK_START}\nmodel_provider = "multivibe"\n\n[model_providers.multivibe]\nname = "MultiVibe Host"\nbase_url = ${jsonString(`${context.baseUrl}/v1`)}\nexperimental_bearer_token = ${jsonString(context.apiKey)}\nwire_api = "responses"\n${MANAGED_BLOCK_END}\n`;
+  if (insideManagedBlock) {
+    throw new HostHarnessIntegrationError("the existing MultiVibe configuration block is incomplete", 409);
+  }
+  return output.join("\n");
+}
+
+function renderCodexToml(current: string | null, context: HarnessContext): string {
+  const value = stripCodexManagedContent(current ?? "").trim();
+  const rootBlock = `${CODEX_ROOT_BLOCK_START}\nmodel_provider = "multivibe"\n${CODEX_ROOT_BLOCK_END}`;
+  const providerBlock = `${CODEX_PROVIDER_BLOCK_START}\n[model_providers.multivibe]\nname = "MultiVibe Host"\nbase_url = ${jsonString(`${context.baseUrl}/v1`)}\nexperimental_bearer_token = ${jsonString(context.apiKey)}\nwire_api = "responses"\n${CODEX_PROVIDER_BLOCK_END}`;
+  return `${rootBlock}\n\n${value ? `${value}\n\n` : ""}${providerBlock}\n`;
 }
 
 const codexConfiguration: HarnessConfiguration = {
   relativePath: ".codex/config.toml",
   render: renderCodexToml,
-  isConfigured: (current, baseUrl) =>
-    current.includes("model_provider = \"multivibe\"") && current.includes(`${baseUrl}/v1`),
+  isConfigured: (current, baseUrl) => inspectCodexToml(current, baseUrl).configured,
+  inspect: inspectCodexToml,
 };
 
 const claudeConfiguration = jsonConfiguration(".claude/settings.json", ({ baseUrl, apiKey }) => [
@@ -457,7 +579,11 @@ export class HostHarnessIntegrationManager {
       const state = await this.readState();
       const before = await this.view(definition, state);
       if (!before.detected) throw new HostHarnessIntegrationError(`${definition.name} is not installed on this host`, 409);
-      if (before.managed || before.configured) return before;
+      if (before.managed) {
+        if (!before.drifted) return before;
+        throw new HostHarnessIntegrationError(`${definition.name} has drifted; repair the existing integration before reconnecting it`, 409);
+      }
+      if (before.configured) return before;
 
       const configPath = await this.safeConfigPath(definition.configuration.relativePath);
       const original = await readBounded(configPath);
@@ -480,6 +606,46 @@ export class HostHarnessIntegrationManager {
       } catch (error) {
         if (original) await writeAtomic(configPath, original.content, original.mode);
         else await fs.unlink(configPath).catch(() => undefined);
+        throw error;
+      }
+      return this.view(definition, state);
+    });
+  }
+
+  async repair(id: string, credential: { apiKeyId: string; apiKey: string; application: string }): Promise<HostHarnessView> {
+    return this.serial(async () => {
+      const definition = this.definition(id);
+      if (!definition.configuration) {
+        throw new HostHarnessIntegrationError(definition.unavailableReason ?? manualReason, 409);
+      }
+      const state = await this.readState();
+      const installation = state.installations[id];
+      if (!installation) throw new HostHarnessIntegrationError(`${definition.name} is not managed by MultiVibe Host`, 409);
+      const configPath = await this.safeConfigPath(definition.configuration.relativePath);
+      const current = await readBounded(configPath);
+      if (!current) throw new HostHarnessIntegrationError(`~/${definition.configuration.relativePath} is missing`, 409);
+      const inspection = definition.configuration.inspect
+        ? definition.configuration.inspect(current.content, this.baseUrl)
+        : { configured: false, repairable: true };
+      if (!inspection.repairable) {
+        throw new HostHarnessIntegrationError(inspection.configurationIssue ?? `~/${definition.configuration.relativePath} cannot be repaired safely`, 409);
+      }
+      const repaired = definition.configuration.render(current.content, {
+        baseUrl: this.baseUrl,
+        apiKey: credential.apiKey,
+      });
+      await writeAtomic(configPath, repaired, current.mode);
+      try {
+        state.installations[id] = {
+          ...installation,
+          installedSha256: sha256(repaired),
+          apiKeyId: credential.apiKeyId,
+          application: credential.application,
+          installedAt: Date.now(),
+        };
+        await this.writeState(state);
+      } catch (error) {
+        await writeAtomic(configPath, current.content, current.mode);
         throw error;
       }
       return this.view(definition, state);
@@ -538,12 +704,28 @@ export class HostHarnessIntegrationManager {
     const detected = detectedBy.length > 0 || Boolean(installation);
     let configured = false;
     let drifted = false;
+    let repairable = false;
     let configurationError: string | undefined;
+    let configurationIssue: string | undefined;
+    let effectiveProvider: string | undefined;
+    let effectiveBaseUrl: string | undefined;
     if (definition.configuration) {
       try {
         const configPath = await this.safeConfigPath(definition.configuration.relativePath);
         const current = await readBounded(configPath);
-        configured = current ? definition.configuration.isConfigured(current.content, this.baseUrl) : false;
+        if (current) {
+          const inspection = definition.configuration.inspect
+            ? definition.configuration.inspect(current.content, this.baseUrl)
+            : {
+                configured: definition.configuration.isConfigured(current.content, this.baseUrl),
+                repairable: true,
+              };
+          configured = inspection.configured;
+          repairable = inspection.repairable;
+          configurationIssue = inspection.configurationIssue;
+          effectiveProvider = inspection.effectiveProvider;
+          effectiveBaseUrl = inspection.effectiveBaseUrl;
+        }
         drifted = Boolean(installation && (!current || sha256(current.content) !== installation.installedSha256));
       } catch (error: any) {
         configurationError = error?.message ?? "The harness configuration cannot be edited safely.";
@@ -560,8 +742,12 @@ export class HostHarnessIntegrationManager {
       managed: Boolean(installation),
       drifted,
       canInstall: detected && Boolean(definition.configuration) && !configured && !installation && !configurationError,
+      repairable: Boolean(installation && repairable && !configurationError),
       canUninstall: Boolean(installation) && !drifted,
       ...(definition.configuration ? { configPath: `~/${definition.configuration.relativePath}` } : {}),
+      ...(configurationIssue ? { configurationIssue } : {}),
+      ...(effectiveProvider ? { effectiveProvider } : {}),
+      ...(effectiveBaseUrl ? { effectiveBaseUrl } : {}),
       ...(!definition.configuration || configurationError
         ? { unavailableReason: configurationError ?? definition.unavailableReason ?? manualReason }
         : {}),

@@ -15,6 +15,7 @@ const disconnectedHarness = (): HostHarnessView => ({
   managed: false,
   drifted: false,
   canInstall: true,
+  repairable: false,
   canUninstall: false,
   configPath: "~/.example/config.json",
 });
@@ -124,5 +125,30 @@ test("a failed configuration rolls back the newly provisioned key", async () => 
     assert.equal(response.status, 500);
     assert.equal(added.length, 1);
     assert.deepEqual(deleted, [added[0].id]);
+  });
+});
+
+test("repair reuses the managed key without returning it to the browser", async () => {
+  const repaired = { ...disconnectedHarness(), configured: true, managed: true, drifted: false, repairable: true, canInstall: false, canUninstall: true };
+  const drifted = { ...repaired, drifted: true, canUninstall: false };
+  let receivedKey = "";
+  const manager = {
+    get: async () => drifted,
+    repair: async (_id: string, credential: { apiKeyId: string; apiKey: string; application: string }) => {
+      receivedKey = credential.apiKey;
+      assert.equal(credential.apiKeyId, "managed-key");
+      assert.equal(credential.application, "harness-example");
+      return repaired;
+    },
+  } as unknown as AdminRoutesOptions["hostHarnessIntegrations"];
+  const store = {
+    getCachedProxyApiKeys: () => [{ id: "managed-key", application: "harness-example", key: "mv_managed-secret", createdAt: 1 }],
+  } as unknown as AdminRoutesOptions["store"];
+
+  await withServer(options({ hostApplication: true, hostHarnessIntegrations: manager, store }), async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/admin/host-harnesses/example/repair`, { method: "POST" });
+    assert.equal(response.status, 200);
+    assert.equal(receivedKey, "mv_managed-secret");
+    assert.doesNotMatch(await response.text(), /mv_managed-secret/);
   });
 });

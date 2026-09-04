@@ -524,6 +524,9 @@ export function createAdminRouter(options: AdminRoutesOptions) {
     let createdId: string | undefined;
     try {
       const current = await options.hostHarnessIntegrations.get(id);
+      if (current.managed && current.drifted) {
+        return res.status(409).json({ error: `${current.name} has drifted; use the repair action` });
+      }
       if (current.configured || current.managed) return res.json({ harness: current });
       if (!current.canInstall) {
         return res.status(409).json({ error: current.unavailableReason ?? `${current.name} cannot be configured automatically` });
@@ -551,6 +554,35 @@ export function createAdminRouter(options: AdminRoutesOptions) {
       if (createdId) await store.deleteProxyApiKey(createdId).catch(() => undefined);
       const status = error instanceof HostHarnessIntegrationError ? error.status : 500;
       return res.status(status).json({ error: error?.message ?? "Harness installation failed" });
+    }
+  });
+
+  router.post("/host-harnesses/:id/repair", async (req, res) => {
+    res.setHeader("cache-control", "no-store");
+    if (!options.hostApplication || !options.hostHarnessIntegrations) {
+      return res.status(404).json({ error: "Harness integrations are available only in MultiVibe Host" });
+    }
+    const id = String(req.params.id ?? "");
+    try {
+      const current = await options.hostHarnessIntegrations.get(id);
+      if (!current.managed) return res.status(409).json({ error: `${current.name} is not managed by MultiVibe Host` });
+      if (!current.repairable) {
+        return res.status(409).json({ error: current.configurationIssue ?? `${current.name} cannot be repaired safely` });
+      }
+      const application = `harness-${id}`;
+      const existing = store.getCachedProxyApiKeys().find((entry) => entry.application === application);
+      if (!existing) {
+        return res.status(409).json({ error: `The API key for ${application} is unavailable; reconnect this harness manually` });
+      }
+      const harness = await options.hostHarnessIntegrations.repair(id, {
+        apiKeyId: existing.id,
+        apiKey: existing.key,
+        application,
+      });
+      return res.json({ harness });
+    } catch (error: any) {
+      const status = error instanceof HostHarnessIntegrationError ? error.status : 500;
+      return res.status(status).json({ error: error?.message ?? "Harness repair failed" });
     }
   });
 

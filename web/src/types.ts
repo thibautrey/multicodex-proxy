@@ -415,9 +415,13 @@ export type HostHarness = {
   managed: boolean;
   drifted: boolean;
   canInstall: boolean;
+  repairable: boolean;
   canUninstall: boolean;
   configPath?: string;
   unavailableReason?: string;
+  configurationIssue?: string;
+  effectiveProvider?: string;
+  effectiveBaseUrl?: string;
 };
 
 export type ApplicationWebhook = {
