@@ -2967,38 +2967,71 @@ details summary {
   font-size: 11px;
 }
 
-.make-money-preview-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  padding: 0 20px 20px;
-}
-
-.make-money-preview-card {
-  padding: 14px;
+.make-money-preview-advanced {
+  margin: 0 20px 20px;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 13px;
   background: var(--surface-muted);
 }
 
-.make-money-preview-card h3 {
-  margin: 0 0 7px;
-  font-size: 14px;
+.make-money-preview-advanced summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  color: var(--text);
+  cursor: pointer;
+  list-style: none;
 }
 
-.make-money-preview-card p,
-.make-money-preview-fineprint {
-  color: var(--muted-strong);
-  font-size: 12px;
-  line-height: 1.55;
+.make-money-preview-advanced summary::-webkit-details-marker {
+  display: none;
 }
 
-.make-money-preview-fineprint {
-  margin: 0 20px 20px;
-  padding: 13px 14px;
-  border: 1px solid color-mix(in srgb, var(--primary) 20%, var(--line));
-  border-radius: 11px;
-  background: var(--primary-soft);
+.make-money-preview-advanced summary::after {
+  flex: 0 0 auto;
+  color: var(--primary);
+  content: "+";
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.make-money-preview-advanced[open] summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.make-money-preview-advanced[open] summary::after {
+  content: "−";
+}
+
+.make-money-preview-advanced-copy {
+  display: block;
+  min-width: 0;
+}
+
+.make-money-preview-advanced-copy strong,
+.make-money-preview-advanced-copy > span {
+  display: block;
+}
+
+.make-money-preview-advanced-copy strong {
+  font-size: 13px;
+}
+
+.make-money-preview-advanced-copy > span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.make-money-preview-advanced > .provider-selection-panel {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 .make-money-preview-actions {
@@ -4428,12 +4461,7 @@ details summary {
     width: 100%;
   }
 
-  .make-money-preview-grid {
-    grid-template-columns: 1fr;
-    padding: 0 16px 16px;
-  }
-
-  .make-money-preview-fineprint {
+  .make-money-preview-advanced {
     margin: 0 16px 16px;
   }
 
