@@ -3,6 +3,8 @@ import type {
 } from "../traces.js";
 import { classifySseFrameTypeFromNative } from "./payload-inspection.js";
 
+const NATIVE_SSE_CLASSIFIER_MIN_BYTES = 512;
+
 export function createResponseStreamDiagnostics(): ResponseStreamDiagnostics {
   return {
     eventCount: 0,
@@ -168,10 +170,11 @@ function fastInspectableEventTypeReference(frame: string): string | undefined {
 }
 
 export function classifySseFrameType(frame: string): string | undefined {
-  return (
-    classifySseFrameTypeFromNative(frame) ??
-    fastInspectableEventTypeReference(frame)
-  );
+  if (Buffer.byteLength(frame, "utf8") >= NATIVE_SSE_CLASSIFIER_MIN_BYTES) {
+    const nativeType = classifySseFrameTypeFromNative(frame);
+    if (nativeType) return nativeType;
+  }
+  return fastInspectableEventTypeReference(frame);
 }
 
 export function inspectResponseStreamFrame(
