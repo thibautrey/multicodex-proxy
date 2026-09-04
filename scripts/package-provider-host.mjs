@@ -186,7 +186,7 @@ async function copySource(source, destination) {
   });
 }
 
-async function buildGo(moduleDirectory, output, versionVariable, version, selectedTarget, packagePath = ".") {
+async function buildGo(moduleDirectory, output, versionVariable, version, selectedTarget, packagePath = ".", buildEnvironment = {}) {
   await command("go", ["test", "./..."], { cwd: moduleDirectory });
   await command("go", [
     "build",
@@ -203,6 +203,7 @@ async function buildGo(moduleDirectory, output, versionVariable, version, select
       CGO_ENABLED: "0",
       GOOS: selectedTarget.goos,
       GOARCH: selectedTarget.goarch,
+      ...buildEnvironment,
     },
   });
   await chmod(output, 0o555);
@@ -499,6 +500,7 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
   let updaterDestination;
   let benchmarkDestination;
   let hostDestination;
+  let menuDestination;
   let menuBarDestination;
   let resourceDirectory;
   let verifierDestination;
@@ -541,6 +543,7 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
     updaterDestination = path.join(root, "bin", "multivibe-host-updater");
     benchmarkDestination = path.join(root, "bin", "multivibe-runtime-benchmark");
     hostDestination = path.join(root, "bin", "multivibe-host");
+    menuDestination = path.join(root, "bin", "multivibe-host-menu");
     ollamaDestination = path.join(root, "runtime", "ollama");
     resourceDirectory = path.join(root, "resources", "provider");
     verifierDestination = path.join(root, "verify-provider-host.mjs");
@@ -555,6 +558,12 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
   await cp(path.join(repositoryRoot, "packaging", "provider-host-dependencies.json"), path.join(resourceDirectory, "provider-host-dependencies.json"));
   await cp(path.join(repositoryRoot, "packaging", "schemas"), path.join(resourceDirectory, "schemas"), { recursive: true });
   await cp(path.join(repositoryRoot, "packaging", "examples"), path.join(resourceDirectory, "examples"), { recursive: true });
+  if (selectedTarget.goos === "linux") {
+    await cp(
+      path.join(repositoryRoot, "web", "public", "assets", "brand", "favicon-32x32.png"),
+      path.join(resourceDirectory, "multivibe-host.png"),
+    );
+  }
   await cp(path.join(repositoryRoot, "scripts", "verify-provider-host.mjs"), verifierDestination);
   await chmod(verifierDestination, 0o444);
   const nodeLicense = await nodeRuntime(work, nodeDestination, dependencies.node.artifacts[selectedTarget.key]);
@@ -568,6 +577,12 @@ async function assemble(options, selectedTarget, work, dependencies, sourceCommi
     selectedTarget, "./cmd/runtime-benchmark",
   );
   await buildGo(path.join(repositoryRoot, "host-application"), hostDestination, "hostApplicationVersion", options.version, selectedTarget);
+  if (menuDestination) {
+    await buildGo(
+      path.join(repositoryRoot, "host-menu"), menuDestination, "menuApplicationVersion", options.version, selectedTarget,
+      ".", { CGO_ENABLED: "1" },
+    );
+  }
   if (menuBarDestination) {
     const swiftArchitecture = selectedTarget.goarch === "arm64" ? "arm64" : "x86_64";
     await command("xcrun", [

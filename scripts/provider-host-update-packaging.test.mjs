@@ -8,11 +8,14 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (name) => readFile(path.join(root, name), "utf8");
 
 test("native packages include the updater and platform schedulers", async () => {
-  const [packager, linux, macos, verifier] = await Promise.all([
+  const [packager, linux, macos, verifier, uninstall] = await Promise.all([
     read("scripts/package-provider-host.mjs"), read("packaging/linux/install.sh"),
-    read("packaging/macos/install.sh"), read("scripts/verify-provider-host.mjs"),
+    read("packaging/macos/install.sh"), read("scripts/verify-provider-host.mjs"), read("packaging/linux/uninstall.sh"),
   ]);
   assert.match(packager, /buildGo\(path\.join\(repositoryRoot, "host-updater"\)/u);
+  assert.match(packager, /buildGo\(\s*path\.join\(repositoryRoot, "host-menu"\)/u);
+  assert.match(packager, /CGO_ENABLED: "1"/u);
+  assert.match(packager, /favicon-32x32\.png/u);
   assert.match(packager, /path\.join\(contents, "Resources", "update", "install\.sh"\)/u);
   assert.match(packager, /install-docker-updater\.sh/u);
   assert.match(
@@ -32,11 +35,17 @@ test("native packages include the updater and platform schedulers", async () => 
   assert.match(linux, /cat > "\$UPDATE_SERVICE_STAGING" <<EOF/u);
   assert.doesNotMatch(linux, /cat > "\$UPDATE_SERVICE_STAGING" <<'EOF'/u);
   assert.match(linux, /body\.version!==process\.argv\[1\]/u);
+  assert.match(linux, /SOURCE_MENU/u);
+  assert.match(linux, /multivibe-host-menu\.desktop/u);
+  assert.match(linux, /X-GNOME-Autostart-enabled=true/u);
+  assert.match(linux, /x-scheme-handler\/multivibe/u);
   assert.match(macos, /cloud\.multivibe\.host\.update/u);
   assert.match(macos, /Contents\/Helpers\/multivibe-host-updater/u);
   assert.match(macos, /UPDATE_SERVICE_KEPT_LOADED/u);
   assert.match(macos, /body\.version!==process\.argv\[1\]/u);
   assert.match(verifier, /multivibe-host-updater/u);
+  assert.match(verifier, /multivibe-host-menu/u);
+  assert.match(uninstall, /multivibe-host-menu\.desktop/u);
 });
 
 test("Docker updates stay outside the container and roll back through Compose", async () => {
