@@ -160,13 +160,17 @@ end-to-end.
 L'inspection de payload et la classification conservatrice des frames SSE sont
 portées. Une première projection de protocole `chat.completion` → `response` a
 été caractérisée avec des fixtures JSON partagées et une liaison N-API. Le
-résultat est fonctionnel, mais le chemin objet appelé après `JSON.parse` est
-plus lent que TypeScript (sur 57 491 octets : médiane 0,286 ms contre 0,157 ms,
-p95 0,379 ms contre 0,260 ms). Il reste donc expérimental et désactivé par
-défaut via `MULTIVIBE_PROXY_CORE_PROTOCOL_CONVERSION=on` ; la prochaine
-itération doit déplacer la frontière avant le parse JSON pour supprimer le
-double marshalling. Les détails sont dans
+pont objet historique, appelé après `JSON.parse`, reste désactivé par défaut et
+ne sert qu'à la compatibilité ou à l'évaluation explicite via
+`MULTIVIBE_PROXY_CORE_OBJECT_CONVERSION=on` ; son benchmark est conservé dans
 [`protocol-conversion-benchmark.json`](protocol-conversion-benchmark.json).
+
+La tranche suivante déplace la frontière avant le parse JavaScript : Rust
+reçoit les octets upstream et produit directement le body JSON ou SSE final.
+Sur les mesures synthétiques finales, la médiane est quasi à parité sur 57 Ko
+et Rust est plus rapide sur 229 Ko ; le p95 est inférieur dans les deux cas.
+Les détails sont dans
+[`raw-protocol-conversion-benchmark.json`](raw-protocol-conversion-benchmark.json).
 
 Cette frontière est maintenant évaluée comme une vraie tranche d'octets : Rust
 reçoit le `Buffer` upstream et renvoie le `Buffer` HTTP final, JSON ou SSE,
@@ -179,16 +183,15 @@ encore une preuve de parsing zero-copy.
 
 Le repli TypeScript reste automatique pour les textes sensibles au sanitizer,
 les arguments d'outils objets, les identifiants d'outils absents, les corps
-non-Chat et les addons incompatibles. Le chemin direct est maintenant activé
-par défaut lorsque l'addon est disponible ;
-`MULTIVIBE_PROXY_CORE_PROTOCOL_CONVERSION=off` fournit le rollback explicite.
-Le pont objet historique reste opt-in séparément. Le benchmark mémoire est disponible via
-`npm run benchmark:raw-protocol-memory` ; il compare RSS, heap V8, mémoire
-externe, buffers et mémoire retenue après GC. Les timings synthétiques restent
-dans
-[`raw-protocol-conversion-benchmark.json`](raw-protocol-conversion-benchmark.json)
-et les résultats mémoire doivent être interprétés avec le débit, le p95, les
-pauses GC et le taux d'erreur.
+non-Chat et les addons incompatibles. Le chemin direct est activé par défaut
+lorsque l'addon est disponible ; `MULTIVIBE_PROXY_CORE_PROTOCOL_CONVERSION=off`
+fournit le rollback explicite. Le benchmark mémoire est disponible via
+`npm run benchmark:raw-protocol-memory` et ses résultats sont conservés dans
+[`raw-protocol-memory-benchmark.json`](raw-protocol-memory-benchmark.json) ; il
+compare RSS, heap V8, mémoire externe, buffers et mémoire retenue après GC.
+Les mesures synthétiques montrent une forte baisse de pression mémoire, mais
+elles doivent être confirmées par un test de charge HTTP réel avec débit, p95,
+pauses GC et taux d'erreur.
 
 ### Phase 2 — edge Rust
 

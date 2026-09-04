@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-04",
+  "benchmark": "synthetic_raw_chat_completion_to_response_memory",
+  "stream": false,
+  "inFlight": 32,
+  "gc": "node --expose-gc",
+  "cases": [
+    {
+      "samples": 1000,
+      "segments": 256,
+      "payloadBytes": 57500,
+      "baseline": {
+        "implementation": "typescript_json_parse_projection_buffer",
+        "peakRssBytes": 148127744,
+        "peakRssDeltaBytes": 55115776,
+        "peakHeapUsedBytes": 43803024,
+        "peakHeapUsedDeltaBytes": 35787184,
+        "peakExternalBytes": 9537416,
+        "peakArrayBuffersBytes": 7098047,
+        "retainedRssDeltaAfterGcBytes": 55181312
+      },
+      "candidate": {
+        "implementation": "rust_napi_raw_bytes_conversion_node_owned_buffer",
+        "peakRssBytes": 140394496,
+        "peakRssDeltaBytes": 46956544,
+        "peakHeapUsedBytes": 8552096,
+        "peakHeapUsedDeltaBytes": 639000,
+        "peakExternalBytes": 20429160,
+        "peakArrayBuffersBytes": 17989791,
+        "retainedRssDeltaAfterGcBytes": 46956544
+      },
+      "peakRssReductionRatio": 0.14803804994054692,
+      "peakHeapUsedReductionRatio": 0.9821444458999624
+    },
+    {
+      "samples": 500,
+      "segments": 1024,
+      "payloadBytes": 229556,
+      "baseline": {
+        "implementation": "typescript_json_parse_projection_buffer",
+        "peakRssBytes": 288620544,
+        "peakRssDeltaBytes": 175702016,
+        "peakHeapUsedBytes": 130341840,
+        "peakHeapUsedDeltaBytes": 122123200,
+        "peakExternalBytes": 35163264,
+        "peakArrayBuffersBytes": 32723895,
+        "retainedRssDeltaAfterGcBytes": 105381888
+      },
+      "candidate": {
+        "implementation": "rust_napi_raw_bytes_conversion_node_owned_buffer",
+        "peakRssBytes": 131907584,
+        "peakRssDeltaBytes": 22626304,
+        "peakHeapUsedBytes": 8187408,
+        "peakHeapUsedDeltaBytes": 47056,
+        "peakExternalBytes": 6745504,
+        "peakArrayBuffersBytes": 4306135,
+        "retainedRssDeltaAfterGcBytes": 22626304
+      },
+      "peakRssReductionRatio": 0.8712234240954868,
+      "peakHeapUsedReductionRatio": 0.999614684187771
+    }
+  ],
+  "interpretation": "One local run per mode and case. Rust materially reduces V8 heap pressure and observed peak RSS in this synthetic workload, while native output buffers are accounted for as external/ArrayBuffer memory.",
+  "limitations": [
+    "Synthetic conversion only; no HTTP server, provider, network, concurrent requests from other clients, or production allocator behavior.",
+    "RSS can remain reserved by the process allocator after garbage collection; compare both peak and retained values.",
+    "The candidate still uses a temporary serde_json::Value tree in Rust and is not zero-copy."
+  ]
+}

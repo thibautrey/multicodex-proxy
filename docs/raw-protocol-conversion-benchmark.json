@@ -8,14 +8,16 @@
       "segments": 256,
       "payloadBytes": 57491,
       "baseline": {
-        "implementation": "JSON.parse_plus_typescript_conversion",
-        "medianMs": 0.2086670000000197,
-        "p95Ms": 0.28383300000001555
+        "implementation": "typescript_json_parse_projection_buffer",
+        "medianMs": 0.32116600000000517,
+        "p95Ms": 0.43070799999998144,
+        "totalMs": 334.7648279999991
       },
       "candidate": {
-        "implementation": "rust_napi_raw_bytes_conversion",
-        "medianMs": 0.38162499999998545,
-        "p95Ms": 0.4458750000000009
+        "implementation": "rust_napi_raw_bytes_conversion_node_owned_buffer",
+        "medianMs": 0.32533300000000054,
+        "p95Ms": 0.367541000000017,
+        "totalMs": 335.0482160000004
       }
     },
     {
@@ -23,23 +25,26 @@
       "segments": 1024,
       "payloadBytes": 229547,
       "baseline": {
-        "implementation": "JSON.parse_plus_typescript_conversion",
-        "medianMs": 0.8058750000000146,
-        "p95Ms": 0.9706249999999272
+        "implementation": "typescript_json_parse_projection_buffer",
+        "medianMs": 1.3563330000000633,
+        "p95Ms": 1.853708000000097,
+        "totalMs": 708.0492550000001
       },
       "candidate": {
-        "implementation": "rust_napi_raw_bytes_conversion",
-        "medianMs": 1.455167000000074,
-        "p95Ms": 1.6202090000000453
+        "implementation": "rust_napi_raw_bytes_conversion_node_owned_buffer",
+        "medianMs": 1.163583000000017,
+        "p95Ms": 1.2570419999999558,
+        "totalMs": 587.8963699999998
       }
     }
   ],
-  "decision": "not_enabled_by_default",
-  "reason": "The raw Rust parser and N-API result marshalling remain slower than JSON.parse plus the TypeScript projection on this host.",
+  "decision": "enabled_by_default_with_fallback",
+  "reason": "The final-byte Rust path is near parity on the small payload and faster on the larger payload; it is enabled when the native addon is available and retains conservative TypeScript fallbacks.",
   "limitations": [
     "Synthetic responses with text segments and string-valued function arguments; no network, provider, or model latency.",
-    "The candidate still serializes a response envelope and parses that envelope in JavaScript so the existing safe fallback contract remains intact.",
+    "Rust builds a temporary serde_json::Value tree and copies the final body into a Node-owned Buffer; this is not zero-copy parsing.",
     "The raw candidate is deliberately conservative and falls back for sanitizer-sensitive text and nested object tool arguments.",
+    "The benchmark script measures buffered JSON conversion (stream=false); SSE output is covered by unit and N-API tests.",
     "Absolute timings depend on host load; these measurements are rollout guards, not end-to-end or production performance claims."
   ]
 }
