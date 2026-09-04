@@ -1621,55 +1621,36 @@ export function AccountsTab(props: Props) {
             <button className="btn" onClick={() => setShowAddAccount(true)}>Add a provider</button>
           </div>
         ) : accounts.length > 0 ? (
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Vendor</th>
-                <th>Account</th>
-                <th>5h quota</th>
-                <th>Weekly quota</th>
-                <th>Monthly quota</th>
-                <th>Routing state</th>
-                <th>Last error</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {accounts.map((a) => {
-                const modelBlocks = activeModelBlocks(a);
-                const needsReauthentication =
-                  a.state?.needsTokenRefresh === true &&
-                  ["openai", "opencode", "xai"].includes(
-                    a.provider ?? "openai",
-                  );
-                return (
-                <tr
-                  key={a.id}
-                  className={
-                    needsReauthentication ? "account-row-needs-reauth" : undefined
-                  }
-                >
-                  <td>
-                    {needsReauthentication && (
-                      <div
-                        className="account-reauth-overlay"
-                        role="status"
-                        aria-label="This account needs to be reconnected"
-                      >
-                        <span>This account needs to be reconnected</span>
-                        <button
-                          type="button"
-                          className="btn account-reauth-button"
-                          disabled={oauthBusyId === a.id}
-                          onClick={() => void reauthOAuthAccount(a)}
-                        >
-                          {oauthBusyId === a.id
-                            ? "Opening..."
-                            : "Reauth this account"}
-                        </button>
-                      </div>
-                    )}
+        <div className="provider-list">
+          {accounts.map((a) => {
+            const modelBlocks = activeModelBlocks(a);
+            const needsReauthentication =
+              a.state?.needsTokenRefresh === true &&
+              ["openai", "opencode", "xai"].includes(a.provider ?? "openai");
+            return (
+              <article
+                key={a.id}
+                className={`provider-card${needsReauthentication ? " provider-card-needs-reauth" : ""}`}
+              >
+                {needsReauthentication && (
+                  <div
+                    className="account-reauth-banner"
+                    role="status"
+                    aria-label="This account needs to be reconnected"
+                  >
+                    <span>This account needs to be reconnected</span>
+                    <button
+                      type="button"
+                      className="btn account-reauth-button"
+                      disabled={oauthBusyId === a.id}
+                      onClick={() => void reauthOAuthAccount(a)}
+                    >
+                      {oauthBusyId === a.id ? "Opening..." : "Reauth this account"}
+                    </button>
+                  </div>
+                )}
+                <div className="provider-card-header">
+                  <div className="provider-card-identity">
                     <span className="provider-badge">
                       <img
                         className="provider-icon"
@@ -1679,139 +1660,21 @@ export function AccountsTab(props: Props) {
                       />
                       {providerLabel(a.provider)}
                     </span>
-                  </td>
-                  <td>
-                    <div className="account-cell">
+                    <div className="provider-card-account">
                       <strong>
-                        {sanitized
-                          ? maskEmail(a.email)
-                          : (a.email ?? "No email set")}
+                        {sanitized ? maskEmail(a.email) : (a.email ?? "No email set")}
                       </strong>
-                      {a.baseUrl && (
-                        <span className="mono muted">{a.baseUrl}</span>
-                      )}
-                      {a.upstreamMode && (
-                        <span className="mono muted">
-                          upstream: {a.upstreamMode}
+                      <div className="provider-card-meta">
+                        <span className={a.location === "local" ? "badge badge-live" : "badge"}>
+                          {a.location ?? "cloud"}
                         </span>
-                      )}
-                      {a.provider === "opencode" && a.opencodeOrgName && (
                         <span className="mono muted">
-                          organization: {a.opencodeOrgName}
+                          {usageStatusLabel(a, usageCacheTtlMs)} · {usageAgeLabel(a.usage?.fetchedAt)}
                         </span>
-                      )}
-                      <span className={a.location === "local" ? "badge badge-live" : "badge"}>
-                        {a.location ?? "cloud"}
-                      </span>
-                      {a.location === "local" && (
-                        <button
-                          type="button"
-                          className="btn secondary make-money-preview-trigger"
-                          aria-haspopup="dialog"
-                          aria-controls="make-money-preview-dialog"
-                          onClick={(event) => {
-                            makeMoneyTriggerRef.current = event.currentTarget;
-                            setOpenMenu(null);
-                            setMakeMoneyPreviewAccount(a);
-                          }}
-                        >
-                          Share models · Preview
-                        </button>
-                      )}
-                      <span className="mono muted">
-                        {usageStatusLabel(a, usageCacheTtlMs)} · {usageAgeLabel(a.usage?.fetchedAt)}
-                      </span>
-                      {a.capacityProfile && (
-                        <span className="mono muted">
-                          capacity: {a.capacityProfile.maxConcurrent ?? "?"} slots · {a.capacityProfile.prefillTokensPerSecond ?? "?"} prefill tok/s · {a.capacityProfile.decodeTokensPerSecond ?? "?"} decode tok/s · {a.capacityProfile.contextWindow ?? "?"} ctx
-                        </span>
-                      )}
-                      {isOpenAiAccount(a) && (
-                        <div className="reset-quota-actions">
-                          <button
-                            className="btn secondary reset-quota-btn"
-                            onClick={() =>
-                              void consumeRateLimitResetCredit(a.id)
-                            }
-                          >
-                            Reset quota now
-                          </button>
-                          {a.state?.scheduledWeeklyReset ? (
-                            <>
-                              <span className="badge badge-live">
-                                Auto-reset scheduled at 0.5% remaining
-                              </span>
-                              {a.state.scheduledWeeklyReset.lastError && (
-                                <small className="reset-quota-error">
-                                  Last attempt failed:{" "}
-                                  {a.state.scheduledWeeklyReset.lastError}
-                                </small>
-                              )}
-                              <button
-                                className="btn secondary reset-quota-btn"
-                                onClick={() =>
-                                  void cancelScheduledRateLimitResetCredit(a.id)
-                                }
-                              >
-                                Cancel auto-reset
-                              </button>
-                            </>
-                          ) : (
-                            <button
-                              className="btn secondary reset-quota-btn"
-                              onClick={() =>
-                                void scheduleRateLimitResetCredit(a.id)
-                              }
-                            >
-                              Auto-reset at 0.5% remaining
-                            </button>
-                          )}
-                        </div>
-                      )}
+                      </div>
                     </div>
-                  </td>
-                  <td>
-                    {renderUsageCell(
-                      a.usage?.primary?.usedPercent,
-                      a.usage?.primary?.resetAt,
-                      a.usage?.quotaStatus === "unsupported",
-                    )}
-                  </td>
-                  <td>
-                    {renderUsageCell(
-                      a.usage?.secondary?.usedPercent,
-                      a.usage?.secondary?.resetAt,
-                      a.usage?.quotaStatus === "unsupported",
-                    )}
-                  </td>
-                  <td>
-                    {renderUsageCell(
-                      a.usage?.monthly?.usedPercent,
-                      a.usage?.monthly?.resetAt,
-                      a.usage?.quotaStatus === "unsupported",
-                    )}
-                  </td>
-                  <td>
-                    <div className="state-stack">
-                      <span
-                        className={
-                          a.enabled ? "badge badge-live" : "badge badge-warn"
-                        }
-                      >
-                        {a.enabled ? "Enabled" : "Disabled"}
-                      </span>
-                      {modelBlocks.map(([model, block]) => (
-                        <span className="badge badge-warn" key={model}>
-                          {`${model} blocked until ${fmt(block.until)}`}
-                        </span>
-                      ))}
-                    </div>
-                  </td>
-                  <td className="mono">
-                    {a.state?.lastError?.slice(0, 80) ?? "-"}
-                  </td>
-                  <td>
-                    <div className="account-actions-cell">
+                  </div>
+                  <div className="account-actions-cell">
                       <button
                         className="icon-menu-btn"
                         aria-label={`Open actions for ${a.email ?? a.id}`}
@@ -1985,13 +1848,107 @@ export function AccountsTab(props: Props) {
                           </div>,
                           document.body,
                         )}
+                  </div>
+                </div>
+                <div className="provider-card-content">
+                  <div className="provider-card-details">
+                    {(a.baseUrl || a.upstreamMode || (a.provider === "opencode" && a.opencodeOrgName)) && (
+                      <div className="provider-card-endpoint">
+                        {a.baseUrl && <span className="mono muted">{a.baseUrl}</span>}
+                        {a.upstreamMode && <span className="mono muted">upstream: {a.upstreamMode}</span>}
+                        {a.provider === "opencode" && a.opencodeOrgName && (
+                          <span className="mono muted">organization: {a.opencodeOrgName}</span>
+                        )}
+                      </div>
+                    )}
+                    {a.capacityProfile && (
+                      <span className="mono muted">
+                        capacity: {a.capacityProfile.maxConcurrent ?? "?"} slots · {a.capacityProfile.prefillTokensPerSecond ?? "?"} prefill tok/s · {a.capacityProfile.decodeTokensPerSecond ?? "?"} decode tok/s · {a.capacityProfile.contextWindow ?? "?"} ctx
+                      </span>
+                    )}
+                    {a.location === "local" && (
+                      <button
+                        type="button"
+                        className="btn secondary make-money-preview-trigger"
+                        aria-haspopup="dialog"
+                        aria-controls="make-money-preview-dialog"
+                        onClick={(event) => {
+                          makeMoneyTriggerRef.current = event.currentTarget;
+                          setOpenMenu(null);
+                          setMakeMoneyPreviewAccount(a);
+                        }}
+                      >
+                        Share models · Preview
+                      </button>
+                    )}
+                    {isOpenAiAccount(a) && (
+                      <div className="reset-quota-actions">
+                        <button
+                          className="btn secondary reset-quota-btn"
+                          onClick={() => void consumeRateLimitResetCredit(a.id)}
+                        >
+                          Reset quota now
+                        </button>
+                        {a.state?.scheduledWeeklyReset ? (
+                          <>
+                            <span className="badge badge-live">Auto-reset scheduled at 0.5% remaining</span>
+                            {a.state.scheduledWeeklyReset.lastError && (
+                              <small className="reset-quota-error">
+                                Last attempt failed: {a.state.scheduledWeeklyReset.lastError}
+                              </small>
+                            )}
+                            <button
+                              className="btn secondary reset-quota-btn"
+                              onClick={() => void cancelScheduledRateLimitResetCredit(a.id)}
+                            >
+                              Cancel auto-reset
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            className="btn secondary reset-quota-btn"
+                            onClick={() => void scheduleRateLimitResetCredit(a.id)}
+                          >
+                            Auto-reset at 0.5% remaining
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <div className="provider-quota-grid" aria-label="Quota usage">
+                    <div className="provider-quota-item">
+                      <span className="provider-quota-label">5h quota</span>
+                      {renderUsageCell(a.usage?.primary?.usedPercent, a.usage?.primary?.resetAt, a.usage?.quotaStatus === "unsupported")}
                     </div>
-                  </td>
-                </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                    <div className="provider-quota-item">
+                      <span className="provider-quota-label">Weekly quota</span>
+                      {renderUsageCell(a.usage?.secondary?.usedPercent, a.usage?.secondary?.resetAt, a.usage?.quotaStatus === "unsupported")}
+                    </div>
+                    <div className="provider-quota-item">
+                      <span className="provider-quota-label">Monthly quota</span>
+                      {renderUsageCell(a.usage?.monthly?.usedPercent, a.usage?.monthly?.resetAt, a.usage?.quotaStatus === "unsupported")}
+                    </div>
+                  </div>
+                </div>
+                <div className="provider-card-footer">
+                  <div className="state-stack">
+                    <span className={a.enabled ? "badge badge-live" : "badge badge-warn"}>
+                      {a.enabled ? "Enabled" : "Disabled"}
+                    </span>
+                    {modelBlocks.map(([model, block]) => (
+                      <span className="badge badge-warn" key={model}>
+                        {`${model} blocked until ${fmt(block.until)}`}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="provider-card-error">
+                    <span className="provider-card-label">Last error</span>
+                    <span className="mono">{a.state?.lastError?.slice(0, 120) ?? "-"}</span>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
         </div>
         ) : null}
       </section>
